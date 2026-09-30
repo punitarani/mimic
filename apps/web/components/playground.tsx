@@ -1,18 +1,25 @@
 'use client';
 import type { Distribution, PlaygroundItem, PublicQuestion, UiSnapshot } from '@mimic/core';
+import { MAX_PROMPT_WORDS } from '@mimic/core/limits';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { CheckIcon, CrossIcon, MinusIcon } from '@/components/session/icons';
 import { Kbd } from '@/components/session/next-button';
 import { OptionButton } from '@/components/session/option-button';
 import { ScaleControl } from '@/components/session/scale-control';
 import { Button, Card, Checkbox, cn, ErrorText, Input, Spinner, Textarea } from '@/components/ui';
-import { api, type Draft } from '@/lib/api';
+import { ApiError, api, type Draft } from '@/lib/api';
 import { newIdempotencyKey } from '@/lib/outbox';
 import { pct, type Verdict, verdictOf } from '@/lib/session-view';
 
-/** Mirrors the server's gate (MAX_PROMPT_WORDS, 2–5 choices); the server re-validates. */
-const MAX_WORDS = 40;
+/** Mirrors the server's gate (2–5 choices, a word limit); the server re-validates. */
 const CHOICE_KEYS = ['a', 'b', 'c', 'd', 'e'];
 const YES_NO: Draft['options'] = [
   { key: 'yes', label: 'Yes' },
@@ -40,13 +47,14 @@ type Stage =
   | { name: 'compose' }
   | { name: 'edit' }
   | { name: 'teach'; picked: string | null; key: string }
-  | { name: 'taught'; question: PublicQuestion; answer: string }
+  | { name: 'taught'; question: PublicQuestion; answer: string; learns: boolean }
   | { name: 'asked'; asked: Asked; key: string };
 
 function draftProblem(d: Draft): string | null {
   const prompt = d.prompt.trim();
   if (prompt.length < 8) return 'Write the question.';
-  if (prompt.split(/\s+/).length > MAX_WORDS) return `Keep the question under ${MAX_WORDS} words.`;
+  if (prompt.split(/\s+/).length > MAX_PROMPT_WORDS)
+    return `Keep the question under ${MAX_PROMPT_WORDS} words.`;
   const labels = d.options.map((o) => o.label.trim().toLowerCase());
   if (labels.some((l) => !l)) return 'Fill in every option.';
   if (new Set(labels).size !== labels.length) return 'Two options say the same thing.';
@@ -70,7 +78,9 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
   const [busy, setBusy] = useState<'draft' | 'predict' | 'answer' | 'teach' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const sectionRef = useRef<HTMLElement>(null);
-  const focusRef = useRef<HTMLHeadingElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  // The options written before switching to yes/no, kept while the editor is closed for answering.
+  const stash = useRef<Draft['options'] | null>(null);
   const outOfBudget = !!snap && snap.mimic.spendUsd >= snap.mimic.budgetUsd;
 
   const run = async <T,>(kind: typeof busy, fn: () => Promise<T>): Promise<T | null> => {
@@ -89,17 +99,20 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
   const go = useCallback((next: Stage) => {
     setError(null);
     setStage(next);
-    if (next.name !== 'teach') {
+    // A reason belongs to the answer being taught; editing the question on the way keeps it.
+    if (next.name !== 'teach' && next.name !== 'edit') {
       setWhy('');
       setWhyOpen(false);
     }
   }, []);
 
-  // Each new card takes focus (for keyboard and screen-reader users) and scrolls into view.
+  // Each new card moves focus to its first control (an option, or the next action) and scrolls into view.
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the card changes, not on picks
   useEffect(() => {
     if (stage.name === 'compose' || stage.name === 'edit') return;
-    focusRef.current?.focus({ preventScroll: true });
+    cardRef.current
+      ?.querySelector<HTMLElement>('[role="radio"][tabindex="0"]:not(:disabled), button:not(:disabled)')
+      ?.focus({ preventScroll: true });
     const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     sectionRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
   }, [stage.name, stage.name === 'asked' ? stage.asked.question.id : null]);
@@ -107,6 +120,7 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
   /** Back to the scenario box: "Start over" keeps what was written, "another" clears it. */
   const reset = (clear = true) => {
     setDraft(null);
+    stash.current = null;
     if (clear) setScenario('');
     go({ name: 'compose' });
   };
@@ -124,11 +138,23 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
   const answerAsked = async (value: string) => {
     if (stage.name !== 'asked' || stage.asked.answer !== null || busy) return;
     const { asked, key } = stage;
+    let stored: string | null = null;
+    // One key per pick: a retry of the same pick is deduplicated, a different pick is a different request.
     const r = await run('answer', () =>
-      api.answer(id, { questionId: asked.question.id, value, latencyMs: 0, idempotencyKey: key }),
+      api
+        .answer(id, { questionId: asked.question.id, value, latencyMs: 0, idempotencyKey: `${key}-${value}` })
+        .catch(async (e: unknown) => {
+          // Already answered, by an earlier attempt whose response was lost: show what was stored.
+          if (!(e instanceof ApiError && e.status === 409)) throw e;
+          const h = await api.playground(id);
+          stored = h.items.find((it) => it.question.id === asked.question.id)?.answer?.optionKey ?? null;
+          if (!stored) throw e;
+          return null;
+        }),
     );
-    if (!r) return;
-    setStage({ name: 'asked', asked: { ...asked, answer: value }, key });
+    const answer = r ? value : stored;
+    if (!answer) return;
+    setStage({ name: 'asked', asked: { ...asked, answer }, key });
     refresh();
   };
 
@@ -145,13 +171,13 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
       }),
     );
     if (!r) return;
-    go({ name: 'taught', question: r.question, answer: r.answer.optionKey });
+    go({ name: 'taught', question: r.question, answer: r.answer.optionKey, learns: r.learns });
     refresh();
     void qc.invalidateQueries({ queryKey: ['snapshot', id] });
   };
 
   const openItem = (it: PlaygroundItem) => {
-    if (!it.guess || !it.dist) return;
+    if (!it.guess || !it.dist || busy) return;
     setDraft(null);
     go({
       name: 'asked',
@@ -181,11 +207,12 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
     if (!answering || !canPick) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
+      // Shortcuts apply only from an option or from no control: a focused field, button or link keeps its keys.
       const t = e.target as HTMLElement | null;
-      if (t?.tagName === 'TEXTAREA' || t?.tagName === 'INPUT') return;
+      const control = t?.closest('button, a, input, textarea, select, [contenteditable="true"]');
+      if (control && control.getAttribute('role') !== 'radio') return;
       if (e.key === 'Enter') {
-        // A focused control keeps its own Enter, except the picked option, where Enter saves.
-        const control = t?.closest('button, a');
+        // Enter on an option picks it (the button's own click); on the picked one, or on no control, it saves.
         if (control && control.getAttribute('aria-checked') !== 'true') return;
         if (stage.name === 'teach' && stage.picked) {
           e.preventDefault();
@@ -268,7 +295,7 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
 
       {stage.name === 'edit' && draft && (
         <Card className="mt-4 space-y-5 p-4 sm:p-5">
-          <DraftEditor draft={draft} onChange={setDraft} />
+          <DraftEditor draft={draft} onChange={setDraft} stash={stash} />
           {!outOfBudget && (
             <Checkbox
               id="pg-rationale"
@@ -299,7 +326,7 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
             <p className="text-[13px] text-muted" aria-live="polite">
               {problem ??
                 (outOfBudget
-                  ? 'Your answer teaches your mimic.'
+                  ? "Your answer is saved with your mimic's answers."
                   : 'Asking shows its guess, and your answer checks it. Answering yourself teaches it instead.')}
             </p>
           </div>
@@ -307,12 +334,14 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
       )}
 
       {stage.name === 'teach' && draft && (
-        <Card className="mt-4 space-y-5 p-4 sm:p-5">
+        <Card ref={cardRef} className="mt-4 space-y-5 p-4 sm:p-5">
           <div className="space-y-2">
-            <p className="text-[14px] text-muted">Pick the right answer. Your mimic learns from it.</p>
-            <h3 ref={focusRef} tabIndex={-1} className="prompt focus-target text-[1.35rem] leading-snug">
-              {draft.prompt.trim()}
-            </h3>
+            <p className="text-[14px] text-muted">
+              {outOfBudget
+                ? "Pick the right answer. It's saved with your mimic's answers."
+                : 'Pick the right answer. Your mimic learns from it.'}
+            </p>
+            <h3 className="prompt text-[1.35rem] leading-snug">{draft.prompt.trim()}</h3>
           </div>
           <Choices q={draft} picked={stage.picked} disabled={busy !== null} onPick={onPick} />
           {whyOpen && (
@@ -350,14 +379,16 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
       )}
 
       {stage.name === 'taught' && (
-        <Card className="mt-4 space-y-4 p-4 sm:p-5">
+        <Card ref={cardRef} className="mt-4 space-y-4 p-4 sm:p-5">
           <p role="status" className="animate-reveal flex items-start gap-2 text-[16px] leading-6 text-moss">
             <CheckIcon className="mt-0.5 flex-none" />
-            <span>Saved. Your mimic will learn from this answer.</span>
+            <span>
+              {stage.learns
+                ? 'Saved. Your mimic will learn from this answer.'
+                : "Saved with your mimic's answers. It has used its budget, so it won't learn from new ones."}
+            </span>
           </p>
-          <h3 ref={focusRef} tabIndex={-1} className="prompt focus-target text-[1.35rem] leading-snug">
-            {stage.question.prompt}
-          </h3>
+          <h3 className="prompt text-[1.35rem] leading-snug">{stage.question.prompt}</h3>
           <Choices q={stage.question} picked={stage.answer} disabled onPick={() => {}} />
           <Button variant="secondary" onClick={() => reset()}>
             Ask or teach another
@@ -366,10 +397,8 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
       )}
 
       {stage.name === 'asked' && (
-        <Card className="mt-4 space-y-4 p-4 sm:p-5">
-          <h3 ref={focusRef} tabIndex={-1} className="prompt focus-target text-[1.35rem] leading-snug">
-            {stage.asked.question.prompt}
-          </h3>
+        <Card ref={cardRef} className="mt-4 space-y-4 p-4 sm:p-5">
+          <h3 className="prompt text-[1.35rem] leading-snug">{stage.asked.question.prompt}</h3>
           <Choices
             q={stage.asked.question}
             picked={stage.asked.answer}
@@ -401,15 +430,23 @@ export function Playground({ id, snap }: { id: string; snap: UiSnapshot | undefi
         data={history.data}
         loading={history.isLoading}
         activeId={stage.name === 'asked' ? stage.asked.question.id : null}
+        busy={busy !== null}
         onOpen={openItem}
       />
     </section>
   );
 }
 
-function DraftEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) => void }) {
-  // Switching to yes/no and back keeps the options that were written.
-  const stash = useRef<Draft['options'] | null>(null);
+function DraftEditor({
+  draft,
+  onChange,
+  stash,
+}: {
+  draft: Draft;
+  onChange: (d: Draft) => void;
+  /** Switching to yes/no and back keeps the options that were written. */
+  stash: RefObject<Draft['options'] | null>;
+}) {
   const setType = (type: 'choice' | 'noul') => {
     if (type === draft.type) return;
     if (type === 'noul') {
@@ -442,9 +479,11 @@ function DraftEditor({ draft, onChange }: { draft: Draft; onChange: (d: Draft) =
           onChange={(e) => onChange({ ...draft, prompt: e.target.value })}
         />
       </div>
-      <fieldset className="space-y-2">
+      <fieldset aria-labelledby="pg-answers" className="min-w-0 space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <legend className="text-sm font-medium">Answers</legend>
+          <span id="pg-answers" className="text-sm font-medium">
+            Answers
+          </span>
           {draft.type !== 'score' && (
             <div
               role="radiogroup"
@@ -649,11 +688,14 @@ function History({
   data,
   loading,
   activeId,
+  busy,
   onOpen,
 }: {
   data: Awaited<ReturnType<typeof api.playground>> | undefined;
   loading: boolean;
   activeId: string | null;
+  /** A request is in flight; opening another question now would be overwritten by its result. */
+  busy: boolean;
   onOpen: (it: PlaygroundItem) => void;
 }) {
   if (loading) return null;
@@ -670,7 +712,13 @@ function History({
       </div>
       <ul className="divide-y divide-line rounded-[12px] border border-line bg-raised">
         {data.items.map((it) => (
-          <HistoryRow key={it.question.id} it={it} active={it.question.id === activeId} onOpen={onOpen} />
+          <HistoryRow
+            key={it.question.id}
+            it={it}
+            active={it.question.id === activeId}
+            busy={busy}
+            onOpen={onOpen}
+          />
         ))}
       </ul>
     </div>
@@ -680,10 +728,12 @@ function History({
 function HistoryRow({
   it,
   active,
+  busy,
   onOpen,
 }: {
   it: PlaygroundItem;
   active: boolean;
+  busy: boolean;
   onOpen: (it: PlaygroundItem) => void;
 }) {
   const taught = it.question.kind === 'feedback';
@@ -715,7 +765,7 @@ function HistoryRow({
             <>
               You: <span className="text-graphite">{it.answer.label}</span> · Mimic:{' '}
               <span className="text-ink">{it.guess?.label}</span> ({p}%)
-              {v && <span className="sr-only">. {v.text.split('.')[0]}.</span>}
+              {v && <span className="sr-only">. {v.word}.</span>}
             </>
           ) : (
             <>
@@ -725,7 +775,13 @@ function HistoryRow({
         </p>
       </div>
       {open && !active && (
-        <Button variant="secondary" size="sm" className="flex-none" onClick={() => onOpen(it)}>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="flex-none"
+          disabled={busy}
+          onClick={() => onOpen(it)}
+        >
           Answer
         </Button>
       )}

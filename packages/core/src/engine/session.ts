@@ -9,9 +9,17 @@ import { pickRepeat } from '../repeats';
 import { repeatAgreement, scorePrediction } from '../scoring';
 import { makeSelector, questionCoverage } from '../selectors';
 import { cosine, lexicalSimilarity } from '../state-builder';
-import type { AnswerRecord, FidelityRecord, MimicRecord, PredictionRecord, QuestionRecord } from '../store';
+import type {
+  AnswerRecord,
+  FidelityRecord,
+  MimicRecord,
+  PredictionRecord,
+  QuestionRecord,
+  Store,
+} from '../store';
 import {
   type Distribution,
+  isScoredKind,
   isSessionKind,
   learnsFrom,
   type PersonState,
@@ -78,8 +86,32 @@ function progressOf(questions: QuestionRecord[], cfg: PipelineConfig): Progress 
   return { answered, target: cfg.session.target };
 }
 
-function maxSeq(questions: QuestionRecord[]): number {
+export function maxSeq(questions: QuestionRecord[]): number {
   return questions.reduce((a, q) => Math.max(a, q.seq ?? 0), 0);
+}
+
+const SERVE_ATTEMPTS = 3;
+
+/**
+ * Marks a question served, with its sealed predictions, at `seq`, or at the next free seq when a question the
+ * person wrote on the mimic page took it meanwhile (ADR-0027). The predictions stay sealed at a later seq, and the
+ * answer that took the seq was given after `stateAt`, so replay leaves it out of the state too. Returns the seq
+ * used, or null when the question was served elsewhere or, for a session question, another session serve won.
+ */
+export async function serveAtFreeSeq(
+  deps: EngineDeps,
+  args: Parameters<Store['serveQuestion']>[0],
+): Promise<number | null> {
+  let seq = args.seq;
+  for (let attempt = 0; attempt < SERVE_ATTEMPTS; attempt++) {
+    if (await deps.store.serveQuestion({ ...args, seq })) return seq;
+    const qs = await deps.store.listQuestions(args.mimicId);
+    const q = qs.find((x) => x.id === args.questionId);
+    if (q?.status !== 'pooled') return null;
+    if (isSessionKind(q.kind) && qs.some((x) => x.status === 'served' && isSessionKind(x.kind))) return null;
+    seq = maxSeq(qs) + 1;
+  }
+  return null;
 }
 
 /**
@@ -87,23 +119,6 @@ function maxSeq(questions: QuestionRecord[]): number {
  * The primary and baseline predictions are persisted before the question is returned (PLAN §3.2).
  */
 export async function serveNext(deps: EngineDeps, mimicId: string): Promise<NextResult> {
-  try {
-    return await serveOnce(deps, mimicId);
-  } catch (e) {
-    // The seq went to a question the person wrote on the mimic page (ADR-0027), not to a concurrent serve:
-    // serve again on a fresh state that includes it. A second loss surfaces as a conflict.
-    if (e instanceof SeqTaken) return serveOnce(deps, mimicId);
-    throw e;
-  }
-}
-
-class SeqTaken extends EngineError {
-  constructor() {
-    super('conflict', 'Concurrent serve; retry');
-  }
-}
-
-async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   const m = await timed(deps, 'mimic', () => requireMimic(deps, mimicId));
   const cfg = await loadConfig(deps, m.configHash);
   // Derived data is pinned to `stateAt` so the sealed states can be rebuilt exactly from an export (ADR-0017).
@@ -137,7 +152,7 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
       repeatOf: q.repeatOf ?? null,
       answered: q.status === 'answered',
     }));
-  const repeatOf = pickRepeat(served, seq, cfg.repeats, rng);
+  const repeatOf = pickRepeat(served, cfg.repeats, rng);
   if (repeatOf) {
     const src = questions.find((q) => q.id === repeatOf)!;
     const rep: QuestionRecord = {
@@ -152,7 +167,7 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
       stateAt: null,
     };
     await deps.store.insertQuestions([rep]);
-    const ok = await deps.store.serveQuestion({
+    const at = await serveAtFreeSeq(deps, {
       questionId: rep.id,
       mimicId: m.id,
       seq,
@@ -160,8 +175,8 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
       stateAt: null,
       predictions: [],
     });
-    if (!ok) return raced(deps, m.id);
-    return { status: 'question', question: toPublic({ ...rep, seq, status: 'served' }), progress };
+    if (at === null) return raced(deps, m.id);
+    return { status: 'question', question: toPublic({ ...rep, seq: at, status: 'served' }), progress };
   }
 
   // 3) Adaptive pool (reserve bank when the generated pool is empty).
@@ -182,7 +197,7 @@ async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   const qs = await deps.store.listQuestions(m.id);
   const current = qs.find((q) => q.status === 'served' && isSessionKind(q.kind));
   const progress = progressOf(qs, cfg);
-  if (!current) throw new SeqTaken();
+  if (!current) throw new EngineError('conflict', 'Concurrent serve; retry');
   return { status: 'question', question: toPublic(current), progress };
 }
 
@@ -371,8 +386,8 @@ async function serveWithPredictions(
     pred('baseline', primarySpec, baseState, baselineResult),
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
-  const ok = await timed(deps, 'persist', () =>
-    deps.store.serveQuestion({
+  const at = await timed(deps, 'persist', () =>
+    serveAtFreeSeq(deps, {
       questionId: chosen.id,
       mimicId: m.id,
       seq,
@@ -381,7 +396,7 @@ async function serveWithPredictions(
       predictions,
     }),
   );
-  if (!ok) return raced(deps, m.id);
+  if (at === null) return raced(deps, m.id);
 
   // The sealed states must exist before shadow jobs read them; both can finish after the response.
   await deferred(deps, async () => {
@@ -399,7 +414,7 @@ async function serveWithPredictions(
       ),
     );
   });
-  return { status: 'question', question: toPublic({ ...chosen, seq, status: 'served' }), progress };
+  return { status: 'question', question: toPublic({ ...chosen, seq: at, status: 'served' }), progress };
 }
 
 export async function loadHypotheses(deps: EngineDeps, mimicId: string): Promise<string[] | undefined> {
@@ -459,52 +474,68 @@ export async function submitAnswer(
     if (existing.mimicId !== m.id) throw new EngineError('conflict', 'Idempotency key reused');
     return replayResult(deps, m, cfg, existing);
   }
-  const q = await deps.store.getQuestion(input.questionId);
-  if (!q || q.mimicId !== m.id) throw new EngineError('not_found', 'Question not found');
-  if (q.status === 'answered') throw new EngineError('conflict', 'Question already answered');
-  if (q.status !== 'served' || q.seq === null)
-    throw new EngineError('conflict', 'Question is not being asked');
-  if (!q.options.some((o) => o.key === input.value)) throw new EngineError('invalid', 'Unknown option');
+  // Feedback given while this question is served moves it to a later seq (ADR-0027); an answer that raced the
+  // move is recorded again at the question's new seq.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const q = await deps.store.getQuestion(input.questionId);
+    if (!q || q.mimicId !== m.id) throw new EngineError('not_found', 'Question not found');
+    if (q.status === 'answered') throw new EngineError('conflict', 'Question already answered');
+    if (q.status !== 'served' || q.seq === null)
+      throw new EngineError('conflict', 'Question is not being asked');
+    if (!q.options.some((o) => o.key === input.value)) throw new EngineError('invalid', 'Unknown option');
 
-  const now = deps.clock();
-  const predictions = q.kind === 'repeat' ? [] : await deps.store.listPredictions({ questionId: q.id });
-  const primary = predictions.find((p) => p.role === 'primary' && p.ok);
-  const reveal =
-    cfg.reveal === 'after_answer' && input.revealShown !== false && q.kind !== 'repeat' && primary
-      ? revealOf(q, primary)
-      : null;
-  const answer: AnswerRecord = {
-    id: deps.newId(),
-    questionId: q.id,
-    mimicId: m.id,
-    seq: q.seq,
-    value: input.value,
-    why: input.why?.length ? input.why : null,
-    latencyMs: input.latencyMs,
-    revealedPrediction: reveal !== null,
-    idempotencyKey: input.idempotencyKey,
-    createdAt: now,
-  };
-  if (reveal) reveal.match = reveal.optionKey === input.value;
-  const scores = predictions
-    .filter((p) => p.ok)
-    .map((p) => ({
-      predictionId: p.id,
-      answerId: answer.id,
-      ...scorePrediction(q.type, p.dist, input.value),
+    const now = deps.clock();
+    const predictions = q.kind === 'repeat' ? [] : await deps.store.listPredictions({ questionId: q.id });
+    const primary = predictions.find((p) => p.role === 'primary' && p.ok);
+    const reveal =
+      cfg.reveal === 'after_answer' && input.revealShown !== false && q.kind !== 'repeat' && primary
+        ? revealOf(q, primary)
+        : null;
+    const answer: AnswerRecord = {
+      id: deps.newId(),
+      questionId: q.id,
+      mimicId: m.id,
+      seq: q.seq,
+      value: input.value,
+      why: input.why?.length ? input.why : null,
+      latencyMs: input.latencyMs,
+      revealedPrediction: reveal !== null,
+      idempotencyKey: input.idempotencyKey,
       createdAt: now,
-    }));
-  await timed(deps, 'record', () => deps.store.recordAnswer({ answer, scores }));
+    };
+    if (reveal) reveal.match = reveal.optionKey === input.value;
+    const scores = predictions
+      .filter((p) => p.ok)
+      .map((p) => ({
+        predictionId: p.id,
+        answerId: answer.id,
+        ...scorePrediction(q.type, p.dist, input.value),
+        createdAt: now,
+      }));
+    if (!(await timed(deps, 'record', () => deps.store.recordAnswer({ answer, scores })))) {
+      const dup = await deps.store.getAnswerByIdempotencyKey(input.idempotencyKey);
+      if (dup?.mimicId === m.id) return replayResult(deps, m, cfg, dup);
+      continue;
+    }
+    return afterAnswer(deps, m, q, q.seq, reveal);
+  }
+  throw new EngineError('conflict', 'Busy; try again');
+}
 
-  const seqAnswered = q.seq;
+async function afterAnswer(
+  deps: EngineDeps,
+  m: MimicRecord,
+  q: QuestionRecord,
+  seq: number,
+  reveal: Reveal | null,
+): Promise<AnswerResult> {
   const fidelity = isSessionKind(q.kind)
-    ? await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seqAnswered))
+    ? await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seq))
     : null;
   if (learnsFrom(q.kind)) {
-    const seq = q.seq;
     await deferred(deps, () => deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq }));
   }
-  return { reveal, fidelity, seq: q.seq };
+  return { reveal, fidelity, seq };
 }
 
 function revealOf(q: QuestionRecord, p: PredictionRecord): Reveal {
@@ -574,10 +605,7 @@ export function fidelityInput(
   answers: AnswerRecord[],
 ): { scored: Array<{ itemAcc: number; baselineItemAcc: number | null }>; repeatAgreements: number[] } {
   const primaries = scored
-    .filter(
-      (r) =>
-        r.prediction.role === 'primary' && (r.question.kind === 'anchor' || r.question.kind === 'adaptive'),
-    )
+    .filter((r) => r.prediction.role === 'primary' && isScoredKind(r.question.kind))
     .sort((a, b) => (a.question.seq ?? 0) - (b.question.seq ?? 0));
   const baselineByQ = new Map(
     scored.filter((r) => r.prediction.role === 'baseline').map((r) => [r.question.id, r.score.itemAcc]),

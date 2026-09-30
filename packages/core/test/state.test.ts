@@ -207,8 +207,8 @@ describe('repeat schedule (PLAN §9.5)', () => {
   const rng = () => 0;
 
   it('waits for `every` adaptive questions', () => {
-    expect(pickRepeat(served(17), 18, { every: 8, minGap: 6 }, rng)).toBeNull();
-    expect(pickRepeat(served(18), 19, { every: 8, minGap: 6 }, rng)).toBe('q1');
+    expect(pickRepeat(served(17), { every: 8, minGap: 6 }, rng)).toBeNull();
+    expect(pickRepeat(served(18), { every: 8, minGap: 6 }, rng)).toBe('q1');
   });
 
   it('respects the minimum gap and never repeats twice', () => {
@@ -216,7 +216,7 @@ describe('repeat schedule (PLAN §9.5)', () => {
       ...served(18),
       { questionId: 'r1', seq: 19, kind: 'repeat' as const, repeatOf: 'q1', answered: true },
     ];
-    expect(pickRepeat(s, 20, { every: 8, minGap: 6 }, rng)).toBeNull();
+    expect(pickRepeat(s, { every: 8, minGap: 6 }, rng)).toBeNull();
     const later = [
       ...s,
       ...Array.from({ length: 8 }, (_, i) => ({
@@ -226,8 +226,14 @@ describe('repeat schedule (PLAN §9.5)', () => {
         answered: true,
       })),
     ];
-    const pick = pickRepeat(later, 28, { every: 8, minGap: 6 }, rng);
+    const pick = pickRepeat(later, { every: 8, minGap: 6 }, rng);
     expect(pick).toBe('q2');
+  });
+
+  it('counts the gap in session questions, not seqs (ADR-0027)', () => {
+    // Seqs jump where the person taught on the mimic page; only q1 is 18 session questions back.
+    const s = served(18).map((x, i) => (i >= 13 ? { ...x, seq: x.seq + 100 } : x));
+    expect(pickRepeat(s, { every: 8, minGap: 18 }, () => 0.99)).toBe('q1');
   });
 });
 

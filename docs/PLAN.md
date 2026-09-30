@@ -658,7 +658,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 2. An LLM turns it into a typed question, whose options the person can edit.
 3. Jev predicts on the full state, and the UI shows the distribution. Optionally, an LLM adds one sentence of rationale in the person's voice, labeled "generated".
 4. The person then answers the question themselves. The answer is stored as `kind = playground` evidence and scored separately, which builds a clean, user-verified test set.
-5. Instead of asking (step 3), the person can answer the question themselves right away: "Answer it myself". The question can also be written by hand, without step 2's LLM. The answer is stored as `kind = feedback`, with no predictions, in one atomic write. Unlike playground answers, feedback is evidence the mimic learns from: it enters later sealed states, embeddings, trait reads and reflection like a session answer. It is never scored and never counts toward session progress (ADR-0027).
+5. Instead of asking (step 3), the person can answer the question themselves right away: "Answer it myself". The question can also be written by hand, without step 2's LLM. The answer is stored as `kind = feedback`, with no predictions, in one atomic write. If a session question is open, the feedback takes its seq and the question moves to the next one, so answers are learned in order. Unlike playground answers, feedback is evidence the mimic learns from: it enters later sealed states, embeddings, trait reads and reflection like a session answer. It is never scored and never counts toward session progress (ADR-0027).
 6. The page lists what was asked and taught, newest first. An asked question left unanswered can be answered from that list.
 
 ---

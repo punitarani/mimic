@@ -16,6 +16,8 @@ export function expectedPoint(keys: string[], dist: Record<string, number>): num
 
 export interface Verdict {
   tone: 'moss' | 'slate' | 'rust';
+  /** One word for compact places: Matched, Close or Missed. */
+  word: 'Matched' | 'Close' | 'Missed';
   text: string;
 }
 
@@ -34,12 +36,14 @@ export function verdictOf(
     const keys = q.options.map((o) => o.key);
     const exp = Math.round(expectedPoint(keys, guess.dist));
     const mine = keys.indexOf(picked) + 1;
-    if (match) return { tone: 'moss', text: `Matched. Your mimic guessed ${mine} too (${p}%).` };
-    if (Math.abs(mine - exp) <= 1) return { tone: 'slate', text: `Close. Your mimic expected about ${exp}.` };
-    return { tone: 'rust', text: `Missed. Your mimic expected about ${exp}.` };
+    if (match)
+      return { tone: 'moss', word: 'Matched', text: `Matched. Your mimic guessed ${mine} too (${p}%).` };
+    if (Math.abs(mine - exp) <= 1)
+      return { tone: 'slate', word: 'Close', text: `Close. Your mimic expected about ${exp}.` };
+    return { tone: 'rust', word: 'Missed', text: `Missed. Your mimic expected about ${exp}.` };
   }
-  if (match) return { tone: 'moss', text: `Matched. Your mimic guessed this too (${p}%).` };
-  return { tone: 'rust', text: `Missed. Your mimic guessed “${guess.label}” (${p}%).` };
+  if (match) return { tone: 'moss', word: 'Matched', text: `Matched. Your mimic guessed this too (${p}%).` };
+  return { tone: 'rust', word: 'Missed', text: `Missed. Your mimic guessed “${guess.label}” (${p}%).` };
 }
 
 export function sentence(s: string): string {

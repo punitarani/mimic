@@ -385,33 +385,57 @@ clean test set (§9.11) and never enter a state, so nothing the person said ther
 pick the right answer themselves, without asking.
 
 - **A new question kind, `feedback`.** "Answer it myself" stores the question (drafted from a scenario or written by
-  hand) and the chosen option in one D1 batch (`Store.recordFeedback`): the question is inserted already answered at
-  the next seq, `mimics.seq_max` advances, and the answer row is written. It carries no predictions and no `stateAt`,
-  like a repeat. The prompt ID in its provenance is `feedback.v1`. There is no model call and no spend, so it works
-  after the budget is reached.
-- **The mimic learns from it; nothing scores it.** `learnsFrom(kind)` (anchor, adaptive, feedback) now decides what
-  enters sealed states (state builder and `sealedState`), `learn.answer` (embedding, trait read, reflection) and the
-  eval reproduce check. `isSessionKind(kind)` (anchor, adaptive, repeat) decides serving, progress and repeat
-  scheduling. Fidelity, the scored set, shadows and backfill stay on anchor and adaptive questions only. The lab's
-  invariant monitor skips feedback, like repeats, since there is nothing to seal.
-- **Sealing still holds by seq.** Feedback at seq t enters states for questions with seq > t only. Existing data has
-  no feedback rows, so every stored state rebuilds to the same hash. Offline replay checkpoints still count session
-  answers only, and keep feedback out of their states.
-- **Why a new kind rather than feeding playground answers into states.** Playground answers are checked against a
-  prediction the person has just seen. Keeping them out of states keeps §9.11's test set clean. An answer given
-  without seeing a guess is ordinary first-person evidence. The UI says which is which: "Your answer checks the
-  guess; it isn't used to teach your mimic" and "Pick the right answer. Your mimic learns from it."
-- **Races.** Feedback takes a seq like a serve does, and the unique `(mimic_id, seq)` index decides which one gets
-  it. `submitFeedback` retries at the next seq (up to 3 times), and is idempotent per key. `serveNext` retries once
-  on a fresh state when the only reason it lost its seq was a person-written question. Before, a playground predict
-  racing `/next` surfaced as a 409.
-- **Out-of-order learning is tolerated.** Feedback given while a session question is still served (seq t−1) is
-  learned before that answer. Trait and insight writes stay monotonic by `seqUpTo`, so the late session answer
-  reaches traits at the next read and insights as earlier evidence.
-- **API.** `POST /api/mimics/:id/ask` takes `{ feedback: { question, answer, why?, idempotencyKey } }` and
-  `GET /api/mimics/:id/ask` lists what was asked and taught, with counts (taught, checked, matched). Draft validation
-  errors now read as sentences a person can act on ("Two options say the same thing.").
-- **UI.** The draft editor can add and remove options (2–5), switch between options and yes/no, and start from a
-  blank question. Answers use the session's option buttons and scale, with keyboard 1–5, Y/N and Enter, and the same
-  match, close and miss wording (`verdictOf`, shared with the session). `mimic.json` (`mimic/1`) accepts
-  `kind = feedback` in its evidence.
+  hand) and the chosen option in one D1 batch (`Store.recordFeedback`): the question is inserted already answered,
+  `mimics.seq_max` advances, and the answer row is written. It carries no predictions and no `stateAt`, like a
+  repeat. The prompt ID in its provenance is `feedback.v1`. Saving makes no model call.
+- **The mimic learns from it; nothing scores it.** Four predicates in `types.ts` replace the hand-written kind
+  checks. `learnsFrom` (anchor, adaptive, feedback) decides what enters sealed states and `learn.answer` (embedding,
+  trait read, reflection). `isSessionKind` (anchor, adaptive, repeat) decides serving, progress and repeat
+  scheduling. `isScoredKind` (anchor, adaptive) decides fidelity, shadows, backfill, coverage and replay targets.
+  `isPredictedKind` (anchor, adaptive, playground) is what the lab's invariant monitor checks.
+- **Invariant 2 is unchanged.** It covers questions served for the person to answer. Feedback is never served: the
+  person writes the question and its answer together, so there is nothing to predict before it is returned.
+- **Learnable answers still arrive in seq order.** Snapshots, reflection, trait writes (monotonic by `seqUpTo`) and
+  the `everyN` cadence all assume it. The session keeps one question served and prefetched, so feedback often comes
+  while a session question at seq t is still waiting for its answer. In that case the feedback takes seq t, and the
+  same batch moves the open question to the next free seq. Its predictions were sealed below t, so they stay
+  sealed. Two more changes support the move:
+  - `loadMimicDataAt` also pins feedback evidence by answer time. A state then rebuilds exactly at the question's
+    new seq, and feedback given within `STATE_SETTLE_MS` of a serve reaches the next state instead, as derived data
+    does (ADR-0017).
+  - An answer that races the move fails on the unique `(mimic_id, seq)` answer index, and `submitAnswer` records it
+    again at the question's new seq.
+- **Races over seqs.** A serve that loses its seq to feedback (session or playground, `serveAtFreeSeq`) keeps its
+  predictions and takes the next free seq instead of predicting again or returning a 409. The answer that took the
+  seq came after `stateAt`, so replay leaves it out too. A playground question is stored only once predicted, and is
+  discarded if it can't be served, so nothing is left orphaned. `submitFeedback` retries up to 3 times.
+- **Idempotent, and strict about it.** A retry with the same key returns the stored result. The same key with a
+  different question or answer is refused. Choice and scale answers map to the renormalized keys by position;
+  yes/no answers map by key in any order.
+- **Budget.** Learning from feedback costs what learning from a session answer does. Once the budget is spent,
+  `learn.answer` keeps the evidence, skips the model reads and still writes the snapshot, instead of failing until
+  the job is dropped. This also covers the session answer that crosses the budget. The response says
+  `learns: false`, and the page says the answer is saved rather than learned.
+- **Snapshots.** A snapshot counts as current only if it holds every answer (same count, seq at least as high).
+  Before, only the highest seq was compared, which missed an answer that arrived below it. That already happened
+  when an asked question was answered while a session question below it was still open.
+- **Repeats.** `minGap` counts session questions, not seqs. Questions written on the mimic page (feedback, and
+  playground before this change) no longer shorten it.
+- **Offline replay.** A checkpoint's state includes feedback given before it, as it did online, because the traits
+  and insights as of that time already learned from it. The as-of time comes from the next predicted question, never
+  from a feedback row. Existing data has no feedback, so every stored state and replay result is unchanged.
+- **Privacy.** Feedback text is free text the person wrote, like playground prompts and `why`. Research exports keep
+  it under `consent_research`, as they keep those (PLAN §12.4). Hard delete covers it with the rest of the evidence.
+- **API.** `POST /api/mimics/:id/ask` takes `{ feedback: { question, answer, why?, idempotencyKey } }`.
+  `GET /api/mimics/:id/ask` lists what was asked and taught, with counts (taught, checked, matched), reading only
+  playground and feedback rows. Draft validation errors read as sentences a person can act on ("Two options say the
+  same thing."). The word limit is shared with the client (`@mimic/core/limits`).
+- **UI.**
+  - The draft editor can add and remove options (2–5), switch between options and yes/no (the written options
+    survive the switch, and a trip to answering and back), and start from a blank question.
+  - Answers use the session's option buttons and scale, with 1–5, Y/N and Enter only when focus is on an option or
+    on no control. Match, close and miss wording is shared with the session (`verdictOf`).
+  - Each new card moves focus to its first control, with the usual visible focus ring.
+  - Opening a question from the history waits for any request in flight. An asked question uses one idempotency key
+    per pick, and shows the stored answer if an earlier attempt already saved one.
+  - `mimic.json` (`mimic/1`) accepts `kind = feedback` in its evidence.

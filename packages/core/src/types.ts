@@ -17,6 +17,16 @@ export function learnsFrom(kind: QKind): boolean {
 export function isSessionKind(kind: QKind): boolean {
   return kind === 'anchor' || kind === 'adaptive' || kind === 'repeat';
 }
+
+/** Kinds scored for fidelity, shadows and backfill (PLAN §9.10): the session's new questions. */
+export function isScoredKind(kind: QKind): boolean {
+  return kind === 'anchor' || kind === 'adaptive';
+}
+
+/** Kinds served with sealed primary and baseline predictions (PLAN §3.2). Repeats and feedback carry none. */
+export function isPredictedKind(kind: QKind): boolean {
+  return kind === 'anchor' || kind === 'adaptive' || kind === 'playground';
+}
 export const Domain = z.enum(['core', 'casual', 'professional']);
 export type Domain = z.infer<typeof Domain>;
 

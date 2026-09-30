@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { expectedIndex, normalizeDist } from './distribution';
 import type { CallContext, Gateway } from './gateway';
 import { GATES, type Gate, gateFailures, gateQuestions, traitQuestion } from './jev';
+import { MAX_PROMPT_WORDS } from './limits';
 import type { ItemTemplate } from './ontology';
 import { parseJsonLoose } from './predictors';
 import { PROMPTS } from './prompts';
@@ -40,7 +41,8 @@ const RawDraft = z.object({
 });
 
 const HEDGE = /\b(it depends|depends on|not sure|n\/a|none of (the|these))\b/i;
-export const MAX_PROMPT_WORDS = 40;
+
+export { MAX_PROMPT_WORDS };
 
 /**
  * Schema gate: zod validation plus option rules by type (choice 2–5, noul yes/no, score exactly 5 ordered).

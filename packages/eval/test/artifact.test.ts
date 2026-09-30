@@ -215,7 +215,9 @@ describe('mimic artifact (M6)', () => {
   });
 
   it('stores feedback the person answers themselves as learning evidence, never scored (ADR-0027)', async () => {
-    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    // States take feedback given at least STATE_SETTLE_MS before the serve, like derived data (ADR-0017).
+    let t = Date.now();
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline', clock: () => (t += 1_000) });
     const m = await session(false, 11);
     const fidBefore = await engine.deps.store.listFidelity(m.id);
     const question = {

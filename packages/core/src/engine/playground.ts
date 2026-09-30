@@ -9,10 +9,10 @@ import {
 } from '../learning';
 import { JevPredictor } from '../predictors';
 import type { AnswerRecord, PredictionRecord, QuestionRecord } from '../store';
-import type { Distribution } from '../types';
+import { type Distribution, isSessionKind } from '../types';
 import { contextState, loadMimicDataAt, STATE_SETTLE_MS, sealedState, stateBlobKey } from './data';
 import { ctxFor, deferred, type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
-import { JEV_PROMPT_VERSION, type PublicQuestion, toPublic } from './session';
+import { JEV_PROMPT_VERSION, maxSeq, type PublicQuestion, serveAtFreeSeq, toPublic } from './session';
 
 export const ScenarioInput = z.object({ scenario: z.string().trim().min(8).max(1000) });
 
@@ -41,10 +41,6 @@ function validateQuestion(input: Omit<DraftInput, 'rationale'>): DraftQuestion {
   const v = validateDraft({ ...input, domain: 'casual', facetIds: ['__pg'] }, new Set(['__pg']));
   if ('error' in v) throw new EngineError('invalid', DRAFT_ERRORS[v.error] ?? `Invalid question: ${v.error}`);
   return v;
-}
-
-function maxSeq(questions: QuestionRecord[]): number {
-  return questions.reduce((a, q) => Math.max(a, q.seq ?? 0), 0);
 }
 
 /** Step 2 of PLAN §9.11: an LLM turns the scenario into a typed question the person can edit. */
@@ -102,7 +98,6 @@ export async function predictPlayground(
     servedAt: null,
     stateAt: null,
   };
-  await deps.store.insertQuestions([q]);
   const model = cfg.predictor.primary.replace(/^jev:/, '');
   const state = await sealedState(deps, loaded, cfg, seq, [q]);
   const base = contextState(loaded, cfg);
@@ -135,7 +130,9 @@ export async function predictPlayground(
     fallback: false,
     createdAt: now,
   });
-  const ok = await deps.store.serveQuestion({
+  // Stored only once predicted, so a failed prediction leaves nothing behind.
+  await deps.store.insertQuestions([q]);
+  const at = await serveAtFreeSeq(deps, {
     questionId: q.id,
     mimicId: m.id,
     seq,
@@ -143,7 +140,10 @@ export async function predictPlayground(
     stateAt,
     predictions: [rec('primary', state, primary), rec('baseline', base, baseline!)],
   });
-  if (!ok) throw new EngineError('conflict', 'Busy; try again');
+  if (at === null) {
+    await deps.store.updateQuestionStatus(q.id, 'discarded');
+    throw new EngineError('conflict', 'Busy; try again');
+  }
   await deps.blobs.put(stateBlobKey(m.id, state.meta.stateHash), JSON.stringify(state), 'application/json');
 
   const key = argmax(primary.dist);
@@ -158,7 +158,7 @@ export async function predictPlayground(
     }).catch(() => null);
   }
   return {
-    question: toPublic({ ...q, seq, status: 'served' }),
+    question: toPublic({ ...q, seq: at, status: 'served' }),
     dist: primary.dist,
     guess: { optionKey: key, label, p: primary.dist[key] ?? 0 },
     rationale,
@@ -182,14 +182,18 @@ export type FeedbackInput = z.infer<typeof FeedbackInput>;
 export interface FeedbackResult {
   question: PublicQuestion;
   answer: { optionKey: string; label: string };
+  /** False once the mimic has spent its budget: the answer is kept, but no model reads it (ADR-0027). */
+  learns: boolean;
 }
 
 const FEEDBACK_ATTEMPTS = 3;
 
 /**
- * Stores a question the person wrote together with their own answer, as `kind = feedback`, in one atomic write at
- * the next seq. It enters later sealed states and learning like a session answer. Idempotent per key; a seq taken
- * by a concurrent serve is retried at the next one.
+ * Stores a question the person wrote together with their own answer, as `kind = feedback`, in one atomic write.
+ * It enters later sealed states and learning like a session answer. Learnable answers must arrive in seq order,
+ * so when a session question is served and not yet answered, the feedback takes that seq and the question moves
+ * past it (its predictions were sealed below it, so they stay sealed). Idempotent per key; a write that loses a
+ * race for a seq is retried.
  */
 export async function submitFeedback(
   deps: EngineDeps,
@@ -197,29 +201,37 @@ export async function submitFeedback(
   input: FeedbackInput,
 ): Promise<FeedbackResult> {
   const m = await requireMimic(deps, mimicId);
-  const replay = async (): Promise<FeedbackResult | null> => {
-    const a = await deps.store.getAnswerByIdempotencyKey(input.idempotencyKey);
-    if (!a) return null;
-    const q = a.mimicId === m.id ? await deps.store.getQuestion(a.questionId) : null;
-    if (q?.kind !== 'feedback') throw new EngineError('conflict', 'Idempotency key reused');
-    return feedbackResult(q, a);
-  };
-  const done = await replay();
-  if (done) return done;
-
+  const cfg = await loadConfig(deps, m.configHash);
+  const learns = m.spendUsd < cfg.session.budgetUsd;
   const v = validateQuestion(input.question);
-  // Keys are renormalized by the gate (a, b, c… for choices); the pick is carried over by position.
+  // Keys are renormalized by the gate (a, b, c… for choices, 0–4 for a scale), so the pick is carried over by
+  // position; yes/no keeps its keys whatever order they came in.
   const i = input.question.options.findIndex((o) => o.key === input.answer);
   const optionKey =
-    v.type === 'noul'
-      ? v.options.find((o) => o.key === input.answer)?.key
+    v.type === 'noul' && (input.answer === 'yes' || input.answer === 'no')
+      ? input.answer
       : i >= 0
         ? v.options[i]?.key
         : undefined;
   if (!optionKey) throw new EngineError('invalid', 'Pick one of the options.');
 
+  const replay = async (): Promise<FeedbackResult | null> => {
+    const a = await deps.store.getAnswerByIdempotencyKey(input.idempotencyKey);
+    if (!a) return null;
+    const q = a.mimicId === m.id ? await deps.store.getQuestion(a.questionId) : null;
+    // A retry must be the same request; a key reused for anything else is refused.
+    if (q?.kind !== 'feedback' || q.prompt !== v.prompt || a.value !== optionKey)
+      throw new EngineError('conflict', 'Idempotency key reused');
+    return feedbackResult(q, a, learns);
+  };
+  const done = await replay();
+  if (done) return done;
+
   for (let attempt = 0; attempt < FEEDBACK_ATTEMPTS; attempt++) {
-    const seq = maxSeq(await deps.store.listQuestions(m.id)) + 1;
+    const questions = await deps.store.listQuestions(m.id);
+    const top = maxSeq(questions);
+    const open = questions.find((q) => q.status === 'served' && isSessionKind(q.kind));
+    const seq = open ? open.seq! : top + 1;
     const now = deps.clock();
     const q: QuestionRecord = {
       id: deps.newId(),
@@ -250,9 +262,10 @@ export async function submitFeedback(
       idempotencyKey: input.idempotencyKey,
       createdAt: now,
     };
-    if (await deps.store.recordFeedback({ question: q, answer })) {
+    const move = open ? { questionId: open.id, toSeq: top + 1 } : undefined;
+    if (await deps.store.recordFeedback({ question: q, answer, ...(move ? { move } : {}) })) {
       await deferred(deps, () => deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq }));
-      return feedbackResult(q, answer);
+      return feedbackResult(q, answer, learns);
     }
     const raced = await replay();
     if (raced) return raced;
@@ -260,10 +273,11 @@ export async function submitFeedback(
   throw new EngineError('conflict', 'Busy; try again');
 }
 
-function feedbackResult(q: QuestionRecord, a: AnswerRecord): FeedbackResult {
+function feedbackResult(q: QuestionRecord, a: AnswerRecord, learns: boolean): FeedbackResult {
   return {
     question: toPublic(q),
     answer: { optionKey: a.value, label: q.options.find((o) => o.key === a.value)?.label ?? a.value },
+    learns,
   };
 }
 
@@ -297,7 +311,7 @@ export async function listPlayground(
 ): Promise<PlaygroundHistory> {
   const m = await requireMimic(deps, mimicId);
   const [questions, answers, primaries] = await Promise.all([
-    deps.store.listQuestions(m.id),
+    deps.store.listQuestions(m.id, ['served', 'answered'], ['playground', 'feedback']),
     deps.store.listAnswers(m.id),
     deps.store.listPredictions({ mimicId: m.id, roles: ['primary'] }),
   ]);
@@ -305,7 +319,7 @@ export async function listPlayground(
   const primaryByQ = new Map(primaries.filter((p) => p.ok).map((p) => [p.questionId, p]));
   const label = (q: QuestionRecord, key: string) => q.options.find((o) => o.key === key)?.label ?? key;
   const all = questions
-    .filter((q) => (q.kind === 'playground' || q.kind === 'feedback') && q.seq !== null)
+    .filter((q) => q.seq !== null)
     .sort((a, b) => b.seq! - a.seq!)
     .map((q): PlaygroundItem => {
       const a = answerByQ.get(q.id);

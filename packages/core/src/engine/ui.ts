@@ -3,7 +3,7 @@ import { FACET_GROUPS } from '../ontology';
 import { facetCoverage } from '../selectors';
 import { toStateEvidence } from '../state-builder';
 import type { IdentityState, MimicStatus } from '../store';
-import { isSessionKind } from '../types';
+import { isScoredKind, isSessionKind } from '../types';
 import { facetCounts, loadMimicData } from './data';
 import { type EngineDeps, facetsFor, loadConfig, requireMimic } from './deps';
 import { fidelityFromRecord, MIN_POOL } from './session';
@@ -86,7 +86,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
   const supporting = new Map<string, number[]>();
   for (const q of loaded.questions) {
     const seq = answeredQ.get(q.id);
-    if (seq === undefined || (q.kind !== 'anchor' && q.kind !== 'adaptive')) continue;
+    if (seq === undefined || !isScoredKind(q.kind)) continue;
     for (const f of q.facetIds) supporting.set(f, [...(supporting.get(f) ?? []), seq]);
   }
   const jevTraits = new Map(loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t]));
