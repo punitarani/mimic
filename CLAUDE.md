@@ -26,7 +26,8 @@ pnpm backfill --predictor <id> [--env local|prod] [--yes]   # run a new predicto
 ```
 
 `pnpm dev` serves the web app on http://localhost:3000 and the worker on http://localhost:8787. It copies
-`.dev.vars.example` to `.dev.vars` in both apps on first run (dev invite code: `mimic-dev`).
+`.dev.vars.example` to `.dev.vars` in both apps on first run (dev invite code: `mimic-dev`, or open
+http://localhost:3000/new?invite=mimic-dev).
 It also fires the worker's cron every 10 minutes (stale-job requeue, missing shadows, snapshots; ADR-0019).
 
 Eval loop on dev data: `pnpm eval -- export --env local --out data/x.sqlite`, then `replay --data data/x.sqlite`, then

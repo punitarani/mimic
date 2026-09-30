@@ -334,3 +334,17 @@ missing-shadow repair covers MiMo too.
 Checked on local dev data: one mimic's 9 missing MiMo predictions ran through the real worker for $0.0043 in total.
 All 9 used the primary's sealed state, and 8 were scored; the ninth question was served but never answered. A
 re-run reported 0 missing.
+
+## ADR-0025 — Invite links (2026-09-30)
+
+An invite can be shared as a link instead of a code to type: `/new?invite=CODE`, or `/?invite=CODE`, where the
+landing page's button carries it to `/new`.
+
+- **The field is filled in and disabled.** The person sees the code and a hint that it came from the link, but
+  can't edit it. Only a rejection from the server (403 on `POST /api/mimics`) unlocks the field and focuses it, so
+  a stale link is recoverable without leaving the page.
+- **Still checked server-side only.** The link changes nothing about `INVITE_CODES` or the route handler. The
+  query value is trimmed and otherwise passed through as typed input would be.
+- **`/new` stays prerendered** (ADR-0023). Reading the query string happens in a client component under a
+  Suspense boundary, so the static HTML carries a same-shaped skeleton and the form renders on hydration.
+- Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
