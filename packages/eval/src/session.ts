@@ -118,6 +118,8 @@ export interface SessionOptions {
   participantId?: string;
   /** A registered config to create the mimic under, instead of the default (see `configs.ts`). */
   configHash?: string;
+  /** The arm of the active experiment to join, instead of the hash allocation (scripted cohorts, ADR-0045). */
+  arm?: string;
   simulatePersona?: string;
   onTurn?: (t: TurnLog) => void;
 }
@@ -145,7 +147,10 @@ export async function runSession(
     },
     // Scripted people are marked so reports can keep them apart from real ones (R10).
     opts.participantId ?? `script:${ulid()}`,
-    opts.configHash ? { configHash: opts.configHash } : {},
+    {
+      ...(opts.configHash ? { configHash: opts.configHash } : {}),
+      ...(opts.arm !== undefined ? { arm: opts.arm } : {}),
+    },
   );
   await engine.drain();
   const { turns } = await continueSession(engine, m.id, script, opts);
@@ -160,7 +165,7 @@ export async function continueSession(
   engine: LocalEngine,
   mimicId: string,
   script: SessionScript,
-  opts: Omit<SessionOptions, 'participantId' | 'configHash'>,
+  opts: Omit<SessionOptions, 'participantId' | 'configHash' | 'arm'>,
 ): Promise<{ turns: TurnLog[] }> {
   const { deps } = engine;
   const m = { id: mimicId };

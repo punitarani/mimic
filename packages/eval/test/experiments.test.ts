@@ -71,7 +71,7 @@ describe('experiments and BALD (M8)', () => {
   });
 
   it('shows per-arm fidelity-vs-questions curves for the experiment in the lab', async () => {
-    const o = await labOverview(engine.deps, { experimentId: EXPERIMENT });
+    const o = await labOverview(engine.deps, { experimentId: EXPERIMENT, population: 'all' });
     expect(o.armExperimentId).toBe(EXPERIMENT);
     expect(o.arms.map((a) => a.arm)).toEqual(['bald', 'entropy']);
     for (const a of o.arms) {
@@ -80,7 +80,7 @@ describe('experiments and BALD (M8)', () => {
       expect(a.fidelityAt20).not.toBeNull();
       expect(a.mimics).toBe(a.points[0]!.n);
     }
-    const other = await labOverview(engine.deps, { experimentId: 'exp_other' });
+    const other = await labOverview(engine.deps, { experimentId: 'exp_other', population: 'all' });
     expect(other.arms).toEqual([]);
   });
 });

@@ -164,7 +164,16 @@ export const api = {
   createConfig: (label: string, config: unknown) =>
     call<{ hash: string }>('POST', '/api/lab/configs', { label, config }),
   saveExperiment: (e: ExperimentRequest) => call<ExperimentRecord>('POST', '/api/lab/experiments', e),
+  setupPreset: (id: string) =>
+    call<{ experiment: ExperimentRecord; created: boolean }>('POST', '/api/lab/experiments/preset', { id }),
 };
+
+/** An experiment preset as `/lab` lists it (ADR-0045). */
+export interface PresetInfo {
+  id: string;
+  name: string;
+  summary: string;
+}
 
 export interface ExperimentRequest {
   id?: string;

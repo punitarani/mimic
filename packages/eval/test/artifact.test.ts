@@ -260,7 +260,7 @@ describe('mimic artifact (M6)', () => {
     const scored = await engine.deps.store.listScoredPredictions(m.id, ['primary', 'baseline']);
     expect(scored.filter((r) => r.question.id === q.id)).toEqual([]);
     expect(await engine.deps.store.listFidelity(m.id)).toHaveLength(fidBefore.length);
-    const lab = await labOverview(engine.deps, { includeAll: true });
+    const lab = await labOverview(engine.deps, { includeAll: true, population: 'all' });
     expect(lab.invariants.incomplete).toBe(0);
 
     // Learning runs on it, and the next sealed state includes it.

@@ -9,6 +9,7 @@ import {
   allOntologyFacets,
   type Facet,
   MimicScope,
+  NOT_REAL_PREFIXES,
   researchAllowed,
   SPECIAL_AREAS,
   type SpecialArea,
@@ -17,7 +18,6 @@ import {
   stripSpecialAreas,
 } from '@mimic/core';
 import { openLocalDb } from '@mimic/db/local';
-import { NOT_REAL_PREFIXES } from './rubric';
 import { remoteFlags, WORKER_DIR } from './wrangler';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');

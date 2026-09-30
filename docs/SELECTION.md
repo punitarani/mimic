@@ -223,7 +223,9 @@ Across people:
 - `pnpm eval -- rubric --data x.sqlite` reports concreteness, category shares, groups reached, sensitive coverage and
   ordering by population (real, scripted, imported) and config; `--arm` splits by experiment arm.
 - Online: E3 arms `entropy` vs `voi` on questions-to-sustained-fidelity and fidelity at 20 (PLAN §12.7), and E3b
-  the M10 candidate (v4's `voi` on ontology v2) vs `cfg.default.v8` (ADR-0045).
+  `cfg.e3b.control` (v8 with v4's `voi` plus the trust ramp) vs `cfg.default.v8` (ADR-0045). `pnpm eval -- arms`
+  reads an export with 95% bootstrap intervals, real people only; `pnpm eval -- cohort --preset e3b` runs scripted
+  personas through both arms to check the machinery.
 - `latencyHints` is a state ablation for replay (E2).
 
 ## 11. What changes in code

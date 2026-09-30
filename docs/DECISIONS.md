@@ -1772,3 +1772,60 @@ resolved here, reusing the scope machinery so enforcement stays in one function,
   script says otherwise. M12's live runs (all confirmed) are therefore unchanged.
 - **Supersedes** the "no prefer not to say (the consent is the opt-out)" rule of ADR-0042 and CATEGORIES.md §2, and
   the two revisit items of ADR-0049.
+
+## ADR-0045 — E3b: M12's selection against v4's, on real people (2026-09-30)
+
+M12 (ADR-0044) showed with scripted people that `cfg.default.v8` asks across every category, reaches every facet
+group and every consented sensitive facet, and keeps sensitive questions late. Whether that costs or saves questions
+(R6, efficiency) needs real answers. A scripted answerer has no true preferences to predict, and this environment
+reaches neither real users nor Twin-2K-500. M13 therefore ships the experiment ready to run, plus a readout that
+shows real people only, with intervals.
+
+- **Arms, 1:1 by `hash(mimicId)`.**
+  - `v8`: `cfg.default.v8` (`08956a22…`).
+  - `control`: `cfg.e3b.control` (`834484a3…`), v8 with the selection it had before M12.
+
+  The control drops ADR-0044's balance: category and group terms, cap, floor, group deadline, category targets and
+  quota, and the reserve top-up for groups. It also switches off the sensitive sweep and its deadline (both start at
+  question 1000). Everything else is identical: the calibrated primary, ontology v2, reserve.v2, gen.v3, gates.v3,
+  reflect.v2, the everyday-first mix, the consent confirmation, "Prefer not to say" and the trust ramp. The arms
+  therefore differ only by M12's selection.
+  - *Why not the M10 candidate as control.* It is pinned to v6, whose primary is uncalibrated Jev. Fidelity is
+    computed from the primary's predictions, so calibration would confound the comparison.
+  - *Why keep the ramp in the control.* Holding sensitive questions back is about respect, not efficiency, so it is
+    not what E3b tests.
+- **Metrics** (PLAN §12.7).
+  - Primary: fidelity at 20 answered questions.
+  - Secondary: questions until fidelity reaches 0.75 and stays there (`questionsToSustain`), reported as the median
+    over the people who got there, with the share who did. This metric is censored by how long people stay, which
+    is why it is secondary.
+  - R2, R4 and R7 per arm from `rubric --arm`.
+- **Readout** (`pnpm eval -- arms --data <export>`, report kind `arms`).
+  - Per arm: n, each metric with a 95% percentile bootstrap interval (2,000 resamples, seeded).
+  - Every arm against the control, with the difference's interval, each arm resampled on its own.
+  - A difference whose interval spans 0 is reported as "not significant", never as a win.
+- **Real people only.** Participant populations moved to core (`participants.ts`: real, scripted, twin2k).
+  - `labOverview` counts real people only unless asked for `population: 'all'`, so `/lab`'s arm curves and
+    predictor metrics never mix in scripted sessions or imported panels. `/lab` says so.
+  - `arms` also defaults to real people. With `--population all` it labels the output "not a result".
+- **Sample size.** Assume an SD of about 6 questions to sustain, or about 0.10 in fidelity at 20. Detecting a
+  3-question or a 0.05 difference, two-sided α 0.05 and power 0.8, needs about 64 people per arm:
+  2 · (1.96 + 0.84)² · (σ/δ)² ≈ 63. Both SDs are assumptions: check them at about 20 per arm, and report at the
+  planned size rather than stopping on a peek.
+- **What it can't show.**
+  - Which M12 mechanism helps: it tests the bundle.
+  - Anything about people who decline research consent: only consented people count.
+  - Anything beyond the session: fidelity predicts the person's own next answers.
+  - Better coverage is not better prediction per se. E3b asks whether breadth costs questions, and R2 and R4 already
+    show the breadth.
+- **Setting it up.** `EXPERIMENT_PRESETS.e3b` and `setupPreset` (`packages/core/src/engine/experiments.ts`) register
+  both configs and save a draft experiment, idempotent by name. They never start, stop or change anything.
+  - `/lab` lists the preset with "Set up as a draft" (`POST /api/lab/experiments/preset`).
+  - Starting the draft is the owner's click. Allocation then applies to new mimics only; an existing mimic never
+    changes config.
+- **Scripted cohort.** `pnpm eval -- cohort --preset e3b` sets the preset up and starts it in a local database only,
+  then runs each persona once in every arm through an internal `arm` option on `createMimic`. The arms therefore see
+  the same people. It checks which arm asks what and when; its fidelity is never a result.
+- **Evidence** (`docs/reports/m13-e3b.md`): the offline cohort by arm, labelled scripted. For live evidence, M12's
+  scripted runs a, b and c (v8) and M10's live runs (the M10 candidate: v4's selection on ontology v2) stand in for
+  the pair, so no money is spent on another scripted comparison.
