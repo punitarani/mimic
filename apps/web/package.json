@@ -10,6 +10,7 @@
     "test": "vitest run --passWithNoTests",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "gen:autocomplete": "pnpm --dir scripts/autocomplete install --ignore-workspace --frozen-lockfile && node scripts/autocomplete/gen.mjs",
+    "gen:share-card": "pnpm --dir scripts/share-card install --ignore-workspace --frozen-lockfile && NODE_USE_ENV_PROXY=1 node --import tsx scripts/share-card/gen.mjs",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {

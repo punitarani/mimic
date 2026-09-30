@@ -603,3 +603,50 @@ and a state or country is the fallback for people who don't want to give one.
 Rejected: a geocoding API (Photon, Mapbox). It sends what people type to a third party and needs a key and a network
 dependency, and this environment's egress blocks it. Serving the data from a Worker route would add ~1 MB to the web
 Worker for no gain.
+
+## ADR-0031 — Link previews (2026-09-30)
+
+A shared link used to unfurl as a bare title ("Mimic") and a generic compass icon: there was no `og:image`, and the
+only icon was an SVG, which iMessage doesn't use. Every route now shares one preview.
+
+- **The card.** The app's `OverlapMark` ("You" and "Mimic") over one question: "How predictable are you?" There's no
+  subtitle, because it can't be read at chat bubble size. The title ("Mimic: a model that predicts how you decide")
+  and the description under the image do the explaining. The description repeats the session's own promise (your
+  mimic guesses before you answer) and claims no accuracy. The same description is now the page's
+  `<meta name="description">`.
+- **Picked with a rubric.** Four gates:
+  - no personal data;
+  - no unbacked claims;
+  - a 1200×630 PNG under 300 KB with an absolute URL, size and alt;
+  - no runtime cost.
+
+  Eight weighted criteria, out of 48: thumbnail legibility, instant clarity, hook, simplicity, brand fidelity, crop
+  safety, contrast on light and dark chat backgrounds, and copy. Eighteen variants were rendered over five rounds,
+  each at full size, in iMessage-style bubbles on dark and light backgrounds, and as an 84 px square crop. An
+  independent blind review scored the finalists, and the fog card beat an ink-field card, 46 to 38. A 2 px rule
+  gives it an edge on white chat backgrounds. The headline fits WhatsApp's centered square crop.
+- **Self-only, so no per-mimic previews.** A mimic's pages get the same card and title as the landing page. A preview
+  never carries a name, answers or traits.
+- **Static assets.**
+  - `public/share-card.png` (about 44 KB) and `public/apple-touch-icon.png` are committed and served by Workers static
+    assets, so the Worker never runs for them.
+  - Pages link each image with a `?v=` content hash, computed in `next.config.ts`, because link previews cache
+    images by URL.
+  - Assets match `_headers` rules on the path alone, and iOS also requests `/apple-touch-icon.png` with no query, so
+    both are cached for a day rather than marked immutable.
+  - We didn't use Next's `opengraph-image` and `apple-icon` file conventions. They inline the PNG into the Worker
+    bundle and answer each request through the Worker with `max-age=0`.
+  - Next ignores file-based icons once metadata sets `icons`, so `icon.svg` moved from `app/` to `public/` too. It is
+    no longer a prerendered route (ADR-0023).
+- **The generator.** `apps/web/scripts/share-card/gen.mjs` (`pnpm --filter @mimic/web gen:share-card`) renders
+  both images. Like the autocomplete generator (ADR-0030), its directory is its own package outside the workspace,
+  so only a run installs Playwright; it needs `playwright install chromium` once.
+  - It renders `OverlapMark` and `Mark` with react-dom/server and colors them with the light theme's tokens, read from
+    `globals.css`, so a change to any of them reaches the images on the next run.
+  - A font that fails to load stops the run instead of drawing a fallback.
+- **The origin is set per environment at build time.** Previews need absolute image URLs.
+  - `scripts/deploy` sets `SITE_URL` for the OpenNext build: the custom domain, or for preview the `workers.dev`
+    URL on the account's subdomain.
+  - `next.config.ts` inlines it into `metadataBase`, so `/new` stays prerendered.
+  - Local builds fall back to `http://localhost:3000`.
+  - The smoke test checks that `/` links a PNG on the deployed host, so a build without `SITE_URL` fails the deploy.
