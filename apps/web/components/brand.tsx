@@ -24,3 +24,12 @@ export function TopBar({ children }: { children?: React.ReactNode }) {
     </header>
   );
 }
+
+/** The link to `/credits`, the attribution the autocomplete data's licenses require (ADR-0030). */
+export function CreditsLink() {
+  return (
+    <Link href="/credits" className="underline underline-offset-2 hover:text-graphite">
+      Credits
+    </Link>
+  );
+}
