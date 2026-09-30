@@ -91,14 +91,17 @@ doppler run -- pnpm deploy:prod
 ## Project structure
 
 ```
-apps/web/          Next.js UI + route handlers (sync path)
-apps/worker/       Queue consumer + cron (async jobs)
-packages/core/     Pure TS engine: configs, prompts, selection, scoring, fidelity
-packages/adapters/ Provider clients + recorded fixtures
-packages/db/       Drizzle schema, migrations, Store, R2/KV/Vectorize helpers
-packages/eval/     Offline eval + optimization CLI
-docs/              Spec (PLAN), decisions (ADRs), design notes, validation log, ontology, prompts
-scripts/           Dev orchestrator, egress relay, backfill, deploy
+mimic/
+├── apps/
+│   ├── web/          # Next.js UI + route handlers (sync path)
+│   └── worker/       # Queue consumer + cron (async jobs)
+├── packages/
+│   ├── core/         # Pure TS engine: configs, prompts, selection, scoring, fidelity
+│   ├── adapters/     # Provider clients + recorded fixtures
+│   ├── db/           # Drizzle schema, migrations, Store, R2/KV/Vectorize helpers
+│   └── eval/         # Offline eval + optimization CLI
+├── docs/             # Spec (PLAN), decisions (ADRs), design notes, validation log, ontology, prompts
+└── scripts/          # Dev orchestrator, egress relay, backfill, deploy
 ```
 
 ## Research and references
