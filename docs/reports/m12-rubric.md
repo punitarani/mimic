@@ -54,3 +54,8 @@ accountant, without "Work and money", got no workplace scene. Reserve items as i
 of 30 states hash-matched in every session. The teacher and accountant passed on the first try. The nurse's first
 replay missed the item-accuracy tolerance (mean |Δ| 0.069 against 0.05; argmax agreement 0.93, mean TVD 0.011): two
 near-tied live Jev predictions came out the other way. Its second replay passed (argmax 1.000, mean |Δ| 0.001).
+
+**Confirmed consent (ADR-0050).** These runs predate it, and their scripts stand for people who chose every area
+they consented to, so `runSession` confirms each script's special-category consents and the same questions would be
+served. A person who leaves the areas pre-ticked is asked about none of them until they confirm (offline,
+`packages/eval/test/consent.test.ts`); the check in the browser is `scripts/browser/consent.mjs`.
