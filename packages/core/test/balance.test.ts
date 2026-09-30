@@ -7,6 +7,7 @@ import {
   categoryQuota,
   categoryTargets,
   DEFAULT_SCOPE,
+  deadlinePressed,
   facetAllowed,
   GROUP_TARGET,
   type MimicScope,
@@ -306,5 +307,37 @@ describe('the balanced, ramped voi selector (ADR-0044)', () => {
     expect(sweeps(asked, RAMP, pool[1]!)).toBe(false);
     // Before sweepFrom, no bonus.
     expect(sweeps(belief(psychology(RAMP.sweepFrom - 1)), RAMP, pool[1]!)).toBe(false);
+  });
+
+  it('coverage deadlines: information chooses until the questions left would not fit what is still uncovered', () => {
+    expect(deadlinePressed(5, 16, 20)).toBe(true); // five groups, five questions left (16..20)
+    expect(deadlinePressed(4, 16, 20)).toBe(false);
+    expect(deadlinePressed(0, 20, 20)).toBe(false);
+    expect(deadlinePressed(3, 31, 30)).toBe(false); // past the deadline nothing is forced
+    // Repeat probes take a slot every eight questions, so the deadline presses one question earlier.
+    expect(deadlinePressed(7, 23, 30)).toBe(false);
+    expect(deadlinePressed(7, 23, 30, 8)).toBe(true);
+  });
+
+  it('when the group deadline presses, only candidates reaching an untouched group are eligible', () => {
+    // Ten answers spread evenly over the four categories but only four groups: six groups are untouched.
+    const spread = ['openness', 'care_harm', 'social_energy', 'leadership_drive'];
+    const b = belief(Array.from({ length: 10 }, (_, i) => answer(i + 1, [spread[i % 4]!])));
+    const v7 = new VoiSelector(VOI_SELECTOR_V7);
+    const pool = [q('touched', ['fairness_cheating']), q('fresh', ['growth_mindset'])];
+    // Question 12: nine questions left to 20 for six groups; nothing forced.
+    expect(v7.eligible({ ...ctx(pool, b), seq: 12 })).toEqual([true, true]);
+    // Question 16: five questions left for six groups.
+    expect(v7.eligible({ ...ctx(pool, b), seq: 16 })).toEqual([false, true]);
+  });
+
+  it('when the sweep deadline presses, only unswept consented sensitive candidates are eligible, never before the ramp', () => {
+    const v7 = new VoiSelector({ ...VOI_SELECTOR_V7, balance: undefined });
+    const pool = [q('plain', ['care_harm']), q('sweep', ['religiosity'])];
+    const b = belief(psychology(RAMP.sweepFrom));
+    expect(v7.eligible({ ...ctx(pool, b), seq: 15 })).toEqual([true, true]);
+    expect(v7.eligible({ ...ctx(pool, b), seq: 25 })).toEqual([false, true]); // 11 unswept, 6 questions left
+    const early = belief(psychology(RAMP.minAnswered - 1));
+    expect(v7.eligible({ ...ctx(pool, early), seq: 29 })).toEqual([true, false]);
   });
 });

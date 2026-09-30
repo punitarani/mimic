@@ -142,6 +142,7 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
             redundancy: (q) => Math.max(0, ...chosen.map((c) => lexicalSimilarity(q.prompt, c.prompt))),
             rng,
             sessionTarget: cfg.session.target,
+            seq: evidence.length + 1,
             ...(selCfg.type === 'voi'
               ? {
                   belief: beliefFor(evidence),

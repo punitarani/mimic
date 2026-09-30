@@ -76,6 +76,8 @@ export const PipelineConfig = z.object({
           category: z.number().min(0).max(1),
           group: z.number().min(0).max(1),
           cap: z.number().min(0).max(1),
+          /** Every facet group in scope is touched by this question (a coverage deadline, ADR-0044). */
+          groupsBy: z.number().int().min(1),
         })
         .refine((b) => b.category + b.group <= 1, 'category + group must be at most 1')
         .optional(),
@@ -85,6 +87,8 @@ export const PipelineConfig = z.object({
           minAnswered: z.number().int().min(0),
           sweepFrom: z.number().int().min(0),
           sweepBonus: z.number().min(0).max(1),
+          /** Every consented sensitive facet is asked about by this question (a coverage deadline, ADR-0044). */
+          sweepBy: z.number().int().min(1),
         })
         .optional(),
     }),
@@ -235,12 +239,13 @@ export const DEFAULT_CONFIG_V6: PipelineConfig = {
 /**
  * The v4 selector with category and facet-group balance and the trust ramp (ADR-0044): categories take 35% of the gap
  * term and facet groups 25%; no category above 40% while another is below it; nothing sensitive before six answers;
- * from ten answers, consented sensitive facets not yet asked about are targeted and preferred.
+ * from ten answers, consented sensitive facets not yet asked about are targeted and preferred. Two coverage deadlines
+ * hold whatever the information says: every facet group touched by question 20, every consented sensitive facet by 30.
  */
 export const VOI_SELECTOR_V7: Extract<PipelineConfig['selector'], { type: 'voi' }> = {
   ...VOI_SELECTOR,
-  balance: { category: 0.35, group: 0.25, cap: 0.4 },
-  trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3 },
+  balance: { category: 0.35, group: 0.25, cap: 0.4, groupsBy: 20 },
+  trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3, sweepBy: 30 },
 };
 
 /**

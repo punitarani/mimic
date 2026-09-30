@@ -54,11 +54,11 @@ describe('cfg.default.v7 on offline sessions (ADR-0044)', () => {
     }
   });
 
-  it('reaches every consented sensitive facet by question 30 and every facet group, bar at most one, by 20', () => {
+  it('reaches every consented sensitive facet by question 30 and every facet group by 20', () => {
     for (const p of [...people.all, ...people.noPsychology]) {
       expect(p.sensitiveInScope).toBe(11);
       expect(p.sensitiveMissing).toEqual([]);
-      expect(p.groupsTouched).toBeGreaterThanOrEqual(p.groupsInScope - 1);
+      expect(p.groupsMissing).toEqual([]);
     }
   });
 

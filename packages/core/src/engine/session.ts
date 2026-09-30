@@ -30,7 +30,6 @@ import {
 } from '../store';
 import {
   CATEGORIES,
-  type Category,
   type Distribution,
   isScoredKind,
   isSessionKind,
@@ -281,7 +280,7 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
   if (pool.length < MIN_POOL) {
     await deferred(deps, () => deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq }));
   }
-  if (pool.length > 0) pool = [...pool, ...(await balanceTopUp(deps, m, cfg, loaded, pool, ramp))];
+  if (pool.length > 0) pool = [...pool, ...(await coverageTopUp(deps, m, cfg, loaded, pool, ramp, seq))];
   if (pool.length === 0) {
     pool = await addReserve(deps, m, cfg, questions, loaded.scope.blocked, ramp);
     if (pool.length === 0) return { status: 'waiting', progress };
@@ -318,46 +317,80 @@ async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
 
 const RESERVE_BATCH = 3;
 
+/** At most this many reserve items are added per serve to back coverage (ADR-0044). */
+const TOP_UP_MAX = RESERVE_BATCH;
+
 /**
- * Category balance backed by the reserve bank (ADR-0044): once a few adaptive questions are answered, a category
- * below BEHIND_SHORTFALL of its even share with nothing waiting in the pool gets one reserve item, so a generator that
- * missed its quota (or whose drafts the gates rejected) can't leave it behind. Configs without `balance` skip this.
+ * Coverage backed by the reserve bank (ADR-0044): the selector's deadlines and floor can only choose from the pool,
+ * so when the pool has nothing for what they need, reserve items are added, one per need, up to TOP_UP_MAX per serve:
+ * first facet groups nothing has touched (until `balance.groupsBy`), then consented sensitive facets not yet asked
+ * about (once the sweep has begun), then categories below BEHIND_SHORTFALL of their even share (once a few adaptive
+ * questions are answered). A generator that missed its targets, or whose drafts the gates rejected, can't leave a gap.
+ * Reserve items are hand-written, concrete and plainly worded (reserve.v2). Configs without balance or ramp skip this.
  */
-async function balanceTopUp(
+async function coverageTopUp(
   deps: EngineDeps,
   m: MimicRecord,
   cfg: PipelineConfig,
   loaded: LoadedMimic,
   pool: QuestionRecord[],
   ramp: (q: { facetIds: string[] }) => boolean,
+  seq: number,
 ): Promise<QuestionRecord[]> {
-  if (cfg.selector.type !== 'voi' || !cfg.selector.balance) return [];
+  if (cfg.selector.type !== 'voi') return [];
+  const { balance, trustRamp } = cfg.selector;
+  if (!balance && !trustRamp) return [];
   const visible = loaded.questions.filter((q) => !loaded.scope.hiddenQuestionIds.has(q.id));
-  const nAdaptive = visible.filter((q) => q.kind === 'adaptive' && q.status === 'answered').length;
-  if (nAdaptive < EXPOSURE_MIN_ADAPTIVE) return [];
+  const asked = visible.filter(
+    (q) => (q.status === 'answered' || q.status === 'served') && isScoredKind(q.kind),
+  );
+  const answered = asked.filter((q) => q.status === 'answered');
   const facets = await facetsFor(deps, m, cfg);
   const byId = new Map(facets.map((f) => [f.id, f]));
-  const shares = categoryShares(
-    facets,
-    visible
-      .filter((q) => (q.status === 'answered' || q.status === 'served') && isScoredKind(q.kind))
-      .map((q) => q.facetIds),
-  );
-  const inCategory = (q: { facetIds: string[] }, c: Category) =>
-    q.facetIds.some((f) => byId.get(f)?.category === c);
-  const missing = CATEGORIES.filter(
-    (c) => (shares[c]?.shortfall ?? 0) >= BEHIND_SHORTFALL && !pool.some((q) => inCategory(q, c)),
-  );
-  if (!missing.length) return [];
-  return addReserve(
-    deps,
-    m,
-    cfg,
-    loaded.questions,
-    loaded.scope.blocked,
-    (q) => ramp(q) && missing.some((c) => inCategory(q, c)),
-    missing.length,
-  );
+  const pooledHas = (want: (q: { facetIds: string[] }) => boolean) => pool.some(want);
+  const wants: Array<(q: { facetIds: string[] }) => boolean> = [];
+
+  if (balance && seq <= balance.groupsBy) {
+    const touched = new Set(asked.flatMap((q) => q.facetIds.map((f) => byId.get(f)?.group)));
+    for (const g of new Set(facets.map((f) => f.group))) {
+      const want = (q: { facetIds: string[] }) => q.facetIds.some((f) => byId.get(f)?.group === g);
+      if (!touched.has(g) && !pooledHas(want)) wants.push(want);
+    }
+  }
+  if (trustRamp && answered.length >= Math.max(trustRamp.minAnswered, trustRamp.sweepFrom)) {
+    const hit = new Set(answered.flatMap((q) => q.facetIds));
+    for (const f of facets) {
+      const want = (q: { facetIds: string[] }) => q.facetIds.includes(f.id);
+      if (f.sensitive && !hit.has(f.id) && !pooledHas(want)) wants.push(want);
+    }
+  }
+  if (balance && answered.filter((q) => q.kind === 'adaptive').length >= EXPOSURE_MIN_ADAPTIVE) {
+    const shares = categoryShares(
+      facets,
+      asked.map((q) => q.facetIds),
+    );
+    for (const c of CATEGORIES) {
+      const want = (q: { facetIds: string[] }) => q.facetIds.some((f) => byId.get(f)?.category === c);
+      if ((shares[c]?.shortfall ?? 0) >= BEHIND_SHORTFALL && !pooledHas(want)) wants.push(want);
+    }
+  }
+
+  const added: QuestionRecord[] = [];
+  for (const want of wants) {
+    if (added.length >= TOP_UP_MAX) break;
+    added.push(
+      ...(await addReserve(
+        deps,
+        m,
+        cfg,
+        [...loaded.questions, ...added],
+        loaded.scope.blocked,
+        (q) => ramp(q) && want(q),
+        1,
+      )),
+    );
+  }
+  return added;
 }
 
 /**
@@ -514,6 +547,8 @@ async function serveWithPredictions(
         redundancy,
         rng,
         sessionTarget: cfg.session.target,
+        seq,
+        repeatsEvery: cfg.repeats.every,
         ...(hyp ? { hypotheses: hyp.hypotheses, hypothesisWeights: hyp.weights, explore } : {}),
         ...(voi ?? {}),
       }),

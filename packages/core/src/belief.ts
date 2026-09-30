@@ -468,6 +468,39 @@ export interface TrustRamp {
   sweepFrom: number;
   /** Score bonus for a candidate touching a consented sensitive facet not yet asked about. */
   sweepBonus: number;
+  /** Every consented sensitive facet is asked about by this question (a coverage deadline). */
+  sweepBy: number;
+}
+
+/**
+ * Coverage deadlines (ADR-0044), in the spirit of the shadow test (van der Linden & Reese 1998): information chooses
+ * freely until `open` items still to cover would no longer fit in the questions left before `by`, allowing for repeat
+ * probes. From then on, only candidates that cover one are eligible.
+ */
+export function deadlinePressed(open: number, seq: number, by: number, repeatsEvery = 0): boolean {
+  if (open <= 0 || seq > by) return false;
+  const left = by - seq + 1;
+  // Conservative: a repeat probe may land anywhere in the window.
+  const repeats = repeatsEvery > 0 ? Math.ceil(left / repeatsEvery) : 0;
+  return open >= left - repeats;
+}
+
+/** Facet groups in scope no answered or waiting question has touched. */
+export function untouchedGroups(belief: BeliefState): Set<string> {
+  return new Set(
+    Object.values(belief.groups)
+      .filter((g) => g.n === 0)
+      .map((g) => g.group),
+  );
+}
+
+/** Consented sensitive facets no answered question has touched. */
+export function unsweptFacets(belief: BeliefState): Set<string> {
+  return new Set(
+    Object.values(belief.facets)
+      .filter((f) => !!f.sensitive && f.n === 0)
+      .map((f) => f.id),
+  );
 }
 
 /** True when a question touches a sensitive facet of the belief's (scoped) facet list. */

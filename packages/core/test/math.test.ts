@@ -170,13 +170,13 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(DEFAULT_CONFIG.predictor).toEqual(DEFAULT_CONFIG_V6.predictor);
     expect(DEFAULT_CONFIG.selector).toEqual({
       ...DEFAULT_CONFIG_V6.selector,
-      balance: { category: 0.35, group: 0.25, cap: 0.4 },
-      trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3 },
+      balance: { category: 0.35, group: 0.25, cap: 0.4, groupsBy: 20 },
+      trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3, sweepBy: 30 },
     });
     expect(DEFAULT_CONFIG.ontologyVersion).toBe('v2');
     expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v3');
     expect(configHash(DEFAULT_CONFIG)).toBe(
-      '9a11a97c734dab99a9fc9a8ad52c01212c26f0ab9ba03b509f28e0a217d7fd4e',
+      '253b81e3004bb664d61e2ad24a8c9e9a8201fa14dba79676ae8e2efe0e8b3d9d',
     );
     // v6 (ADR-0041): every LLM shadow on predict.v2, with v5's reasoning-off Qwen kept as a control; nothing else
     // changes. Calibrated Jev is derived from the stored primary, not a second Jev call.

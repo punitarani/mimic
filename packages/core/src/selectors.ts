@@ -2,11 +2,14 @@ import {
   BEHIND_SHORTFALL,
   type BeliefState,
   COVERAGE_TARGET,
+  deadlinePressed,
   EXPOSURE_MIN_ADAPTIVE,
   overExposed,
   rampOpen,
   sweeps,
   touchesSensitive,
+  unsweptFacets,
+  untouchedGroups,
 } from './belief';
 import type { PipelineConfig } from './config';
 import { entropy, meanDist, normalizedEntropy, optionKeys, P_FLOOR } from './distribution';
@@ -35,6 +38,10 @@ export interface SelectContext {
   population?: (q: Question) => number | null;
   /** Session target, for the fatigue term. */
   sessionTarget?: number;
+  /** The seq the chosen question will be served at, for coverage deadlines (ADR-0044). */
+  seq?: number;
+  /** How often repeat probes take a slot (`cfg.repeats.every`), so deadlines leave room for them. */
+  repeatsEvery?: number;
 }
 
 export interface Selection {
@@ -350,7 +357,8 @@ export class VoiSelector implements Selector {
    * Exposure control: candidates whose facets already dominate the adaptive questions, unless all do. With `balance`,
    * the same for candidates whose categories all exceed the cap, and while a category is below BEHIND_SHORTFALL of its
    * even share, only candidates in it if there are any. With `trustRamp`, sensitive candidates before the ramp opens,
-   * with no exception (the engine never offers only those; ADR-0044).
+   * with no exception (the engine never offers only those; ADR-0044). When a coverage deadline would otherwise be
+   * missed (`deadlinePressed`), only candidates that cover an untouched group or an unswept sensitive facet.
    */
   eligible(ctx: SelectContext): boolean[] {
     const b = ctx.belief;
@@ -381,9 +389,30 @@ export class VoiSelector implements Selector {
         if (lifts.some(Boolean)) ok = lifts;
       }
     }
-    if (this.cfg.trustRamp && !rampOpen(b, this.cfg.trustRamp))
-      ok = ok.map((o, i) => o && !touchesSensitive(b, ctx.pool[i]!));
-    return ok;
+    const ramp = this.cfg.trustRamp;
+    const allowed = ctx.pool.map((q) => !ramp || rampOpen(b, ramp) || !touchesSensitive(b, q));
+    // Coverage deadlines take precedence over exposure, the cap and the floor, never over the ramp.
+    const seq = ctx.seq ?? b.person.nAnswered + 1;
+    const pressing: Array<(q: Question) => boolean> = [];
+    const groupsBy = this.cfg.balance?.groupsBy;
+    if (groupsBy !== undefined) {
+      const open = untouchedGroups(b);
+      if (deadlinePressed(open.size, seq, groupsBy, ctx.repeatsEvery))
+        pressing.push((q) => q.facetIds.some((f) => open.has(b.facets[f]?.group ?? '')));
+    }
+    if (ramp && rampOpen(b, ramp)) {
+      const open = unsweptFacets(b);
+      if (deadlinePressed(open.size, seq, ramp.sweepBy, ctx.repeatsEvery))
+        pressing.push((q) => q.facetIds.some((f) => open.has(f)));
+    }
+    if (pressing.length) {
+      const due = ctx.pool.map((q, i) => allowed[i]! && pressing.some((meets) => meets(q)));
+      if (due.some(Boolean)) {
+        const both = due.map((d, i) => d && ok[i]!);
+        return both.some(Boolean) ? both : due;
+      }
+    }
+    return ok.map((o, i) => o && allowed[i]!);
   }
 
   async select(ctx: SelectContext): Promise<Selection> {
