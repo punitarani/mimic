@@ -65,7 +65,10 @@ export interface IdentityView {
     source: string;
     provider: string;
     samePerson: number | null;
-    status: 'proposed' | 'confirmed' | 'rejected';
+    /** The profile at a link the person gave. */
+    fromLink: boolean;
+    /** Only the latest search's candidates are listed: open or confirmed. */
+    status: 'proposed' | 'confirmed';
   }>;
   facts: Array<{
     id: string;
@@ -93,7 +96,7 @@ export interface Draft {
   options: PublicQuestion['options'];
 }
 
-/** A question the person answers themselves, for the mimic to learn from (ADR-0027). */
+/** A question the person answers themselves, for the mimic to learn from (ADR-0032). */
 export interface FeedbackRequest {
   question: Draft;
   answer: string;
@@ -118,6 +121,8 @@ export const api = {
   confirm: (id: string, candidateId: string | null) =>
     call<{ ok: true }>('POST', `/api/mimics/${id}/identity/confirm`, { candidateId }),
   finishIdentity: (id: string) => call<{ ok: true }>('POST', `/api/mimics/${id}/identity/finish`),
+  searchAgain: (id: string, link: string) =>
+    call<{ ok: true }>('POST', `/api/mimics/${id}/identity/search`, { link }),
   setFact: (id: string, factId: string, userState: 'active' | 'removed') =>
     call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
   next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),

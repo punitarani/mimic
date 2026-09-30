@@ -126,7 +126,7 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
       const beforeSeq = train[k - 1]!.seq + 1;
       const trainSeqs = new Set(train.slice(0, k).map((e) => e.seq));
       // Derived data as it stood when the next predicted question was served (all of it if there is none), sealed
-      // below `beforeSeq`. Feedback takes seqs without a serve, so it never sets the as-of time (ADR-0027).
+      // below `beforeSeq`. Feedback takes seqs without a serve, so it never sets the as-of time (ADR-0032).
       const next = loaded.questions
         .filter((q) => q.seq !== null && q.seq >= beforeSeq && isPredictedKind(q.kind))
         .sort((a, b) => a.seq! - b.seq!)[0];

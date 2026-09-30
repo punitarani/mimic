@@ -1,12 +1,15 @@
 import {
   type AnswerRecord,
   type CandidateRecord,
+  type CandidateStatus,
   type ConfigRecord,
   type EvalRunRecord,
   type ExperimentRecord,
   type FactRecord,
   type FidelityRecord,
+  type IdentityState,
   type InsightRecord,
+  type ItemStatRecord,
   type JobRecord,
   type KgEdgeRecord,
   type KgNodeRecord,
@@ -19,6 +22,7 @@ import {
   type QKind,
   type QuestionRecord,
   type QuestionStatus,
+  type ScoredItemSource,
   type ScoredPredictionRow,
   type ScoreRecord,
   type SnapshotRecord,
@@ -65,6 +69,14 @@ type QRow = typeof s.questions.$inferSelect;
 type PRow = typeof s.predictions.$inferSelect;
 type MRow = typeof s.mimics.$inferSelect;
 type TRow = typeof s.traitEstimates.$inferSelect;
+
+/** A MimicRecord patch as column values (`links` is stored as JSON). */
+function mimicPatch(patch: Partial<Omit<MimicRecord, 'id'>>): Partial<typeof s.mimics.$inferInsert> {
+  const { links, ...rest } = patch;
+  const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
+  if (links) set.linksJson = JSON.stringify(links);
+  return set;
+}
 
 const toMimic = (r: MRow): MimicRecord => ({
   id: r.id,
@@ -115,6 +127,7 @@ const toQuestion = (r: QRow): QuestionRecord => {
   };
   if (r.repeatOf) q.repeatOf = r.repeatOf;
   if (r.itemKey) q.itemKey = r.itemKey;
+  if (r.selectionJson) q.selection = parse(Obj, r.selectionJson, null as Record<string, unknown> | null);
   return q;
 };
 
@@ -138,6 +151,7 @@ const fromQuestion = (q: QuestionRecord): typeof s.questions.$inferInsert => ({
   createdAt: q.createdAt,
   servedAt: q.servedAt,
   stateAt: q.stateAt,
+  selectionJson: q.selection ? JSON.stringify(q.selection) : null,
 });
 
 const toPrediction = (r: PRow): PredictionRecord => ({
@@ -158,11 +172,15 @@ const toPrediction = (r: PRow): PredictionRecord => ({
   ok: r.ok,
   error: r.error,
   fallback: r.fallback,
+  hypothesis: r.hypothesis,
   createdAt: r.createdAt,
 });
 
+/** 20 columns per row (D1's 100-parameter limit bounds the batch size below). */
+const PREDICTION_COLS = 20;
 const fromPrediction = (p: PredictionRecord): typeof s.predictions.$inferInsert => ({
   ...p,
+  hypothesis: p.hypothesis ?? null,
   distJson: JSON.stringify(p.dist),
 });
 
@@ -273,10 +291,20 @@ export class DrizzleStore implements Store {
     return rows.map(toMimic);
   }
   async updateMimic(id: string, patch: Partial<Omit<MimicRecord, 'id'>>) {
-    const { links, ...rest } = patch;
-    const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
-    if (links) set.linksJson = JSON.stringify(links);
+    const set = mimicPatch(patch);
     if (Object.keys(set).length) await this.db.update(s.mimics).set(set).where(eq(s.mimics.id, id));
+  }
+  async transitionIdentity(
+    id: string,
+    from: readonly IdentityState[],
+    patch: Partial<Omit<MimicRecord, 'id'>>,
+  ) {
+    const r = await this.db
+      .update(s.mimics)
+      .set(mimicPatch(patch))
+      .where(and(eq(s.mimics.id, id), inArray(s.mimics.identityState, [...from])))
+      .returning({ id: s.mimics.id });
+    return r.length > 0;
   }
   async addSpend(id: string, usd: number) {
     await this.db
@@ -305,8 +333,18 @@ export class DrizzleStore implements Store {
       .orderBy(asc(s.identityCandidates.rank))
       .all();
   }
-  async updateCandidate(id: string, patch: Partial<Pick<CandidateRecord, 'status' | 'jevSamePersonP'>>) {
-    await this.db.update(s.identityCandidates).set(patch).where(eq(s.identityCandidates.id, id));
+  async setCandidateStatus(mimicId: string, ids: readonly string[], status: CandidateStatus) {
+    for (let i = 0; i < ids.length; i += 90) {
+      await this.db
+        .update(s.identityCandidates)
+        .set({ status })
+        .where(
+          and(
+            eq(s.identityCandidates.mimicId, mimicId),
+            inArray(s.identityCandidates.id, ids.slice(i, i + 90)),
+          ),
+        );
+    }
   }
   async insertFacts(recs: FactRecord[]) {
     await this.insertChunked(s.facts, recs);
@@ -361,18 +399,25 @@ export class DrizzleStore implements Store {
     servedAt: number;
     stateAt: number | null;
     predictions: PredictionRecord[];
+    selection?: Record<string, unknown> | null;
   }) {
     const stmts: BatchItem<'sqlite'>[] = [
       this.db
         .update(s.questions)
-        .set({ seq: args.seq, status: 'served', servedAt: args.servedAt, stateAt: args.stateAt })
+        .set({
+          seq: args.seq,
+          status: 'served',
+          servedAt: args.servedAt,
+          stateAt: args.stateAt,
+          selectionJson: args.selection ? JSON.stringify(args.selection) : null,
+        })
         .where(and(eq(s.questions.id, args.questionId), eq(s.questions.status, 'pooled'))),
       this.db
         .update(s.mimics)
         .set({ seqMax: sql`max(${s.mimics.seqMax}, ${args.seq})`, updatedAt: args.servedAt })
         .where(eq(s.mimics.id, args.mimicId)),
     ];
-    for (const part of chunk(args.predictions.map(fromPrediction), 19)) {
+    for (const part of chunk(args.predictions.map(fromPrediction), PREDICTION_COLS)) {
       stmts.push(this.db.insert(s.predictions).values(part));
     }
     try {
@@ -686,6 +731,68 @@ export class DrizzleStore implements Store {
       createdAt: r.createdAt,
     }));
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
+  }
+
+  // cross-person item statistics (ADR-0027)
+  async listScoredForStats(filter: { consentResearch: boolean; split: 'dev' | 'test' }) {
+    const rows = await this.db
+      .select({
+        mimicId: s.predictions.mimicId,
+        questionId: s.predictions.questionId,
+        role: s.predictions.role,
+        fallback: s.predictions.fallback,
+        itemAcc: s.scores.itemAcc,
+        logLoss: s.scores.logLoss,
+        kind: s.questions.kind,
+        type: s.questions.type,
+        domain: s.questions.domain,
+        facetIdsJson: s.questions.facetIdsJson,
+        optionsJson: s.questions.optionsJson,
+        itemKey: s.questions.itemKey,
+        value: s.answers.value,
+        latencyMs: s.answers.latencyMs,
+      })
+      .from(s.scores)
+      .innerJoin(s.predictions, eq(s.predictions.id, s.scores.predictionId))
+      .innerJoin(s.questions, eq(s.questions.id, s.predictions.questionId))
+      .innerJoin(s.answers, eq(s.answers.questionId, s.predictions.questionId))
+      .innerJoin(s.mimics, eq(s.mimics.id, s.predictions.mimicId))
+      .where(
+        and(
+          eq(s.mimics.consentResearch, filter.consentResearch),
+          eq(s.mimics.split, filter.split),
+          inArray(s.predictions.role, ['primary', 'baseline']),
+          inArray(s.questions.kind, ['anchor', 'adaptive']),
+        ),
+      )
+      .all();
+    return rows.map(
+      (r): ScoredItemSource => ({
+        mimicId: r.mimicId,
+        questionId: r.questionId,
+        role: r.role as 'primary' | 'baseline',
+        fallback: r.fallback,
+        itemAcc: r.itemAcc,
+        logLoss: r.logLoss,
+        question: {
+          kind: r.kind,
+          type: r.type,
+          domain: r.domain,
+          facetIds: parse(StrArr, r.facetIdsJson, []),
+          options: parse(Options, r.optionsJson, []),
+          ...(r.itemKey ? { itemKey: r.itemKey } : {}),
+        },
+        answer: { value: r.value, latencyMs: r.latencyMs },
+      }),
+    );
+  }
+  async replaceItemStats(recs: ItemStatRecord[]) {
+    const stmts: BatchItem<'sqlite'>[] = [this.db.delete(s.itemStats)];
+    for (const part of chunk(recs, 11)) stmts.push(this.db.insert(s.itemStats).values(part));
+    await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+  async listItemStats(): Promise<ItemStatRecord[]> {
+    return this.db.select().from(s.itemStats).orderBy(asc(s.itemStats.key)).all();
   }
 
   // jobs

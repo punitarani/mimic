@@ -7,12 +7,12 @@ import {
   scenarioToQuestion,
   validateDraft,
 } from '../learning';
-import { JevPredictor } from '../predictors';
+import { makePredictor, promptVersionOf } from '../predictors';
 import type { AnswerRecord, PredictionRecord, QuestionRecord } from '../store';
 import { type Distribution, isSessionKind } from '../types';
 import { contextState, loadMimicDataAt, STATE_SETTLE_MS, sealedState, stateBlobKey } from './data';
 import { ctxFor, deferred, type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
-import { JEV_PROMPT_VERSION, maxSeq, type PublicQuestion, serveAtFreeSeq, toPublic } from './session';
+import { maxSeq, type PublicQuestion, serveAtFreeSeq, toPublic } from './session';
 
 export const ScenarioInput = z.object({ scenario: z.string().trim().min(8).max(1000) });
 
@@ -98,12 +98,13 @@ export async function predictPlayground(
     servedAt: null,
     stateAt: null,
   };
-  const model = cfg.predictor.primary.replace(/^jev:/, '');
+  // The primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
+  const primarySpec = cfg.predictor.primary;
   const state = await sealedState(deps, loaded, cfg, seq, [q]);
   const base = contextState(loaded, cfg);
   const [[primary], [baseline]] = await Promise.all([
-    new JevPredictor(deps.gateway, model, ctxFor(m, 'playground.predict')).predict(state, [q]),
-    new JevPredictor(deps.gateway, model, ctxFor(m, 'playground.baseline')).predict(base, [q]),
+    makePredictor(deps.gateway, primarySpec, ctxFor(m, 'playground.predict')).predict(state, [q]),
+    makePredictor(deps.gateway, primarySpec, ctxFor(m, 'playground.baseline')).predict(base, [q]),
   ]);
   if (!primary?.ok) throw new EngineError('conflict', 'The mimic could not predict this one. Try again.');
   const rec = (
@@ -114,14 +115,14 @@ export async function predictPlayground(
     id: deps.newId(),
     questionId: q.id,
     mimicId: m.id,
-    predictorId: cfg.predictor.primary,
+    predictorId: primarySpec,
     role,
     dist: r.dist,
     confidence: r.confidence ?? null,
     stateHash: s.meta.stateHash,
     evidenceSeqMax: s.meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: JEV_PROMPT_VERSION,
+    promptVersion: promptVersionOf(primarySpec),
     modelSnapshot: r.modelSnapshot,
     costUsd: r.costUsd,
     latencyMs: r.latencyMs,
@@ -166,7 +167,7 @@ export async function predictPlayground(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Feedback (ADR-0027): the person writes a question and picks the right answer themselves, without asking the
+// Feedback (ADR-0032): the person writes a question and picks the right answer themselves, without asking the
 // mimic. The answer is evidence the mimic learns from; with no prediction, it is never scored.
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -182,7 +183,7 @@ export type FeedbackInput = z.infer<typeof FeedbackInput>;
 export interface FeedbackResult {
   question: PublicQuestion;
   answer: { optionKey: string; label: string };
-  /** False once the mimic has spent its budget: the answer is kept, but no model reads it (ADR-0027). */
+  /** False once the mimic has spent its budget: the answer is kept, but no model reads it (ADR-0032). */
   learns: boolean;
 }
 

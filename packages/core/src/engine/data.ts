@@ -48,6 +48,7 @@ function assemble(
       options: q.options,
       answer: a.value,
       facetIds: q.facetIds,
+      latencyMs: a.latencyMs,
     };
     if (a.why) item.why = a.why;
     evidence.push(item);
@@ -94,7 +95,7 @@ export async function loadMimicData(deps: EngineDeps, m: MimicRecord): Promise<L
  * history, insights created by then and not yet superseded, facts created by then and never re-activated after it. Serving builds sealed
  * states from this view and records `at` as the question's `stateAt`, so replay can rebuild them exactly from an
  * export. Evidence is sealed by seq in the state builder, and only feedback is also time-filtered: it is written
- * without a serve, so it can take a seq below a question that was already predicted (ADR-0027).
+ * without a serve, so it can take a seq below a question that was already predicted (ADR-0032).
  */
 export async function loadMimicDataAt(
   deps: EngineDeps,
@@ -141,6 +142,7 @@ export function stateOptions(
     strategy: cfg.stateBuilder.strategy,
     retrievalK: cfg.stateBuilder.retrievalK,
     recentN: cfg.stateBuilder.recentN,
+    ...(cfg.stateBuilder.latencyHints ? { latencyHints: true } : {}),
     ...extra,
   };
 }

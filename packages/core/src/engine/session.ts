@@ -1,13 +1,21 @@
 import { z } from 'zod';
+import { DEFAULT_PROMPT_VERSION } from '../components';
 import type { PipelineConfig } from '../config';
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
 import { RESERVE_V1 } from '../ontology';
-import { JevPredictor, LlmPredictor } from '../predictors';
+import { type ItemStatRecord, populationScore } from '../population';
+import { LlmPredictor, makePredictor, promptVersionOf } from '../predictors';
 import { pickRepeat } from '../repeats';
 import { repeatAgreement, scorePrediction } from '../scoring';
-import { makeSelector, questionCoverage } from '../selectors';
+import {
+  hypothesisPosterior,
+  makeSelector,
+  questionCoverage,
+  type SelectContext,
+  usesHypotheses,
+} from '../selectors';
 import { cosine, lexicalSimilarity } from '../state-builder';
 import type {
   AnswerRecord,
@@ -26,6 +34,7 @@ import {
   type PredictionResult,
   type Question,
 } from '../types';
+import { beliefFromLoaded, loadBeliefSources } from './belief';
 import {
   contextState,
   facetCounts,
@@ -41,13 +50,14 @@ import {
   deferred,
   type EngineDeps,
   EngineError,
+  facetsFor,
   fallbackModel,
   loadConfig,
   requireMimic,
   timed,
 } from './deps';
 
-export const JEV_PROMPT_VERSION = 'jev-predict.v1';
+export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.jev;
 export const MIN_POOL = 6;
 export const MAX_POOL = 15;
 
@@ -94,7 +104,7 @@ const SERVE_ATTEMPTS = 3;
 
 /**
  * Marks a question served, with its sealed predictions, at `seq`, or at the next free seq when a question the
- * person wrote on the mimic page took it meanwhile (ADR-0027). The predictions stay sealed at a later seq, and the
+ * person wrote on the mimic page took it meanwhile (ADR-0032). The predictions stay sealed at a later seq, and the
  * answer that took the seq was given after `stateAt`, so replay leaves it out of the state too. Returns the seq
  * used, or null when the question was served elsewhere or, for a session question, another session serve won.
  */
@@ -289,13 +299,9 @@ async function serveWithPredictions(
   rng: () => number,
 ): Promise<NextResult> {
   const primarySpec = cfg.predictor.primary;
-  const ctxPrimary = ctxFor(m, 'predict.primary');
-  const primary = primarySpec.startsWith('jev:')
-    ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxPrimary)
-    : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxPrimary);
-  const baselinePredictor = primarySpec.startsWith('jev:')
-    ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'predict.baseline'))
-    : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'predict.baseline'));
+  // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
+  const primary = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
+  const baselinePredictor = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.baseline'));
 
   const state = await timed(deps, 'state', () => sealedState(deps, loaded, cfg, seq, pool));
   const baseState = contextState(loaded, cfg);
@@ -308,6 +314,9 @@ async function serveWithPredictions(
   const baselinePromise = baselinePredictor.predict(baseState, pool);
   let chosen: QuestionRecord;
   let primaryResult: PredictionResult;
+  let selection: Record<string, unknown> | null = null;
+  const hypothesisRows: PredictionRecord[] = [];
+  const hypothesisStates: PersonState[] = [];
   if (fixed) {
     chosen = fixed;
     [primaryResult] = (await timed(deps, 'select', () => primary.predict(state, [fixed]))) as [
@@ -315,8 +324,13 @@ async function serveWithPredictions(
     ];
   } else {
     const selector = makeSelector(cfg.selector);
-    const hypotheses = cfg.selector.type === 'bald' ? await loadHypotheses(deps, m.id) : undefined;
-    const redundancy = await timed(deps, 'redundancy', () => redundancyFn(deps, m, pool, asked));
+    // Same prompt as the primary, including a prompt variant (ADR-0028); logged under its own purpose.
+    const explore = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'select.bald'));
+    const [hyp, redundancy, voi] = await Promise.all([
+      usesHypotheses(cfg.selector) ? loadHypothesisSet(deps, m, loaded) : undefined,
+      timed(deps, 'redundancy', () => redundancyFn(deps, m, pool, asked)),
+      cfg.selector.type === 'voi' ? timed(deps, 'belief', () => voiContext(deps, m, cfg, loaded)) : undefined,
+    ]);
     const sel = await timed(deps, 'select', () =>
       selector.select({
         pool,
@@ -325,18 +339,41 @@ async function serveWithPredictions(
         coverage: (q) => questionCoverage(counts, q),
         redundancy,
         rng,
-        ...(hypotheses
-          ? {
-              hypotheses,
-              explore: primarySpec.startsWith('jev:')
-                ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'select.bald'))
-                : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'select.bald')),
-            }
-          : {}),
+        sessionTarget: cfg.session.target,
+        ...(hyp ? { hypotheses: hyp.hypotheses, hypothesisWeights: hyp.weights, explore } : {}),
+        ...(voi ?? {}),
       }),
     );
     chosen = sel.question as QuestionRecord;
     primaryResult = sel.primary;
+    selection = { selector: cfg.selector.type, ...sel.diagnostics };
+    if (hyp && sel.hypothesisPreds) {
+      selection.hypothesisWeights = hyp.weights.map((w) => Math.round(w * 1000) / 1000);
+      for (const h of sel.hypothesisPreds) {
+        hypothesisStates.push(h.state);
+        hypothesisRows.push({
+          id: deps.newId(),
+          questionId: chosen.id,
+          mimicId: m.id,
+          predictorId: primarySpec,
+          role: 'hypothesis',
+          dist: h.result.dist,
+          confidence: h.result.confidence ?? null,
+          stateHash: h.state.meta.stateHash,
+          evidenceSeqMax: h.state.meta.evidenceSeqMax,
+          configHash: m.configHash,
+          promptVersion: promptVersionOf(primarySpec),
+          modelSnapshot: h.result.modelSnapshot,
+          costUsd: h.result.costUsd,
+          latencyMs: h.result.latencyMs,
+          ok: h.result.ok,
+          error: h.result.error ?? null,
+          fallback: false,
+          hypothesis: hypothesisTag(hyp.seqUpTo, h.index),
+          createdAt: deps.clock(),
+        });
+      }
+    }
   }
   const baselines = await timed(deps, 'baseline', () => baselinePromise);
   const baselineResult = baselines[pool.indexOf(chosen)]!;
@@ -372,7 +409,7 @@ async function serveWithPredictions(
     stateHash: s.meta.stateHash,
     evidenceSeqMax: s.meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: predictorId.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
+    promptVersion: promptVersionOf(predictorId),
     modelSnapshot: r.modelSnapshot,
     costUsd: r.costUsd,
     latencyMs: r.latencyMs,
@@ -384,6 +421,8 @@ async function serveWithPredictions(
   const predictions = [
     pred('primary', primaryId, state, primaryResult, fallback),
     pred('baseline', primarySpec, baseState, baselineResult),
+    // The chosen question's prediction under each persona hypothesis feeds the hypothesis posterior (§6); not scored.
+    ...hypothesisRows,
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
   const at = await timed(deps, 'persist', () =>
@@ -394,11 +433,13 @@ async function serveWithPredictions(
       servedAt: now,
       stateAt,
       predictions,
+      selection,
     }),
   );
   if (at === null) return raced(deps, m.id);
 
-  // The sealed states must exist before shadow jobs read them; both can finish after the response.
+  // The sealed states must exist before shadow jobs read them; both can finish after the response. Hypothesis
+  // states are written too, so every stored prediction resolves to its state (ADR-0010).
   await deferred(deps, async () => {
     await Promise.all([
       deps.blobs.put(stateBlobKey(m.id, state.meta.stateHash), JSON.stringify(state), 'application/json'),
@@ -406,6 +447,9 @@ async function serveWithPredictions(
         stateBlobKey(m.id, baseState.meta.stateHash),
         JSON.stringify(baseState),
         'application/json',
+      ),
+      ...hypothesisStates.map((s) =>
+        deps.blobs.put(stateBlobKey(m.id, s.meta.stateHash), JSON.stringify(s), 'application/json'),
       ),
     ]);
     await Promise.all(
@@ -417,15 +461,98 @@ async function serveWithPredictions(
   return { status: 'question', question: toPublic({ ...chosen, seq: at, status: 'served' }), progress };
 }
 
-export async function loadHypotheses(deps: EngineDeps, mimicId: string): Promise<string[] | undefined> {
+export interface HypothesisSet {
+  /** The evidence seq the hypotheses were written from; their posterior counts answers after it. */
+  seqUpTo: number;
+  hypotheses: string[];
+}
+
+export async function loadHypotheses(deps: EngineDeps, mimicId: string): Promise<HypothesisSet | undefined> {
   const raw = await deps.kv.get(`hyp:${mimicId}`);
   if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as { hypotheses?: string[] };
-    return parsed.hypotheses;
+    const parsed = JSON.parse(raw) as { seqUpTo?: number; hypotheses?: string[] };
+    if (!Array.isArray(parsed.hypotheses)) return undefined;
+    return { seqUpTo: parsed.seqUpTo ?? 0, hypotheses: parsed.hypotheses };
   } catch {
     return undefined;
   }
+}
+
+/** `predictions.hypothesis` for hypothesis `index` of the set written at `seqUpTo`. */
+export function hypothesisTag(seqUpTo: number, index: number): string {
+  return `${seqUpTo}:${index}`;
+}
+
+export function parseHypothesisTag(tag: string): { seqUpTo: number; index: number } | null {
+  const m = /^(\d+):(\d+)$/.exec(tag);
+  return m ? { seqUpTo: Number(m[1]), index: Number(m[2]) } : null;
+}
+
+/**
+ * The current hypothesis set with its posterior weights (docs/SELECTION.md §6): each hypothesis's likelihood of the
+ * answers given since the set was written, read from the stored `role = hypothesis` rows. No mutable state.
+ */
+export async function loadHypothesisSet(
+  deps: EngineDeps,
+  m: MimicRecord,
+  loaded: LoadedMimic,
+): Promise<(HypothesisSet & { weights: number[] }) | undefined> {
+  const set = await loadHypotheses(deps, m.id);
+  if (!set || set.hypotheses.length < 2) return undefined;
+  const rows = await deps.store.listPredictions({ mimicId: m.id, roles: ['hypothesis'] });
+  const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
+  const obs: Array<{ index: number; pAnswer: number }> = [];
+  for (const r of rows) {
+    if (!r.ok || !r.hypothesis) continue;
+    const tag = parseHypothesisTag(r.hypothesis);
+    if (!tag || tag.seqUpTo !== set.seqUpTo) continue;
+    const a = answerByQ.get(r.questionId);
+    if (!a) continue;
+    obs.push({ index: tag.index, pAnswer: r.dist[a.value] ?? 0 });
+  }
+  return { ...set, weights: hypothesisPosterior(obs, set.hypotheses.length) };
+}
+
+/**
+ * `item_stats` changes hourly (`stats.refresh`) and is read on every `/next`, so it is cached per isolate for a
+ * short while, like question vectors. `stats.refresh` invalidates the cache of its own isolate; other isolates see
+ * the new rows within ITEM_STATS_TTL_MS.
+ */
+export const ITEM_STATS_TTL_MS = 5 * 60 * 1000;
+let ITEM_STATS_CACHE: { at: number; byKey: Map<string, ItemStatRecord> } | null = null;
+
+export function invalidateItemStatsCache(): void {
+  ITEM_STATS_CACHE = null;
+}
+
+async function itemStatsByKey(deps: EngineDeps): Promise<Map<string, ItemStatRecord>> {
+  const now = deps.clock();
+  if (ITEM_STATS_CACHE && now - ITEM_STATS_CACHE.at < ITEM_STATS_TTL_MS && now >= ITEM_STATS_CACHE.at)
+    return ITEM_STATS_CACHE.byKey;
+  const byKey = new Map((await deps.store.listItemStats()).map((s) => [s.key, s]));
+  ITEM_STATS_CACHE = { at: now, byKey };
+  return byKey;
+}
+
+/** Belief state and population prior for the `voi` selector. */
+async function voiContext(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  loaded: LoadedMimic,
+): Promise<Pick<SelectContext, 'belief' | 'population'>> {
+  const wantStats = cfg.selector.type === 'voi' && cfg.selector.piPopulation > 0;
+  const [facets, sources, byKey] = await Promise.all([
+    facetsFor(deps, m, cfg),
+    loadBeliefSources(deps, m),
+    wantStats ? itemStatsByKey(deps) : Promise.resolve(new Map<string, ItemStatRecord>()),
+  ]);
+  const belief = beliefFromLoaded(loaded, facets, cfg, sources);
+  return {
+    belief,
+    population: (q) => (byKey.size ? populationScore(q, byKey) : null),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -474,7 +601,7 @@ export async function submitAnswer(
     if (existing.mimicId !== m.id) throw new EngineError('conflict', 'Idempotency key reused');
     return replayResult(deps, m, cfg, existing);
   }
-  // Feedback given while this question is served moves it to a later seq (ADR-0027); an answer that raced the
+  // Feedback given while this question is served moves it to a later seq (ADR-0032); an answer that raced the
   // move is recorded again at the question's new seq.
   for (let attempt = 0; attempt < 2; attempt++) {
     const q = await deps.store.getQuestion(input.questionId);
@@ -504,8 +631,9 @@ export async function submitAnswer(
       createdAt: now,
     };
     if (reveal) reveal.match = reveal.optionKey === input.value;
+    // Hypothesis rows are exploration artifacts, not predictors: they are never scored (docs/SELECTION.md §6).
     const scores = predictions
-      .filter((p) => p.ok)
+      .filter((p) => p.ok && p.role !== 'hypothesis')
       .map((p) => ({
         predictionId: p.id,
         answerId: answer.id,

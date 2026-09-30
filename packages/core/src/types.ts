@@ -7,7 +7,7 @@ export type QKind = z.infer<typeof QKind>;
 
 /**
  * Kinds whose answers the mimic learns from: they enter sealed states, trait reads and reflection. `feedback` is a
- * question the person wrote and answered themselves on the mimic page, with no prediction (ADR-0027).
+ * question the person wrote and answered themselves on the mimic page, with no prediction (ADR-0032).
  */
 export function learnsFrom(kind: QKind): boolean {
   return kind === 'anchor' || kind === 'adaptive' || kind === 'feedback';
@@ -19,7 +19,7 @@ export function isSessionKind(kind: QKind): boolean {
 }
 
 /** Kinds scored for fidelity, shadows and backfill (PLAN §9.10): the session's new questions. */
-export function isScoredKind(kind: QKind): boolean {
+export function isScoredKind(kind: QKind): kind is 'anchor' | 'adaptive' {
   return kind === 'anchor' || kind === 'adaptive';
 }
 
@@ -111,6 +111,11 @@ export interface StateEvidence {
   options: string[];
   answer: string;
   why?: string;
+  /**
+   * With `stateBuilder.latencyHints`: 'quick' when answered in under half the person's median latency (a decisive
+   * answer), 'slow' when over twice it (a torn one). Docs/SELECTION.md §8.
+   */
+  pace?: 'quick' | 'slow';
 }
 
 export interface PersonState {
@@ -131,6 +136,13 @@ export interface PredictionResult {
   modelSnapshot: string;
   ok: boolean;
   error?: string;
+  /**
+   * Why it failed: `transport` (the provider errored or timed out; worth retrying) or `output` (the model answered but
+   * the answer was unusable; the prompt's fault). Set on failures only.
+   */
+  errorKind?: 'transport' | 'output';
+  /** Raw model output (LLM only, truncated). Kept in memory for eval traces; never persisted with the prediction. */
+  raw?: string;
 }
 
 export interface Predictor {
@@ -227,6 +239,8 @@ export interface PeopleSearchResult {
 export interface PeopleSearch {
   readonly provider: string;
   search(query: string, opts: { numResults: number }): Promise<PeopleSearchResult>;
+  /** Resolves a profile URL the person gave into a candidate (none if the page can't be read). */
+  lookup?(url: string): Promise<PeopleSearchResult>;
 }
 
 export interface EnrichedFact {

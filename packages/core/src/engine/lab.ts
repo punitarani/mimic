@@ -116,7 +116,7 @@ export async function labOverview(
     const predsByQ = new Map<string, typeof preds>();
     for (const p of preds) predsByQ.set(p.questionId, [...(predsByQ.get(p.questionId) ?? []), p]);
     for (const q of questions) {
-      // Repeats and person-written feedback carry no predictions by design (PLAN §9.5; ADR-0027).
+      // Repeats and person-written feedback carry no predictions by design (PLAN §9.5; ADR-0032).
       if (q.seq === null || !isPredictedKind(q.kind)) continue;
       inv.servedQuestions++;
       const ps = predsByQ.get(q.id) ?? [];

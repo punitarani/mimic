@@ -2,12 +2,13 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { EvalRunRecord, PipelineConfig } from '@mimic/core';
+import { type EvalRunRecord, type PipelineConfig, VOI_SELECTOR } from '@mimic/core';
 import { schema } from '@mimic/db';
 import { sql } from 'drizzle-orm';
 import { datasetHash, exportData } from './export';
 import { calibrateGates } from './gates';
 import { openLocalEngine } from './local';
+import { diagnoseCmd, evaluateCmd, optimizeCmd } from './optimize/commands';
 import { replay, reproduceOnline } from './replay';
 import { publishReport, renderReport, writeReport } from './report';
 import { simulateSelection } from './select';
@@ -34,9 +35,21 @@ Commands
             --checkpoints 10,20,30 --split dev|test|all [--targets later|heldout] [--limit N] [--offline]
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
   select    Pool-restricted selection simulation (biased; iteration only)
-            --data <file.sqlite> --selector random|coverage|entropy --budget 5,10,20 [--split dev] [--limit N]
+            --data <file.sqlite> --selector random|coverage|entropy|bald|voi[,…] --budget 5,10,20 [--split dev]
+            [--limit N] [--no-population]   several selectors run on the same people and report side by side
   import    import twin2k500 --path <twin2k500.jsonl> --out <file.sqlite> [--limit N]
   report    --data <file.sqlite> --run <id> [--to local|preview|prod]   writes report.{json,md}; --to publishes to /lab
+  evaluate  Score prediction prompts on sealed instances (docs/OPTIMIZATION.md §5)
+            --data <a.sqlite>[,<b.sqlite>] --from stored        stored online predictions, calibration fits; no calls
+            --data … --predictor <id>[,<id>] [--candidate <cand.json>[,…]] [--repeat] [--max-usd 2]
+            [--split dev|test|all] [--k 30] [--limit N] [--max-targets 40] [--publish local|preview|prod]
+  diagnose  Failure analysis of a stored predictor by the reflection model (one call)
+            --data … --predictor <id> [--role primary|shadow] [--cases 40] [--reflection-model <id>]
+  optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
+            --data … --predictor jev:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
+            [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]
+            [--max-iterations 30] [--reflection-model anthropic/claude-sonnet-5.5] [--no-noise] [--run-dir <dir>]
+            [--k 30] [--publish local|preview|prod] [--offline]
 
 Every eval command records its run in the data file's eval_runs table and writes data/reports/<run>/.
 `;
@@ -182,6 +195,7 @@ async function selectCmd(argv: string[]) {
       limit: { type: 'string' },
       seed: { type: 'string', default: 'select' },
       offline: { type: 'boolean', default: false },
+      'no-population': { type: 'boolean', default: false },
     },
   });
   if (!values.data) throw new Error('--data is required');
@@ -192,17 +206,19 @@ async function selectCmd(argv: string[]) {
     coverage: { type: 'coverage' },
     entropy: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
     bald: { type: 'bald', k: 4, lambdaCoverage: 0.3 },
+    voi: VOI_SELECTOR,
   };
-  const selector = selectors[values.selector];
-  if (!selector) throw new Error(`unknown selector ${values.selector}`);
+  const chosen = values.selector.split(',').map((s) => s.trim());
+  for (const s of chosen) if (!selectors[s]) throw new Error(`unknown selector ${s}`);
   const { run } = await simulateSelection(
     engine.deps,
     {
-      name: `select ${values.selector}`,
-      selector,
+      name: `select ${chosen.join(' vs ')}`,
+      selectors: chosen.map((label) => ({ label, selector: selectors[label]! })),
       budgets: list(values.budget),
       split: values.split as 'dev' | 'test' | 'all',
       seed: values.seed,
+      population: !values['no-population'],
       ...(values.limit ? { limitPeople: Number(values.limit) } : {}),
     },
     await datasetHash(engine.client),
@@ -294,6 +310,12 @@ async function main() {
       return importCmd(rest);
     case 'report':
       return reportCmd(rest);
+    case 'evaluate':
+      return evaluateCmd(rest);
+    case 'diagnose':
+      return diagnoseCmd(rest);
+    case 'optimize':
+      return optimizeCmd(rest);
     default:
       console.log(USAGE);
       if (cmd && cmd !== 'help' && cmd !== '--help') process.exitCode = 1;

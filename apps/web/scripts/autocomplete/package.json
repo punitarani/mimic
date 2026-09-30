@@ -1,0 +1,11 @@
+{
+  "name": "@mimic/autocomplete-data",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Builds apps/web/public/autocomplete/*.json. Installed on demand, outside the workspace, so CI never downloads the source data.",
+  "dependencies": {
+    "@countrystatecity/countries": "1.0.9",
+    "all-the-cities": "3.1.0"
+  }
+}

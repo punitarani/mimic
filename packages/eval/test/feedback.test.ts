@@ -73,7 +73,7 @@ async function learnOrder(mimicId: string) {
     .map((a) => a.seq);
 }
 
-describe('feedback while a session question is open (ADR-0027)', () => {
+describe('feedback while a session question is open (ADR-0032)', () => {
   it('takes the open question’s seq and moves it past, so answers stay in seq order', async () => {
     let t = Date.now();
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', clock: () => (t += 1_000) });
@@ -157,7 +157,7 @@ describe('feedback while a session question is open (ADR-0027)', () => {
   });
 });
 
-describe('feedback robustness (ADR-0027)', () => {
+describe('feedback robustness (ADR-0032)', () => {
   it('refuses a reused key for a different answer, and replays the same request', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await session(1);

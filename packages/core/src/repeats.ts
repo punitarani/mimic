@@ -12,7 +12,7 @@ export interface ServedItem {
  * PLAN §9.5 repeat schedule: after every `every` adaptive questions, re-serve an earlier answered anchor or
  * adaptive question verbatim, at least `minGap` session questions after it was first asked. `served` holds the
  * session's questions only; the gap counts them, not seqs, which questions written on the mimic page also take
- * (ADR-0027). Returns the question id to repeat, or null.
+ * (ADR-0032). Returns the question id to repeat, or null.
  */
 export function pickRepeat(
   served: ServedItem[],

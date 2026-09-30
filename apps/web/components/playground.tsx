@@ -62,7 +62,7 @@ function draftProblem(d: Draft): string | null {
 }
 
 /**
- * PLAN §9.11 and ADR-0027: a scenario (or a question written by hand) becomes an editable typed question. The person
+ * PLAN §9.11 and ADR-0032: a scenario (or a question written by hand) becomes an editable typed question. The person
  * then either asks the mimic, sees its guess and checks it with their own answer (`playground`, scored separately),
  * or answers it themselves so the mimic learns from it (`feedback`, never scored).
  */

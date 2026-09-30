@@ -20,7 +20,7 @@ const Ask = z.union([
  * POST /api/mimics/:id/ask (PLAN §9.11). `{ scenario }` → an editable typed question (LLM);
  * `{ question }` → the mimic's sealed prediction for it, stored as `kind = playground`;
  * `{ feedback }` → a question the person answers themselves, stored as `kind = feedback` for the mimic to learn
- * from (ADR-0027). No model call.
+ * from (ADR-0032). No model call.
  */
 export const POST = handle(async (req: Request, ctx: RouteCtx<{ id: string }>) => {
   const { id } = await ctx.params;

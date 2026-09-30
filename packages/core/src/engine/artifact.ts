@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { QKind } from '../types';
 import { loadMimicData, vectorId } from './data';
 import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
-import { searchCacheKey } from './identity';
+import { searchCacheKeys } from './identity';
 
 /** The persisted, portable mimic (PLAN §8.1). */
 export const MimicJson = z.object({
@@ -242,7 +242,7 @@ export async function deleteMimic(deps: EngineDeps, mimicId: string): Promise<vo
   for (let i = 0; i < blobKeys.length; i += 500) await deps.blobs.delete(blobKeys.slice(i, i + 500));
 
   await deps.kv.delete(`hyp:${m.id}`);
-  await deps.kv.delete(searchCacheKey(m));
+  for (const k of searchCacheKeys(m)) await deps.kv.delete(k);
   for (const k of await deps.kv.list(`mimic:${m.id}:`)) await deps.kv.delete(k);
 
   await deps.store.deleteMimic(m.id);

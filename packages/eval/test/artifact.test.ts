@@ -10,6 +10,7 @@ import {
   MimicJson,
   predictPlayground,
   searchCacheKey,
+  searchCacheKeys,
   serveNext,
   submitAnswer,
   submitFeedback,
@@ -155,15 +156,14 @@ describe('mimic artifact (M6)', () => {
     for (const k of traceKeys) expect(await blobs.get(k)).toBeNull();
     for (const [, v] of blobs.data) expect(v).not.toContain(m.id);
     expect([...kv.data.keys()].filter((k) => k.includes(m.id))).toEqual([]);
-    expect(
-      await kv.get(
-        searchCacheKey({
-          displayName: 'Avery Quinn',
-          location: 'San Francisco, US',
-          occupation: 'Software engineer',
-        }),
-      ),
-    ).toBeNull();
+    for (const k of searchCacheKeys({
+      displayName: 'Avery Quinn',
+      location: 'San Francisco, US',
+      occupation: 'Software engineer',
+      employer: null,
+      links: [],
+    }))
+      expect(await kv.get(k)).toBeNull();
     // Deletion is scoped: the other mimic is untouched.
     expect(await engine.deps.store.getMimic(keep.id)).not.toBeNull();
     expect((await engine.deps.store.listAnswers(keep.id)).length).toBe(3);
@@ -214,7 +214,7 @@ describe('mimic artifact (M6)', () => {
     expect(doc.evidence.find((e) => e.kind === 'playground')).toBeDefined();
   });
 
-  it('stores feedback the person answers themselves as learning evidence, never scored (ADR-0027)', async () => {
+  it('stores feedback the person answers themselves as learning evidence, never scored (ADR-0032)', async () => {
     // States take feedback given at least STATE_SETTLE_MS before the serve, like derived data (ADR-0017).
     let t = Date.now();
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', clock: () => (t += 1_000) });

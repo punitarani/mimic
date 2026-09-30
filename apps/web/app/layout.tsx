@@ -1,12 +1,25 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { Providers } from '@/components/providers';
+import { ICONS, SHARE_CARD, SITE_DESCRIPTION, SITE_TITLE, SITE_URL } from '@/lib/site';
 import { THEME_BOOT } from '@/lib/theme-boot';
 import './globals.css';
 
+// Every route shares one link preview (lib/site.ts). Next copies the openGraph title, description and image into the
+// twitter tags.
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: 'Mimic',
-  description: 'Build a model that predicts how you decide.',
+  description: SITE_DESCRIPTION,
+  openGraph: {
+    type: 'website',
+    siteName: 'Mimic',
+    title: SITE_TITLE,
+    description: SITE_DESCRIPTION,
+    images: [SHARE_CARD],
+  },
+  twitter: { card: 'summary_large_image' },
+  icons: ICONS,
 };
 
 export const viewport: Viewport = {

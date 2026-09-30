@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { TargetFacet } from './belief';
 import { expectedIndex, normalizeDist } from './distribution';
 import type { CallContext, Gateway } from './gateway';
 import { GATES, type Gate, gateFailures, gateQuestions, traitQuestion } from './jev';
@@ -85,13 +86,34 @@ export function validateDraft(
 export interface GenerateInput {
   model: string;
   reasoningEffort: ReasoningEffort;
+  /** `gen.v1` (PLAN A.1) or `gen.v2` (belief-driven, docs/SELECTION.md §5). Defaults to gen.v1. */
+  promptVersion?: string;
   facets: Facet[];
   targets: string[];
+  /** gen.v2: why each target is targeted and the person's current reading on it. */
+  targetDetails?: TargetFacet[];
+  /** gen.v2: facets over the exposure cap. */
+  avoid?: string[];
   quota: Record<Domain, number>;
   identity: Record<string, unknown>;
   traitSummary: string;
   recentPrompts: string[];
   n: number;
+}
+
+function targetLines(input: GenerateInput): string {
+  const details = new Map((input.targetDetails ?? []).map((t) => [t.id, t]));
+  return input.targets
+    .map((id) => {
+      const t = details.get(id);
+      if (!t) return `- ${id}`;
+      const reading =
+        t.label && t.certainty !== null
+          ? `current reading "${t.label}" (certainty ${t.certainty})`
+          : 'no reading yet';
+      return `- ${id} (${t.name}: ${t.low} → ${t.high}); why: ${t.reason}; ${reading}`;
+    })
+    .join('\n');
 }
 
 export interface GenerateOutput {
@@ -108,7 +130,8 @@ export async function generateCandidates(
   ctx: CallContext,
   input: GenerateInput,
 ): Promise<GenerateOutput> {
-  const p = PROMPTS['gen.v1'];
+  const v2 = input.promptVersion === 'gen.v2';
+  const p = PROMPTS[v2 ? 'gen.v2' : 'gen.v1'];
   // Stable prefix first (system, ontology), variable task last, so provider prompt caching applies (PLAN §5).
   const messages: ChatMessage[] = [
     {
@@ -119,6 +142,12 @@ export async function generateCandidates(
       role: 'user',
       content: [
         `Target facets: ${input.targets.join(', ')}`,
+        ...(v2
+          ? [
+              `Target details:\n${targetLines(input)}`,
+              `Avoid facets: ${input.avoid?.length ? input.avoid.join(', ') : 'none'}`,
+            ]
+          : []),
         `Domain quota: ${JSON.stringify(input.quota)}`,
         `Person context: ${JSON.stringify(input.identity)}`,
         `Trait summary: ${input.traitSummary || 'none yet'}`,

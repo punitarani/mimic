@@ -46,6 +46,8 @@ export interface QuestionRecord extends Question {
   servedAt: number | null;
   /** As-of time of the derived data in this question's sealed states; replay rebuilds them from it (ADR-0017). */
   stateAt: number | null;
+  /** The selector's diagnostics for the winning score, written when served (ADR-0027). */
+  selection?: Record<string, unknown> | null;
 }
 
 export interface PredictionRecord {
@@ -67,6 +69,8 @@ export interface PredictionRecord {
   error: string | null;
   /** True when the primary came from the LLM fallback because Jev errored (PLAN §16). */
   fallback: boolean;
+  /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (docs/SELECTION.md §6). */
+  hypothesis?: string | null;
   createdAt: number;
 }
 
@@ -121,9 +125,12 @@ export interface CandidateRecord {
   summary: string;
   jevSamePersonP: number | null;
   r2Key: string | null;
-  status: 'proposed' | 'confirmed' | 'rejected';
+  /** `superseded`: set aside by a newer search, not judged by the person (ADR-0029). */
+  status: CandidateStatus;
   createdAt: number;
 }
+
+export type CandidateStatus = 'proposed' | 'confirmed' | 'rejected' | 'superseded';
 
 export interface TraitRecord extends TraitEstimate {
   mimicId: string;
@@ -237,6 +244,18 @@ export interface ScoredPredictionRow {
   question: Pick<QuestionRecord, 'id' | 'kind' | 'type' | 'seq' | 'itemKey'>;
 }
 
+/** One scored primary or baseline with what the item statistics need (ADR-0027). */
+export interface ScoredItemSource {
+  mimicId: string;
+  questionId: string;
+  role: 'primary' | 'baseline';
+  fallback: boolean;
+  itemAcc: number;
+  logLoss: number;
+  question: Pick<QuestionRecord, 'kind' | 'type' | 'domain' | 'facetIds' | 'options' | 'itemKey'>;
+  answer: { value: string; latencyMs: number };
+}
+
 /** Persistence port used by the engine. Implemented with Drizzle over D1 (Workers) and libSQL (Node CLI). */
 export interface Store {
   // participants
@@ -255,13 +274,20 @@ export interface Store {
   addSpend(id: string, usd: number): Promise<void>;
   /** Removes every row for the mimic across all tables. */
   deleteMimic(id: string): Promise<void>;
+  /**
+   * Applies the patch only if the mimic's identity state is one of `from`, in one statement. False when it isn't,
+   * for example because a concurrent request moved it first.
+   */
+  transitionIdentity(
+    id: string,
+    from: readonly IdentityState[],
+    patch: Partial<Omit<MimicRecord, 'id'>>,
+  ): Promise<boolean>;
   // identity
   insertCandidates(recs: CandidateRecord[]): Promise<void>;
   listCandidates(mimicId: string): Promise<CandidateRecord[]>;
-  updateCandidate(
-    id: string,
-    patch: Partial<Pick<CandidateRecord, 'status' | 'jevSamePersonP'>>,
-  ): Promise<void>;
+  /** Sets the status of the mimic's candidates with these IDs. */
+  setCandidateStatus(mimicId: string, ids: readonly string[], status: CandidateStatus): Promise<void>;
   insertFacts(recs: FactRecord[]): Promise<void>;
   listFacts(mimicId: string): Promise<FactRecord[]>;
   updateFact(
@@ -285,6 +311,7 @@ export interface Store {
     servedAt: number;
     stateAt: number | null;
     predictions: PredictionRecord[];
+    selection?: Record<string, unknown> | null;
   }): Promise<boolean>;
   // predictions & answers
   insertPredictions(recs: PredictionRecord[]): Promise<void>;
@@ -302,7 +329,7 @@ export interface Store {
    */
   recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<boolean>;
   /**
-   * Atomically inserts a question the person wrote and answered themselves (`kind = feedback`, ADR-0027) at
+   * Atomically inserts a question the person wrote and answered themselves (`kind = feedback`, ADR-0032) at
    * `answer.seq`, with its answer, and advances the mimic's `seqMax`. With `move`, the served session question at
    * that seq first moves to `move.toSeq`, so it is answered after the feedback. Returns false, writing nothing, if a
    * seq was already taken, the moved question was answered meanwhile, or the idempotency key was used.
@@ -335,6 +362,15 @@ export interface Store {
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
+  // cross-person item statistics (aggregate only; ADR-0027)
+  /** Every scored primary and baseline of the matching mimics' anchor and adaptive questions, in one query. */
+  listScoredForStats(filter: {
+    consentResearch: boolean;
+    split: 'dev' | 'test';
+  }): Promise<ScoredItemSource[]>;
+  /** Replaces the whole table atomically, so keys absent from `recs` are removed. */
+  replaceItemStats(recs: import('./population').ItemStatRecord[]): Promise<void>;
+  listItemStats(): Promise<import('./population').ItemStatRecord[]>;
   // jobs ledger
   getJob(key: string): Promise<JobRecord | null>;
   putJob(rec: JobRecord): Promise<void>;
