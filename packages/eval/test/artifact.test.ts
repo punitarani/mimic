@@ -1,13 +1,16 @@
 import {
   confirmIdentity,
   createMimic,
+  curatePersona,
   deleteMimic,
   draftFromScenario,
+  draftPersona,
   exportMimic,
   finishIdentity,
   labOverview,
   listPlayground,
   MimicJson,
+  PersonaCuration,
   predictPlayground,
   searchCacheKey,
   searchCacheKeys,
@@ -126,6 +129,11 @@ describe('mimic artifact (M6)', () => {
     const keep = await session(false, 3, 'Rowan Ellis'); // another person's data must survive
     const m = await session(true, 12);
     await exportMimic(engine.deps, m.id);
+    await draftPersona(engine.deps, m.id);
+    await curatePersona(engine.deps, m.id, {
+      rev: 1,
+      curation: PersonaCuration.parse({ notes: 'My own words.' }),
+    });
     const blobs = engine.deps.blobs as MemoryBlobs;
     const kv = engine.deps.kv as MemoryKv;
     const db = (engine.deps.store as unknown as { db: Db }).db;

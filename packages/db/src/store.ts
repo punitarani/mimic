@@ -17,6 +17,10 @@ import {
   type MimicRecord,
   type ModelCallRecord,
   Option,
+  PersonaCuration,
+  type PersonaCurationRecord,
+  PersonaDraft,
+  type PersonaDraftRecord,
   type PredictionRecord,
   type PredictionRole,
   type QKind,
@@ -731,6 +735,54 @@ export class DrizzleStore implements Store {
       createdAt: r.createdAt,
     }));
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
+  }
+
+  // Persona.md (ADR-0033)
+  async insertPersonaDraft(rec: PersonaDraftRecord) {
+    const { draft, ...row } = rec;
+    await this.db
+      .insert(s.personaDrafts)
+      .values({ ...row, draftJson: JSON.stringify(PersonaDraft.parse(draft)) });
+  }
+  async latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null> {
+    const row = await this.db
+      .select()
+      .from(s.personaDrafts)
+      .where(eq(s.personaDrafts.mimicId, mimicId))
+      .orderBy(desc(s.personaDrafts.createdAt), desc(s.personaDrafts.id))
+      .get();
+    if (!row) return null;
+    const { draftJson, ...rest } = row;
+    return { ...rest, draft: parse(PersonaDraft, draftJson, { summary: '', statements: [] }) };
+  }
+  async getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null> {
+    const row = await this.db
+      .select()
+      .from(s.personaCurations)
+      .where(eq(s.personaCurations.mimicId, mimicId))
+      .get();
+    if (!row) return null;
+    return {
+      mimicId: row.mimicId,
+      curation: parse(PersonaCuration, row.json, PersonaCuration.parse({})),
+      rev: row.rev,
+      updatedAt: row.updatedAt,
+    };
+  }
+  async putPersonaCuration(rec: PersonaCurationRecord) {
+    const json = JSON.stringify(PersonaCuration.parse(rec.curation));
+    const rows = await this.db
+      .insert(s.personaCurations)
+      .values({ mimicId: rec.mimicId, json, rev: rec.rev, updatedAt: rec.updatedAt })
+      .onConflictDoUpdate({
+        target: s.personaCurations.mimicId,
+        set: { json, rev: rec.rev, updatedAt: rec.updatedAt },
+        // Out-of-order saves (a slow request, a keepalive flush on leaving the page) never overwrite a newer one.
+        setWhere: lt(s.personaCurations.rev, rec.rev),
+      })
+      .returning({ rev: s.personaCurations.rev })
+      .all();
+    return rows.length > 0;
   }
 
   // cross-person item statistics (ADR-0027)

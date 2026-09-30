@@ -129,6 +129,7 @@ export class FakeLlm implements LlmClient {
     else if (sys.startsWith("Given a person's occupation")) out = this.occFacets();
     else if (sys.startsWith('Write {k}') || /^Write \d+ distinct/.test(sys)) out = this.hypotheses(user);
     else if (sys.startsWith("Turn the person's scenario")) out = this.ask(user);
+    else if (sys.startsWith('You write a portrait of one specific person')) out = this.persona(user);
     else if (sys.startsWith('Write one short sentence'))
       out = { sentence: 'I tend to go with what worked before.' };
     else out = {};
@@ -197,6 +198,52 @@ export class FakeLlm implements LlmClient {
       ],
       facts: [{ predicate: 'hasInterest', object: 'Planning trips', evidenceSeqs: [seqs[0]!] }],
       contradictions: [],
+    };
+  }
+
+  private persona(user: string) {
+    const seqs = [...(user.split('ANSWERS:')[1] ?? '').matchAll(/^#(\d+)/gm)].map((m) => Number(m[1]));
+    const cite = (i: number) => seqs.filter((_, j) => j % 3 === i % 3).slice(0, 3);
+    return {
+      summary: 'They decide quickly on everyday matters and slow down when other people are affected.',
+      statements: [
+        {
+          section: 'decision_style',
+          text: 'Decides fast when a choice is easy to undo.',
+          evidenceSeqs: cite(0),
+          confidence: 0.7,
+        },
+        {
+          section: 'principles',
+          text: 'When a plan changes, they adapt rather than push back.',
+          evidenceSeqs: cite(1),
+          confidence: 0.6,
+        },
+        {
+          section: 'tradeoffs',
+          text: 'Prefers finishing on time over polishing.',
+          evidenceSeqs: cite(2),
+          confidence: 0.45,
+        },
+        {
+          section: 'biases',
+          text: 'Leans on what worked before, even when conditions changed.',
+          evidenceSeqs: cite(0),
+          confidence: 0.55,
+        },
+        {
+          section: 'values',
+          text: 'An uncited claim that must be dropped.',
+          evidenceSeqs: [],
+          confidence: 0.9,
+        },
+        {
+          section: 'values',
+          text: 'A claim citing answers that do not exist.',
+          evidenceSeqs: [99_999],
+          confidence: 0.9,
+        },
+      ],
     };
   }
 

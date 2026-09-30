@@ -5,6 +5,7 @@ export * from './deps';
 export * from './identity';
 export * from './jobs';
 export * from './lab';
+export * from './persona';
 export * from './playground';
 export * from './session';
 export * from './ui';

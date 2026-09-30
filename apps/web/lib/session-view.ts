@@ -1,4 +1,5 @@
 import type { Distribution, PublicQuestion, UiSnapshot } from '@mimic/core';
+import { certaintyTier, facetReading } from '@mimic/core/labels';
 import { hostLabel } from '@mimic/core/links';
 import type { IdentityView } from './api';
 
@@ -58,16 +59,13 @@ function lowerFirst(s: string): string {
 /** Jev's confidence in the trait read, shown as a tier (never as accuracy; PLAN §9.10). */
 export function certaintyOf(f: Facet): Certainty {
   if (f.mean === null || f.certainty === null) return 'none';
-  if (f.certainty >= 0.7) return 'high';
-  if (f.certainty >= 0.4) return 'medium';
-  return 'low';
+  return certaintyTier(f.certainty);
 }
 
 /** The facet's current reading, e.g. "leans toward the familiar". */
 export function readingOf(f: Facet): string {
   if (f.mean === null) return 'Not enough answers yet.';
-  const i = Math.max(0, Math.min(4, Math.round(f.mean * 4)));
-  return lowerFirst(f.labels[i] ?? '');
+  return facetReading(f.labels, f.mean);
 }
 
 /** Width of the certainty band on the 0–1 track: narrow when certain. */

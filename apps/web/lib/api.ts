@@ -3,6 +3,8 @@ import type {
   ExperimentRecord,
   FeedbackResult,
   NextResult,
+  PersonaSave,
+  PersonaView,
   PlaygroundHistory,
   PlaygroundPrediction,
   PublicQuestion,
@@ -131,6 +133,19 @@ export const api = {
     call<{ draft: Draft }>('POST', `/api/mimics/${id}/ask`, { scenario }),
   predict: (id: string, question: Draft & { rationale: boolean }) =>
     call<PlaygroundPrediction>('POST', `/api/mimics/${id}/ask`, { question }),
+  persona: (id: string) => call<PersonaView>('GET', `/api/mimics/${id}/persona`),
+  draftPersona: (id: string) => call<PersonaView>('POST', `/api/mimics/${id}/persona`),
+  curatePersona: (id: string, save: PersonaSave) =>
+    call<PersonaView>('PUT', `/api/mimics/${id}/persona`, save),
+  /** Fire-and-forget save that outlives the page (leaving it mid-debounce); the server orders saves by rev. */
+  curatePersonaOnLeave: (id: string, save: PersonaSave) =>
+    void fetch(`/api/mimics/${id}/persona`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(save),
+      credentials: 'same-origin',
+      keepalive: true,
+    }).catch(() => {}),
   teach: (id: string, feedback: FeedbackRequest) =>
     call<FeedbackResult>('POST', `/api/mimics/${id}/ask`, { feedback }),
   playground: (id: string) => call<PlaygroundHistory>('GET', `/api/mimics/${id}/ask`),

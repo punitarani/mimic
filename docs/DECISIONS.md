@@ -712,3 +712,49 @@ pick the right answer themselves, without asking.
   - Opening a question from the history waits for any request in flight. An asked question uses one idempotency key
     per pick, and shows the stored answer if an earlier attempt already saved one.
   - `mimic.json` (`mimic/1`) accepts `kind = feedback` in its evidence.
+
+## ADR-0033 — Persona.md: a curated, portable portrait for any agent (2026-09-30)
+
+`mimic.json` is a research artifact: it lets a predictor run against a person's state. People also want to bring
+themselves to the agents they already use, which read prose, not trait vectors. `Persona.md` is that file: values,
+beliefs, opinions and biases, and above all how the person thinks and decides. PLAN §8.3 describes it.
+
+- **A view, not new evidence.** The file is built from the mimic's current data, the latest `persona.v1` draft and
+  the person's curation. The deterministic sections need no model call, so the file downloads even before a draft
+  exists. Curation filters and rewords the file only; nothing flows back into states, traits or predictions, so
+  invariants 1 and 3 are untouched.
+- **Live data, not the snapshot.** An earlier version read the latest snapshot through `exportMimic`, which writes one
+  when evidence has moved. Every persona request could then write a snapshot mid-learning (freezing traits and
+  insights from before the last answer, after which the debounced `snapshot.write` job had nothing to do), race that
+  job for the version number, and keep showing a fact the person had removed until their next answer. The persona
+  now reads the same fields live (`mimicDocParts`, shared with `buildMimicJson`), so viewing writes nothing.
+- **One new prompt, `persona.v1`.** It runs on the reflector's model (the generator's when reflection is off) at
+  `reasoning.effort: medium`, since it's a one-off per request and quality matters more than latency. Not adding a
+  config field keeps every existing config hash valid; the draft row records the evidence seq it covers, config
+  hash, prompt version, model and model snapshot instead (invariant 4). The call goes through the gateway
+  (invariant 5) and the budget guard.
+- **Citations or nothing.** Like the reflector, every statement must cite answers the writer was shown, or it is
+  dropped, and at most six survive per section. Each statement is validated on its own, so one malformed item
+  doesn't sink the rest. A statement with a single citation is marked tentative whatever confidence the model
+  reports. Citations in the file point into the decision record at its end, and are shown only for answers that are
+  in the file. The model is told to cite only in `evidenceSeqs`; inline references like "(#1, #2)" (seen in the first
+  live run) are stripped, and bare numbers such as "(2019)" are left alone.
+- **Data minimization.** The writer gets location, occupation, sourced facts other than `headline` (a search
+  result's page title, which usually carries the name), tendencies, insights and answers. The display name and each
+  part of it are redacted anywhere in that input. Draft text that mentions a fact the person later removes is left
+  out of the file, and removing a fact also hides identical copies stored by another source.
+- **Curation keys.** Draft items are keyed by content hash (`summary:` and `st:`), so a rewrite that changes one
+  drops its edit and never lets an old edit mask new text. Everything else is keyed by a stable identity (`fact:`,
+  `trait:{facet}`, `ex:{seq}`, `id:location`), and those keys are never pruned, so an item the person hid stays hidden
+  when it drops out and comes back (a facet whose certainty dips, for example).
+- **Ordered saves.** The page sends one save at a time and flushes an unsent change when the person leaves (a
+  keepalive request). Each save carries an increasing `rev`; the upsert applies only when it is newer than the stored
+  one, so a slow or late request can never overwrite a newer curation.
+- **Shared labels.** Fact predicate labels and certainty tiers live in `@mimic/core/labels` (client-safe, like
+  `@mimic/core/links`), used by the model panel, the identity page and the file, so the three agree.
+- **Storage.** `persona_drafts` (append-only, one row per draft) and `persona_curations` (one row per mimic, with
+  `rev`), migration `0004_persona`. Both are in the hard-delete scope. Research exports always drop curations, the
+  person's own writing, and drop drafts whenever identity is scrubbed, since drafts are free text written from
+  location and sourced facts.
+- **Synchronous.** Drafting is a route handler call like the playground's, not a queue job: the person is waiting
+  on the page for it, and it is one LLM call.

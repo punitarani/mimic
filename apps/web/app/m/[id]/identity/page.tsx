@@ -1,4 +1,5 @@
 'use client';
+import { predicateLabel } from '@mimic/core/labels';
 import { hostLabel, isWebLink, withScheme } from '@mimic/core/links';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
@@ -6,19 +7,6 @@ import { type FormEvent, useState } from 'react';
 import { TopBar } from '@/components/brand';
 import { Button, cn, ErrorText, Input, Spinner } from '@/components/ui';
 import { api, type IdentityView } from '@/lib/api';
-
-const PREDICATE_LABEL: Record<string, string> = {
-  headline: 'Headline',
-  jobTitle: 'Role',
-  worksAt: 'Works at',
-  workedAt: 'Worked at',
-  educatedAt: 'Studied at',
-  hasSkill: 'Skill',
-  created: 'Project or writing',
-  hasInterest: 'Interest',
-  livesIn: 'Location',
-  knowsAbout: 'Knows about',
-};
 
 type Candidate = IdentityView['candidates'][number];
 
@@ -150,9 +138,7 @@ export default function IdentityPage() {
                   return (
                     <li key={f.id} className="flex items-center justify-between gap-4 px-4 py-3">
                       <div className={cn('min-w-0', removed && 'opacity-50')}>
-                        <p className="text-[13px] text-slate">
-                          {PREDICATE_LABEL[f.predicate] ?? f.predicate}
-                        </p>
+                        <p className="text-[13px] text-slate">{predicateLabel(f.predicate)}</p>
                         <p className={cn('text-[15px]', removed && 'line-through')}>{f.object}</p>
                         <p className="text-[12px] text-slate">
                           Source:{' '}
