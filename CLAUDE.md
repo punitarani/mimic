@@ -21,7 +21,7 @@ pnpm db:migrate:local       # remote migrations run as part of each deploy
 pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Workers (CI's build job)
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
-pnpm eval -- <export|replay|select|import|report|session> ...
+pnpm eval -- <export|replay|select|import|report|session|evaluate|diagnose|optimize> ...
 pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--yes]   # run new predictors over served questions (ADR-0024)
 ```
 
@@ -29,6 +29,11 @@ pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--yes]   # run new pre
 `.dev.vars.example` to `.dev.vars` in both apps on first run (dev invite code: `mimic-dev`, or open
 http://localhost:3000/new?invite=mimic-dev).
 It also fires the worker's cron every 10 minutes (stale-job requeue, missing shadows, snapshots; ADR-0019).
+
+Prompt optimization (ADR-0028, docs/OPTIMIZATION.md): `pnpm eval -- evaluate --from stored --data x.sqlite` reports on
+stored predictions for free; `pnpm eval -- optimize --data x.sqlite --predictor jev:typesafe/jev-1.13 --max-usd 2` runs a
+capped GEPA loop. In prod, run Actions → Optimize. A winner ships only as a registered variant
+(`llm:<model>@<version>`, `packages/core/src/components.ts`), first as a shadow via `pnpm backfill`.
 
 Eval loop on dev data: `pnpm eval -- export --env local --out data/x.sqlite`, then `replay --data data/x.sqlite`, then
 `report --data … --run <id> --to local` (shown in `/lab`). Reproducing online predictions needs an export made with

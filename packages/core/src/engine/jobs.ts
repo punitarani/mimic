@@ -1,5 +1,4 @@
 import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
-import { parsePredictorId } from '../config';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
 import { type Job, jobFromKey, jobKey } from '../jobs';
@@ -14,7 +13,7 @@ import {
 } from '../learning';
 import { getAnchorSet } from '../ontology';
 import { computeItemStats, type ScoredItemRow } from '../population';
-import { makePredictor } from '../predictors';
+import { assertPredictorId, makePredictor, promptVersionOf } from '../predictors';
 import { scorePrediction } from '../scoring';
 import { facetCoverage, usesHypotheses } from '../selectors';
 import { buildState, cosine, toStateEvidence } from '../state-builder';
@@ -25,7 +24,7 @@ import { beliefFromLoaded, loadBeliefSources } from './belief';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
-import { invalidateItemStatsCache, JEV_PROMPT_VERSION, MAX_POOL, MIN_POOL } from './session';
+import { invalidateItemStatsCache, MAX_POOL, MIN_POOL } from './session';
 
 export const MAX_JOB_ATTEMPTS = 5;
 
@@ -147,7 +146,8 @@ export async function enqueueMissingPredictions(
 
 function checkPredictorId(id: string): void {
   try {
-    parsePredictorId(id);
+    // The ID must parse and any `@<promptVersion>` must be registered (ADR-0028).
+    assertPredictorId(id);
   } catch (e) {
     throw new EngineError('invalid', e instanceof Error ? e.message : String(e));
   }
@@ -289,7 +289,7 @@ export async function runShadow(
     stateHash: meta.stateHash,
     evidenceSeqMax: meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: predictorId.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
+    promptVersion: promptVersionOf(predictorId),
     modelSnapshot: r!.modelSnapshot,
     costUsd: r!.costUsd,
     latencyMs: r!.latencyMs,

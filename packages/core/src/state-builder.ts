@@ -1,4 +1,5 @@
 import { LATENCY_MIN_N, medianOf, paceOf } from './belief';
+import { fill, INCUMBENT_COMPONENTS, type PredictComponents } from './components';
 import { canonicalJson, sha256Hex } from './hash';
 import type {
   Insight,
@@ -251,8 +252,26 @@ export function stateForProvider(state: PersonState): Omit<PersonState, 'meta'> 
   return body;
 }
 
+/** One earlier answer as a line of state text, from the `state.evidence.line` component. */
+export function renderEvidenceLine(
+  e: StateEvidence,
+  template: string = INCUMBENT_COMPONENTS['state.evidence.line'],
+): string {
+  return fill(template, {
+    seq: String(e.seq),
+    q: e.q,
+    options: e.options.join(' | '),
+    answer: e.answer,
+    pace: e.pace === 'quick' ? ' (answered quickly)' : e.pace === 'slow' ? ' (took a while)' : '',
+    why: e.why ? ` (why: ${e.why})` : '',
+  });
+}
+
 /** Compact text rendering of a state for LLM prompts. */
-export function renderStateText(state: PersonState): string {
+export function renderStateText(
+  state: Omit<PersonState, 'meta'>,
+  c: Pick<PredictComponents, 'state.evidence.line'> = INCUMBENT_COMPONENTS,
+): string {
   const lines: string[] = [];
   lines.push('IDENTITY');
   for (const [k, v] of Object.entries(state.identity)) {
@@ -269,12 +288,7 @@ export function renderStateText(state: PersonState): string {
   }
   if (state.evidence.length) {
     lines.push('', 'ANSWERS');
-    for (const e of state.evidence) {
-      const pace = e.pace === 'quick' ? ' (answered quickly)' : e.pace === 'slow' ? ' (took a while)' : '';
-      lines.push(
-        `#${e.seq} ${e.q} [${e.options.join(' | ')}] → ${e.answer}${pace}${e.why ? ` (why: ${e.why})` : ''}`,
-      );
-    }
+    for (const e of state.evidence) lines.push(renderEvidenceLine(e, c['state.evidence.line']));
   }
   return lines.join('\n');
 }

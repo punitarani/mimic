@@ -429,3 +429,70 @@ ADR records the decisions.
 - **Default config `cfg.default.v4`** = v3 + `voi`, `gen.v2` and latency hints. Mimics created under v1–v3 keep
   their configs. Not done: one-step lookahead EIG on the pool (exact but |pool| × |options| Jev calls), a shared
   bank of generated questions (needs a leakage check), Twin-2K-500 item statistics as a cold-start prior.
+
+## ADR-0028 — Prediction prompt variants, the eval loop and GEPA-style optimization (2026-09-30)
+
+`docs/OPTIMIZATION.md` is the design; this records what was built and the choices made.
+
+**Prompt components and variants.** The prediction prompts are named text components
+(`packages/core/src/components.ts`): the LLM predictor's system prompt and user template, the evidence line of the state
+text, and Jev's instructions and criteria templates. The incumbents render byte for byte what the old literals did
+(pinned by a test). A registered variant is addressable as `llm:<model>@<version>` or `jev:<model>@<version>`
+(`parsePredictorId`), so it can be a config's primary or shadow, and `pnpm backfill` can run it over served questions
+on the primary's sealed states. `predictions.prompt_version` now comes from the predictor ID instead of a literal.
+Without a suffix nothing changes: the IDs, prompts and config hashes of v1–v3 are untouched. Variants are mirrored to
+`docs/prompts/variants/`. A variant may also set harness options: reasoning effort, max tokens, an output schema with
+a short rationale before the probabilities, and Jev receiving the state as the LLMs' text rendering.
+
+**Evaluator.** `mimic-eval evaluate` scores candidates on sealed instances: each served question with its state rebuilt
+as served (ADR-0017), or, for Twin-2K-500 people, their first k answers against the held-out wave. Each record carries
+log loss, item accuracy, Brier, the stored baseline's accuracy on the same question, and textual feedback (the answer,
+the person's reason, the profile-only guess, related earlier answers, repeat agreement). `--from stored` reports on the
+predictions already stored, with no model calls, and fits a temperature per predictor, shrinkage toward the baseline
+and Jev + LLM log-linear pools on dev people, checked on test people.
+
+**Optimizer.** `mimic-eval optimize` is a TypeScript GEPA loop over the real engine code (no Python, no second copy of
+the prompts): Pareto parent sampling over per-instance validation scores, one component rewritten per iteration by a
+reflection model reading a minibatch of cases, acceptance only when the child beats its parent on the minibatch by
+more than the measured noise floor, then a full validation pass. Choices:
+
+- *Objective:* −log loss per question, so calibration counts; a failed output scores as a uniform guess minus 1 nat.
+- *Splits:* dev people train and validate (by person with 6 or more dev people, otherwise by question); test people
+  are a holdout evaluated once, after selection (PLAN §12.4). "Improved" needs the validation gain above twice the
+  noise standard error, a 90% bootstrap CI above zero, and no loss on the holdout beyond that margin.
+- *Leakage lint:* a child is rejected if it adds a 6-word sequence from any question, reason or insight in the data, or
+  an identity detail (name, location, employer, fact). Instruction-only optimization with no real-person demos keeps
+  invariant 8.
+- *Reflection model:* `anthropic/claude-sonnet-5.5` by default ($2/$10 per million tokens at the time), low reasoning
+  effort. It is offline tooling, logged through the gateway as `eval.reflect`, never in a production config.
+- *Budgets:* hard caps on predictions (`--max-metric-calls`, default 400) and dollars (`--max-usd`, default 2); an
+  iteration that could not be validated within either is not started. Runs are resumable from `--run-dir`.
+- *Cost:* Jev components are the default target because Jev bills input only (about $0.0001 per question), so a run
+  is dominated by reflection calls.
+- *One person per reflection:* each minibatch is drawn from one person, and `diagnose` makes one call per person, so
+  no prompt mixes people's answers (invariant 8). Names are left out of the cases as well. These are offline analysis
+  calls on consented, scrubbed data, and their output passes the leakage lint before it can reach a product prompt.
+- *Tooling prompts are versioned:* the reflection and diagnosis prompts (`optimize.reflect.v1`,
+  `optimize.diagnose.v1`) live in `packages/eval/src/optimize/reflect.ts`, are recorded on each run and mirrored to
+  `docs/prompts/optimize/` with a sync test. A reply that breaks a rule gets one repair turn naming the problems.
+- *Transport failures are not scores:* predictors label a failure `transport` or `output`. Only the failed questions
+  are retried once. A transport failure is never cached. If it persists, the optimizer stops gracefully rather than
+  let an outage decide an acceptance, the Pareto front or the holdout; the run can be resumed. A malformed output is
+  the candidate's fault and is scored as a failure.
+- *Batching and margins:* Jev questions that share a state go in one request, split only near the 32K context. The
+  minibatch margin uses the size of the minibatch actually drawn. With six or more dev people, a balanced, seeded
+  half of them validate. A run directory refuses to resume against different data, since exports re-salt IDs.
+- *Validation at the edges:* `PipelineConfig` rejects an unregistered or incumbent-aliased `@<version>`, so `/lab`
+  can't register a config that would break `/next`. `pnpm backfill` checks a version against
+  `docs/prompts/variants/` before enqueueing. Published metrics are compacted to fit one D1 statement; the full report
+  is in R2.
+
+**Shipping.** A winner is never deployed by the optimizer. It writes the candidate and a `PREDICT_PROMPTS` entry to
+paste; registering it is a code change reviewed like any other, then `pnpm backfill --predictor <id>@<version>` gives a
+within-person comparison on identical sealed states in `/lab`, and promotion to primary goes through a config and an
+experiment arm. Calibration post-processing is reported but not applied online yet (a later config field).
+
+**Where it runs.** `.github/workflows/optimize.yml` (Actions → Optimize), like the backfill: export prod (consented,
+scrubbed), optionally add Twin-2K-500 people, report on stored predictions for free, and optionally optimize. Only
+aggregates and prompt text leave the runner: the step summary, `/lab`, and an artifact with the candidate. Hugging
+Face is blocked in the Claude Code environment, so the Twin step runs only in Actions and is best-effort there.

@@ -13,12 +13,17 @@
 //   preview, prod   the Cloudflare Queues and D1 HTTP APIs; needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
 //                   (`doppler run -- pnpm backfill ...`)
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cloudflareFromEnv, envBlock, ROOT, readConfig, WORKER_CONFIG } from './deploy/lib.mjs';
 
 const ENVS = ['local', 'preview', 'prod'];
-/** `llm:<vendor>/<model>` or `jev:<vendor>/<model>`. Strict, since the local path inlines it into SQL. */
-export const PREDICTOR_ID = /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
+/**
+ * `llm:<vendor>/<model>` or `jev:<vendor>/<model>`, optionally `@<promptVersion>` for a registered prediction prompt
+ * variant (ADR-0028; the worker rejects an unregistered one). Strict, since the local path inlines it into SQL.
+ */
+export const PREDICTOR_ID =
+  /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*(@[a-z0-9][a-z0-9._-]*)?$/i;
 const MIMIC_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const LOCAL_WORKER = 'http://127.0.0.1:8787';
 
@@ -35,7 +40,9 @@ export function parseBackfillArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (!out.predictors.length || !out.predictors.every((p) => PREDICTOR_ID.test(p)))
-    throw new Error('--predictor must look like llm:<vendor>/<model> or jev:<vendor>/<model>');
+    throw new Error(
+      '--predictor must look like llm:<vendor>/<model> or jev:<vendor>/<model>, optionally @<promptVersion>',
+    );
   out.predictors = [...new Set(out.predictors)];
   if (!ENVS.includes(out.env)) throw new Error(`--env must be one of ${ENVS.join(', ')}`);
   for (const m of out.mimics) if (!MIMIC_ID.test(m ?? '')) throw new Error(`--mimic ${m} is not a mimic ID`);
@@ -82,13 +89,43 @@ export function backfillJobs({ predictor, consented, mimics }, runId) {
   return [{ type: 'backfill.predictor', runId, predictorId: predictor, consentedOnly: consented }];
 }
 
+const INCUMBENT = { llm: 'predict.v1', jev: 'jev-predict.v1' };
+
+/**
+ * A `@<version>` must be a registered prompt variant of the right kind, and not the incumbent (which would store a
+ * second ID for the same predictor). The registry in packages/core/src/components.ts is mirrored to
+ * docs/prompts/variants/ (checked by a test), which this dependency-free script can read. Throws, or returns a label.
+ */
+export function checkPromptVersion(predictor, root = ROOT) {
+  const kind = predictor.slice(0, predictor.indexOf(':'));
+  const at = predictor.lastIndexOf('@');
+  if (at < 0) return null;
+  const version = predictor.slice(at + 1);
+  const bare = predictor.slice(0, at);
+  if (version === INCUMBENT[kind]) throw new Error(`${predictor} names the incumbent prompt; use ${bare}`);
+  let doc;
+  try {
+    doc = readFileSync(join(root, 'docs/prompts/variants', `${version}.md`), 'utf8');
+  } catch {
+    throw new Error(
+      `${version} is not a registered prompt variant (packages/core/src/components.ts); merge it first`,
+    );
+  }
+  if (!doc.includes(`Predictor kind: \`${kind}\``))
+    throw new Error(`${version} is not a ${kind} prompt variant`);
+  return version;
+}
+
 /** An LLM shadow must exist on OpenRouter and support structured outputs (predict.v1 is a JSON-schema call). */
 export async function checkModel(predictor, fetchImpl = fetch) {
+  const version = checkPromptVersion(predictor);
+  // A prompt variant (`@<promptVersion>`) runs on the same model, so check the bare model.
   const [kind, model] = [
     predictor.slice(0, predictor.indexOf(':')),
-    predictor.slice(predictor.indexOf(':') + 1),
+    predictor.slice(predictor.indexOf(':') + 1).replace(/@[^@]*$/, ''),
   ];
-  if (kind !== 'llm') return `${model} (Jev decisions API)`;
+  const suffix = version ? `, prompt ${version}` : '';
+  if (kind !== 'llm') return `${model} (Jev decisions API${suffix})`;
   const res = await fetchImpl('https://openrouter.ai/api/v1/models');
   if (!res.ok) throw new Error(`OpenRouter model list: ${res.status}`);
   const found = ((await res.json()).data ?? []).find((m) => m.id === model);
@@ -96,7 +133,7 @@ export async function checkModel(predictor, fetchImpl = fetch) {
   const params = found.supported_parameters ?? [];
   if (!params.includes('structured_outputs') && !params.includes('response_format'))
     throw new Error(`${model} doesn't support structured outputs, which predict.v1 needs`);
-  return `${found.name ?? model} on OpenRouter (structured outputs)`;
+  return `${found.name ?? model} on OpenRouter (structured outputs${suffix})`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------

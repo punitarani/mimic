@@ -212,3 +212,49 @@ machinery: `pnpm check` passes with 74 core unit tests and 41 eval integration t
   question sharing one state hash, none for repeats, 28 × 7 scored rows, 30 fidelity rows.
 - Not yet measured: E3 arms `entropy` vs `voi` on real people, and `pnpm eval -- select --selector entropy,voi`
   on a real export. Both need human answers.
+
+## Evals and prompt optimization (ADR-0028)
+
+Checked in the Claude Code environment. Prod data isn't reachable here, so the live runs used two scripted live
+sessions: 17 answered questions, with one dev person and one test person. The metrics below validate the machinery
+only; scripted answers say nothing about real people. The whole live smoke cost **$0.20**.
+
+- **Offline** (fake providers, 7 scripted people, 161 instances):
+  - every command runs end to end: `evaluate --from stored`, live-mode `evaluate` with `--repeat`, `diagnose` and
+    `optimize`;
+  - the fake Jev ignores its templates, so the optimizer rejects every child, as it should.
+- **Tests** (`packages/eval/test/optimize.test.ts`, `packages/core/test/components.test.ts`):
+  - the incumbent prompts render byte for byte as before;
+  - `@version` IDs parse, resolve and are rejected when unregistered, or when they name the incumbent;
+  - instances are sealed, and test people never reach train or val;
+  - stored records, fits and feedback;
+  - candidate caching and the spend cap;
+  - the leakage lint;
+  - the reflection repair turn;
+  - a full GEPA run that accepts an improving child, passes the holdout and resumes;
+  - the call-budget stop;
+  - Pareto sampling;
+  - report rendering with no question text in it.
+- **Live, every command:**
+
+  | Run | Calls | Cost | Result |
+  | --- | --- | --- | --- |
+  | `evaluate --from stored` | 0 | $0 | Seven predictors per split, person and type |
+  | `optimize`, Jev templates, 4 iterations | 44 | $0.033 | 1 invalid (133 words over the 120 limit), 2 rejected, 1 accepted on its minibatch but worse on val; verdict "no candidate beat the seed" |
+  | `optimize`, DeepSeek prompt, 3 iterations | 35 | $0.044 | 3 rejected under the noise margin |
+  | `evaluate`, `probs` vs `reasoned` schema, `--repeat` | 39 | $0.013 | Paired comparison and noise floor |
+  | `diagnose`, Jev primary | 1 | $0.035 | Overconfident peaks on thin evidence (100% on a miss, log loss 9.2), and drift away from a correct profile-only guess |
+
+- **Findings that shape how to use it:**
+  - Run-to-run noise per question is 0.031 nats for Jev and 0.14–0.20 for DeepSeek V4.1 Flash. LLM prompt changes
+    therefore need about 5× the validation size to show the same gain, and Jev is the cheaper, more sensitive target.
+  - A Sonnet 5.5 reflection costs $0.007–0.011, so a 30-iteration Jev run costs well under $1.
+  - The accepted reflection was general strategy with no copied data: weigh direct earlier answers, cap confidence
+    on thin evidence, leave mass on adjacent scale points. The lint passed it.
+  - A reflection over the word limit wasted an iteration, so the loop now gives a rejected reflection one repair
+    turn naming its problems.
+- **Not verified here:**
+  - the Actions workflow's prod export and `/lab` publishing, which need the Cloudflare credentials in the
+    production environment;
+  - its Twin-2K-500 step, since Hugging Face is blocked in this environment. That step is best-effort, and the run
+    continues without it.

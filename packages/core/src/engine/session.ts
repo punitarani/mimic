@@ -1,11 +1,12 @@
 import { z } from 'zod';
+import { DEFAULT_PROMPT_VERSION } from '../components';
 import type { PipelineConfig } from '../config';
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
 import { RESERVE_V1 } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
-import { JevPredictor, LlmPredictor } from '../predictors';
+import { LlmPredictor, makePredictor, promptVersionOf } from '../predictors';
 import { pickRepeat } from '../repeats';
 import { repeatAgreement, scorePrediction } from '../scoring';
 import {
@@ -41,7 +42,7 @@ import {
   timed,
 } from './deps';
 
-export const JEV_PROMPT_VERSION = 'jev-predict.v1';
+export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.jev;
 export const MIN_POOL = 6;
 export const MAX_POOL = 15;
 
@@ -259,13 +260,9 @@ async function serveWithPredictions(
   rng: () => number,
 ): Promise<NextResult> {
   const primarySpec = cfg.predictor.primary;
-  const ctxPrimary = ctxFor(m, 'predict.primary');
-  const primary = primarySpec.startsWith('jev:')
-    ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxPrimary)
-    : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxPrimary);
-  const baselinePredictor = primarySpec.startsWith('jev:')
-    ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'predict.baseline'))
-    : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'predict.baseline'));
+  // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
+  const primary = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
+  const baselinePredictor = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.baseline'));
 
   const state = await timed(deps, 'state', () => sealedState(deps, loaded, cfg, seq, pool));
   const baseState = contextState(loaded, cfg);
@@ -288,9 +285,8 @@ async function serveWithPredictions(
     ];
   } else {
     const selector = makeSelector(cfg.selector);
-    const explore = primarySpec.startsWith('jev:')
-      ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'select.bald'))
-      : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'select.bald'));
+    // Same prompt as the primary, including a prompt variant (ADR-0028); logged under its own purpose.
+    const explore = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'select.bald'));
     const [hyp, redundancy, voi] = await Promise.all([
       usesHypotheses(cfg.selector) ? loadHypothesisSet(deps, m, loaded) : undefined,
       timed(deps, 'redundancy', () => redundancyFn(deps, m, pool, asked)),
@@ -327,7 +323,7 @@ async function serveWithPredictions(
           stateHash: h.state.meta.stateHash,
           evidenceSeqMax: h.state.meta.evidenceSeqMax,
           configHash: m.configHash,
-          promptVersion: primarySpec.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
+          promptVersion: promptVersionOf(primarySpec),
           modelSnapshot: h.result.modelSnapshot,
           costUsd: h.result.costUsd,
           latencyMs: h.result.latencyMs,
@@ -374,7 +370,7 @@ async function serveWithPredictions(
     stateHash: s.meta.stateHash,
     evidenceSeqMax: s.meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: predictorId.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
+    promptVersion: promptVersionOf(predictorId),
     modelSnapshot: r.modelSnapshot,
     costUsd: r.costUsd,
     latencyMs: r.latencyMs,

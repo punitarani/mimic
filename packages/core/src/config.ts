@@ -1,5 +1,31 @@
 import { z } from 'zod';
+import { DEFAULT_PROMPT_VERSION, PREDICT_PROMPTS } from './components';
 import { canonicalJson, sha256Hex } from './hash';
+
+/**
+ * Why a predictor ID can't be served, or null. A config naming an unregistered prompt version would otherwise throw on
+ * every /next; the incumbent spelled with a suffix would store a second ID for the same predictor.
+ */
+export function predictorIdProblem(id: string): string | null {
+  let spec: PredictorSpec;
+  try {
+    spec = parsePredictorId(id);
+  } catch (e) {
+    return (e as Error).message;
+  }
+  if (spec.promptVersion === undefined) return null;
+  if (spec.promptVersion === DEFAULT_PROMPT_VERSION[spec.kind])
+    return `${id} names the incumbent prompt; use ${spec.kind}:${spec.model}`;
+  const v = PREDICT_PROMPTS[spec.promptVersion];
+  if (!v) return `unknown prediction prompt version in ${id}`;
+  if (v.kind !== spec.kind) return `${spec.promptVersion} is a ${v.kind} prompt, not ${spec.kind}`;
+  return null;
+}
+
+function checkPredictor(id: string, ctx: z.RefinementCtx): void {
+  const problem = predictorIdProblem(id);
+  if (problem) ctx.addIssue({ code: 'custom', message: problem });
+}
 
 export const PipelineConfig = z.object({
   version: z.literal(1),
@@ -33,7 +59,11 @@ export const PipelineConfig = z.object({
       exposureCap: z.number().min(0).max(1),
     }),
   ]),
-  predictor: z.object({ primary: z.string(), shadows: z.array(z.string()) }),
+  /** Predictor IDs, optionally `@<version>` naming a registered prompt variant (ADR-0028); checked on parse. */
+  predictor: z.object({
+    primary: z.string().superRefine(checkPredictor),
+    shadows: z.array(z.string().superRefine(checkPredictor)),
+  }),
   stateBuilder: z.object({
     strategy: z.enum(['raw', 'structured', 'summary', 'full']),
     budgetTokens: z.number().int(),
@@ -135,13 +165,23 @@ export function configHash(config: PipelineConfig): string {
   return sha256Hex(canonicalJson(PipelineConfig.parse(config)));
 }
 
-export type PredictorSpec = { kind: 'jev'; model: string } | { kind: 'llm'; model: string };
+export type PredictorSpec = { kind: 'jev' | 'llm'; model: string; promptVersion?: string };
 
+/**
+ * `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` for a registered prediction prompt variant
+ * (packages/core/src/components.ts, ADR-0028). Without a version the predictor uses the incumbent prompt.
+ */
 export function parsePredictorId(id: string): PredictorSpec {
   const idx = id.indexOf(':');
   const kind = id.slice(0, idx);
-  const model = id.slice(idx + 1);
+  const rest = id.slice(idx + 1);
+  const at = rest.lastIndexOf('@');
+  const model = at >= 0 ? rest.slice(0, at) : rest;
+  const promptVersion = at >= 0 ? rest.slice(at + 1) : undefined;
   if (idx < 0 || !model) throw new Error(`Invalid predictor id: ${id}`);
-  if (kind === 'jev' || kind === 'llm') return { kind, model };
+  if (promptVersion !== undefined && !/^[a-z0-9][a-z0-9._-]*$/i.test(promptVersion))
+    throw new Error(`Invalid prompt version in predictor id: ${id}`);
+  if (kind === 'jev' || kind === 'llm')
+    return promptVersion === undefined ? { kind, model } : { kind, model, promptVersion };
   throw new Error(`Unknown predictor kind: ${id}`);
 }

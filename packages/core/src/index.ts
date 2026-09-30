@@ -1,4 +1,5 @@
 export * from './belief';
+export * from './components';
 export * from './config';
 export * from './distribution';
 export * from './engine';
