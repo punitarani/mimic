@@ -1,5 +1,5 @@
 'use client';
-import type { PersonaCuration, PersonaItem, PersonaSave, PersonaSection, PersonaView } from '@mimic/core';
+import type { SoulCuration, SoulItem, SoulSave, SoulSection, SoulView } from '@mimic/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
@@ -12,12 +12,12 @@ type SaveState = 'saved' | 'saving' | 'error';
 const SAVE_DELAY_MS = 600;
 const RECORD_PREVIEW = 8;
 
-/** Persona.md (ADR-0033): choose what goes in, reword what was inferred, add your own words, then download. */
-export default function PersonaPage() {
+/** SOUL.md (ADR-0035): choose what goes in, reword what was inferred, add your own words, then download. */
+export default function SoulPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ['persona', id], queryFn: () => api.persona(id) });
-  const [curation, setCuration] = useState<PersonaCuration | null>(null);
+  const q = useQuery({ queryKey: ['soul', id], queryFn: () => api.soul(id) });
+  const [curation, setCuration] = useState<SoulCuration | null>(null);
   const [save, setSave] = useState<SaveState>('saved');
   const [saveError, setSaveError] = useState<string | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
@@ -26,7 +26,7 @@ export default function PersonaPage() {
   // Saves go out one at a time, newest state last; each carries an increasing rev, and the server ignores a save
   // older than the one it has, so out-of-order arrival (for example the keepalive flush on leaving) can't regress it.
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pending = useRef<PersonaSave | null>(null);
+  const pending = useRef<SoulSave | null>(null);
   const inFlight = useRef(false);
   const rev = useRef(0);
 
@@ -43,9 +43,9 @@ export default function PersonaPage() {
     pending.current = null;
     inFlight.current = true;
     try {
-      const v = await api.curatePersona(id, next);
+      const v = await api.curateSoul(id, next);
       if (!pending.current) {
-        qc.setQueryData(['persona', id], v);
+        qc.setQueryData(['soul', id], v);
         setSave('saved');
         setSaveError(null);
       }
@@ -62,7 +62,7 @@ export default function PersonaPage() {
   }, [id, qc]);
 
   const update = useCallback(
-    (next: PersonaCuration) => {
+    (next: SoulCuration) => {
       setCuration(next);
       setSave('saving');
       rev.current = Math.max(Date.now(), rev.current + 1);
@@ -81,7 +81,7 @@ export default function PersonaPage() {
     const leave = () => {
       if (timer.current) clearTimeout(timer.current);
       timer.current = null;
-      if (pending.current) api.curatePersonaOnLeave(id, pending.current);
+      if (pending.current) api.curateSoulOnLeave(id, pending.current);
       pending.current = null;
     };
     window.addEventListener('pagehide', leave);
@@ -101,7 +101,7 @@ export default function PersonaPage() {
       </TopBar>
       <main className="mx-auto w-full max-w-2xl space-y-8 px-4 pb-20 pt-4 sm:px-6">
         <header className="space-y-2">
-          <h1 className="font-serif text-3xl tracking-tight">Persona.md</h1>
+          <h1 className="font-serif text-3xl tracking-tight">SOUL.md</h1>
           <p className="text-[15px] text-muted">
             A file any AI agent can read to represent you: your values, beliefs and biases, and above all how
             you make decisions. Choose what goes in, reword what was inferred, add your own words, then
@@ -164,7 +164,7 @@ function FileActions({
   onRetry,
 }: {
   id: string;
-  view: PersonaView;
+  view: SoulView;
   save: SaveState;
   onRetry: () => void;
 }) {
@@ -174,12 +174,12 @@ function FileActions({
   return (
     <div className="flex flex-wrap items-center gap-3">
       <a
-        href={busy ? undefined : `/api/mimics/${id}/persona.md`}
+        href={busy ? undefined : `/api/mimics/${id}/soul.md`}
         aria-disabled={busy}
         download
         className={buttonClass('primary')}
       >
-        Download Persona.md
+        Download SOUL.md
       </a>
       <Button
         variant="secondary"
@@ -210,7 +210,7 @@ function DraftCard({
   onError,
 }: {
   id: string;
-  view: PersonaView;
+  view: SoulView;
   onError: (e: string | null) => void;
 }) {
   const qc = useQueryClient();
@@ -221,7 +221,7 @@ function DraftCard({
     setBusy(true);
     onError(null);
     try {
-      qc.setQueryData(['persona', id], await api.draftPersona(id));
+      qc.setQueryData(['soul', id], await api.draftSoul(id));
     } catch (e) {
       onError(e instanceof Error ? e.message : 'Could not write the persona.');
     } finally {
@@ -269,14 +269,14 @@ function Curate({
   curation,
   update,
 }: {
-  view: PersonaView;
-  curation: PersonaCuration;
-  update: (c: PersonaCuration) => void;
+  view: SoulView;
+  curation: SoulCuration;
+  update: (c: SoulCuration) => void;
 }) {
   const toggle = (list: string[], key: string, include: boolean) =>
     include ? list.filter((k) => k !== key) : [...list, key];
-  const setSection = (sid: PersonaSection['id'], on: boolean) =>
-    update({ ...curation, disabled: toggle(curation.disabled, sid, on) as PersonaCuration['disabled'] });
+  const setSection = (sid: SoulSection['id'], on: boolean) =>
+    update({ ...curation, disabled: toggle(curation.disabled, sid, on) as SoulCuration['disabled'] });
   const setItem = (key: string, on: boolean) =>
     update({ ...curation, hidden: toggle(curation.hidden, key, on) });
   const setEdit = (key: string, text: string | null) => {
@@ -290,11 +290,11 @@ function Curate({
     <div className="space-y-10">
       <div className="space-y-5">
         <div className="space-y-1.5">
-          <label htmlFor="persona-name" className="block text-sm font-medium">
+          <label htmlFor="soul-name" className="block text-sm font-medium">
             Name in the file
           </label>
           <Input
-            id="persona-name"
+            id="soul-name"
             placeholder={view.name}
             maxLength={120}
             value={curation.name ?? ''}
@@ -339,7 +339,7 @@ function SectionToggle({
   onChange,
   children,
 }: {
-  section: PersonaSection;
+  section: SoulSection;
   on: boolean;
   onChange: (on: boolean) => void;
   children?: React.ReactNode;
@@ -375,8 +375,8 @@ function Items({
   onToggle,
   onEdit,
 }: {
-  section: PersonaSection;
-  curation: PersonaCuration;
+  section: SoulSection;
+  curation: SoulCuration;
   onToggle: (key: string, on: boolean) => void;
   onEdit: (key: string, text: string | null) => void;
 }) {
@@ -416,7 +416,7 @@ function Item({
   onToggle,
   onEdit,
 }: {
-  item: PersonaItem;
+  item: SoulItem;
   single: boolean;
   included: boolean;
   edited: string | undefined;
@@ -510,7 +510,7 @@ function Item({
   );
 }
 
-function Meta({ item, edited }: { item: PersonaItem; edited: boolean }) {
+function Meta({ item, edited }: { item: SoulItem; edited: boolean }) {
   const bits: string[] = [];
   if (edited) bits.push('edited by you');
   if (item.tentative) bits.push('tentative');

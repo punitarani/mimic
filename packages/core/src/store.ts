@@ -1,5 +1,5 @@
 import type { FidelityState } from './fidelity';
-import type { PersonaCuration, PersonaDraft } from './persona';
+import type { SoulCuration, SoulDraft } from './soul';
 import type { Distribution, Facet, Insight, QKind, Question, TraitEstimate } from './types';
 
 export type MimicStatus = 'intake' | 'identity' | 'learning' | 'paused' | 'archived';
@@ -197,8 +197,8 @@ export interface SnapshotRecord {
   createdAt: number;
 }
 
-/** A `persona.v1` draft (ADR-0033): derived from the evidence up to `seqUpTo`, versioned, recomputable. */
-export interface PersonaDraftRecord {
+/** A `persona.v1` draft (ADR-0035): derived from the evidence up to `seqUpTo`, versioned, recomputable. */
+export interface SoulDraftRecord {
   id: string;
   mimicId: string;
   seqUpTo: number;
@@ -206,14 +206,14 @@ export interface PersonaDraftRecord {
   promptVersion: string;
   model: string;
   modelSnapshot: string;
-  draft: PersonaDraft;
+  draft: SoulDraft;
   createdAt: number;
 }
 
-/** The person's choices for Persona.md: one row per mimic. */
-export interface PersonaCurationRecord {
+/** The person's choices for SOUL.md: one row per mimic. */
+export interface SoulCurationRecord {
   mimicId: string;
-  curation: PersonaCuration;
+  curation: SoulCuration;
   /** The client's revision of this curation; a save with a lower or equal rev never overwrites a newer one. */
   rev: number;
   updatedAt: number;
@@ -384,12 +384,12 @@ export interface Store {
   insertSnapshot(rec: SnapshotRecord): Promise<void>;
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
-  // Persona.md (ADR-0033)
-  insertPersonaDraft(rec: PersonaDraftRecord): Promise<void>;
-  latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null>;
-  getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null>;
+  // SOUL.md (ADR-0035)
+  insertPersonaDraft(rec: SoulDraftRecord): Promise<void>;
+  latestPersonaDraft(mimicId: string): Promise<SoulDraftRecord | null>;
+  getSoulCuration(mimicId: string): Promise<SoulCurationRecord | null>;
   /** Writes only if `rec.rev` is newer than the stored rev; returns whether it wrote. */
-  putPersonaCuration(rec: PersonaCurationRecord): Promise<boolean>;
+  putPersonaCuration(rec: SoulCurationRecord): Promise<boolean>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
   // cross-person item statistics (aggregate only; ADR-0027)
   /** Every scored primary and baseline of the matching mimics' anchor and adaptive questions, in one query. */

@@ -1,25 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildPersona,
+  buildSoul,
   EMPTY_CURATION,
   Gateway,
   type LlmClient,
   ONTOLOGY_V1,
-  PersonaCuration,
-  type PersonaDraft,
-  type PersonaInput,
-  type PersonaSource,
-  personaKey,
-  personaWriterInput,
   pruneCuration,
+  SoulCuration,
+  type SoulDraft,
+  type SoulInput,
+  type SoulSource,
+  soulKey,
+  soulWriterInput,
   stripInlineCites,
-  writePersonaDraft,
+  writeSoulDraft,
 } from '../src';
 
 const facets = ONTOLOGY_V1.filter((f) => ['openness', 'risk_tolerance', 'extraversion'].includes(f.id));
 
-function src(over: Partial<PersonaSource> = {}): PersonaSource {
-  const q = (seq: number, kind: PersonaSource['evidence'][number]['kind'], why: string | null = null) => ({
+function src(over: Partial<SoulSource> = {}): SoulSource {
+  const q = (seq: number, kind: SoulSource['evidence'][number]['kind'], why: string | null = null) => ({
     seq,
     kind,
     type: 'choice' as const,
@@ -65,7 +65,7 @@ function src(over: Partial<PersonaSource> = {}): PersonaSource {
   };
 }
 
-const draft: PersonaDraft = {
+const draft: SoulDraft = {
   summary: 'They move fast and revisit later.',
   statements: [
     {
@@ -80,8 +80,8 @@ const draft: PersonaDraft = {
 };
 const meta = { id: 'd1', createdAt: 1, seqUpTo: 5, modelSnapshot: 'deepseek@x', promptVersion: 'persona.v1' };
 
-const build = (over: Partial<PersonaInput> = {}) =>
-  buildPersona({ source: src(), facets, draft: { ...meta, draft }, curation: EMPTY_CURATION, ...over });
+const build = (over: Partial<SoulInput> = {}) =>
+  buildSoul({ source: src(), facets, draft: { ...meta, draft }, curation: EMPTY_CURATION, ...over });
 
 function fakeGateway(content: unknown) {
   const rows: Array<{ purpose: string }> = [];
@@ -110,7 +110,7 @@ function fakeGateway(content: unknown) {
   return { g, rows, sent };
 }
 
-describe('Persona.md (ADR-0033)', () => {
+describe('SOUL.md (ADR-0035)', () => {
   it('renders the deterministic sections without a draft', () => {
     const v = build({ draft: null });
     const md = v.markdown;
@@ -152,9 +152,9 @@ describe('Persona.md (ADR-0033)', () => {
     expect(v.markdown).toContain('- Anchors on the first option. _(tentative)_ [#5]');
     expect(v.draft).toMatchObject({ id: 'd1', answers: 5, newAnswers: 1 });
 
-    const hidden = build({ curation: PersonaCuration.parse({ hidden: [personaKey.record(3)] }) });
+    const hidden = build({ curation: SoulCuration.parse({ hidden: [soulKey.record(3)] }) });
     expect(hidden.markdown).toContain('easy to undo. [#2]');
-    const noRecord = build({ curation: PersonaCuration.parse({ disabled: ['record'] }) });
+    const noRecord = build({ curation: SoulCuration.parse({ disabled: ['record'] }) });
     expect(noRecord.markdown).not.toMatch(/\[#\d/);
     expect(noRecord.markdown).not.toContain('Citations like');
   });
@@ -172,12 +172,12 @@ describe('Persona.md (ADR-0033)', () => {
 
   it('applies curation: name, own words, edits, hidden items and sections', () => {
     const st = draft.statements[0]!;
-    const curation = PersonaCuration.parse({
+    const curation = SoulCuration.parse({
       name: 'Ave',
       notes: '# My rules\nNever sign on the first call.',
       disabled: ['tendencies', 'unknowns'],
-      hidden: [personaKey.identity('location'), personaKey.fact({ predicate: 'worksAt', object: 'Acme' })],
-      edits: { [personaKey.statement(st)]: 'Decides within a day\nunless it is hard to undo.' },
+      hidden: [soulKey.identity('location'), soulKey.fact({ predicate: 'worksAt', object: 'Acme' })],
+      edits: { [soulKey.statement(st)]: 'Decides within a day\nunless it is hard to undo.' },
     });
     const md = build({ curation }).markdown;
     expect(md.startsWith('# Persona: Ave\n')).toBe(true);
@@ -192,30 +192,24 @@ describe('Persona.md (ADR-0033)', () => {
   });
 
   it('prunes only draft keys a rewrite replaced; hiding a fact, facet or answer survives', () => {
-    const st = personaKey.statement(draft.statements[0]!);
-    const oldSummary = personaKey.summary('An older summary.');
+    const st = soulKey.statement(draft.statements[0]!);
+    const oldSummary = soulKey.summary('An older summary.');
     const c = pruneCuration(
-      PersonaCuration.parse({
-        hidden: [
-          personaKey.record(2),
-          personaKey.trait('patience'),
-          'st:gone',
-          oldSummary,
-          personaKey.record(2),
-        ],
-        edits: { [st]: 'kept', [oldSummary]: 'stale', [personaKey.record(2)]: 'not editable' },
+      SoulCuration.parse({
+        hidden: [soulKey.record(2), soulKey.trait('patience'), 'st:gone', oldSummary, soulKey.record(2)],
+        edits: { [st]: 'kept', [oldSummary]: 'stale', [soulKey.record(2)]: 'not editable' },
       }),
       draft,
     );
-    expect(c.hidden).toEqual([personaKey.record(2), personaKey.trait('patience')]);
+    expect(c.hidden).toEqual([soulKey.record(2), soulKey.trait('patience')]);
     expect(c.edits).toEqual({ [st]: 'kept' });
     // An edit to an old summary never masks a new one.
-    const md = build({ curation: PersonaCuration.parse({ edits: { [oldSummary]: 'Stale.' } }) }).markdown;
+    const md = build({ curation: SoulCuration.parse({ edits: { [oldSummary]: 'Stale.' } }) }).markdown;
     expect(md).toContain('They move fast and revisit later.');
   });
 
   it('calls itself a strong prior only with enough evidence that beats a measured baseline', () => {
-    const md = (fidelity: PersonaSource['fidelity']) =>
+    const md = (fidelity: SoulSource['fidelity']) =>
       build({ source: src({ fidelity }), draft: null }).markdown;
     const f = { fidelity: 0.5, ci: [0.4, 0.6] as [number, number], selfConsistency: 0.8 };
     expect(md({ ...f, acc: 0.39, accBaseline: 0.5, n: 30 })).toContain('rough sketch');
@@ -245,7 +239,7 @@ describe('Persona.md (ADR-0033)', () => {
   });
 
   it('keeps the name, headlines and repeats away from the writer', () => {
-    const { text, shown } = personaWriterInput(
+    const { text, shown } = soulWriterInput(
       src({
         facts: [
           ...src().facts,
@@ -288,16 +282,16 @@ describe('Persona.md (ADR-0033)', () => {
       })),
     ];
     const { g, rows, sent } = fakeGateway({ summary: 'S (#1).', statements });
-    const out = await writePersonaDraft(
+    const out = await writeSoulDraft(
       g,
-      { purpose: 'persona.draft', mimicId: 'm1' },
+      { purpose: 'soul.draft', mimicId: 'm1' },
       {
         model: 'deepseek/deepseek-v4.1-flash',
         source: src(),
         facets,
       },
     );
-    expect(rows.map((r) => r.purpose)).toEqual(['persona.draft']);
+    expect(rows.map((r) => r.purpose)).toEqual(['soul.draft']);
     expect(sent[0]).not.toContain('Avery');
     expect(out.draft.summary).toBe('S.');
     expect(out.draft.statements.map((s) => s.section)).toEqual(['beliefs', ...Array(6).fill('principles')]);

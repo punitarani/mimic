@@ -1,16 +1,16 @@
 import type { PipelineConfig } from '../config';
 import {
-  buildPersona,
+  buildSoul,
   EMPTY_CURATION,
-  PERSONA_MIN_ANSWERS,
-  PERSONA_PROMPT_VERSION,
-  type PersonaSave,
-  type PersonaSource,
-  type PersonaView,
   pruneCuration,
-  writePersonaDraft,
-} from '../persona';
-import type { PersonaCurationRecord as CurationRecord, MimicRecord, PersonaDraftRecord } from '../store';
+  SOUL_MIN_ANSWERS,
+  SOUL_PROMPT_VERSION,
+  type SoulSave,
+  type SoulSource,
+  type SoulView,
+  writeSoulDraft,
+} from '../soul';
+import type { SoulCurationRecord as CurationRecord, MimicRecord, SoulDraftRecord } from '../store';
 import type { Facet } from '../types';
 import { mimicDocParts } from './artifact';
 import { loadMimicData } from './data';
@@ -25,11 +25,11 @@ import {
 } from './deps';
 
 /**
- * Persona.md (ADR-0033). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
+ * SOUL.md (ADR-0035). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
  * snapshot (so it can't race the `snapshot.write` job or freeze derived data mid-learning), and a fact the person
  * removes leaves the file at once.
  */
-async function personaSource(deps: EngineDeps, m: MimicRecord): Promise<PersonaSource> {
+async function soulSource(deps: EngineDeps, m: MimicRecord): Promise<SoulSource> {
   const [loaded, facts, fid] = await Promise.all([
     loadMimicData(deps, m),
     deps.store.listFacts(m.id),
@@ -51,27 +51,27 @@ async function personaSource(deps: EngineDeps, m: MimicRecord): Promise<PersonaS
 
 interface Loaded {
   cfg: PipelineConfig;
-  source: PersonaSource;
+  source: SoulSource;
   facets: Facet[];
 }
 
 async function load(deps: EngineDeps, m: MimicRecord): Promise<Loaded> {
   const cfg = await loadConfig(deps, m.configHash);
-  const [source, facets] = await Promise.all([personaSource(deps, m), facetsFor(deps, m, cfg)]);
+  const [source, facets] = await Promise.all([soulSource(deps, m), facetsFor(deps, m, cfg)]);
   return { cfg, source, facets };
 }
 
 async function view(
   deps: EngineDeps,
   m: MimicRecord,
-  pre: { loaded?: Loaded; draft?: PersonaDraftRecord | null; stored?: CurationRecord | null } = {},
-): Promise<PersonaView> {
+  pre: { loaded?: Loaded; draft?: SoulDraftRecord | null; stored?: CurationRecord | null } = {},
+): Promise<SoulView> {
   const [loaded, draft, stored] = await Promise.all([
     pre.loaded ?? load(deps, m),
     pre.draft !== undefined ? pre.draft : deps.store.latestPersonaDraft(m.id),
-    pre.stored !== undefined ? pre.stored : deps.store.getPersonaCuration(m.id),
+    pre.stored !== undefined ? pre.stored : deps.store.getSoulCuration(m.id),
   ]);
-  return buildPersona({
+  return buildSoul({
     source: loaded.source,
     facets: loaded.facets,
     draft,
@@ -80,7 +80,7 @@ async function view(
   });
 }
 
-export async function getPersona(deps: EngineDeps, mimicId: string): Promise<PersonaView> {
+export async function getSoul(deps: EngineDeps, mimicId: string): Promise<SoulView> {
   return view(deps, await requireMimic(deps, mimicId));
 }
 
@@ -89,11 +89,7 @@ export async function getPersona(deps: EngineDeps, mimicId: string): Promise<Per
  * everything else is kept (PLAN §8.3). The save doesn't depend on rendering, so it can't be lost to a render error. A
  * save older than the stored one (by `rev`) is ignored, and the view shows the newer stored curation.
  */
-export async function curatePersona(
-  deps: EngineDeps,
-  mimicId: string,
-  save: PersonaSave,
-): Promise<PersonaView> {
+export async function curateSoul(deps: EngineDeps, mimicId: string, save: SoulSave): Promise<SoulView> {
   const m = await requireMimic(deps, mimicId);
   const draft = await deps.store.latestPersonaDraft(m.id);
   const rec: CurationRecord = {
@@ -111,15 +107,15 @@ export async function curatePersona(
  * budget-guarded). The draft is derived data: it records the evidence, config, prompt and model snapshot it came from
  * (PLAN §3.4).
  */
-export async function draftPersona(deps: EngineDeps, mimicId: string): Promise<PersonaView> {
+export async function draftSoul(deps: EngineDeps, mimicId: string): Promise<SoulView> {
   const m = await requireMimic(deps, mimicId);
   const loaded = await load(deps, m);
   if (budgetSpent(deps, m, loaded.cfg)) throw new EngineError('budget', 'Budget reached');
-  if (loaded.source.evidence.length < PERSONA_MIN_ANSWERS)
-    throw new EngineError('invalid', `Answer at least ${PERSONA_MIN_ANSWERS} questions first.`);
+  if (loaded.source.evidence.length < SOUL_MIN_ANSWERS)
+    throw new EngineError('invalid', `Answer at least ${SOUL_MIN_ANSWERS} questions first.`);
   const model = loaded.cfg.reflector.model ?? loaded.cfg.generator.model;
   const write = () =>
-    writePersonaDraft(deps.gateway, ctxFor(m, 'persona.draft'), {
+    writeSoulDraft(deps.gateway, ctxFor(m, 'soul.draft'), {
       model,
       source: loaded.source,
       facets: loaded.facets,
@@ -129,12 +125,12 @@ export async function draftPersona(deps: EngineDeps, mimicId: string): Promise<P
   if (!draft.statements.length) ({ draft, modelSnapshot } = await write());
   if (!draft.statements.length)
     throw new EngineError('conflict', 'Could not write a persona from these answers. Try again.');
-  const rec: PersonaDraftRecord = {
+  const rec: SoulDraftRecord = {
     id: deps.newId(),
     mimicId: m.id,
     seqUpTo: loaded.source.evidence.reduce((a, e) => Math.max(a, e.seq), 0),
     configHash: m.configHash,
-    promptVersion: PERSONA_PROMPT_VERSION,
+    promptVersion: SOUL_PROMPT_VERSION,
     model,
     modelSnapshot,
     draft,
@@ -144,7 +140,7 @@ export async function draftPersona(deps: EngineDeps, mimicId: string): Promise<P
   return view(deps, m, { loaded, draft: rec });
 }
 
-/** The file itself, as downloaded: `Persona.md`. */
-export async function exportPersona(deps: EngineDeps, mimicId: string): Promise<string> {
-  return (await getPersona(deps, mimicId)).markdown;
+/** The file itself, as downloaded: `SOUL.md`. */
+export async function exportSoul(deps: EngineDeps, mimicId: string): Promise<string> {
+  return (await getSoul(deps, mimicId)).markdown;
 }

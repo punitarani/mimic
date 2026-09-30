@@ -24,6 +24,13 @@ const nextConfig: NextConfig = {
     APPLE_ICON_VERSION: version('./public/apple-touch-icon.png'),
     ICON_VERSION: version('./public/icon.svg'),
   },
+  // Persona.md became SOUL.md (ADR-0035); links and bookmarks to the old paths keep working.
+  async redirects() {
+    return [
+      { source: '/m/:id/persona', destination: '/m/:id/soul', permanent: true },
+      { source: '/api/mimics/:id/persona.md', destination: '/api/mimics/:id/soul.md', permanent: true },
+    ];
+  },
 };
 
 export default nextConfig;

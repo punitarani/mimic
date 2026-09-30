@@ -17,10 +17,6 @@ import {
   type MimicRecord,
   type ModelCallRecord,
   Option,
-  PersonaCuration,
-  type PersonaCurationRecord,
-  PersonaDraft,
-  type PersonaDraftRecord,
   type PredictionRecord,
   type PredictionRole,
   type QKind,
@@ -30,6 +26,10 @@ import {
   type ScoredPredictionRow,
   type ScoreRecord,
   type SnapshotRecord,
+  SoulCuration,
+  type SoulCurationRecord,
+  SoulDraft,
+  type SoulDraftRecord,
   type Store,
   type TraitRecord,
 } from '@mimic/core';
@@ -737,50 +737,48 @@ export class DrizzleStore implements Store {
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
   }
 
-  // Persona.md (ADR-0033)
-  async insertPersonaDraft(rec: PersonaDraftRecord) {
+  // SOUL.md (ADR-0035)
+  async insertPersonaDraft(rec: SoulDraftRecord) {
     const { draft, ...row } = rec;
-    await this.db
-      .insert(s.personaDrafts)
-      .values({ ...row, draftJson: JSON.stringify(PersonaDraft.parse(draft)) });
+    await this.db.insert(s.soulDrafts).values({ ...row, draftJson: JSON.stringify(SoulDraft.parse(draft)) });
   }
-  async latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null> {
+  async latestPersonaDraft(mimicId: string): Promise<SoulDraftRecord | null> {
     const row = await this.db
       .select()
-      .from(s.personaDrafts)
-      .where(eq(s.personaDrafts.mimicId, mimicId))
-      .orderBy(desc(s.personaDrafts.createdAt), desc(s.personaDrafts.id))
+      .from(s.soulDrafts)
+      .where(eq(s.soulDrafts.mimicId, mimicId))
+      .orderBy(desc(s.soulDrafts.createdAt), desc(s.soulDrafts.id))
       .get();
     if (!row) return null;
     const { draftJson, ...rest } = row;
-    return { ...rest, draft: parse(PersonaDraft, draftJson, { summary: '', statements: [] }) };
+    return { ...rest, draft: parse(SoulDraft, draftJson, { summary: '', statements: [] }) };
   }
-  async getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null> {
+  async getSoulCuration(mimicId: string): Promise<SoulCurationRecord | null> {
     const row = await this.db
       .select()
-      .from(s.personaCurations)
-      .where(eq(s.personaCurations.mimicId, mimicId))
+      .from(s.soulCurations)
+      .where(eq(s.soulCurations.mimicId, mimicId))
       .get();
     if (!row) return null;
     return {
       mimicId: row.mimicId,
-      curation: parse(PersonaCuration, row.json, PersonaCuration.parse({})),
+      curation: parse(SoulCuration, row.json, SoulCuration.parse({})),
       rev: row.rev,
       updatedAt: row.updatedAt,
     };
   }
-  async putPersonaCuration(rec: PersonaCurationRecord) {
-    const json = JSON.stringify(PersonaCuration.parse(rec.curation));
+  async putPersonaCuration(rec: SoulCurationRecord) {
+    const json = JSON.stringify(SoulCuration.parse(rec.curation));
     const rows = await this.db
-      .insert(s.personaCurations)
+      .insert(s.soulCurations)
       .values({ mimicId: rec.mimicId, json, rev: rec.rev, updatedAt: rec.updatedAt })
       .onConflictDoUpdate({
-        target: s.personaCurations.mimicId,
+        target: s.soulCurations.mimicId,
         set: { json, rev: rec.rev, updatedAt: rec.updatedAt },
         // Out-of-order saves (a slow request, a keepalive flush on leaving the page) never overwrite a newer one.
-        setWhere: lt(s.personaCurations.rev, rec.rev),
+        setWhere: lt(s.soulCurations.rev, rec.rev),
       })
-      .returning({ rev: s.personaCurations.rev })
+      .returning({ rev: s.soulCurations.rev })
       .all();
     return rows.length > 0;
   }

@@ -8,17 +8,17 @@ import { PROMPTS } from './prompts';
 import type { Facet } from './types';
 
 /**
- * Persona.md (ADR-0033): a portable Markdown portrait that any agent can read to represent the person. It is a view of
+ * SOUL.md (ADR-0035): a portable Markdown portrait that any agent can read to represent the person. It is a view of
  * the mimic's current evidence and derived data, plus an optional LLM-written draft (`persona.v1`) and the person's
  * curation. Evidence stays the source of truth (PLAN §3.3): drafts are derived and versioned, and curation only
  * filters and rewords what goes into the file. Nothing here feeds back into states or predictions.
  */
 
-export const PERSONA_PROMPT_VERSION = 'persona.v1';
+export const SOUL_PROMPT_VERSION = 'persona.v1';
 /** Fewer answers than this can't support cited statements. */
-export const PERSONA_MIN_ANSWERS = 5;
+export const SOUL_MIN_ANSWERS = 5;
 /** Answers sent to the writer, the most recent when over the cap. */
-export const PERSONA_MAX_ANSWERS = 300;
+export const SOUL_MAX_ANSWERS = 300;
 /** Scored answers needed before the file calls itself a strong prior. */
 export const STRONG_MIN_SCORED = 20;
 /** Below this certainty, or with no direct evidence, a facet goes under "Not known yet". */
@@ -37,7 +37,7 @@ export const STATEMENT_SECTIONS = [
 ] as const;
 export type StatementSection = (typeof STATEMENT_SECTIONS)[number];
 
-export const PERSONA_SECTIONS = [
+export const SOUL_SECTIONS = [
   'guide',
   'own_words',
   'summary',
@@ -48,10 +48,10 @@ export const PERSONA_SECTIONS = [
   'unknowns',
   'record',
 ] as const;
-export const PersonaSectionId = z.enum(PERSONA_SECTIONS);
-export type PersonaSectionId = z.infer<typeof PersonaSectionId>;
+export const SoulSectionId = z.enum(SOUL_SECTIONS);
+export type SoulSectionId = z.infer<typeof SoulSectionId>;
 
-const SECTION_META: Record<PersonaSectionId, { title: string; about: string }> = {
+const SECTION_META: Record<SoulSectionId, { title: string; about: string }> = {
   guide: { title: 'How to use this file', about: 'Instructions for the agent reading the file.' },
   own_words: {
     title: 'In their own words',
@@ -76,7 +76,7 @@ const SECTION_META: Record<PersonaSectionId, { title: string; about: string }> =
  * What a persona is built from: the mimic's current data, the same shape as the matching `mimic.json` fields. Built
  * live rather than from a snapshot, so a removed fact leaves the file at once and viewing never writes a snapshot.
  */
-export interface PersonaSource {
+export interface SoulSource {
   asOf: number;
   subject: MimicJson['subject'];
   /** Active facts only. */
@@ -93,27 +93,27 @@ export interface PersonaSource {
 // Draft (LLM-written) and curation (the person's choices)
 // ---------------------------------------------------------------------------------------------------------------
 
-export const PersonaStatement = z.object({
+export const SoulStatement = z.object({
   section: z.enum(STATEMENT_SECTIONS),
   text: z.string().min(3).max(400),
   evidenceSeqs: z.array(z.number().int()),
   confidence: z.number().min(0).max(1),
 });
-export type PersonaStatement = z.infer<typeof PersonaStatement>;
+export type SoulStatement = z.infer<typeof SoulStatement>;
 
-export const PersonaDraft = z.object({
+export const SoulDraft = z.object({
   summary: z.string().max(1200),
-  statements: z.array(PersonaStatement),
+  statements: z.array(SoulStatement),
 });
-export type PersonaDraft = z.infer<typeof PersonaDraft>;
+export type SoulDraft = z.infer<typeof SoulDraft>;
 
 const ItemKey = z.string().min(1).max(80);
-export const PersonaCuration = z.object({
+export const SoulCuration = z.object({
   /** The name used in the file; null keeps the mimic's display name. */
   name: z.string().trim().max(120).nullable().default(null),
   /** Free Markdown written by the person. */
   notes: z.string().max(6000).default(''),
-  disabled: z.array(PersonaSectionId).default([]),
+  disabled: z.array(SoulSectionId).default([]),
   hidden: z.array(ItemKey).max(2000).default([]),
   /** Rewordings of draft items (summary and statements), keyed by item key. */
   edits: z
@@ -121,12 +121,12 @@ export const PersonaCuration = z.object({
     .refine((e) => Object.keys(e).length <= 500, 'too many edits')
     .default({}),
 });
-export type PersonaCuration = z.infer<typeof PersonaCuration>;
-export const EMPTY_CURATION: PersonaCuration = PersonaCuration.parse({});
+export type SoulCuration = z.infer<typeof SoulCuration>;
+export const EMPTY_CURATION: SoulCuration = SoulCuration.parse({});
 
-/** `PUT /persona`: the whole curation, with the client's revision (increasing per edit). */
-export const PersonaSave = z.object({ rev: z.number().int().nonnegative(), curation: PersonaCuration });
-export type PersonaSave = z.infer<typeof PersonaSave>;
+/** `PUT /soul`: the whole curation, with the client's revision (increasing per edit). */
+export const SoulSave = z.object({ rev: z.number().int().nonnegative(), curation: SoulCuration });
+export type SoulSave = z.infer<typeof SoulSave>;
 
 /** One statement as the writer returned it; each is parsed on its own, so one bad item drops only itself. */
 const RawStatement = z.object({
@@ -170,10 +170,7 @@ function nameRedactor(displayName: string): (s: string) => string {
  * appears, such as a search result's title), no `headline` facts, which are page titles, and no repeats, which the
  * file's decision record leaves out.
  */
-export function personaWriterInput(
-  src: PersonaSource,
-  facets: Facet[],
-): { text: string; shown: Set<number> } {
+export function soulWriterInput(src: SoulSource, facets: Facet[]): { text: string; shown: Set<number> } {
   const redact = nameRedactor(src.subject.displayName);
   const ctx = [`location: ${src.subject.location}`];
   if (src.subject.occupation) ctx.push(`occupation: ${src.subject.occupation}`);
@@ -182,7 +179,7 @@ export function personaWriterInput(
     (t) => `${t.facet.id}: ${t.label} (${t.facet.low} ↔ ${t.facet.high}; ${t.certainty} certainty)`,
   );
   const patterns = src.insights.map((i) => `- ${oneLine(i.text)} [${i.evidence.join(', ')}]`);
-  const answers = recordEvidence(src).slice(-PERSONA_MAX_ANSWERS);
+  const answers = recordEvidence(src).slice(-SOUL_MAX_ANSWERS);
   const lines = answers.map((e) => {
     const why = e.why ? ` (why: ${oneLine(e.why).slice(0, WHY_CHARS)})` : '';
     return `#${e.seq} ${oneLine(e.prompt)} [${e.options.join(' | ')}] → ${chosenLabel(e)}${why}`;
@@ -200,20 +197,20 @@ export function personaWriterInput(
  * Writes a draft with `persona.v1`. The citation guard matches the reflector's: a statement must cite at least one
  * answer the writer was shown, or it is dropped.
  */
-export async function writePersonaDraft(
+export async function writeSoulDraft(
   gateway: Gateway,
   ctx: CallContext,
-  input: { model: string; source: PersonaSource; facets: Facet[] },
-): Promise<{ draft: PersonaDraft; dropped: number; modelSnapshot: string }> {
+  input: { model: string; source: SoulSource; facets: Facet[] },
+): Promise<{ draft: SoulDraft; dropped: number; modelSnapshot: string }> {
   const p = PROMPTS['persona.v1'];
-  const { text, shown } = personaWriterInput(input.source, input.facets);
+  const { text, shown } = soulWriterInput(input.source, input.facets);
   const res = await gateway.chat(ctx, {
     model: input.model,
     messages: [
       { role: 'system', content: p.system },
       { role: 'user', content: text },
     ],
-    jsonSchema: { name: 'persona', schema: p.schema },
+    jsonSchema: { name: 'soul', schema: p.schema },
     reasoningEffort: 'medium',
     maxTokens: 16_000,
   });
@@ -222,7 +219,7 @@ export async function writePersonaDraft(
   const sections = new Set<string>(STATEMENT_SECTIONS);
   const perSection = new Map<string, number>();
   const seen = new Set<string>();
-  const statements: PersonaStatement[] = [];
+  const statements: SoulStatement[] = [];
   let dropped = 0;
   for (const raw of parsed.data.statements) {
     const r = RawStatement.safeParse(raw);
@@ -242,7 +239,7 @@ export async function writePersonaDraft(
     seen.add(`${s.section}|${stmt}`);
     perSection.set(s.section, n + 1);
     statements.push(
-      PersonaStatement.parse({
+      SoulStatement.parse({
         section: s.section,
         text: stmt,
         evidenceSeqs: cites,
@@ -250,7 +247,7 @@ export async function writePersonaDraft(
       }),
     );
   }
-  const draft = PersonaDraft.parse({
+  const draft = SoulDraft.parse({
     summary: stripInlineCites(parsed.data.summary).slice(0, 1200),
     statements,
   });
@@ -261,7 +258,7 @@ export async function writePersonaDraft(
 // The view (for curation) and the file
 // ---------------------------------------------------------------------------------------------------------------
 
-export interface PersonaItem {
+export interface SoulItem {
   key: string;
   /** The text before any edit by the person. */
   text: string;
@@ -277,14 +274,14 @@ export interface PersonaItem {
   answer?: { options: string[]; chosen: string; why: string | null };
 }
 
-export interface PersonaSection {
-  id: PersonaSectionId;
+export interface SoulSection {
+  id: SoulSectionId;
   title: string;
   about: string;
-  items: PersonaItem[];
+  items: SoulItem[];
 }
 
-export interface PersonaDraftMeta {
+export interface SoulDraftMeta {
   id: string;
   createdAt: number;
   seqUpTo: number;
@@ -292,24 +289,24 @@ export interface PersonaDraftMeta {
   promptVersion: string;
 }
 
-export interface PersonaInput {
-  source: PersonaSource;
+export interface SoulInput {
+  source: SoulSource;
   facets: Facet[];
-  draft: (PersonaDraftMeta & { draft: PersonaDraft }) | null;
-  curation: PersonaCuration;
+  draft: (SoulDraftMeta & { draft: SoulDraft }) | null;
+  curation: SoulCuration;
   rev?: number;
 }
 
-export interface PersonaView {
+export interface SoulView {
   name: string;
-  sections: PersonaSection[];
+  sections: SoulSection[];
   markdown: string;
   source: { asOf: number; answers: number };
   /** `answers`: answers the draft was written from; `newAnswers`: answered since. */
-  draft: (PersonaDraftMeta & { answers: number; newAnswers: number }) | null;
+  draft: (SoulDraftMeta & { answers: number; newAnswers: number }) | null;
   /** Answers needed before a draft can be written. */
   minAnswers: number;
-  curation: PersonaCuration;
+  curation: SoulCuration;
   /** Revision of the stored curation (0 when none is stored). */
   rev: number;
 }
@@ -319,9 +316,9 @@ const short = (s: string) => sha256Hex(s).slice(0, 12);
  * Curation keys. Draft items hash their content, so a rewrite that changes one drops its edit; the rest name stable
  * things (a fact, a facet, an answer), so hiding them survives rewrites and new answers.
  */
-export const personaKey = {
+export const soulKey = {
   summary: (text: string) => `summary:${short(text)}`,
-  statement: (s: Pick<PersonaStatement, 'section' | 'text'>) => `st:${short(`${s.section}|${s.text}`)}`,
+  statement: (s: Pick<SoulStatement, 'section' | 'text'>) => `st:${short(`${s.section}|${s.text}`)}`,
   identity: (field: 'location' | 'occupation') => `id:${field}`,
   fact: (f: { predicate: string; object: string }) => `fact:${short(`${f.predicate}|${f.object}`)}`,
   trait: (facetId: string) => `trait:${facetId}`,
@@ -338,7 +335,7 @@ interface TraitLine {
 }
 
 /** One line per facet with an estimate, preferring the decision model's read over psychometric scoring. */
-function traitLines(src: PersonaSource, facets: Facet[]): TraitLine[] {
+function traitLines(src: SoulSource, facets: Facet[]): TraitLine[] {
   const best = new Map<string, MimicJson['traits'][number]>();
   for (const t of src.traits) {
     const cur = best.get(t.facet);
@@ -359,7 +356,7 @@ function traitLines(src: PersonaSource, facets: Facet[]): TraitLine[] {
 }
 
 /** Repeats re-ask an earlier prompt to measure consistency; the record keeps the first time it was answered. */
-function recordEvidence(src: PersonaSource): MimicJson['evidence'] {
+function recordEvidence(src: SoulSource): MimicJson['evidence'] {
   return src.evidence.filter((e) => e.kind !== 'repeat');
 }
 
@@ -383,7 +380,7 @@ function firstName(name: string): string {
 }
 
 /** Draft text mentioning a fact the person removed stays out of the file (PLAN §15: every fact can be removed). */
-function mentionsRemoved(src: PersonaSource): (text: string) => boolean {
+function mentionsRemoved(src: SoulSource): (text: string) => boolean {
   const objects = src.removedFacts.map((f) => f.object.trim().toLowerCase()).filter((o) => o.length >= 3);
   return (text) => {
     const t = text.toLowerCase();
@@ -392,18 +389,18 @@ function mentionsRemoved(src: PersonaSource): (text: string) => boolean {
 }
 
 /** Builds the curation view and the Markdown from the same items, so the preview is exactly the file. */
-export function buildPersona(input: PersonaInput): PersonaView {
+export function buildSoul(input: SoulInput): SoulView {
   const { source: src, facets, draft, curation } = input;
   const name = curation.name?.trim() || src.subject.displayName;
-  const items = new Map<PersonaSectionId, PersonaItem[]>(PERSONA_SECTIONS.map((s) => [s, []]));
-  const push = (s: PersonaSectionId, item: PersonaItem) => items.get(s)!.push(item);
+  const items = new Map<SoulSectionId, SoulItem[]>(SOUL_SECTIONS.map((s) => [s, []]));
+  const push = (s: SoulSectionId, item: SoulItem) => items.get(s)!.push(item);
 
   if (draft) {
     const removed = mentionsRemoved(src);
     const summary = draft.draft.summary;
     if (summary && !removed(summary))
       push('summary', {
-        key: personaKey.summary(summary),
+        key: soulKey.summary(summary),
         text: summary,
         detail: null,
         cites: [],
@@ -412,7 +409,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
     for (const st of draft.draft.statements) {
       if (removed(st.text)) continue;
       push(st.section, {
-        key: personaKey.statement(st),
+        key: soulKey.statement(st),
         text: st.text,
         detail: null,
         cites: st.evidenceSeqs,
@@ -424,7 +421,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
 
   if (src.subject.occupation)
     push('background', {
-      key: personaKey.identity('occupation'),
+      key: soulKey.identity('occupation'),
       text: src.subject.occupation,
       detail: null,
       cites: [],
@@ -432,7 +429,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
     });
   if (src.subject.location)
     push('background', {
-      key: personaKey.identity('location'),
+      key: soulKey.identity('location'),
       text: `Based in ${src.subject.location}`,
       detail: null,
       cites: [],
@@ -440,7 +437,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
     });
   const factSeen = new Set<string>();
   for (const f of src.facts) {
-    const key = personaKey.fact(f);
+    const key = soulKey.fact(f);
     if (factSeen.has(key)) continue;
     factSeen.add(key);
     push('background', {
@@ -455,7 +452,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
   const traits = traitLines(src, facets);
   for (const t of traits.filter((x) => x.known)) {
     push('tendencies', {
-      key: personaKey.trait(t.facet.id),
+      key: soulKey.trait(t.facet.id),
       text: `${capitalize(t.facet.name)}: ${t.label}`,
       detail: `${t.facet.low} ↔ ${t.facet.high}; ${t.certainty} certainty`,
       cites: [],
@@ -476,7 +473,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
 
   for (const i of src.insights) {
     push('patterns', {
-      key: personaKey.insight(i.text),
+      key: soulKey.insight(i.text),
       text: oneLine(i.text),
       detail: null,
       cites: [...i.evidence].sort((a, b) => a - b),
@@ -486,7 +483,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
 
   for (const e of recordEvidence(src)) {
     push('record', {
-      key: personaKey.record(e.seq),
+      key: soulKey.record(e.seq),
       text: oneLine(e.prompt),
       detail: null,
       cites: [e.seq],
@@ -495,12 +492,12 @@ export function buildPersona(input: PersonaInput): PersonaView {
     });
   }
 
-  const sections: PersonaSection[] = PERSONA_SECTIONS.map((id) => ({
+  const sections: SoulSection[] = SOUL_SECTIONS.map((id) => ({
     id,
     ...SECTION_META[id],
     items: items.get(id)!,
   }));
-  let draftMeta: PersonaView['draft'] = null;
+  let draftMeta: SoulView['draft'] = null;
   if (draft) {
     const { draft: _body, ...meta } = draft;
     const within = src.evidence.filter((e) => e.seq <= draft.seqUpTo).length;
@@ -512,7 +509,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
     markdown: renderPersonaMarkdown({ name, src, sections, curation }),
     source: { asOf: src.asOf, answers: src.evidence.length },
     draft: draftMeta,
-    minAnswers: PERSONA_MIN_ANSWERS,
+    minAnswers: SOUL_MIN_ANSWERS,
     curation,
     rev: input.rev ?? 0,
   };
@@ -520,17 +517,17 @@ export function buildPersona(input: PersonaInput): PersonaView {
 
 function renderPersonaMarkdown(args: {
   name: string;
-  src: PersonaSource;
-  sections: PersonaSection[];
-  curation: PersonaCuration;
+  src: SoulSource;
+  sections: SoulSection[];
+  curation: SoulCuration;
 }): string {
   const { name, src, sections, curation } = args;
   const off = new Set<string>(curation.disabled);
   const hidden = new Set(curation.hidden);
-  const on = (id: PersonaSectionId) => !off.has(id);
-  const visible = (id: PersonaSectionId) =>
+  const on = (id: SoulSectionId) => !off.has(id);
+  const visible = (id: SoulSectionId) =>
     on(id) ? sections.find((s) => s.id === id)!.items.filter((i) => !hidden.has(i.key)) : [];
-  const textOf = (i: PersonaItem) => oneLine(curation.edits[i.key] ?? i.text);
+  const textOf = (i: SoulItem) => oneLine(curation.edits[i.key] ?? i.text);
 
   // Citations point into the decision record, so they are shown only for answers that made it into the file.
   const recordSeqs = new Set(visible('record').flatMap((i) => i.cites));
@@ -545,7 +542,7 @@ function renderPersonaMarkdown(args: {
     `A portrait of how ${name} thinks and makes decisions, built by Mimic from ${src.evidence.length} answers they gave about themselves, as of ${date}.`,
   );
 
-  const section = (id: PersonaSectionId, body: string[]) => {
+  const section = (id: SoulSectionId, body: string[]) => {
     if (!body.length) return;
     out.push('', `## ${SECTION_META[id].title}`, '', ...body);
   };
@@ -637,10 +634,10 @@ function renderPersonaMarkdown(args: {
  * for stable things (facts, facets, answers, identity fields) are kept even when the item is missing for now, so an
  * item the person hid stays hidden when it comes back.
  */
-export function pruneCuration(c: PersonaCuration, draft: PersonaDraft | null): PersonaCuration {
+export function pruneCuration(c: SoulCuration, draft: SoulDraft | null): SoulCuration {
   const current = new Set<string>();
-  if (draft?.summary) current.add(personaKey.summary(draft.summary));
-  for (const st of draft?.statements ?? []) current.add(personaKey.statement(st));
+  if (draft?.summary) current.add(soulKey.summary(draft.summary));
+  for (const st of draft?.statements ?? []) current.add(soulKey.statement(st));
   const keep = (k: string) => !isDraftKey(k) || current.has(k);
   return {
     ...c,

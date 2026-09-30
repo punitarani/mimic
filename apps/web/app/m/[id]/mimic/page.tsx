@@ -41,7 +41,7 @@ export default function MimicPage() {
   );
 }
 
-/** Persona.md (ADR-0033): a portable portrait for any agent, curated on its own page. */
+/** SOUL.md (ADR-0035): a portable portrait for any agent, curated on its own page. */
 function Persona({ id }: { id: string }) {
   return (
     <section aria-labelledby="persona-h" className="space-y-3">
@@ -49,11 +49,11 @@ function Persona({ id }: { id: string }) {
         Take your mimic anywhere
       </h2>
       <p className="text-[15px] text-muted">
-        Persona.md is a file any AI agent can read to represent you: your values, beliefs, opinions and
-        biases, and above all how you make decisions. You choose what goes in.
+        SOUL.md is a file any AI agent can read to represent you: your values, beliefs, opinions and biases,
+        and above all how you make decisions. You choose what goes in.
       </p>
-      <Link href={`/m/${id}/persona`} className={buttonClass('primary')}>
-        Curate Persona.md
+      <Link href={`/m/${id}/soul`} className={buttonClass('primary')}>
+        Curate SOUL.md
       </Link>
     </section>
   );
@@ -68,9 +68,9 @@ function Manage({ id }: { id: string }) {
         Your data
       </h2>
       <div className="flex flex-wrap gap-3">
-        <a href={`/api/mimics/${id}/persona.md`} className={buttonClass('primary')} download>
+        <a href={`/api/mimics/${id}/soul.md`} className={buttonClass('primary')} download>
           <DocIcon width={18} height={18} />
-          Download Persona.md
+          Download SOUL.md
         </a>
         <a href={`/api/mimics/${id}/export`} className={buttonClass('secondary')} download>
           <CodeIcon width={18} height={18} />

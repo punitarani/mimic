@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { curatePersona, draftPersona, PersonaCuration, VOI_SELECTOR } from '@mimic/core';
+import { curateSoul, draftSoul, SoulCuration, VOI_SELECTOR } from '@mimic/core';
 import { schema } from '@mimic/db';
 import type { MemoryBlobs } from '@mimic/db/local';
 import { sql } from 'drizzle-orm';
@@ -158,12 +158,12 @@ describe('replay (M7)', () => {
     const ids = await cohort(3, 12);
     // Persona drafts are free text written from location and sourced facts; curations are the person's own words.
     for (const id of ids) {
-      await draftPersona(engine.deps, id);
-      await curatePersona(engine.deps, id, { rev: 1, curation: PersonaCuration.parse({ notes: 'Mine.' }) });
+      await draftSoul(engine.deps, id);
+      await curateSoul(engine.deps, id, { rev: 1, curation: SoulCuration.parse({ notes: 'Mine.' }) });
     }
     const { dropped } = await scrubExport(engine.client, { keepIdentity: false });
     expect(dropped).toBe(1);
-    for (const t of ['persona_drafts', 'persona_curations'])
+    for (const t of ['soul_drafts', 'soul_curations'])
       expect((await engine.client.execute(`select count(*) as n from ${t}`)).rows[0]!.n).toBe(0);
     const db = (
       engine.deps.store as unknown as { db: { all: (q: unknown) => Promise<Array<Record<string, unknown>>> } }

@@ -1,12 +1,12 @@
 import {
   createMimic,
-  curatePersona,
-  draftPersona,
-  exportPersona,
-  getPersona,
-  personaKey,
+  curateSoul,
+  draftSoul,
+  exportSoul,
+  getSoul,
   serveNext,
   setFactState,
+  soulKey,
   submitAnswer,
 } from '@mimic/core';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -46,17 +46,17 @@ async function mimic() {
   );
 }
 
-describe('Persona.md (ADR-0033)', () => {
+describe('SOUL.md (ADR-0035)', () => {
   it('drafts, curates and exports a persona from the latest snapshot', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await mimic();
     await engine.drain();
     await answer(m.id, 3);
-    await expect(draftPersona(engine.deps, m.id)).rejects.toThrow(/at least 5/);
+    await expect(draftSoul(engine.deps, m.id)).rejects.toThrow(/at least 5/);
 
     await answer(m.id, 9, 3);
     const snaps = (await engine.deps.store.listSnapshots(m.id)).length;
-    const before = await getPersona(engine.deps, m.id);
+    const before = await getSoul(engine.deps, m.id);
     // Viewing reads live data and never writes a snapshot (it can't race snapshot.write or freeze derived data).
     expect((await engine.deps.store.listSnapshots(m.id)).length).toBe(snaps);
     expect(before.draft).toBeNull();
@@ -66,7 +66,7 @@ describe('Persona.md (ADR-0033)', () => {
     expect(before.markdown).toContain('Why: “Fast beats perfect for me”');
     expect(before.markdown).not.toContain('## Summary');
 
-    const v = await draftPersona(engine.deps, m.id);
+    const v = await draftSoul(engine.deps, m.id);
     expect(v.draft).toMatchObject({ promptVersion: 'persona.v1', seqUpTo: 12, answers: 12, newAnswers: 0 });
     expect(v.draft!.modelSnapshot).toMatch(/@fake$/);
     const statements = v.sections.filter((s) => s.items.some((i) => i.key.startsWith('st:')));
@@ -80,7 +80,7 @@ describe('Persona.md (ADR-0033)', () => {
     expect(v.markdown).toContain('## How they decide');
     expect(v.markdown).not.toContain('must be dropped');
     const calls = await engine.deps.store.listModelCalls({ mimicId: m.id, limit: 1000 });
-    const call = calls.find((c) => c.purpose === 'persona.draft')!;
+    const call = calls.find((c) => c.purpose === 'soul.draft')!;
     expect(call.configHash).toBe(m.configHash);
     // No name goes to the writer (data minimization).
     expect(await engine.deps.blobs.get(call.r2TraceKey)).not.toContain('Avery');
@@ -90,17 +90,17 @@ describe('Persona.md (ADR-0033)', () => {
       name: 'Avery',
       notes: 'I never decide on money the same day.',
       disabled: ['tendencies' as const],
-      hidden: [personaKey.identity('location'), 'st:gone'],
+      hidden: [soulKey.identity('location'), 'st:gone'],
       edits: { [st.key]: 'Commits quickly, then revisits.', 'st:gone': 'stale' },
     };
-    const curated = await curatePersona(engine.deps, m.id, { rev: 10, curation });
-    expect(curated.curation.hidden).toEqual([personaKey.identity('location')]);
+    const curated = await curateSoul(engine.deps, m.id, { rev: 10, curation });
+    expect(curated.curation.hidden).toEqual([soulKey.identity('location')]);
     expect(curated.curation.edits).toEqual({ [st.key]: 'Commits quickly, then revisits.' });
     expect(curated.rev).toBe(10);
     // A save that arrives late (older rev) never overwrites a newer one.
-    const late = await curatePersona(engine.deps, m.id, { rev: 9, curation: { ...curation, notes: 'Old.' } });
+    const late = await curateSoul(engine.deps, m.id, { rev: 9, curation: { ...curation, notes: 'Old.' } });
     expect(late).toMatchObject({ rev: 10, curation: { notes: 'I never decide on money the same day.' } });
-    const md = await exportPersona(engine.deps, m.id);
+    const md = await exportSoul(engine.deps, m.id);
     expect(md).toContain('# Persona: Avery\n');
     expect(md).toContain('## In their own words\n\nI never decide on money the same day.');
     expect(md).toContain('- Commits quickly, then revisits.');
@@ -111,11 +111,11 @@ describe('Persona.md (ADR-0033)', () => {
     const fact = (await engine.deps.store.listFacts(m.id)).find((f) => f.object === 'Planning trips')!;
     expect(md).toContain('Interest: Planning trips');
     await setFactState(engine.deps, m.id, fact.id, 'removed');
-    expect(await exportPersona(engine.deps, m.id)).not.toContain('Planning trips');
+    expect(await exportSoul(engine.deps, m.id)).not.toContain('Planning trips');
 
     // New answers mark the draft stale; the deterministic sections follow right away.
     await answer(m.id, 2, 12);
-    const later = await getPersona(engine.deps, m.id);
+    const later = await getSoul(engine.deps, m.id);
     expect(later.draft).toMatchObject({ answers: 12, newAnswers: 2 });
     expect(later.source.answers).toBe(14);
     expect(later.markdown).toContain('**#14**');

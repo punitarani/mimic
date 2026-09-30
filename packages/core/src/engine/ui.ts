@@ -38,7 +38,7 @@ export interface UiSnapshot {
     arm: string | null;
     createdAt: number;
     spendUsd: number;
-    /** The whole cap: asking, teaching and Persona.md work until spend reaches it (ADR-0034). */
+    /** The whole cap: asking, teaching and SOUL.md work until spend reaches it (ADR-0034). */
     budgetUsd: number;
     /** The session's share of the cap; it stops serving questions here. */
     sessionBudgetUsd: number;
