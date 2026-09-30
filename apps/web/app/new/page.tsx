@@ -2,9 +2,12 @@
 import { withScheme } from '@mimic/core/links';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
+import { AutocompleteInput } from '@/components/autocomplete';
 import { TopBar } from '@/components/brand';
-import { Button, Checkbox, ErrorText, Field, Input } from '@/components/ui';
+import { Button, Checkbox, ErrorText, Field, fieldLabelId, Input } from '@/components/ui';
 import { api } from '@/lib/api';
+import { loadOccupations, loadPlaces } from '@/lib/autocomplete';
+import sources from '@/lib/autocomplete-sources.json';
 import { INVITE_PARAM, inviteFromQuery } from '@/lib/invite';
 
 export default function NewMimic() {
@@ -51,8 +54,8 @@ function IntakeForm({ invite }: { invite: string | null }) {
   const [research, setResearch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setF({ ...f, [k]: e.target.value });
+  const setValue = (k: keyof typeof f) => (v: string) => setF((prev) => ({ ...prev, [k]: v }));
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setValue(k)(e.target.value);
 
   // After each failed submit of a linked code, put the cursor where the fix goes (once the field is enabled).
   useEffect(() => {
@@ -113,23 +116,26 @@ function IntakeForm({ invite }: { invite: string | null }) {
         label="Location"
         htmlFor="location"
         required
-        hint="City and country, for example Lisbon, Portugal."
+        hint="Your city finds you best. A state or country works too."
       >
-        <Input
+        <AutocompleteInput
           id="location"
+          labelId={fieldLabelId('location')}
           value={f.location}
-          onChange={set('location')}
+          onChange={setValue('location')}
+          load={loadPlaces}
           required
-          autoComplete="address-level2"
+          placeholder="Lisbon, Portugal"
         />
       </Field>
       <div className="grid gap-5 sm:grid-cols-2">
         <Field label="Occupation" htmlFor="occupation">
-          <Input
+          <AutocompleteInput
             id="occupation"
+            labelId={fieldLabelId('occupation')}
             value={f.occupation}
-            onChange={set('occupation')}
-            autoComplete="organization-title"
+            onChange={setValue('occupation')}
+            load={loadOccupations}
           />
         </Field>
         <Field label="Employer or school" htmlFor="employer">
@@ -179,6 +185,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
       >
         {busy ? 'Creating…' : 'Continue'}
       </Button>
+      <p className="text-xs text-muted">{[...sources.places, ...sources.occupations].join(' ')}</p>
     </form>
   );
 }

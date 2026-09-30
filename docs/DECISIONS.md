@@ -551,3 +551,55 @@ plus 10 Jev calls, and $0.001 more for a link.
 
 The picker is a radio group (select, then "This is me"). Profiles below p = 0.2 are behind "Show more". The link
 search sits under the list and on the "couldn't find" screen.
+
+## ADR-0030 — Location and occupation autocomplete on `/new` (2026-09-30)
+
+The location and occupation fields on `/new` suggest as you type. A location can be a city, a state or province, or a
+country: "Cambridge, Massachusetts, United States", "Bavaria, Germany" or "Portugal". Suggestions only fill the text
+field, and anything typed is kept, so a village or a title that isn't listed still works. The API and the `mimics`
+columns don't change: both fields are still free text.
+
+This departs from PLAN §9.1, which asked for "city and country". A country-only location makes the identity queries
+(`"{name}, {role}, {location}"`, ADR-0029) and the baseline's context less specific, so the hint asks for a city first
+and a state or country is the fallback for people who don't want to give one.
+
+- **Data.** `apps/web/scripts/autocomplete/gen.mjs` (`pnpm --filter @mimic/web gen:autocomplete`) writes two static
+  files to `apps/web/public/autocomplete/`, plus `lib/autocomplete-sources.json`, which is the attribution the form
+  shows. All three are committed and deterministic. The script's directory is its own package, outside the
+  workspace. It installs its ~80 MB of source data only when run, so CI and deploys never download it.
+  - `places.v1.json` (~350 KB gzipped) holds 250 countries and 5,076 subdivisions from `@countrystatecity/countries`
+    (dr5hn, ODbL). It also holds 24,686 cities from GeoNames via `all-the-cities` (CC BY 4.0): those with 15,000+
+    people, plus capitals.
+    - Each city takes its state from the nearest same-named dr5hn city, so the names agree.
+    - The UK keeps only England, Scotland, Wales and Northern Ireland as its subdivisions.
+    - A subdivision that is also listed as a country (Hong Kong SAR, Macau SAR, Puerto Rico, Taiwan, Kosovo) is left
+      out, and so is a city that is its own country (Singapore, Monaco).
+    - A few cities carry the names people type (NYC, SF, Bangalore, Kiev, DC). US, Canadian and Australian states
+      match their abbreviations (TX, ON, NSW).
+  - `occupations.v1.json` holds 6,813 titles from O*NET 30.3 "Sample of Reported Titles" (USDOL/ETA, CC BY 4.0).
+    Titles longer than the 120 characters the server accepts are dropped. A short list O*NET lacks is added:
+    student, founder, retired, data scientist… O*NET isn't on npm, so pass its text file with `--onet`.
+- **Search** (`apps/web/lib/autocomplete.ts`). A field fetches its file the first time it is focused, validates it
+  (zod/mini), indexes it (~150 ms once) and searches in memory. A lookup takes about 1 ms because only names with a
+  word starting with the query's first two letters are scored.
+  - Matching folds case, accents and letters like ł, ø and ı (`lib/norm.mjs`, which the generator shares), so
+    "lodz" finds Łódź.
+  - Tiers, best first: the start of a name or alias; a word inside a name; then a name followed by its region or
+    country ("cambridge ma", "paris, france") or the words in any order ("engineer software").
+  - Within a tier, bigger places rank first. A whole-name match counts three times its population, except for
+    states, and a state weighs 0.4 of the population of its cities. So "new york" puts the city first and
+    "georgia" the country.
+  - Country codes are used only to narrow a search ("paris fr"), never to match on their own. If they did, "ma" or
+    "to" would put Morocco or Tonga first.
+- **UI** (`apps/web/components/autocomplete.tsx`). A WAI-ARIA combobox on downshift's `useCombobox`:
+  - The menu counts as open only while it shows suggestions, so Enter submits the form unless a suggestion is
+    highlighted.
+  - Tab takes the highlighted suggestion; Escape keeps the typed text.
+  - Typing updates the form synchronously. downshift's `onInputValueChange` runs one render late and dropped fast
+    keystrokes.
+  - The browser's own autofill is off on both fields (downshift sets `autocomplete="off"`); its popup would cover
+    the list.
+
+Rejected: a geocoding API (Photon, Mapbox). It sends what people type to a third party and needs a key and a network
+dependency, and this environment's egress blocks it. Serving the data from a Worker route would add ~1 MB to the web
+Worker for no gain.
