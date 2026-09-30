@@ -26,6 +26,29 @@ export interface LoadedMimic {
   answers: AnswerRecord[];
   /** What the scope hides: served views and states never include it. */
   scope: ScopeView;
+  /** Facts and insights the scope hid, so views can drop the graph edges built from them. */
+  hidden: { factIds: Set<string>; insightIds: Set<string> };
+}
+
+/**
+ * The knowledge graph as the person's scope allows it (ADR-0043): no edge built from a hidden fact or insight, no
+ * facet node for a blocked facet, and no node left without a kept edge (the person node stays).
+ */
+export function scopedKg<
+  N extends { id: string; type: string; props: Record<string, unknown> },
+  E extends { src: string; dst: string; sourceRef: string | null },
+>(kg: { nodes: N[]; edges: E[] }, loaded: Pick<LoadedMimic, 'scope' | 'hidden'>): { nodes: N[]; edges: E[] } {
+  const blockedNode = (n: N) => n.type === 'Facet' && loaded.scope.blocked.has(String(n.props.facetId ?? ''));
+  const dropped = new Set(kg.nodes.filter(blockedNode).map((n) => n.id));
+  const edges = kg.edges.filter(
+    (e) =>
+      !dropped.has(e.src) &&
+      !dropped.has(e.dst) &&
+      !(e.sourceRef && (loaded.hidden.factIds.has(e.sourceRef) || loaded.hidden.insightIds.has(e.sourceRef))),
+  );
+  const linked = new Set(edges.flatMap((e) => [e.src, e.dst]));
+  const nodes = kg.nodes.filter((n) => !dropped.has(n.id) && (n.type === 'Person' || linked.has(n.id)));
+  return { nodes, edges };
 }
 
 /**
@@ -55,6 +78,10 @@ function assemble(
   const facts = rows.facts.filter((f) => !factHidden(view, f));
   const traits = rows.traits.filter((t) => !view.blocked.has(t.facetId));
   const insights = rows.insights.filter((i) => !insightHidden(view, i));
+  const hidden = {
+    factIds: new Set(rows.facts.filter((f) => factHidden(view, f)).map((f) => f.id)),
+    insightIds: new Set(rows.insights.filter((i) => insightHidden(view, i)).map((i) => i.id)),
+  };
   const qById = new Map(questions.map((q) => [q.id, q]));
   const evidence: EvidenceItem[] = [];
   for (const a of answers) {
@@ -91,6 +118,7 @@ function assemble(
     questions,
     answers,
     scope: view,
+    hidden,
   };
 }
 

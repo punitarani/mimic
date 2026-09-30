@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { factHidden } from '../scope';
 import type { FactRecord, FidelityRecord, MimicRecord } from '../store';
 import { StaleEvidenceError } from '../store';
 import { QKind } from '../types';
-import { type LoadedMimic, loadMimicData, vectorId } from './data';
+import { type LoadedMimic, loadMimicData, scopedKg, vectorId } from './data';
 import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
 import { searchCacheKeys } from './identity';
 
@@ -97,7 +98,7 @@ export function mimicDocParts(
     seqUpTo,
     subject: { displayName: m.displayName, location: m.location, occupation: m.occupation },
     facts: facts
-      .filter((f) => f.userState === 'active')
+      .filter((f) => f.userState === 'active' && !factHidden(loaded.scope, f))
       .map((f) => ({
         predicate: f.predicate,
         object: f.object,
@@ -106,6 +107,7 @@ export function mimicDocParts(
         confidence: f.confidence,
       })),
     evidence: loaded.answers
+      .filter((a) => !loaded.scope.hiddenQuestionIds.has(a.questionId))
       .map((a) => {
         const q = qById.get(a.questionId)!;
         return {
@@ -158,6 +160,7 @@ export async function buildMimicJson(deps: EngineDeps, mimicId: string, version:
   ]);
   const lastPrimary = primaries.filter((p) => p.ok && !p.fallback).at(-1);
   const parts = mimicDocParts(m, loaded, facts, fid);
+  const graph = scopedKg(kg, loaded);
   const doc: MimicJson = {
     schema: 'mimic/1',
     mimicId: m.id,
@@ -165,8 +168,8 @@ export async function buildMimicJson(deps: EngineDeps, mimicId: string, version:
     createdAt: deps.clock(),
     ...parts,
     kg: {
-      nodes: kg.nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),
-      edges: kg.edges.map((e) => ({ src: e.src, dst: e.dst, predicate: e.predicate, weight: e.weight })),
+      nodes: graph.nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),
+      edges: graph.edges.map((e) => ({ src: e.src, dst: e.dst, predicate: e.predicate, weight: e.weight })),
     },
     pipeline: {
       configHash: m.configHash,

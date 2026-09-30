@@ -240,6 +240,11 @@ export interface ReproductionResult {
   /** Over the evidence budget: retrieval ranked evidence against the candidate pool (not exported), so only the
    * sealed state blob in R2 reproduces these exactly. */
   truncated: number;
+  /**
+   * Served before the person narrowed their scope, or on a question it now hides (ADR-0040, ADR-0043): what they
+   * withdrew is never time-travelled back into a rebuilt state, so these are counted, not checked.
+   */
+  rescoped: number;
   /** Over checkable predictions. */
   stateHashMatchRate: number;
   snapshotMatchRate: number;
@@ -276,6 +281,7 @@ export async function reproduceOnline(
   let checkable = 0;
   let legacy = 0;
   let truncated = 0;
+  let rescoped = 0;
   let hashMatch = 0;
   let snapMatch = 0;
   let agree = 0;
@@ -295,6 +301,11 @@ export async function reproduceOnline(
       if (!q || q.seq === null || q.servedAt === null || !a) continue;
       // Questions served before stateAt existed fall back to servedAt (approximate, ADR-0017).
       const loaded = await loadMimicDataAt(deps, m, q.stateAt ?? q.servedAt, q.seq);
+      if ((m.scopeAt !== null && q.servedAt < m.scopeAt) || loaded.scope.hiddenQuestionIds.has(q.id)) {
+        n++;
+        rescoped++;
+        continue;
+      }
       const state = buildState(loaded.data, stateOptions(cfg, q.seq, { forQuestions: [q] }));
       const eligible = loaded.data.evidence.filter((e) => e.seq < q.seq! && learnsFrom(e.kind)).length;
       const overBudget = cfg.stateBuilder.strategy !== 'structured' && state.evidence.length < eligible;
@@ -323,6 +334,7 @@ export async function reproduceOnline(
     checkable,
     legacy,
     truncated,
+    rescoped,
     stateHashMatchRate: checkable ? hashMatch / checkable : 0,
     snapshotMatchRate: tvds.length ? snapMatch / tvds.length : 0,
     argmaxAgreement: tvds.length ? agree / tvds.length : 0,

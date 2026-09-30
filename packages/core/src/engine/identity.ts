@@ -4,7 +4,15 @@ import { hashJson, seededRng, sha256Hex, shuffle } from '../hash';
 import { samePersonQuestion } from '../jev';
 import { isWebLink, profileKey } from '../links';
 import { getAnchorSet, getOntology } from '../ontology';
-import { blockedFacetIds, DEFAULT_SCOPE, MimicScope, normalizeScope, questionAllowed } from '../scope';
+import {
+  blockedFacetIds,
+  DEFAULT_SCOPE,
+  MimicScope,
+  normalizeScope,
+  questionAllowed,
+  specialAreaOfFact,
+  stripSpecialText,
+} from '../scope';
 import type {
   CandidateRecord,
   FactRecord,
@@ -398,8 +406,14 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
     employer: m.employer ?? undefined,
     link,
   };
+  // Special-category sentences never enter a prompt or the store (ADR-0043).
+  const cleaned = candidates.map((c) => ({
+    ...c,
+    summary: stripSpecialText(c.summary),
+    ...(c.headline ? { headline: stripSpecialText(c.headline) } : {}),
+  }));
   const scored = await Promise.all(
-    candidates.map(async (c) => {
+    cleaned.map(async (c) => {
       const own = !!link && profileKey(c.url) === profileKey(link);
       try {
         const res = await deps.gateway.decide(ctxFor(m, 'identity.rank', jobKey), {
@@ -431,7 +445,8 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
   const carried: Record<string, PersonCandidate['facts']> = {};
   const recs: CandidateRecord[] = scored.map(({ c, p }, i) => {
     const id = deps.newId();
-    if (c.facts?.length) carried[id] = c.facts;
+    const kept = c.facts?.filter((f) => specialAreaOfFact(f) === null) ?? [];
+    if (kept.length) carried[id] = kept;
     return {
       id,
       mimicId: m.id,
@@ -443,7 +458,7 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
       url: c.url,
       summary: c.summary.slice(0, 2000),
       jevSamePersonP: p,
-      r2Key: c.facts?.length ? factsKey : null,
+      r2Key: kept.length ? factsKey : null,
       status: 'proposed',
       createdAt: now,
     };
@@ -671,7 +686,10 @@ const PREDICATE_NODE: Record<string, { type: KgNodeType; edge: string }> = {
 };
 
 /** Inserts facts and mirrors them into the KG (with provenance) and the vector index. */
-export async function addFacts(deps: EngineDeps, m: MimicRecord, facts: FactRecord[]): Promise<void> {
+export async function addFacts(deps: EngineDeps, m: MimicRecord, all: FactRecord[]): Promise<void> {
+  // Never from the web (ADR-0040, ADR-0043): a search or enrichment fact revealing politics, religion, sexuality or
+  // health is dropped before it reaches the store, the graph or the index. Reflection facts are guarded upstream.
+  const facts = all.filter((f) => f.source !== 'search' || specialAreaOfFact(f) === null);
   if (!facts.length) return;
   await deps.store.insertFacts(facts);
   const kg = await deps.store.listKg(m.id);

@@ -1,4 +1,5 @@
 import type { PipelineConfig } from '../config';
+import { factHidden } from '../scope';
 import {
   buildSoul,
   EMPTY_CURATION,
@@ -43,7 +44,7 @@ async function soulSource(deps: EngineDeps, m: MimicRecord): Promise<SoulSource>
   ]);
   const { seqUpTo: _seq, ...parts } = mimicDocParts(m, loaded, facts, fid);
   const removedFacts = facts
-    .filter((f) => f.userState === 'removed')
+    .filter((f) => f.userState === 'removed' && !factHidden(loaded.scope, f))
     .map((f) => ({ predicate: f.predicate, object: f.object }));
   // The same fact can be stored twice (search and reflection both add it); removing one removes it from the file.
   const removed = new Set(removedFacts.map((f) => `${f.predicate}|${f.object}`));

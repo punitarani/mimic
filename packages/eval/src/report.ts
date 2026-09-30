@@ -9,7 +9,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 const pct = (x: unknown) => (typeof x === 'number' ? `${(x * 100).toFixed(1)}%` : '—');
 const f3 = (x: unknown) => (typeof x === 'number' ? x.toFixed(3) : '—');
-const COUNTS = new Set(['n', 'checkable', 'legacy', 'truncated']);
+const COUNTS = new Set(['n', 'checkable', 'legacy', 'truncated', 'rescoped']);
 
 function predictorTable(ps: PredictorMetrics[]): string {
   const rows = ps.map(
@@ -64,6 +64,7 @@ export function renderReport(run: EvalRunRecord): string {
         'checkable',
         'legacy',
         'truncated',
+        'rescoped',
         'stateHashMatchRate',
         'snapshotMatchRate',
         'argmaxAgreement',

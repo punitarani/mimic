@@ -1,10 +1,11 @@
 import type { FidelityResult } from '../fidelity';
 import { getFacetGroups } from '../ontology';
+import type { MimicScope } from '../scope';
 import { facetCoverage } from '../selectors';
 import { toStateEvidence } from '../state-builder';
 import type { IdentityState, MimicStatus } from '../store';
 import { isScoredKind, isSessionKind } from '../types';
-import { facetCounts, loadMimicData } from './data';
+import { facetCounts, loadMimicData, scopedKg } from './data';
 import { capsFor, type EngineDeps, facetsFor, loadConfig, requireMimic } from './deps';
 import { fidelityFromRecord, MIN_POOL } from './session';
 
@@ -34,6 +35,9 @@ export interface UiSnapshot {
     identityState: IdentityState;
     consentSearch: boolean;
     consentResearch: boolean;
+    /** What the person agreed to be asked about (ADR-0040), and when it last narrowed. */
+    scope: MimicScope;
+    scopeAt: number | null;
     reveal: 'after_answer' | 'never';
     arm: string | null;
     createdAt: number;
@@ -45,7 +49,7 @@ export interface UiSnapshot {
     budgetUsd: number;
     snapshotVersion: number;
   };
-  /** `basics`: the anchor battery size; the panel shows "Learning the basics" until that many are answered. */
+  /** `basics`: the anchors seeded for this person; the panel shows "Learning the basics" until they are answered. */
   progress: { answered: number; target: number; basics: number };
   fidelity: FidelityResult | null;
   history: Array<{
@@ -85,10 +89,12 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
     deps.store.listKg(m.id),
     facetsFor(deps, m, cfg),
   ]);
-  const counts = facetCounts(loaded.questions);
+  // Answers the scope hides count nowhere, not even toward coverage (ADR-0043).
+  const visible = loaded.questions.filter((q) => !loaded.scope.hiddenQuestionIds.has(q.id));
+  const counts = facetCounts(visible);
   const answeredQ = new Map(loaded.answers.map((a) => [a.questionId, a.seq]));
   const supporting = new Map<string, number[]>();
-  for (const q of loaded.questions) {
+  for (const q of visible) {
     const seq = answeredQ.get(q.id);
     if (seq === undefined || !isScoredKind(q.kind)) continue;
     for (const f of q.facetIds) supporting.set(f, [...(supporting.get(f) ?? []), seq]);
@@ -125,10 +131,13 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
         .filter((e): e is NonNullable<typeof e> => !!e)
         .map((e) => ({ seq: e.seq, q: e.q, answer: e.answer })),
     }));
-  const nodes = kg.nodes.slice(0, KG_MAX_NODES);
+  const graph = scopedKg(kg, loaded);
+  const nodes = graph.nodes.slice(0, KG_MAX_NODES);
   const nodeIds = new Set(nodes.map((n) => n.id));
   const latest = fid.at(-1);
-  const pooled = loaded.questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled').length;
+  const pooled = visible.filter((q) => q.kind === 'adaptive' && q.status === 'pooled').length;
+  // The anchors actually seeded: a person who deselected a category gets fewer (ADR-0040).
+  const basics = visible.filter((q) => q.kind === 'anchor').length;
   return {
     mimic: {
       id: m.id,
@@ -140,6 +149,8 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       identityState: m.identityState,
       consentSearch: m.consentSearch,
       consentResearch: m.consentResearch,
+      scope: m.scope,
+      scopeAt: m.scopeAt,
       reveal: cfg.reveal,
       arm: m.arm,
       createdAt: m.createdAt,
@@ -150,7 +161,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
     progress: {
       answered: loaded.questions.filter((q) => q.status === 'answered' && isSessionKind(q.kind)).length,
       target: cfg.session.target,
-      basics: cfg.anchors.count,
+      basics,
     },
     fidelity: latest ? fidelityFromRecord(latest) : null,
     history: fid.map((f) => ({
@@ -167,7 +178,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
     insights,
     kg: {
       nodes: nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),
-      edges: kg.edges
+      edges: graph.edges
         .filter((e) => nodeIds.has(e.src) && nodeIds.has(e.dst))
         .map((e) => ({ src: e.src, dst: e.dst, predicate: e.predicate, weight: e.weight })),
     },
