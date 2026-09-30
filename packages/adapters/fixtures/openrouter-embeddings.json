@@ -1,0 +1,47 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "embedding",
+      "embedding": [
+        -0.004055485129356384,
+        0.024136191233992577,
+        -0.018506934866309166,
+        0.0007991802995093167,
+        0.01935434900224209,
+        -0.008693568408489227,
+        0.08449936658143997,
+        0.0430365689098835
+      ],
+      "index": 0
+    },
+    {
+      "object": "embedding",
+      "embedding": [
+        -0.024865174666047096,
+        0.0008327469695359468,
+        -0.006065149325877428,
+        0.002021070569753647,
+        0.023501001298427582,
+        0.05056745558977127,
+        0.06191490590572357,
+        0.03714274242520332
+      ],
+      "index": 1
+    }
+  ],
+  "model": "BAAI/bge-base-en-v1.5",
+  "usage": {
+    "prompt_tokens": 22,
+    "total_tokens": 22,
+    "cost": 1.1e-07,
+    "is_byok": false,
+    "cost_details": {
+      "upstream_inference_cost": 1.1e-07,
+      "upstream_inference_prompt_cost": 1.1e-07,
+      "upstream_inference_completions_cost": 0
+    }
+  },
+  "provider": "DeepInfra",
+  "id": "gen-emb-1790730497-DEVREgXUH4O1omwfHafe"
+}

@@ -1,0 +1,9 @@
+{
+  "run_id": "trun_0000000000000000000000000000example",
+  "interaction_id": "trun_0000000000000000000000000000example",
+  "status": "queued",
+  "is_active": true,
+  "processor": "base",
+  "created_at": "2026-09-30T00:00:00Z",
+  "modified_at": "2026-09-30T00:00:00Z"
+}

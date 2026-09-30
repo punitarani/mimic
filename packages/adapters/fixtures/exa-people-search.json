@@ -1,0 +1,125 @@
+{
+  "requestId": "example",
+  "resolvedSearchType": "",
+  "results": [
+    {
+      "id": "https://exa.ai/library/person/example-avery",
+      "title": "Avery Quinn",
+      "url": "https://www.linkedin.com/in/avery-quinn-example",
+      "publishedDate": "2026-09-04T03:44:49.000Z",
+      "highlights": [
+        "# Avery Quinn\n\nSenior Software Engineer at Northwind Labs\n...\nLocation: San Francisco Bay Area\n...\nBuilds data tools; previously at Contoso."
+      ],
+      "entities": [
+        {
+          "id": "https://exa.ai/library/person/example-avery",
+          "type": "person",
+          "version": 1,
+          "properties": {
+            "name": "Avery Quinn",
+            "firstName": "Avery",
+            "lastName": "Quinn",
+            "location": "San Francisco, California, United States",
+            "workHistory": [
+              {
+                "title": "Senior Software Engineer",
+                "location": null,
+                "dates": {
+                  "from": "2021-03-01",
+                  "to": null
+                },
+                "company": {
+                  "id": null,
+                  "name": "Northwind Labs"
+                }
+              },
+              {
+                "title": "Software Engineer",
+                "location": null,
+                "dates": {
+                  "from": "2017-06-01",
+                  "to": "2021-02-01"
+                },
+                "company": {
+                  "id": null,
+                  "name": "Contoso"
+                }
+              }
+            ],
+            "educationHistory": [
+              {
+                "degree": "B.S. Computer Science",
+                "dates": {
+                  "from": "2013",
+                  "to": "2017"
+                },
+                "institution": {
+                  "id": null,
+                  "name": "Example State University"
+                }
+              }
+            ],
+            "research": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "https://exa.ai/library/person/example-rowan",
+      "title": "Rowan Ellis",
+      "url": "https://www.linkedin.com/in/rowan-ellis-example",
+      "publishedDate": "2026-09-24T03:41:51.000Z",
+      "highlights": [
+        "# Rowan Ellis\n\nProduct Designer \u00b7 Oakland, California\n...\nLocation: San Francisco Bay Area\n...\nBuilds data tools; previously at Contoso."
+      ],
+      "entities": [
+        {
+          "id": "https://exa.ai/library/person/example-rowan",
+          "type": "person",
+          "version": 1,
+          "properties": {
+            "name": "Rowan Ellis",
+            "firstName": "Rowan",
+            "lastName": "Ellis",
+            "location": "Oakland, California, United States",
+            "workHistory": [
+              {
+                "title": "Product Designer",
+                "location": null,
+                "dates": {
+                  "from": "2020-01-01",
+                  "to": null
+                },
+                "company": {
+                  "id": null,
+                  "name": "Fabrikam"
+                }
+              }
+            ],
+            "educationHistory": [
+              {
+                "degree": "B.A. Design",
+                "dates": {
+                  "from": "2013",
+                  "to": "2017"
+                },
+                "institution": {
+                  "id": null,
+                  "name": "Example College"
+                }
+              }
+            ],
+            "research": null
+          }
+        }
+      ]
+    }
+  ],
+  "searchTime": 2102.5,
+  "costDollars": {
+    "total": 0.007,
+    "search": {
+      "neural": 0.007
+    }
+  }
+}

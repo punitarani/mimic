@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests --exclude 'test/live/**'",
-    "test:live": "vitest run test/live"
+    "test:live": "NODE_USE_ENV_PROXY=1 vitest run test/live"
   },
   "dependencies": {
     "@mimic/core": "workspace:*",

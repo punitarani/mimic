@@ -13,6 +13,50 @@ import { authHeader, type HttpOptions, requestJson } from './http';
 // Exa people search (PLAN §9.2 step 1)
 // ---------------------------------------------------------------------------------------------------------------
 
+const ExaEntity = z
+  .object({
+    type: z.string().optional(),
+    properties: z
+      .object({
+        name: z.string().nullable().optional(),
+        location: z.string().nullable().optional(),
+        workHistory: z
+          .array(
+            z
+              .object({
+                title: z.string().nullable().optional(),
+                dates: z.object({ to: z.string().nullable().optional() }).passthrough().nullable().optional(),
+                company: z
+                  .object({ name: z.string().nullable().optional() })
+                  .passthrough()
+                  .nullable()
+                  .optional(),
+              })
+              .passthrough(),
+          )
+          .nullable()
+          .optional(),
+        educationHistory: z
+          .array(
+            z
+              .object({
+                degree: z.string().nullable().optional(),
+                institution: z
+                  .object({ name: z.string().nullable().optional() })
+                  .passthrough()
+                  .nullable()
+                  .optional(),
+              })
+              .passthrough(),
+          )
+          .nullable()
+          .optional(),
+      })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
 const ExaResponse = z
   .object({
     results: z.array(
@@ -25,6 +69,7 @@ const ExaResponse = z
           highlights: z.array(z.string()).optional(),
           text: z.string().optional(),
           summary: z.string().optional(),
+          entities: z.array(ExaEntity).optional(),
         })
         .passthrough(),
     ),
@@ -37,24 +82,42 @@ export interface ExaOptions extends HttpOptions {
   baseUrl?: string;
 }
 
-/** Parses Exa's people highlight format: "# Name\n\nHeadline\n...". */
+/**
+ * Builds a candidate from an Exa people result. Prefers the structured person entity (name, location, work and
+ * education history) and falls back to the highlight text ("# Name\n\nHeadline\n...").
+ */
 export function exaCandidate(r: z.infer<typeof ExaResponse>['results'][number]): PersonCandidate {
   const text = (r.highlights ?? []).join('\n...\n') || r.summary || r.text || '';
   const lines = text
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l && l !== '...');
-  const name = (r.title ?? lines[0]?.replace(/^#\s*/, '') ?? '').trim() || 'Unknown';
+  const person = r.entities?.find((e) => e.type === 'person')?.properties;
+  const name = (person?.name ?? r.title ?? lines[0]?.replace(/^#\s*/, '') ?? '').trim() || 'Unknown';
+  const jobs = (person?.workHistory ?? []).filter((w) => w.title || w.company?.name);
+  const current = jobs.find((w) => !w.dates?.to) ?? jobs[0];
+  const role = current ? [current.title, current.company?.name].filter(Boolean).join(' at ') : undefined;
   const headlineLine = lines.find((l) => !l.startsWith('#') && l !== name && l.length < 160);
-  const c: PersonCandidate = {
-    provider: 'exa',
-    name,
-    url: r.url,
-    summary: text.replace(/\s+\n/g, '\n').slice(0, 1500),
-  };
-  if (headlineLine) c.headline = headlineLine.replace(/^#+\s*/, '');
-  const loc = text.match(/\b(?:Location|Based in|Lives in)[:\s]+([^\n.]{3,60})/i);
-  if (loc?.[1]) c.location = loc[1].trim();
+  const summary = [
+    ...jobs
+      .slice(0, 4)
+      .map(
+        (w) =>
+          `${w.title ?? 'Role'}${w.company?.name ? ` at ${w.company.name}` : ''}${w.dates?.to ? '' : ' (current)'}`,
+      ),
+    ...(person?.educationHistory ?? [])
+      .slice(0, 2)
+      .map((e) => [e.degree, e.institution?.name].filter(Boolean).join(', ')),
+    text,
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, 1500);
+  const c: PersonCandidate = { provider: 'exa', name, url: r.url, summary };
+  const headline = role || headlineLine?.replace(/^#+\s*/, '');
+  if (headline) c.headline = headline;
+  const loc = person?.location ?? text.match(/\b(?:Location|Based in|Lives in)[:\s]+([^\n.]{3,60})/i)?.[1];
+  if (loc) c.location = loc.trim();
   return c;
 }
 
