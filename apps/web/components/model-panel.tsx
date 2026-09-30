@@ -219,8 +219,12 @@ function FacetBar({
   );
 }
 
+const INSIGHTS_SHOWN = 5;
+
 export function Insights({ snap }: { snap: UiSnapshot }) {
   const [open, setOpen] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
+  const shown = all ? snap.insights : snap.insights.slice(0, INSIGHTS_SHOWN);
   return (
     <section aria-labelledby="insights-h">
       <h2 id="insights-h" className="text-sm font-medium">
@@ -232,7 +236,7 @@ export function Insights({ snap }: { snap: UiSnapshot }) {
         </p>
       ) : (
         <ul className="mt-2 space-y-2">
-          {snap.insights.map((i) => (
+          {shown.map((i) => (
             <li key={i.id} className="rounded-[10px] border border-line bg-raised p-3">
               <p className="text-[14px] leading-snug">{i.text}</p>
               <button
@@ -256,6 +260,15 @@ export function Insights({ snap }: { snap: UiSnapshot }) {
             </li>
           ))}
         </ul>
+      )}
+      {snap.insights.length > INSIGHTS_SHOWN && (
+        <button
+          type="button"
+          className="mt-2 text-[13px] text-ink underline underline-offset-2"
+          onClick={() => setAll(!all)}
+        >
+          {all ? 'Show fewer' : `Show all ${snap.insights.length}`}
+        </button>
       )}
     </section>
   );

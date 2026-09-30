@@ -113,3 +113,11 @@ kept the session going). PLAN §9.4 asks to tune the thresholds on a small label
 
 The thresholds are versioned as `gates.v2` and stored in each question's `quality_json`. Re-run the calibration when Jev's
 snapshot changes. The set is small; grow it before drawing conclusions about generator quality.
+
+## ADR-0016 — Deferred work after the response on the synchronous path (2026-09-30)
+
+`EngineDeps.defer` runs work that may finish after the HTTP response (Next's `after()`, i.e. `waitUntil` on Workers):
+writing the sealed-state blobs and then enqueueing the shadow jobs that read them, pool refills, and the
+`learn.answer` enqueue. The primary and baseline predictions are still persisted before `/next` returns
+(PLAN §3.2). Question-prompt vectors for the redundancy term are cached per isolate. Both routes emit per-phase
+`Server-Timing` headers.

@@ -3,7 +3,7 @@ import { BudgetExceededError, type EngineDeps, EngineError, type MimicRecord, ul
 import { engineDeps, type MimicBindings } from '@mimic/db/runtime';
 import { getCloudflareContext, initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 import { cookies, headers } from 'next/headers';
-import { NextResponse } from 'next/server';
+import { after, NextResponse } from 'next/server';
 import { z } from 'zod';
 
 export const PID_COOKIE = 'mimic_pid';
@@ -28,9 +28,23 @@ export async function env(): Promise<CloudflareEnv> {
   return (await getCloudflareContext({ async: true })).env;
 }
 
-export async function deps(): Promise<{ deps: EngineDeps; env: CloudflareEnv }> {
+/**
+ * Engine deps for one request. Deferred work runs after the response via Next's `after()` (waitUntil on Workers);
+ * phase timings are collected for the Server-Timing header.
+ */
+export async function deps(): Promise<{ deps: EngineDeps; env: CloudflareEnv; serverTiming: () => string }> {
   const e = await env();
-  return { deps: engineDeps(e as MimicBindings), env: e };
+  const timings: Array<[string, number]> = [];
+  const d = engineDeps(e as MimicBindings, {
+    defer: (task) =>
+      after(() =>
+        task().catch((err: unknown) => {
+          console.error('deferred task failed', err);
+        }),
+      ),
+    timing: (phase, ms) => timings.push([phase, ms]),
+  });
+  return { deps: d, env: e, serverTiming: () => timings.map(([p, ms]) => `${p};dur=${ms}`).join(', ') };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

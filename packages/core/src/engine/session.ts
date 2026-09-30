@@ -20,7 +20,16 @@ import {
   stateBlobKey,
   vectorId,
 } from './data';
-import { ctxFor, type EngineDeps, EngineError, fallbackModel, loadConfig, requireMimic } from './deps';
+import {
+  ctxFor,
+  deferred,
+  type EngineDeps,
+  EngineError,
+  fallbackModel,
+  loadConfig,
+  requireMimic,
+  timed,
+} from './deps';
 
 export const JEV_PROMPT_VERSION = 'jev-predict.v1';
 export const MIN_POOL = 6;
@@ -70,9 +79,9 @@ function maxSeq(questions: QuestionRecord[]): number {
  * The primary and baseline predictions are persisted before the question is returned (PLAN §3.2).
  */
 export async function serveNext(deps: EngineDeps, mimicId: string): Promise<NextResult> {
-  const m = await requireMimic(deps, mimicId);
+  const m = await timed(deps, 'mimic', () => requireMimic(deps, mimicId));
   const cfg = await loadConfig(deps, m.configHash);
-  const loaded = await loadMimicData(deps, m);
+  const loaded = await timed(deps, 'load', () => loadMimicData(deps, m));
   const { questions } = loaded;
   const progress = progressOf(questions, cfg);
 
@@ -127,7 +136,9 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
 
   // 3) Adaptive pool (reserve bank when the generated pool is empty).
   let pool = questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled');
-  if (pool.length < MIN_POOL) await deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq });
+  if (pool.length < MIN_POOL) {
+    await deferred(deps, () => deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq }));
+  }
   if (pool.length === 0) {
     pool = await addReserve(deps, m, questions);
     if (pool.length === 0) return { status: 'waiting', progress };
@@ -177,25 +188,42 @@ async function addReserve(
   return recs;
 }
 
+/**
+ * Question-prompt vectors never change, so they are cached per isolate; only unseen IDs are fetched (keeps the
+ * redundancy term off the critical path after the first request).
+ */
+const VECTOR_CACHE = new Map<string, number[]>();
+const VECTOR_CACHE_MAX = 5000;
+
 async function redundancyFn(
   deps: EngineDeps,
   m: MimicRecord,
   pool: QuestionRecord[],
   asked: QuestionRecord[],
 ): Promise<(q: Question) => number> {
-  let vecs = new Map<string, number[]>();
-  try {
-    const recs = await deps.vectors.getByIds([...pool, ...asked].map((q) => vectorId.question(m.id, q.id)));
-    vecs = new Map(recs.map((r) => [r.id, r.values]));
-  } catch {
-    // fall back to lexical similarity
+  const all = [...pool, ...asked];
+  const missing = all.filter((q) => !VECTOR_CACHE.has(vectorId.question(m.id, q.id)));
+  const remember = (id: string, v: number[]) => {
+    if (VECTOR_CACHE.size >= VECTOR_CACHE_MAX) VECTOR_CACHE.delete(VECTOR_CACHE.keys().next().value!);
+    VECTOR_CACHE.set(id, v);
+  };
+  // Anchors and reserve items (item keys) are never embedded; remember that so they aren't refetched.
+  for (const q of missing) if (q.itemKey) remember(vectorId.question(m.id, q.id), []);
+  const toFetch = missing.filter((q) => !q.itemKey).map((q) => vectorId.question(m.id, q.id));
+  if (toFetch.length) {
+    try {
+      for (const r of await deps.vectors.getByIds(toFetch)) remember(r.id, r.values);
+    } catch {
+      // fall back to lexical similarity
+    }
   }
+  const vecs = VECTOR_CACHE;
   return (q) => {
     let best = 0;
     const vq = vecs.get(vectorId.question(m.id, q.id));
     for (const a of asked) {
       const va = vecs.get(vectorId.question(m.id, a.id));
-      const s = vq && va ? cosine(vq, va) : lexicalSimilarity(q.prompt, a.prompt);
+      const s = vq?.length && va?.length ? cosine(vq, va) : lexicalSimilarity(q.prompt, a.prompt);
       if (s > best) best = s;
     }
     return Math.max(0, Math.min(1, best));
@@ -222,7 +250,7 @@ async function serveWithPredictions(
     ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'predict.baseline'))
     : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'predict.baseline'));
 
-  const state = await sealedState(deps, loaded, cfg, seq, pool);
+  const state = await timed(deps, 'state', () => sealedState(deps, loaded, cfg, seq, pool));
   const baseState = contextState(loaded, cfg);
   if (state.meta.evidenceSeqMax >= seq) throw new Error('Sealing violated: state contains answer ≥ seq');
 
@@ -235,23 +263,28 @@ async function serveWithPredictions(
   let primaryResult: PredictionResult;
   if (fixed) {
     chosen = fixed;
-    [primaryResult] = (await primary.predict(state, [fixed])) as [PredictionResult];
+    [primaryResult] = (await timed(deps, 'select', () => primary.predict(state, [fixed]))) as [
+      PredictionResult,
+    ];
   } else {
     const selector = makeSelector(cfg.selector);
     const hypotheses = cfg.selector.type === 'bald' ? await loadHypotheses(deps, m.id) : undefined;
-    const sel = await selector.select({
-      pool,
-      state,
-      primary,
-      coverage: (q) => questionCoverage(counts, q),
-      redundancy: await redundancyFn(deps, m, pool, asked),
-      rng,
-      ...(hypotheses ? { hypotheses } : {}),
-    });
+    const redundancy = await timed(deps, 'redundancy', () => redundancyFn(deps, m, pool, asked));
+    const sel = await timed(deps, 'select', () =>
+      selector.select({
+        pool,
+        state,
+        primary,
+        coverage: (q) => questionCoverage(counts, q),
+        redundancy,
+        rng,
+        ...(hypotheses ? { hypotheses } : {}),
+      }),
+    );
     chosen = sel.question as QuestionRecord;
     primaryResult = sel.primary;
   }
-  const baselines = await baselinePromise;
+  const baselines = await timed(deps, 'baseline', () => baselinePromise);
   const baselineResult = baselines[pool.indexOf(chosen)]!;
 
   let primaryId = primarySpec;
@@ -298,20 +331,28 @@ async function serveWithPredictions(
     pred('primary', primaryId, state, primaryResult, fallback),
     pred('baseline', primarySpec, baseState, baselineResult),
   ];
-  const [ok] = await Promise.all([
+  // Primary and baseline are persisted before the question is returned (PLAN §3.2).
+  const ok = await timed(deps, 'persist', () =>
     deps.store.serveQuestion({ questionId: chosen.id, mimicId: m.id, seq, servedAt: now, predictions }),
-    deps.blobs.put(stateBlobKey(m.id, state.meta.stateHash), JSON.stringify(state), 'application/json'),
-    deps.blobs.put(
-      stateBlobKey(m.id, baseState.meta.stateHash),
-      JSON.stringify(baseState),
-      'application/json',
-    ),
-  ]);
+  );
   if (!ok) return raced(deps, m.id);
 
-  for (const s of cfg.predictor.shadows) {
-    await deps.jobs.enqueue({ type: 'predict.shadow', mimicId: m.id, questionId: chosen.id, predictorId: s });
-  }
+  // The sealed states must exist before shadow jobs read them; both can finish after the response.
+  await deferred(deps, async () => {
+    await Promise.all([
+      deps.blobs.put(stateBlobKey(m.id, state.meta.stateHash), JSON.stringify(state), 'application/json'),
+      deps.blobs.put(
+        stateBlobKey(m.id, baseState.meta.stateHash),
+        JSON.stringify(baseState),
+        'application/json',
+      ),
+    ]);
+    await Promise.all(
+      cfg.predictor.shadows.map((s) =>
+        deps.jobs.enqueue({ type: 'predict.shadow', mimicId: m.id, questionId: chosen.id, predictorId: s }),
+      ),
+    );
+  });
   return { status: 'question', question: toPublic({ ...chosen, seq, status: 'served' }), progress };
 }
 
@@ -398,11 +439,16 @@ export async function submitAnswer(
       ...scorePrediction(q.type, p.dist, input.value),
       createdAt: now,
     }));
-  await deps.store.recordAnswer({ answer, scores });
+  await timed(deps, 'record', () => deps.store.recordAnswer({ answer, scores }));
 
-  const fidelity = q.kind === 'playground' ? null : await recomputeFidelity(deps, m, q.seq);
+  const seqAnswered = q.seq;
+  const fidelity =
+    q.kind === 'playground'
+      ? null
+      : await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seqAnswered));
   if (q.kind === 'anchor' || q.kind === 'adaptive') {
-    await deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq: q.seq });
+    const seq = q.seq;
+    await deferred(deps, () => deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq }));
   }
   return { reveal, fidelity, seq: q.seq };
 }

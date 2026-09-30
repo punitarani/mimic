@@ -193,7 +193,7 @@ export function Sheet({
           Close
         </Button>
       </div>
-      <div className="p-4">{children}</div>
+      <div className="p-4">{open ? children : null}</div>
     </dialog>
   );
 }

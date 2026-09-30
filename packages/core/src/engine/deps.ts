@@ -19,6 +19,13 @@ export interface EngineDeps {
   jevModel?: string;
   /** LLM used when the Jev primary errors (PLAN §16), and for playground wording. */
   fallbackModel?: string;
+  /**
+   * Runs work that may finish after the response is sent (Next's `after()` / `ctx.waitUntil`). Defaults to running it
+   * inline. Never used for anything the client must see persisted first (PLAN §3.2).
+   */
+  defer?: (task: () => Promise<void>) => void;
+  /** Receives phase timings (ms), e.g. for Server-Timing headers. */
+  timing?: (phase: string, ms: number) => void;
 }
 
 export class EngineError extends Error {
@@ -91,6 +98,23 @@ export function jevModel(deps: EngineDeps): string {
 
 export function fallbackModel(deps: EngineDeps): string {
   return deps.fallbackModel ?? LLM.deepseek;
+}
+
+/** Runs `task` via deps.defer when provided, else inline. */
+export async function deferred(deps: EngineDeps, task: () => Promise<void>): Promise<void> {
+  if (deps.defer) deps.defer(task);
+  else await task();
+}
+
+/** Times an async phase and reports it through deps.timing. */
+export async function timed<T>(deps: EngineDeps, phase: string, fn: () => Promise<T>): Promise<T> {
+  if (!deps.timing) return fn();
+  const t0 = deps.clock();
+  try {
+    return await fn();
+  } finally {
+    deps.timing(phase, deps.clock() - t0);
+  }
 }
 
 export function ctxFor(
