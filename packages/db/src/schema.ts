@@ -55,7 +55,7 @@ export const identityCandidates = sqliteTable(
     summary: text('summary').notNull(),
     jevSamePersonP: real('jev_same_person_p'),
     r2Key: text('r2_key'),
-    status: text('status', { enum: ['proposed', 'confirmed', 'rejected'] }).notNull(),
+    status: text('status', { enum: ['proposed', 'confirmed', 'rejected', 'superseded'] }).notNull(),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [index('identity_candidates_mimic_idx').on(t.mimicId)],
@@ -103,6 +103,8 @@ export const questions = sqliteTable(
     servedAt: integer('served_at'),
     /** As-of time of the derived data (traits, insights, facts) in this question's sealed states (ADR-0017). */
     stateAt: integer('state_at'),
+    /** The selector's diagnostics for the winning score (ADR-0031). */
+    selectionJson: text('selection_json'),
   },
   (t) => [
     index('questions_mimic_idx').on(t.mimicId),
@@ -131,6 +133,8 @@ export const predictions = sqliteTable(
     ok: bool('ok').notNull(),
     error: text('error'),
     fallback: bool('fallback').notNull().default(false),
+    /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0031). */
+    hypothesis: text('hypothesis'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
@@ -356,13 +360,12 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
-/** ADR-0027: `persona.v1` drafts, derived from a snapshot; the latest feeds Persona.md. */
+/** ADR-0031: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds Persona.md. */
 export const personaDrafts = sqliteTable(
   'persona_drafts',
   {
     id: text('id').primaryKey(),
     mimicId: text('mimic_id').notNull(),
-    snapshotVersion: integer('snapshot_version').notNull(),
     seqUpTo: integer('seq_up_to').notNull(),
     configHash: text('config_hash').notNull(),
     promptVersion: text('prompt_version').notNull(),
@@ -374,10 +377,12 @@ export const personaDrafts = sqliteTable(
   (t) => [index('persona_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
 );
 
-/** ADR-0027: the person's choices for Persona.md (sections, hidden items, edits, their own words). */
+/** ADR-0031: the person's choices for Persona.md (sections, hidden items, edits, their own words). */
 export const personaCurations = sqliteTable('persona_curations', {
   mimicId: text('mimic_id').primaryKey(),
   json: text('json').notNull(),
+  /** Client revision: saves apply only in increasing rev order. */
+  rev: integer('rev').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });
 
@@ -394,6 +399,24 @@ export const vectors = sqliteTable(
   },
   (t) => [index('vectors_mimic_idx').on(t.mimicId, t.kind)],
 );
+
+/**
+ * ADR-0031: cross-person item statistics, aggregate only (no mimic_id, no free text), over research-consented
+ * dev-split mimics. Used to rank pooled candidates; never in a prompt or a state.
+ */
+export const itemStats = sqliteTable('item_stats', {
+  key: text('key').primaryKey(),
+  kind: text('kind', { enum: ['item', 'archetype'] }).notNull(),
+  nPeople: integer('n_people').notNull(),
+  nAnswers: integer('n_answers').notNull(),
+  answerEntropy: real('answer_entropy'),
+  baselineError: real('baseline_error').notNull(),
+  primaryError: real('primary_error').notNull(),
+  surprise: real('surprise').notNull(),
+  lift: real('lift'),
+  meanLatencyMs: real('mean_latency_ms').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
 
 /** Tables scoped to one mimic, all removed by a hard delete. */
 export const MIMIC_TABLES = [

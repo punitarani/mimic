@@ -2,22 +2,27 @@ import { z } from 'zod';
 import type { MimicJson } from './engine/artifact';
 import type { CallContext, Gateway } from './gateway';
 import { sha256Hex } from './hash';
+import { type CertaintyTier, certaintyTier, facetReading, predicateLabel } from './labels';
 import { parseJsonLoose } from './predictors';
 import { PROMPTS } from './prompts';
 import type { Facet } from './types';
 
 /**
- * Persona.md (ADR-0027): a portable Markdown portrait that any agent can read to represent the person. It is a view of
- * the latest `mimic.json` snapshot, plus an optional LLM-written draft (`persona.v1`) and the person's curation.
- * Evidence stays the source of truth (PLAN §3.3): drafts are derived and versioned, and curation only filters and
- * rewords what goes into the file. Nothing here feeds back into states or predictions.
+ * Persona.md (ADR-0031): a portable Markdown portrait that any agent can read to represent the person. It is a view of
+ * the mimic's current evidence and derived data, plus an optional LLM-written draft (`persona.v1`) and the person's
+ * curation. Evidence stays the source of truth (PLAN §3.3): drafts are derived and versioned, and curation only
+ * filters and rewords what goes into the file. Nothing here feeds back into states or predictions.
  */
 
 export const PERSONA_PROMPT_VERSION = 'persona.v1';
 /** Fewer answers than this can't support cited statements. */
 export const PERSONA_MIN_ANSWERS = 5;
-/** Answers sent to the writer, most recent first when over the cap. */
+/** Answers sent to the writer, the most recent when over the cap. */
 export const PERSONA_MAX_ANSWERS = 300;
+/** Scored answers needed before the file calls itself a strong prior. */
+export const STRONG_MIN_SCORED = 20;
+/** Below this certainty, or with no direct evidence, a facet goes under "Not known yet". */
+export const KNOWN_MIN_CONFIDENCE = 0.4;
 const MAX_PER_SECTION = 6;
 const WHY_CHARS = 300;
 
@@ -67,6 +72,23 @@ const SECTION_META: Record<PersonaSectionId, { title: string; about: string }> =
   record: { title: 'Decision record', about: 'Your real answers, quoted as evidence.' },
 };
 
+/**
+ * What a persona is built from: the mimic's current data, the same shape as the matching `mimic.json` fields. Built
+ * live rather than from a snapshot, so a removed fact leaves the file at once and viewing never writes a snapshot.
+ */
+export interface PersonaSource {
+  asOf: number;
+  subject: MimicJson['subject'];
+  /** Active facts only. */
+  facts: MimicJson['facts'];
+  /** Facts the person removed: draft text that mentions one is left out of the file. */
+  removedFacts: Array<{ predicate: string; object: string }>;
+  evidence: MimicJson['evidence'];
+  traits: MimicJson['traits'];
+  insights: MimicJson['insights'];
+  fidelity: MimicJson['fidelity'];
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Draft (LLM-written) and curation (the person's choices)
 // ---------------------------------------------------------------------------------------------------------------
@@ -102,66 +124,94 @@ export const PersonaCuration = z.object({
 export type PersonaCuration = z.infer<typeof PersonaCuration>;
 export const EMPTY_CURATION: PersonaCuration = PersonaCuration.parse({});
 
+/** `PUT /persona`: the whole curation, with the client's revision (increasing per edit). */
+export const PersonaSave = z.object({ rev: z.number().int().nonnegative(), curation: PersonaCuration });
+export type PersonaSave = z.infer<typeof PersonaSave>;
+
+/** One statement as the writer returned it; each is parsed on its own, so one bad item drops only itself. */
+const RawStatement = z.object({
+  section: z.string(),
+  text: z.string(),
+  evidenceSeqs: z.array(z.coerce.number().int()).catch([]),
+  confidence: z.coerce.number().min(0).max(1).catch(0.5),
+});
 const RawDraft = z.object({
   summary: z.string().catch(''),
-  statements: z
-    .array(
-      z.object({
-        section: z.string(),
-        text: z.string(),
-        evidenceSeqs: z.array(z.number().int()).catch([]),
-        confidence: z.number().min(0).max(1).catch(0.5),
-      }),
-    )
-    .catch([]),
+  statements: z.array(z.unknown()).catch([]),
 });
 
 function oneLine(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-/** The writer is told to cite in `evidenceSeqs` only; inline "(#1, #2)" references would duplicate the file's own. */
+/**
+ * The writer is told to cite in `evidenceSeqs` only; an inline "(#1, #2)" would duplicate the file's own citations.
+ * Only bracketed references marked as citations are removed ("#3", "answer 3", "seq 3"), never bare numbers.
+ */
+const INLINE_CITE =
+  /\s*[([]\s*(?:#|(?:answers?|seqs?|responses?)\s*#?)\d+(?:\s*(?:,|and|&|–|-|to)\s*#?\d+)*\s*[)\]]/gi;
 export function stripInlineCites(s: string): string {
-  return oneLine(s.replace(/\s*[([]\s*(?:answers?\s*)?#?\d+(?:\s*(?:,|and|&)\s*#?\d+)*\s*[)\]]/gi, ''));
+  return oneLine(s.replace(INLINE_CITE, '')).replace(/\s+([.,;:])/g, '$1');
 }
 
-/** Rendered input for `persona.v1`. No name: the writer refers to the person as "they" (data minimization). */
-export function personaWriterInput(doc: MimicJson, facets: Facet[]): string {
-  const ctx = [`location: ${doc.subject.location}`];
-  if (doc.subject.occupation) ctx.push(`occupation: ${doc.subject.occupation}`);
-  for (const f of doc.facts) ctx.push(`${f.predicate}: ${oneLine(f.object)}`);
-  const tendencies = traitLines(doc, facets).map(
+/** Replaces the person's name (whole, and each part of 3+ letters) so it never reaches the writer. */
+function nameRedactor(displayName: string): (s: string) => string {
+  const parts = [displayName, ...displayName.split(/\s+/)]
+    .map((p) => p.trim())
+    .filter((p) => p.length >= 3)
+    .map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!parts.length) return (s) => s;
+  const re = new RegExp(`\\b(?:${parts.join('|')})\\b`, 'gi');
+  return (s) => s.replace(re, '[name]');
+}
+
+/**
+ * Rendered input for `persona.v1`, and the answer seqs it shows. Data minimization: no name (redacted anywhere it
+ * appears, such as a search result's title), no `headline` facts, which are page titles, and no repeats, which the
+ * file's decision record leaves out.
+ */
+export function personaWriterInput(
+  src: PersonaSource,
+  facets: Facet[],
+): { text: string; shown: Set<number> } {
+  const redact = nameRedactor(src.subject.displayName);
+  const ctx = [`location: ${src.subject.location}`];
+  if (src.subject.occupation) ctx.push(`occupation: ${src.subject.occupation}`);
+  for (const f of src.facts) if (f.predicate !== 'headline') ctx.push(`${f.predicate}: ${oneLine(f.object)}`);
+  const tendencies = traitLines(src, facets).map(
     (t) => `${t.facet.id}: ${t.label} (${t.facet.low} ↔ ${t.facet.high}; ${t.certainty} certainty)`,
   );
-  const patterns = doc.insights.map((i) => `- ${oneLine(i.text)} [${i.evidence.join(', ')}]`);
-  const answers = doc.evidence.slice(-PERSONA_MAX_ANSWERS).map((e) => {
-    const chosen = e.options[e.optionKeys.indexOf(e.answer)] ?? e.answer;
+  const patterns = src.insights.map((i) => `- ${oneLine(i.text)} [${i.evidence.join(', ')}]`);
+  const answers = recordEvidence(src).slice(-PERSONA_MAX_ANSWERS);
+  const lines = answers.map((e) => {
     const why = e.why ? ` (why: ${oneLine(e.why).slice(0, WHY_CHARS)})` : '';
-    return `#${e.seq} ${oneLine(e.prompt)} [${e.options.join(' | ')}] → ${chosen}${why}`;
+    return `#${e.seq} ${oneLine(e.prompt)} [${e.options.join(' | ')}] → ${chosenLabel(e)}${why}`;
   });
-  return [
+  const text = [
     `CONTEXT:\n${ctx.join('\n')}`,
     `TENDENCIES:\n${tendencies.join('\n') || 'none yet'}`,
     `PATTERNS:\n${patterns.join('\n') || 'none yet'}`,
-    `ANSWERS:\n${answers.join('\n')}`,
+    `ANSWERS:\n${lines.join('\n')}`,
   ].join('\n\n');
+  return { text: redact(text), shown: new Set(answers.map((e) => e.seq)) };
 }
 
 /**
  * Writes a draft with `persona.v1`. The citation guard matches the reflector's: a statement must cite at least one
- * real answer, or it is dropped.
+ * answer the writer was shown, or it is dropped.
  */
 export async function writePersonaDraft(
   gateway: Gateway,
   ctx: CallContext,
-  input: { model: string; doc: MimicJson; facets: Facet[] },
+  input: { model: string; source: PersonaSource; facets: Facet[] },
 ): Promise<{ draft: PersonaDraft; dropped: number; modelSnapshot: string }> {
   const p = PROMPTS['persona.v1'];
+  const { text, shown } = personaWriterInput(input.source, input.facets);
   const res = await gateway.chat(ctx, {
     model: input.model,
     messages: [
       { role: 'system', content: p.system },
-      { role: 'user', content: personaWriterInput(input.doc, input.facets) },
+      { role: 'user', content: text },
     ],
     jsonSchema: { name: 'persona', schema: p.schema },
     reasoningEffort: 'medium',
@@ -169,25 +219,35 @@ export async function writePersonaDraft(
   });
   const parsed = RawDraft.safeParse(parseJsonLoose(res.content));
   if (!parsed.success) throw new Error('persona writer returned invalid JSON');
-  const valid = new Set(input.doc.evidence.map((e) => e.seq));
   const sections = new Set<string>(STATEMENT_SECTIONS);
   const perSection = new Map<string, number>();
   const seen = new Set<string>();
   const statements: PersonaStatement[] = [];
   let dropped = 0;
-  for (const s of parsed.data.statements) {
-    const text = stripInlineCites(s.text).slice(0, 400);
-    const cites = [...new Set(s.evidenceSeqs.filter((x) => valid.has(x)))].sort((a, b) => a - b);
-    const n = perSection.get(s.section) ?? 0;
-    if (!sections.has(s.section) || text.length < 3 || !cites.length || n >= MAX_PER_SECTION) {
+  for (const raw of parsed.data.statements) {
+    const r = RawStatement.safeParse(raw);
+    if (!r.success) {
       dropped++;
       continue;
     }
-    if (seen.has(`${s.section}|${text}`)) continue;
-    seen.add(`${s.section}|${text}`);
+    const s = r.data;
+    const stmt = stripInlineCites(s.text).slice(0, 400);
+    const cites = [...new Set(s.evidenceSeqs.filter((x) => shown.has(x)))].sort((a, b) => a - b);
+    const n = perSection.get(s.section) ?? 0;
+    if (!sections.has(s.section) || stmt.length < 3 || !cites.length || n >= MAX_PER_SECTION) {
+      dropped++;
+      continue;
+    }
+    if (seen.has(`${s.section}|${stmt}`)) continue;
+    seen.add(`${s.section}|${stmt}`);
     perSection.set(s.section, n + 1);
     statements.push(
-      PersonaStatement.parse({ section: s.section, text, evidenceSeqs: cites, confidence: s.confidence }),
+      PersonaStatement.parse({
+        section: s.section,
+        text: stmt,
+        evidenceSeqs: cites,
+        confidence: s.confidence,
+      }),
     );
   }
   const draft = PersonaDraft.parse({
@@ -205,11 +265,11 @@ export interface PersonaItem {
   key: string;
   /** The text before any edit by the person. */
   text: string;
-  /** Secondary text: sources, poles and certainty, or the question's options. */
+  /** Secondary text: sources, poles and certainty. */
   detail: string | null;
   cites: number[];
   editable: boolean;
-  /** Statements resting on little evidence. */
+  /** Statements resting on one answer, or that the writer was unsure of. */
   tentative?: boolean;
   /** Tendencies: the facet group. */
   group?: string;
@@ -228,32 +288,39 @@ export interface PersonaDraftMeta {
   id: string;
   createdAt: number;
   seqUpTo: number;
-  snapshotVersion: number;
   modelSnapshot: string;
   promptVersion: string;
 }
 
 export interface PersonaInput {
-  doc: MimicJson;
+  source: PersonaSource;
   facets: Facet[];
   draft: (PersonaDraftMeta & { draft: PersonaDraft }) | null;
   curation: PersonaCuration;
+  rev?: number;
 }
 
 export interface PersonaView {
   name: string;
   sections: PersonaSection[];
   markdown: string;
-  snapshot: { version: number; seqUpTo: number; answers: number };
-  draft: (PersonaDraftMeta & { newAnswers: number }) | null;
+  source: { asOf: number; answers: number };
+  /** `answers`: answers the draft was written from; `newAnswers`: answered since. */
+  draft: (PersonaDraftMeta & { answers: number; newAnswers: number }) | null;
   /** Answers needed before a draft can be written. */
   minAnswers: number;
   curation: PersonaCuration;
+  /** Revision of the stored curation (0 when none is stored). */
+  rev: number;
 }
 
 const short = (s: string) => sha256Hex(s).slice(0, 12);
+/**
+ * Curation keys. Draft items hash their content, so a rewrite that changes one drops its edit; the rest name stable
+ * things (a fact, a facet, an answer), so hiding them survives rewrites and new answers.
+ */
 export const personaKey = {
-  summary: () => 'summary',
+  summary: (text: string) => `summary:${short(text)}`,
   statement: (s: Pick<PersonaStatement, 'section' | 'text'>) => `st:${short(`${s.section}|${s.text}`)}`,
   identity: (field: 'location' | 'occupation') => `id:${field}`,
   fact: (f: { predicate: string; object: string }) => `fact:${short(`${f.predicate}|${f.object}`)}`,
@@ -261,62 +328,43 @@ export const personaKey = {
   insight: (text: string) => `ins:${short(text)}`,
   record: (seq: number) => `ex:${seq}`,
 };
-
-type Certainty = 'low' | 'moderate' | 'high';
-function certaintyOf(confidence: number): Certainty {
-  return confidence >= 0.66 ? 'high' : confidence >= 0.4 ? 'moderate' : 'low';
-}
+const isDraftKey = (k: string) => k.startsWith('st:') || k.startsWith('summary:');
 
 interface TraitLine {
   facet: Facet;
   label: string;
-  certainty: Certainty;
+  certainty: CertaintyTier;
+  known: boolean;
 }
 
-/** Scored answers needed before the file calls itself a strong prior. */
-export const STRONG_MIN_SCORED = 20;
-
-/** Below this certainty, or with no direct evidence, a facet goes under "Not known yet". */
-export const KNOWN_MIN_CONFIDENCE = 0.4;
-
 /** One line per facet with an estimate, preferring the decision model's read over psychometric scoring. */
-function traitLines(doc: MimicJson, facets: Facet[]): Array<TraitLine & { known: boolean }> {
+function traitLines(src: PersonaSource, facets: Facet[]): TraitLine[] {
   const best = new Map<string, MimicJson['traits'][number]>();
-  for (const t of doc.traits) {
+  for (const t of src.traits) {
     const cur = best.get(t.facet);
     if (!cur || (t.method === 'jev' && cur.method !== 'jev')) best.set(t.facet, t);
   }
-  const out: Array<TraitLine & { known: boolean }> = [];
+  const out: TraitLine[] = [];
   for (const f of facets) {
     const t = best.get(f.id);
     if (!t) continue;
-    const idx = Math.max(0, Math.min(4, Math.round(t.mean * 4)));
     out.push({
       facet: f,
-      label: f.labels[idx] ?? f.labels[2],
-      certainty: certaintyOf(t.confidence),
+      label: facetReading(f.labels, t.mean),
+      certainty: certaintyTier(t.confidence),
       known: t.n > 0 && t.confidence >= KNOWN_MIN_CONFIDENCE,
     });
   }
   return out;
 }
 
-const PREDICATES: Record<string, string> = {
-  worksAt: 'Works at',
-  livesIn: 'Lives in',
-  hasSkill: 'Skill',
-  hasInterest: 'Interest',
-  knowsAbout: 'Knows about',
-  alumniOf: 'Studied at',
-  jobTitle: 'Job title',
-  headline: 'Headline',
-  memberOf: 'Member of',
-  hasOccupation: 'Occupation',
-};
-function predicateLabel(p: string): string {
-  if (PREDICATES[p]) return PREDICATES[p];
-  const words = p.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
-  return words.charAt(0).toUpperCase() + words.slice(1);
+/** Repeats re-ask an earlier prompt to measure consistency; the record keeps the first time it was answered. */
+function recordEvidence(src: PersonaSource): MimicJson['evidence'] {
+  return src.evidence.filter((e) => e.kind !== 'repeat');
+}
+
+function chosenLabel(e: MimicJson['evidence'][number]): string {
+  return e.options[e.optionKeys.indexOf(e.answer)] ?? e.answer;
 }
 
 const SOURCES: Record<MimicJson['facts'][number]['source'], string> = {
@@ -334,52 +382,64 @@ function firstName(name: string): string {
   return name.trim().split(/\s+/)[0] || name;
 }
 
+/** Draft text mentioning a fact the person removed stays out of the file (PLAN §15: every fact can be removed). */
+function mentionsRemoved(src: PersonaSource): (text: string) => boolean {
+  const objects = src.removedFacts.map((f) => f.object.trim().toLowerCase()).filter((o) => o.length >= 3);
+  return (text) => {
+    const t = text.toLowerCase();
+    return objects.some((o) => t.includes(o));
+  };
+}
+
 /** Builds the curation view and the Markdown from the same items, so the preview is exactly the file. */
 export function buildPersona(input: PersonaInput): PersonaView {
-  const { doc, facets, draft, curation } = input;
-  const name = curation.name?.trim() || doc.subject.displayName;
+  const { source: src, facets, draft, curation } = input;
+  const name = curation.name?.trim() || src.subject.displayName;
   const items = new Map<PersonaSectionId, PersonaItem[]>(PERSONA_SECTIONS.map((s) => [s, []]));
   const push = (s: PersonaSectionId, item: PersonaItem) => items.get(s)!.push(item);
 
   if (draft) {
-    if (draft.draft.summary)
+    const removed = mentionsRemoved(src);
+    const summary = draft.draft.summary;
+    if (summary && !removed(summary))
       push('summary', {
-        key: personaKey.summary(),
-        text: draft.draft.summary,
+        key: personaKey.summary(summary),
+        text: summary,
         detail: null,
         cites: [],
         editable: true,
       });
     for (const st of draft.draft.statements) {
+      if (removed(st.text)) continue;
       push(st.section, {
         key: personaKey.statement(st),
         text: st.text,
         detail: null,
         cites: st.evidenceSeqs,
         editable: true,
-        tentative: st.confidence < 0.5,
+        tentative: st.confidence < 0.5 || st.evidenceSeqs.length < 2,
       });
     }
   }
 
-  if (doc.subject.occupation)
+  if (src.subject.occupation)
     push('background', {
       key: personaKey.identity('occupation'),
-      text: doc.subject.occupation,
+      text: src.subject.occupation,
       detail: null,
       cites: [],
       editable: false,
     });
-  if (doc.subject.location)
+  if (src.subject.location)
     push('background', {
       key: personaKey.identity('location'),
-      text: `Based in ${doc.subject.location}`,
+      text: `Based in ${src.subject.location}`,
       detail: null,
       cites: [],
       editable: false,
     });
   const factSeen = new Set<string>();
-  for (const f of doc.facts) {
+  for (const f of src.facts) {
     const key = personaKey.fact(f);
     if (factSeen.has(key)) continue;
     factSeen.add(key);
@@ -392,11 +452,11 @@ export function buildPersona(input: PersonaInput): PersonaView {
     });
   }
 
-  const traits = traitLines(doc, facets);
+  const traits = traitLines(src, facets);
   for (const t of traits.filter((x) => x.known)) {
     push('tendencies', {
       key: personaKey.trait(t.facet.id),
-      text: `${capitalize(t.facet.name)}: ${t.label.charAt(0).toLowerCase()}${t.label.slice(1)}`,
+      text: `${capitalize(t.facet.name)}: ${t.label}`,
       detail: `${t.facet.low} ↔ ${t.facet.high}; ${t.certainty} certainty`,
       cites: [],
       editable: false,
@@ -414,7 +474,7 @@ export function buildPersona(input: PersonaInput): PersonaView {
       editable: false,
     });
 
-  for (const i of doc.insights) {
+  for (const i of src.insights) {
     push('patterns', {
       key: personaKey.insight(i.text),
       text: oneLine(i.text),
@@ -424,16 +484,14 @@ export function buildPersona(input: PersonaInput): PersonaView {
     });
   }
 
-  // Repeats re-ask an earlier prompt to measure consistency; the record keeps the first time it was answered.
-  for (const e of doc.evidence.filter((x) => x.kind !== 'repeat')) {
-    const chosen = e.options[e.optionKeys.indexOf(e.answer)] ?? e.answer;
+  for (const e of recordEvidence(src)) {
     push('record', {
       key: personaKey.record(e.seq),
       text: oneLine(e.prompt),
       detail: null,
       cites: [e.seq],
       editable: false,
-      answer: { options: e.options, chosen, why: e.why ? oneLine(e.why) : null },
+      answer: { options: e.options, chosen: chosenLabel(e), why: e.why ? oneLine(e.why) : null },
     });
   }
 
@@ -445,26 +503,28 @@ export function buildPersona(input: PersonaInput): PersonaView {
   let draftMeta: PersonaView['draft'] = null;
   if (draft) {
     const { draft: _body, ...meta } = draft;
-    draftMeta = { ...meta, newAnswers: doc.evidence.filter((e) => e.seq > draft.seqUpTo).length };
+    const within = src.evidence.filter((e) => e.seq <= draft.seqUpTo).length;
+    draftMeta = { ...meta, answers: within, newAnswers: src.evidence.length - within };
   }
   return {
     name,
     sections,
-    markdown: renderPersonaMarkdown({ name, doc, sections, curation }),
-    snapshot: { version: doc.version, seqUpTo: doc.seqUpTo, answers: doc.evidence.length },
+    markdown: renderPersonaMarkdown({ name, src, sections, curation }),
+    source: { asOf: src.asOf, answers: src.evidence.length },
     draft: draftMeta,
     minAnswers: PERSONA_MIN_ANSWERS,
     curation,
+    rev: input.rev ?? 0,
   };
 }
 
 function renderPersonaMarkdown(args: {
   name: string;
-  doc: MimicJson;
+  src: PersonaSource;
   sections: PersonaSection[];
   curation: PersonaCuration;
 }): string {
-  const { name, doc, sections, curation } = args;
+  const { name, src, sections, curation } = args;
   const off = new Set<string>(curation.disabled);
   const hidden = new Set(curation.hidden);
   const on = (id: PersonaSectionId) => !off.has(id);
@@ -479,10 +539,10 @@ function renderPersonaMarkdown(args: {
     return shown.length ? ` [${shown.map((s) => `#${s}`).join(', ')}]` : '';
   };
   const first = firstName(name);
-  const date = new Date(doc.createdAt).toISOString().slice(0, 10);
+  const date = new Date(src.asOf).toISOString().slice(0, 10);
   const out: string[] = [`# Persona: ${name}`, ''];
   out.push(
-    `A portrait of how ${name} thinks and makes decisions, built by Mimic from ${doc.evidence.length} answers they gave about themselves. Snapshot v${doc.version}, ${date}.`,
+    `A portrait of how ${name} thinks and makes decisions, built by Mimic from ${src.evidence.length} answers they gave about themselves, as of ${date}.`,
   );
 
   const section = (id: PersonaSectionId, body: string[]) => {
@@ -504,12 +564,12 @@ function renderPersonaMarkdown(args: {
     guide.push(
       `- Where this file is silent or unsure, say so and ask. Don't invent experiences, facts or opinions for ${first}.`,
     );
-    if (doc.fidelity && doc.fidelity.n > 0) {
+    if (src.fidelity && src.fidelity.n > 0) {
       const pct = (x: number) => `${Math.round(x * 100)}%`;
-      const f = doc.fidelity;
+      const f = src.fidelity;
       const base = f.accBaseline === null ? '' : ` (${pct(f.accBaseline)} from context alone)`;
-      // Only a model with enough scored answers that beats the context-only baseline earns "strong prior".
-      const strong = f.n >= STRONG_MIN_SCORED && (f.accBaseline === null || f.acc > f.accBaseline);
+      // "Strong prior" needs enough scored answers and a measured win over the context-only baseline.
+      const strong = f.n >= STRONG_MIN_SCORED && f.accBaseline !== null && f.acc > f.accBaseline;
       guide.push(
         `- How far to trust it: the model behind this file predicted ${pct(f.acc)} of ${first}'s answers before seeing them${base}, over ${f.n} questions. ${
           strong
@@ -572,13 +632,19 @@ function renderPersonaMarkdown(args: {
   return `${out.join('\n')}\n`;
 }
 
-/** Drops hidden keys and edits that no longer match any item, so curation doesn't grow without bound. */
-export function pruneCuration(c: PersonaCuration, sections: PersonaSection[]): PersonaCuration {
-  const keys = new Set(sections.flatMap((s) => s.items.map((i) => i.key)));
-  const editable = new Set(sections.flatMap((s) => s.items.filter((i) => i.editable).map((i) => i.key)));
+/**
+ * Drops edits and hidden keys for draft items that are no longer in the latest draft (a rewrite replaced them). Keys
+ * for stable things (facts, facets, answers, identity fields) are kept even when the item is missing for now, so an
+ * item the person hid stays hidden when it comes back.
+ */
+export function pruneCuration(c: PersonaCuration, draft: PersonaDraft | null): PersonaCuration {
+  const current = new Set<string>();
+  if (draft?.summary) current.add(personaKey.summary(draft.summary));
+  for (const st of draft?.statements ?? []) current.add(personaKey.statement(st));
+  const keep = (k: string) => !isDraftKey(k) || current.has(k);
   return {
     ...c,
-    hidden: [...new Set(c.hidden.filter((k) => keys.has(k)))],
-    edits: Object.fromEntries(Object.entries(c.edits).filter(([k]) => editable.has(k))),
+    hidden: [...new Set(c.hidden.filter(keep))],
+    edits: Object.fromEntries(Object.entries(c.edits).filter(([k]) => isDraftKey(k) && current.has(k))),
   };
 }

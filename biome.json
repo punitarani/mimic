@@ -15,7 +15,8 @@
       "!**/cloudflare-env.d.ts",
       "!**/worker-configuration.d.ts",
       "!docs/ontology/*.json",
-      "!docs/schemas/*.json"
+      "!docs/schemas/*.json",
+      "!apps/web/public/autocomplete"
     ]
   },
   "formatter": {

@@ -2,7 +2,7 @@ import type {
   AnswerResult,
   ExperimentRecord,
   NextResult,
-  PersonaCuration,
+  PersonaSave,
   PersonaView,
   PlaygroundPrediction,
   PublicQuestion,
@@ -65,7 +65,10 @@ export interface IdentityView {
     source: string;
     provider: string;
     samePerson: number | null;
-    status: 'proposed' | 'confirmed' | 'rejected';
+    /** The profile at a link the person gave. */
+    fromLink: boolean;
+    /** Only the latest search's candidates are listed: open or confirmed. */
+    status: 'proposed' | 'confirmed';
   }>;
   facts: Array<{
     id: string;
@@ -110,6 +113,8 @@ export const api = {
   confirm: (id: string, candidateId: string | null) =>
     call<{ ok: true }>('POST', `/api/mimics/${id}/identity/confirm`, { candidateId }),
   finishIdentity: (id: string) => call<{ ok: true }>('POST', `/api/mimics/${id}/identity/finish`),
+  searchAgain: (id: string, link: string) =>
+    call<{ ok: true }>('POST', `/api/mimics/${id}/identity/search`, { link }),
   setFact: (id: string, factId: string, userState: 'active' | 'removed') =>
     call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
   next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),
@@ -120,8 +125,17 @@ export const api = {
     call<PlaygroundPrediction>('POST', `/api/mimics/${id}/ask`, { question }),
   persona: (id: string) => call<PersonaView>('GET', `/api/mimics/${id}/persona`),
   draftPersona: (id: string) => call<PersonaView>('POST', `/api/mimics/${id}/persona`),
-  curatePersona: (id: string, curation: PersonaCuration) =>
-    call<PersonaView>('PUT', `/api/mimics/${id}/persona`, curation),
+  curatePersona: (id: string, save: PersonaSave) =>
+    call<PersonaView>('PUT', `/api/mimics/${id}/persona`, save),
+  /** Fire-and-forget save that outlives the page (leaving it mid-debounce); the server orders saves by rev. */
+  curatePersonaOnLeave: (id: string, save: PersonaSave) =>
+    void fetch(`/api/mimics/${id}/persona`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(save),
+      credentials: 'same-origin',
+      keepalive: true,
+    }).catch(() => {}),
   stop: (id: string) => call<{ snapshotVersion: number | null }>('POST', `/api/mimics/${id}/stop`),
   remove: (id: string) => call<{ deleted: true }>('DELETE', `/api/mimics/${id}`),
   // Lab (admin only)

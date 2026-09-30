@@ -27,7 +27,9 @@ Rules:
 - Refer to the person as "they". Never use a name.
 - Don't infer demographics, politics, religion, health, sexuality or finances. Beliefs are only views their answers show.
 - If answers conflict, say so in the statement instead of picking a side.
-- At most 6 statements per section, one or two sentences each. Fewer is better than padding when evidence is thin.
+- Write statements for every section the answers support, even when there are few answers: give thin ones low
+  confidence rather than leaving them out. Skip a section only when no answer bears on it.
+- At most 6 statements per section, one or two sentences each. Don't pad with statements the answers don't support.
 - The summary is 2–4 sentences on how this person thinks and decides.
 Return JSON only, matching the schema.
 ```

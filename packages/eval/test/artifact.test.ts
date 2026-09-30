@@ -8,8 +8,10 @@ import {
   exportMimic,
   finishIdentity,
   MimicJson,
+  PersonaCuration,
   predictPlayground,
   searchCacheKey,
+  searchCacheKeys,
   serveNext,
   submitAnswer,
   writeSnapshot,
@@ -125,7 +127,10 @@ describe('mimic artifact (M6)', () => {
     const m = await session(true, 12);
     await exportMimic(engine.deps, m.id);
     await draftPersona(engine.deps, m.id);
-    await curatePersona(engine.deps, m.id, { notes: 'My own words.' });
+    await curatePersona(engine.deps, m.id, {
+      rev: 1,
+      curation: PersonaCuration.parse({ notes: 'My own words.' }),
+    });
     const blobs = engine.deps.blobs as MemoryBlobs;
     const kv = engine.deps.kv as MemoryKv;
     const db = (engine.deps.store as unknown as { db: Db }).db;
@@ -156,15 +161,14 @@ describe('mimic artifact (M6)', () => {
     for (const k of traceKeys) expect(await blobs.get(k)).toBeNull();
     for (const [, v] of blobs.data) expect(v).not.toContain(m.id);
     expect([...kv.data.keys()].filter((k) => k.includes(m.id))).toEqual([]);
-    expect(
-      await kv.get(
-        searchCacheKey({
-          displayName: 'Avery Quinn',
-          location: 'San Francisco, US',
-          occupation: 'Software engineer',
-        }),
-      ),
-    ).toBeNull();
+    for (const k of searchCacheKeys({
+      displayName: 'Avery Quinn',
+      location: 'San Francisco, US',
+      occupation: 'Software engineer',
+      employer: null,
+      links: [],
+    }))
+      expect(await kv.get(k)).toBeNull();
     // Deletion is scoped: the other mimic is untouched.
     expect(await engine.deps.store.getMimic(keep.id)).not.toBeNull();
     expect((await engine.deps.store.listAnswers(keep.id)).length).toBe(3);

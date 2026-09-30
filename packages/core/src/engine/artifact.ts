@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { loadMimicData, vectorId } from './data';
+import type { FactRecord, FidelityRecord, MimicRecord } from '../store';
+import { type LoadedMimic, loadMimicData, vectorId } from './data';
 import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
-import { searchCacheKey } from './identity';
+import { searchCacheKeys } from './identity';
 
 /** The persisted, portable mimic (PLAN §8.1). */
 export const MimicJson = z.object({
@@ -75,25 +76,22 @@ export function snapshotKey(mimicId: string, version: number, attemptId: string)
   return `snapshots/${mimicId}/v${version}-${attemptId}.json`;
 }
 
-export async function buildMimicJson(deps: EngineDeps, mimicId: string, version: number): Promise<MimicJson> {
-  const m = await requireMimic(deps, mimicId);
-  const cfg = await loadConfig(deps, m.configHash);
-  const loaded = await loadMimicData(deps, m);
-  const [facts, kg, fid, primaries] = await Promise.all([
-    deps.store.listFacts(m.id),
-    deps.store.listKg(m.id),
-    deps.store.listFidelity(m.id),
-    deps.store.listPredictions({ mimicId: m.id, roles: ['primary'] }),
-  ]);
+/** The fields of `mimic.json` that describe the person, from the mimic's current data (facts: active only). */
+export type MimicDocParts = Pick<
+  MimicJson,
+  'seqUpTo' | 'subject' | 'facts' | 'evidence' | 'traits' | 'insights' | 'fidelity'
+>;
+
+export function mimicDocParts(
+  m: MimicRecord,
+  loaded: LoadedMimic,
+  facts: FactRecord[],
+  fid: FidelityRecord[],
+): MimicDocParts {
   const seqUpTo = loaded.answers.reduce((a, x) => Math.max(a, x.seq), 0);
   const latestFid = fid.at(-1);
-  const lastPrimary = primaries.filter((p) => p.ok && !p.fallback).at(-1);
   const qById = new Map(loaded.questions.map((q) => [q.id, q]));
-  const doc: MimicJson = {
-    schema: 'mimic/1',
-    mimicId: m.id,
-    version,
-    createdAt: deps.clock(),
+  return {
     seqUpTo,
     subject: { displayName: m.displayName, location: m.location, occupation: m.occupation },
     facts: facts
@@ -133,10 +131,6 @@ export async function buildMimicJson(deps: EngineDeps, mimicId: string, version:
       facets: i.facetIds,
       evidence: i.evidenceSeqs,
     })),
-    kg: {
-      nodes: kg.nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),
-      edges: kg.edges.map((e) => ({ src: e.src, dst: e.dst, predicate: e.predicate, weight: e.weight })),
-    },
     fidelity: latestFid
       ? {
           fidelity: latestFid.fidelity,
@@ -147,6 +141,31 @@ export async function buildMimicJson(deps: EngineDeps, mimicId: string, version:
           n: latestFid.nScored,
         }
       : null,
+  };
+}
+
+export async function buildMimicJson(deps: EngineDeps, mimicId: string, version: number): Promise<MimicJson> {
+  const m = await requireMimic(deps, mimicId);
+  const cfg = await loadConfig(deps, m.configHash);
+  const loaded = await loadMimicData(deps, m);
+  const [facts, kg, fid, primaries] = await Promise.all([
+    deps.store.listFacts(m.id),
+    deps.store.listKg(m.id),
+    deps.store.listFidelity(m.id),
+    deps.store.listPredictions({ mimicId: m.id, roles: ['primary'] }),
+  ]);
+  const lastPrimary = primaries.filter((p) => p.ok && !p.fallback).at(-1);
+  const parts = mimicDocParts(m, loaded, facts, fid);
+  const doc: MimicJson = {
+    schema: 'mimic/1',
+    mimicId: m.id,
+    version,
+    createdAt: deps.clock(),
+    ...parts,
+    kg: {
+      nodes: kg.nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),
+      edges: kg.edges.map((e) => ({ src: e.src, dst: e.dst, predicate: e.predicate, weight: e.weight })),
+    },
     pipeline: {
       configHash: m.configHash,
       config: cfg,
@@ -222,7 +241,7 @@ export async function deleteMimic(deps: EngineDeps, mimicId: string): Promise<vo
   for (let i = 0; i < blobKeys.length; i += 500) await deps.blobs.delete(blobKeys.slice(i, i + 500));
 
   await deps.kv.delete(`hyp:${m.id}`);
-  await deps.kv.delete(searchCacheKey(m));
+  for (const k of searchCacheKeys(m)) await deps.kv.delete(k);
   for (const k of await deps.kv.list(`mimic:${m.id}:`)) await deps.kv.delete(k);
 
   await deps.store.deleteMimic(m.id);

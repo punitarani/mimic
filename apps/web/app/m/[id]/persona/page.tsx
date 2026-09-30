@@ -1,5 +1,5 @@
 'use client';
-import type { PersonaCuration, PersonaItem, PersonaSection, PersonaView } from '@mimic/core';
+import type { PersonaCuration, PersonaItem, PersonaSave, PersonaSection, PersonaView } from '@mimic/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
@@ -12,44 +12,84 @@ type SaveState = 'saved' | 'saving' | 'error';
 const SAVE_DELAY_MS = 600;
 const RECORD_PREVIEW = 8;
 
-/** Persona.md (ADR-0027): choose what goes in, reword what was inferred, add your own words, then download. */
+/** Persona.md (ADR-0031): choose what goes in, reword what was inferred, add your own words, then download. */
 export default function PersonaPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['persona', id], queryFn: () => api.persona(id) });
   const [curation, setCuration] = useState<PersonaCuration | null>(null);
   const [save, setSave] = useState<SaveState>('saved');
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [tab, setTab] = useState<'curate' | 'preview'>('curate');
-  const [error, setError] = useState<string | null>(null);
+
+  // Saves go out one at a time, newest state last; each carries an increasing rev, and the server ignores a save
+  // older than the one it has, so out-of-order arrival (for example the keepalive flush on leaving) can't regress it.
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latest = useRef(0);
+  const pending = useRef<PersonaSave | null>(null);
+  const inFlight = useRef(false);
+  const rev = useRef(0);
 
   useEffect(() => {
-    if (q.data && curation === null) setCuration(q.data.curation);
+    if (q.data && curation === null) {
+      setCuration(q.data.curation);
+      rev.current = Math.max(rev.current, q.data.rev);
+    }
   }, [q.data, curation]);
+
+  const flush = useCallback(async () => {
+    if (inFlight.current || !pending.current) return;
+    const next = pending.current;
+    pending.current = null;
+    inFlight.current = true;
+    try {
+      const v = await api.curatePersona(id, next);
+      if (!pending.current) {
+        qc.setQueryData(['persona', id], v);
+        setSave('saved');
+        setSaveError(null);
+      }
+    } catch (e) {
+      // A newer save supersedes this one; otherwise say so and offer a retry.
+      if (!pending.current) {
+        setSave('error');
+        setSaveError(e instanceof Error ? e.message : 'Could not save.');
+      }
+    } finally {
+      inFlight.current = false;
+      if (pending.current && !timer.current) void flush();
+    }
+  }, [id, qc]);
 
   const update = useCallback(
     (next: PersonaCuration) => {
       setCuration(next);
       setSave('saving');
+      rev.current = Math.max(Date.now(), rev.current + 1);
+      pending.current = { rev: rev.current, curation: next };
       if (timer.current) clearTimeout(timer.current);
-      const n = ++latest.current;
-      timer.current = setTimeout(async () => {
-        try {
-          const v = await api.curatePersona(id, next);
-          if (n !== latest.current) return; // a newer change is on its way
-          qc.setQueryData(['persona', id], v);
-          setSave('saved');
-        } catch (e) {
-          if (n !== latest.current) return;
-          setSave('error');
-          setError(e instanceof Error ? e.message : 'Could not save.');
-        }
+      timer.current = setTimeout(() => {
+        timer.current = null;
+        void flush();
       }, SAVE_DELAY_MS);
     },
-    [id, qc],
+    [flush],
   );
-  useEffect(() => () => void (timer.current && clearTimeout(timer.current)), []);
+
+  // Leaving the page (in-app navigation or closing the tab) sends any unsent change instead of dropping it.
+  useEffect(() => {
+    const leave = () => {
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      if (pending.current) api.curatePersonaOnLeave(id, pending.current);
+      pending.current = null;
+    };
+    window.addEventListener('pagehide', leave);
+    return () => {
+      window.removeEventListener('pagehide', leave);
+      leave();
+    };
+  }, [id]);
 
   const view = q.data;
   return (
@@ -76,9 +116,10 @@ export default function PersonaPage() {
           )
         ) : (
           <>
-            <FileActions id={id} view={view} save={save} />
-            <ErrorText>{error}</ErrorText>
-            <DraftCard id={id} view={view} onError={setError} />
+            <FileActions id={id} view={view} save={save} onRetry={() => curation && update(curation)} />
+            <ErrorText>{saveError}</ErrorText>
+            <ErrorText>{draftError}</ErrorText>
+            <DraftCard id={id} view={view} onError={setDraftError} />
             <div
               role="tablist"
               aria-label="View"
@@ -116,8 +157,19 @@ export default function PersonaPage() {
   );
 }
 
-function FileActions({ id, view, save }: { id: string; view: PersonaView; save: SaveState }) {
+function FileActions({
+  id,
+  view,
+  save,
+  onRetry,
+}: {
+  id: string;
+  view: PersonaView;
+  save: SaveState;
+  onRetry: () => void;
+}) {
   const [copied, setCopied] = useState(false);
+  // The file on the server matches the page only once the latest change is saved.
   const busy = save !== 'saved';
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -146,6 +198,11 @@ function FileActions({ id, view, save }: { id: string; view: PersonaView; save: 
       <span className="text-[13px] text-muted" aria-live="polite">
         {save === 'saving' ? 'Saving…' : save === 'error' ? 'Not saved' : 'Saved'}
       </span>
+      {save === 'error' && (
+        <Button variant="ghost" size="sm" onClick={onRetry}>
+          Try again
+        </Button>
+      )}
     </div>
   );
 }
@@ -161,8 +218,8 @@ function DraftCard({
 }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
-  const { draft, snapshot, minAnswers } = view;
-  const tooFew = snapshot.answers < minAnswers;
+  const { draft, source, minAnswers } = view;
+  const tooFew = source.answers < minAnswers;
   const write = async () => {
     setBusy(true);
     onError(null);
@@ -179,7 +236,7 @@ function DraftCard({
       {draft ? (
         <p className="text-[15px]">
           The inferred sections were written from your {draft.newAnswers > 0 ? 'first ' : ''}
-          {draft.seqUpTo} answers on {new Date(draft.createdAt).toLocaleDateString()}.
+          {draft.answers} answers on {new Date(draft.createdAt).toLocaleDateString()}.
           {draft.newAnswers > 0 && (
             <span className="text-muted">
               {' '}
@@ -189,7 +246,7 @@ function DraftCard({
         </p>
       ) : (
         <p className="text-[15px]">
-          Mimic reads your {snapshot.answers} answers and writes how you decide, what you value, what you
+          Mimic reads your {source.answers} answers and writes how you decide, what you value, what you
           believe and where your blind spots are. Every statement cites the answers behind it.
         </p>
       )}

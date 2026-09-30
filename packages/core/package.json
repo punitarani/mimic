@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./ontology": "./src/ontology/index.ts"
+    "./ontology": "./src/ontology/index.ts",
+    "./links": "./src/links.ts",
+    "./labels": "./src/labels.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

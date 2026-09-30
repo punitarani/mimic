@@ -230,7 +230,7 @@ function Playground({ id }: { id: string }) {
   );
 }
 
-/** Persona.md (ADR-0027): a portable portrait for any agent, curated on its own page. */
+/** Persona.md (ADR-0031): a portable portrait for any agent, curated on its own page. */
 function Persona({ id }: { id: string }) {
   return (
     <section aria-labelledby="persona-h" className="space-y-3">

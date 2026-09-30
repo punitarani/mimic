@@ -103,6 +103,9 @@ function systemText(req: ChatRequest): string {
   return req.messages.find((m) => m.role === 'system')?.content ?? '';
 }
 
+/** The sentence the fake reflection model adds; tests key fake predictors on it to make an improvement detectable. */
+export const FAKE_REFLECTION_HINT = 'Weigh earlier answers first.';
+
 export class FakeLlm implements LlmClient {
   readonly provider = 'fake-llm';
   calls = 0;
@@ -113,7 +116,14 @@ export class FakeLlm implements LlmClient {
     const sys = systemText(req);
     const user = userText(req);
     let out: unknown;
-    if (sys.startsWith('You write short, concrete questions')) out = this.generate(user);
+    let text: string | undefined;
+    if (sys.startsWith('You improve one text component')) {
+      // Reflection (mimic-eval optimize): the current text plus one generic sentence, keeping every placeholder.
+      const current = user.split('CURRENT TEXT:\n<<<\n')[1]?.split('\n>>>')[0] ?? '';
+      text = `<component>${current} ${FAKE_REFLECTION_HINT}</component>`;
+    } else if (sys.startsWith('You analyze where a predictor'))
+      text = '1. Fake analysis: misses cluster on scale items.';
+    else if (sys.startsWith('You write short, concrete questions')) out = this.generate(user);
     else if (sys.startsWith("You analyze one person's answers")) out = this.reflect(user);
     else if (sys.startsWith('Estimate the probability')) out = this.predict(user);
     else if (sys.startsWith("Given a person's occupation")) out = this.occFacets();
@@ -124,7 +134,7 @@ export class FakeLlm implements LlmClient {
       out = { sentence: 'I tend to go with what worked before.' };
     else out = {};
     return {
-      content: JSON.stringify(out),
+      content: text ?? JSON.stringify(out),
       modelSnapshot: `${req.model}@fake`,
       provider: 'fake',
       usage: { inputTokens: Math.ceil(user.length / 4), outputTokens: 50, costUsd: 0 },
