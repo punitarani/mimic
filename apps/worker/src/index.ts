@@ -1,4 +1,13 @@
-import { EngineError, Job, jobKey, MAX_JOB_ATTEMPTS, runJob, ulid, writeSnapshot } from '@mimic/core';
+import {
+  EngineError,
+  Job,
+  jobKey,
+  MAX_JOB_ATTEMPTS,
+  requeueStaleJobs,
+  runJob,
+  ulid,
+  writeSnapshot,
+} from '@mimic/core';
 import { engineDeps, type MimicBindings } from '@mimic/db/runtime';
 
 export interface Env extends MimicBindings {
@@ -61,9 +70,14 @@ export default {
     );
   },
 
-  /** Cron: write snapshots for mimics whose evidence moved past their last snapshot (session-end safety net). */
+  /**
+   * Cron: re-enqueue stale jobs, and write snapshots for mimics whose evidence moved past their last snapshot
+   * (session-end safety net).
+   */
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
     const d = deps(env);
+    const requeued = await requeueStaleJobs(d);
+    if (requeued) console.log(`requeued ${requeued} stale jobs`);
     const recent = (await d.store.listMimics({})).filter((m) => m.updatedAt > Date.now() - 24 * 3600 * 1000);
     for (const m of recent) {
       try {

@@ -308,6 +308,8 @@ export interface Store {
   // jobs ledger
   getJob(key: string): Promise<JobRecord | null>;
   putJob(rec: JobRecord): Promise<void>;
+  /** Jobs not done whose last update is older than `before`. */
+  listStaleJobs(before: number, limit: number): Promise<JobRecord[]>;
   // observability
   insertModelCall(rec: import('./gateway').ModelCallRecord): Promise<void>;
   listModelCalls(filter: {

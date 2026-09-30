@@ -1,6 +1,6 @@
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
-import { type Job, jobKey } from '../jobs';
+import { type Job, jobFromKey, jobKey } from '../jobs';
 import {
   generateCandidates,
   generateHypotheses,
@@ -65,6 +65,25 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
     });
     throw e;
   }
+}
+
+export const STALE_JOB_MS = 30 * 60 * 1000;
+
+/**
+ * Cron safety net: re-enqueues jobs stuck in `running`/`failed` (for example a lost message in local dev). Queues
+ * already redeliver unacked messages in deployed envs; the ledger makes a duplicate run a no-op.
+ */
+export async function requeueStaleJobs(deps: EngineDeps, limit = 200): Promise<number> {
+  const stale = await deps.store.listStaleJobs(deps.clock() - STALE_JOB_MS, limit);
+  let n = 0;
+  for (const j of stale) {
+    if (j.attempts >= MAX_JOB_ATTEMPTS) continue;
+    const job = jobFromKey(j.key);
+    if (!job) continue;
+    await deps.jobs.enqueue(job);
+    n++;
+  }
+  return n;
 }
 
 async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> {

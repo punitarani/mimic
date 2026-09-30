@@ -62,3 +62,18 @@ Playwright against `pnpm dev` (14 answered questions, keyboard only):
 - `pnpm deploy:preview` and the preview latency target (answer → next p50 ≤ 800 ms): this environment has no
   Cloudflare account. Locally, the Jev round trip through the relay and proxy is the dominant cost; on Workers the
   D1 phases should also shrink.
+
+## M5 Shadows and lab v0
+
+- `/lab` (admin; open in local dev): per-predictor accuracy, top-1, log loss, Brier, ECE, paired lift over the
+  baseline, failures, $/1k and latency; cost and latency per call type; fidelity vs questions per arm; fidelity per
+  dollar; configs, experiments and eval runs. Research metrics default to consented mimics.
+- The lab doubles as an invariant monitor over every served question: missing primary/baseline/shadows, shadow
+  state ≠ primary state, non-context baselines and sealing violations. On local data: 0 state mismatches, 0
+  non-context baselines, 0 sealing violations. The only incomplete questions were shadow jobs lost when `pnpm dev`
+  was restarted mid-backlog (local queue messages live in memory); a cron sweep now re-enqueues stale jobs.
+- Tests: the offline session test asserts 1 primary + 1 context-only baseline + 3 shadows per scored question with
+  identical state hashes, and none for repeats.
+- Finding: for first questions the sealed state equals the context-only state (same hash), yet Jev returned
+  slightly different distributions for the primary and baseline calls. Jev is not bit-for-bit deterministic across
+  calls, so M7 replay compares within a tolerance.

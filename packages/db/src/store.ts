@@ -24,7 +24,7 @@ import {
   type Store,
   type TraitRecord,
 } from '@mimic/core';
-import { and, asc, desc, eq, gte, inArray, like, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, like, lt, sql } from 'drizzle-orm';
 import type { BatchItem, BatchResponse } from 'drizzle-orm/batch';
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
@@ -631,6 +631,16 @@ export class DrizzleStore implements Store {
           updatedAt: rec.updatedAt,
         },
       });
+  }
+
+  async listStaleJobs(before: number, limit: number) {
+    return this.db
+      .select()
+      .from(s.jobs)
+      .where(and(inArray(s.jobs.status, ['running', 'failed']), lt(s.jobs.updatedAt, before)))
+      .orderBy(asc(s.jobs.updatedAt))
+      .limit(limit)
+      .all();
   }
 
   // observability

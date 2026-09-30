@@ -8,6 +8,7 @@ export * from './ids';
 export * from './jev';
 export * from './jobs';
 export * from './learning';
+export * from './metrics';
 export * from './ontology';
 export * from './predictors';
 export * from './prompts';

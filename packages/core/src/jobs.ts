@@ -39,6 +39,36 @@ export function jobKey(job: Job): string {
   }
 }
 
+/** Inverse of jobKey, for re-enqueueing stale jobs from the ledger. Returns null for unknown shapes. */
+export function jobFromKey(key: string): Job | null {
+  const [type, ...parts] = key.split(':');
+  let job: unknown = null;
+  switch (type) {
+    case 'noop':
+      job = { type, id: parts.join(':') };
+      break;
+    case 'identity.search':
+      job = { type, mimicId: parts[0] };
+      break;
+    case 'identity.enrich':
+      job = { type, mimicId: parts[0], candidateId: parts[1] };
+      break;
+    case 'pool.refill':
+    case 'learn.answer':
+      job = { type, mimicId: parts[0], seq: Number(parts[1]) };
+      break;
+    case 'predict.shadow':
+      job = { type, mimicId: parts[0], questionId: parts[1], predictorId: parts.slice(2).join(':') };
+      break;
+    case 'hypotheses.refresh':
+    case 'snapshot.write':
+      job = { type, mimicId: parts[0], seqUpTo: Number(parts[1]) };
+      break;
+  }
+  const r = Job.safeParse(job);
+  return r.success ? r.data : null;
+}
+
 export interface JobQueue {
   enqueue(job: Job, opts?: { delaySeconds?: number }): Promise<void>;
 }
