@@ -16,6 +16,7 @@
     "db:generate": "pnpm --filter @mimic/db generate",
     "db:migrate:local": "pnpm --filter @mimic/worker exec wrangler d1 migrations apply DB --local --persist-to ../../.wrangler/state",
     "deploy:config": "node scripts/deploy/config.mjs",
+    "deploy:dry-run": "node scripts/deploy/dry-run.mjs --env prod",
     "deploy:preflight": "node scripts/deploy/preflight.mjs --env prod",
     "deploy:preview": "node scripts/deploy/deploy.mjs --env preview",
     "deploy:prod": "node scripts/deploy/deploy.mjs --env prod",

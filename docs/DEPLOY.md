@@ -1,7 +1,8 @@
 # Deploying Mimic
 
-Production is https://mimic.punitarani.com. It is deployed by `.github/workflows/cd.yml` after CI goes green on
-`main`, and by nothing else. There is one command, the same locally and in CI:
+Production is https://mimic.punitarani.com. It is deployed by `.github/workflows/cd.yml` after CI
+(`.github/workflows/ci.yml`: lint, typecheck, test and a deploy dry run) goes green on a push to `main`. There is one
+command. CD runs `pnpm deploy:prod` with the repository secrets that Doppler syncs to GitHub; locally it's:
 
 ```
 doppler run -- pnpm deploy:prod
@@ -11,16 +12,17 @@ The command runs `scripts/deploy/deploy.mjs`. Every step is idempotent, so a re-
 
 | Step | What it does |
 | --- | --- |
-| Preflight | Checks that every name below is set, that `APP_URL` is the custom domain, and that the Cloudflare token is active. It prints names only, never values. |
-| Resources | Finds or creates D1 `mimic-prod`, KV `mimic-cache-prod`, R2 `mimic-blobs-prod`, queues `mimic-jobs-prod` and `mimic-jobs-prod-dlq`, and Vectorize `mimic-qa-prod` (768-d cosine, metadata indexes `mimicId` and `kind`). It writes `apps/*/wrangler.deploy.jsonc` with the real IDs; that file is gitignored. |
+| Preflight | Checks that every name below is set, that the settings are valid and their providers' keys are present, that `APP_URL` is the custom domain, and that the Cloudflare token is active. It prints names only, never values. |
+| Resources | Finds or creates D1 `mimic-prod`, KV `mimic-cache-prod`, R2 `mimic-blobs-prod`, queues `mimic-jobs-prod` and `mimic-jobs-prod-dlq`, and Vectorize `mimic-qa-prod` (768-d cosine, metadata indexes `mimicId` and `kind`). It writes `apps/*/wrangler.deploy.jsonc` with the real IDs and the settings; that file is gitignored. |
 | Migrations | `wrangler d1 migrations apply DB --remote`, run before any code that expects the new schema. |
-| Worker | Deploys `mimic-worker-prod` (the queue consumer and cron) with its secrets via `--secrets-file`. |
+| Worker | Deploys `mimic-worker-prod` (the queue consumer and cron) with its secrets via `--secrets-file`: `OPENROUTER_API_KEY` plus the chosen providers' keys. |
 | Web | Runs the OpenNext build, then deploys `mimic-web-prod` with its secrets and the custom domain. The domain's DNS record and certificate are created by Cloudflare. |
 | Access | Creates the Access application "Mimic lab" on `/lab`, `/lab/*`, `/api/lab` and `/api/lab/*`, with an allow policy for `ADMIN_EMAILS`. |
-| Smoke | Checks that `/` renders, that `/api/health` passes (D1 read, R2 write, no-op job), and that `/lab` redirects to Access. It retries for about 2 minutes while the domain comes up. |
+| Smoke | Checks that `/` renders, that `/api/health` passes (D1 read, R2 write, no-op job), and that `/lab` redirects to Access. It retries for about 5 minutes while a new domain and certificate come up. |
 
 Secrets are pushed with the code on every deploy, so Doppler stays the source of truth. A value changed in Doppler
-reaches the Workers on the next deploy; to apply it right away, re-run CD with "Run workflow".
+syncs to GitHub and reaches the Workers on the next deploy; to apply it right away, run CD by hand (Actions → CD →
+"Run workflow" on `main`).
 
 ## One-time setup
 
@@ -40,9 +42,10 @@ These are the only manual steps.
    - Zone `punitarani.com`:
      - Workers Routes: Edit
      - DNS: Edit
-3. **Doppler.** In project `mimic`, config `prd`, set the variables in the table below.
-4. **GitHub.** Create a Doppler service token for `mimic/prd`. Then, in the repo under Settings → Environments, create
-   the `production` environment and add that token as the secret `DOPPLER_TOKEN`. It is the only GitHub secret.
+3. **Doppler → GitHub.** In project `mimic`, config `prd`, set the variables below. Sync them to this repository's
+   Actions secrets with Doppler's GitHub integration. CD reads repository secrets and nothing else.
+
+Required:
 
 | Name | Value |
 | --- | --- |
@@ -50,19 +53,27 @@ These are the only manual steps.
 | `CLOUDFLARE_ACCOUNT_ID` | The account ID (dashboard → Workers & Pages, right sidebar) |
 | `APP_URL` | `https://mimic.punitarani.com` |
 | `OPENROUTER_API_KEY` | An OpenRouter key |
-| `EXA_API_KEY` | An Exa key |
-| `PARALLEL_API_KEY` | A Parallel key |
 | `SESSION_SECRET` | `openssl rand -base64 32` |
 | `INVITE_CODES` | Comma-separated invite codes for the cohort |
 | `ADMIN_EMAILS` | Comma-separated emails allowed into `/lab` (the Access policy and the in-app check both use it) |
 
-Wrangler reads `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from the environment. Everything else is pushed
-to the Workers that list it in `secrets.required` in their `wrangler.jsonc`. Doppler variables that no Worker lists
-are ignored.
+Settings (optional; each unset one keeps the default in `apps/worker/wrangler.jsonc`), and the key each choice needs:
+
+| Name | Allowed | Default | Needs |
+| --- | --- | --- | --- |
+| `SEARCH_PROVIDER` | `exa`, `perplexity`, `none` | `exa` | `EXA_API_KEY` for `exa`; `PERPLEXITY_API_KEY` for `perplexity` |
+| `ENRICH_PROVIDER` | `parallel`, `none` | `parallel` | `PARALLEL_API_KEY` for `parallel` |
+| `EMBEDDINGS_PROVIDER` | `workers-ai`, `openrouter` | `workers-ai` | — (the same 768-d bge-base model either way) |
+| `VECTOR_BACKEND` | `vectorize`, `sql` | `vectorize` | — |
+
+Fixtures and the hash embedder are for tests only, so preflight refuses them. Doppler's own metadata
+(`DOPPLER_CONFIG`, `DOPPLER_ENVIRONMENT`, `DOPPLER_PROJECT`) and any other synced names are ignored. A value moves
+through GitHub → the step's environment → the Workers and is never printed; GitHub masks it in logs anyway.
 
 ## Other commands
 
 ```
+pnpm deploy:dry-run                              # what CI's build job runs: OpenNext build + wrangler --dry-run
 doppler run -- pnpm deploy:preflight             # the preflight checks only
 doppler run -- pnpm deploy:config --env prod     # write wrangler.deploy.jsonc without deploying
 doppler run --config stg -- pnpm deploy:preview  # preview, from a Doppler config of your choice

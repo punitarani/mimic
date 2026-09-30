@@ -7,6 +7,7 @@
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { DEPLOY_CONFIG_NAME, envBlock, readConfig, WEB_CONFIG, WORKER_CONFIG } from './lib.mjs';
+import { resolveSettings } from './settings.mjs';
 
 /** bge-base-en-v1.5 embeddings: 768 dimensions, cosine; metadata indexes for filtering by mimic and kind. */
 export const VECTOR_INDEX = { dimensions: 768, metric: 'cosine', metadata: ['mimicId', 'kind'] };
@@ -96,14 +97,15 @@ export async function ensureResources(cf, spec, log = console.log) {
 }
 
 /**
- * The checked-in config with this environment's resource IDs filled in. Placeholders are the REPLACE_ME_<ENV>_*
- * values in wrangler.jsonc; a config that no longer has them is used as is.
+ * The checked-in config with this environment's resource IDs (in place of the REPLACE_ME_<ENV>_* placeholders) and,
+ * when given, its resolved vars.
  */
-export function deployConfig(config, env, ids) {
+export function deployConfig(config, env, ids, vars) {
   const out = structuredClone(config);
   const e = envBlock(out, env);
   for (const d of e.d1_databases ?? []) d.database_id = ids.d1Id;
   for (const k of e.kv_namespaces ?? []) k.id = ids.kvId;
+  if (vars) e.vars = vars;
   return out;
 }
 
@@ -117,12 +119,17 @@ export function writeDeployConfig(configPath, config) {
   return path;
 }
 
-/** Step 2 of a deploy: resources found or created, and both apps' deploy configs written. Returns their paths. */
-export async function prepareConfigs(cf, env, log = console.log) {
+/**
+ * Step 2 of a deploy: resources found or created, and both apps' deploy configs written with real IDs and the
+ * settings from `source` (settings.mjs). Returns their paths.
+ */
+export async function prepareConfigs(cf, env, source, log = console.log) {
   const worker = readConfig(WORKER_CONFIG);
+  const web = readConfig(WEB_CONFIG);
   const ids = await ensureResources(cf, resourceSpec(worker, env), log);
+  const vars = (config) => resolveSettings(config, env, source).vars;
   return {
-    worker: writeDeployConfig(WORKER_CONFIG, deployConfig(worker, env, ids)),
-    web: writeDeployConfig(WEB_CONFIG, deployConfig(readConfig(WEB_CONFIG), env, ids)),
+    worker: writeDeployConfig(WORKER_CONFIG, deployConfig(worker, env, ids, vars(worker))),
+    web: writeDeployConfig(WEB_CONFIG, deployConfig(web, env, ids, vars(web))),
   };
 }

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Everything a deploy reads, checked before anything is touched: each name is present (values are never printed),
-// APP_URL matches the custom domain the web app deploys to, ADMIN_EMAILS parses, and the Cloudflare token is
-// active. A gap fails here in seconds, with its name, instead of halfway through a rollout.
+// settings are valid and their providers' keys are set, APP_URL matches the custom domain the web app deploys to,
+// ADMIN_EMAILS parses, and the Cloudflare token is active. A gap fails here in seconds, with its name, instead of
+// halfway through a rollout.
 import { adminEmails } from './access.mjs';
 import {
   cloudflareFromEnv,
@@ -13,8 +14,9 @@ import {
   WEB_CONFIG,
   WORKER_CONFIG,
 } from './lib.mjs';
+import { providerSecrets, resolveSettings } from './settings.mjs';
 
-/** Local-dev-only names: harmless in Doppler (only required secrets are synced) but a sign of a mixed-up config. */
+/** Local-dev-only names: harmless (only the names a deploy needs are pushed) but a sign of a mixed-up config. */
 export const DEV_ONLY = ['DEV_MODE', 'EGRESS_RELAY'];
 
 /** The web app's public hostname in this environment (a custom-domain route), or null. */
@@ -23,11 +25,17 @@ export function customDomain(webConfig, env) {
   return route ? route.pattern : null;
 }
 
-/** The names a deploy of `env` reads from the environment. */
-export function requiredNames(webConfig, workerConfig, env) {
+/** The worker's secrets: its `secrets.required` plus the keys of the providers `source` selects. */
+export function workerSecrets(workerConfig, env, source) {
+  const extra = providerSecrets(resolveSettings(workerConfig, env, source).vars);
+  return [...new Set([...requiredSecrets(workerConfig, env), ...extra])];
+}
+
+/** The names a deploy of `env` reads from `source`. */
+export function requiredNames(webConfig, workerConfig, env, source) {
   const names = new Set(['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ACCOUNT_ID']);
   for (const k of requiredSecrets(webConfig, env)) names.add(k);
-  for (const k of requiredSecrets(workerConfig, env)) names.add(k);
+  for (const k of workerSecrets(workerConfig, env, source)) names.add(k);
   if (customDomain(webConfig, env)) {
     names.add('APP_URL');
     names.add('ADMIN_EMAILS');
@@ -37,9 +45,15 @@ export function requiredNames(webConfig, workerConfig, env) {
 
 /** Checks that need no network. Returns a list of problems (empty = fine) and warnings. */
 export function checkNames(source, webConfig, workerConfig, env) {
-  const problems = missingNames(source, requiredNames(webConfig, workerConfig, env)).map(
-    (k) => `${k} is missing or empty in Doppler`,
-  );
+  const problems = [
+    ...new Set([
+      ...resolveSettings(workerConfig, env, source).problems,
+      ...resolveSettings(webConfig, env, source).problems,
+    ]),
+    ...missingNames(source, requiredNames(webConfig, workerConfig, env, source)).map(
+      (k) => `${k} is missing or empty (a GitHub secret synced from Doppler)`,
+    ),
+  ];
   const warnings = DEV_ONLY.filter((k) => source[k]).map(
     (k) => `${k} is set; it is for local dev only and is ignored`,
   );
@@ -91,7 +105,7 @@ export async function preflight(env, source = process.env) {
   for (const w of warnings) console.log(`  warning: ${w}`);
   if (problems.length) throw new Error(`preflight failed:\n  - ${problems.join('\n  - ')}`);
   await verifyToken(cloudflareFromEnv(source));
-  console.log(`  ${requiredNames(web, worker, env).length} names present; Cloudflare token active`);
+  console.log(`  ${requiredNames(web, worker, env, source).length} names present; Cloudflare token active`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

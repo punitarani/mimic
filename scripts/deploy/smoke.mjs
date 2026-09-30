@@ -5,7 +5,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export async function smoke(
   appUrl,
-  { fetchImpl = fetch, attempts = 12, delayMs = 10_000, log = console.log } = {},
+  { fetchImpl = fetch, attempts = 30, delayMs = 10_000, log = console.log } = {},
 ) {
   const base = appUrl.replace(/\/$/, '');
   const checks = [

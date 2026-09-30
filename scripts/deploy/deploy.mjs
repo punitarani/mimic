@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// `pnpm deploy:prod` (and CD): the whole deploy, in order, from Doppler-provided environment variables.
+// `pnpm deploy:prod` (and CD): the whole deploy, in order, from environment variables (GitHub secrets synced from
+// Doppler in CD; `doppler run --` locally).
 //
 //   1. preflight      every name present, APP_URL matches the custom domain, Cloudflare token active
 //   2. resources      find-or-create D1, KV, R2, queues, Vectorize; write wrangler.deploy.jsonc with real IDs
+//                     and the settings (settings.mjs)
 //   3. migrations     D1 migrations, before any code that expects them
 //   4. worker         queue consumer + cron, deployed with its secrets (--secrets-file)
 //   5. web            OpenNext build, then deployed with its secrets and custom domain
@@ -28,7 +30,7 @@ import {
   WORKER_CONFIG,
   withSecretsFile,
 } from './lib.mjs';
-import { customDomain, preflight } from './preflight.mjs';
+import { customDomain, preflight, workerSecrets } from './preflight.mjs';
 import { prepareConfigs } from './resources.mjs';
 import { smoke } from './smoke.mjs';
 
@@ -44,7 +46,7 @@ async function deploy(env) {
 
   step('Cloudflare resources');
   const cf = cloudflareFromEnv(source);
-  const { worker: workerDeploy, web: webDeploy } = await prepareConfigs(cf, env);
+  const { worker: workerDeploy, web: webDeploy } = await prepareConfigs(cf, env, source);
 
   step('D1 migrations');
   await run(
@@ -68,9 +70,9 @@ async function deploy(env) {
   );
 
   step('Worker (queue consumer + cron)');
-  const workerSecrets = secretPayload(source, requiredSecrets(worker, env));
-  console.log(`  with secrets: ${Object.keys(workerSecrets).join(', ')}`);
-  await withSecretsFile(workerSecrets, (file) =>
+  const workerSecretValues = secretPayload(source, workerSecrets(worker, env, source));
+  console.log(`  with secrets: ${Object.keys(workerSecretValues).join(', ')}`);
+  await withSecretsFile(workerSecretValues, (file) =>
     run(
       'pnpm',
       ['exec', 'wrangler', 'deploy', '--env', env, '--config', workerDeploy, '--secrets-file', file],

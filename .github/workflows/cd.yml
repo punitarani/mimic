@@ -1,14 +1,15 @@
 # Deploy to Cloudflare, and only what CI already went green on.
 #
-# Triggered by CI completing on main (`workflow_run`), so "gated on CI" is structural: a red run never reaches
-# these jobs. Everything checks out `workflow_run.head_sha`, not `main`: if two commits land close together, the
-# second must not deploy on the first one's test result.
+# Triggered by CI completing on main (`workflow_run`), so "gated on CI" is structural: a red run never reaches this
+# job. It checks out `workflow_run.head_sha`, not `main`: if two commits land close together, the second must not
+# deploy on the first one's test result. Only pushes to this repo's main deploy; a fork's PR from a branch that
+# happens to be called `main` also completes CI "on main", and must never run here with secrets.
 #
-# Doppler is the source of truth for every credential and secret, including the Cloudflare token and account id.
-# The only GitHub secret is `DOPPLER_TOKEN` (a service token for the mimic project's prd config), on the
-# `production` environment. `scripts/deploy` does the rest (docs/DEPLOY.md):
+# Every value comes from repository secrets, which Doppler (project mimic, config prd) syncs to GitHub. `scripts/deploy`
+# does the rest (docs/DEPLOY.md):
 #   preflight → find-or-create Cloudflare resources → D1 migrations → worker → web → Access for /lab → smoke test.
-# Nothing is created by hand, and every step is idempotent, so a re-run is always safe.
+# Nothing is created by hand, and every step is idempotent, so a re-run is always safe. A Doppler change reaches the
+# Workers on the next deploy; to apply one now, run this workflow by hand ("Run workflow" on main).
 
 name: CD
 
@@ -17,7 +18,6 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
-  # Manual deploy of the chosen ref, e.g. to re-run after fixing a Doppler value.
   workflow_dispatch:
 
 permissions:
@@ -29,32 +29,14 @@ concurrency:
   group: cd-production
   cancel-in-progress: false
 
-env:
-  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-
 jobs:
-  # Every name the deploy reads is in Doppler, APP_URL matches the custom domain, and the Cloudflare token is
-  # active: a gap fails here in seconds, with its name, before anything is touched. Values are never printed.
-  preflight:
-    name: preflight (Doppler, Cloudflare)
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-        with: { ref: "${{ env.SHA }}" }
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - uses: dopplerhq/cli-action@v3
-      - name: Everything the deploy reads is in place
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-        run: doppler run -- node scripts/deploy/preflight.mjs --env prod
-
   deploy:
-    name: deploy (Cloudflare Workers)
-    needs: preflight
+    name: Deploy to Cloudflare (prod)
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     # A hung deploy holds the concurrency group, and the next release with it.
     timeout-minutes: 30
@@ -63,17 +45,31 @@ jobs:
       url: https://mimic.punitarani.com
     steps:
       - uses: actions/checkout@v4
-        with: { ref: "${{ env.SHA }}" }
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - uses: dopplerhq/cli-action@v3
-      # One command, the same one you'd run locally: `doppler run -- pnpm deploy:prod`.
-      - name: Resources, migrations, worker, web, Access, smoke test
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # Preflight comes first and fails in seconds, by name, before anything is touched: every name present,
+      # settings valid, APP_URL is the custom domain, the Cloudflare token active. Values are never printed.
+      - name: Preflight, resources, migrations, worker, web, Access, smoke test
+        run: pnpm deploy:prod
+        # Secrets are scoped to this step, not to the job's actions.
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
-          CI: "1"
-        run: doppler run -- pnpm deploy:prod
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          APP_URL: ${{ secrets.APP_URL }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          INVITE_CODES: ${{ secrets.INVITE_CODES }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          # Provider keys: each is required only when its provider is selected (scripts/deploy/settings.mjs).
+          EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
+          PARALLEL_API_KEY: ${{ secrets.PARALLEL_API_KEY }}
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          # Settings (Worker vars): unset keeps the default in wrangler.jsonc.
+          VECTOR_BACKEND: ${{ secrets.VECTOR_BACKEND }}
+          EMBEDDINGS_PROVIDER: ${{ secrets.EMBEDDINGS_PROVIDER }}
+          SEARCH_PROVIDER: ${{ secrets.SEARCH_PROVIDER }}
+          ENRICH_PROVIDER: ${{ secrets.ENRICH_PROVIDER }}

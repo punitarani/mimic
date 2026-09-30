@@ -8,7 +8,7 @@ import { prepareConfigs } from './resources.mjs';
 const { env } = parseArgs(process.argv.slice(2));
 step(`Cloudflare resources (${env})`);
 Promise.resolve()
-  .then(() => prepareConfigs(cloudflareFromEnv(process.env), env))
+  .then(() => prepareConfigs(cloudflareFromEnv(process.env), env, process.env))
   .then((paths) => console.log(`  wrote ${paths.worker}\n  wrote ${paths.web}`))
   .catch((e) => {
     console.error(`\n✗ ${e.message}`);

@@ -79,7 +79,7 @@ export function secretPayload(source, keys) {
   const missing = missingNames(source, keys);
   if (missing.length) {
     throw new Error(
-      `missing worker secrets: ${missing.join(', ')}\nrun under \`doppler run --\` with the mimic project's config`,
+      `missing worker secrets: ${missing.join(', ')}\nset them in Doppler (synced to GitHub secrets); locally, run under \`doppler run --\``,
     );
   }
   return Object.fromEntries(keys.map((k) => [k, source[k]]));

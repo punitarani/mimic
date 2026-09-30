@@ -66,9 +66,16 @@
         ]
       },
       "ratelimits": [{ "name": "RL", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } }],
-      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
-      // Pushed from Doppler with each deploy (scripts/deploy). Not inherited: listed per environment.
-      "secrets": { "required": ["OPENROUTER_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"] }
+      // Defaults; a value set in the deploy environment (Doppler → GitHub) overrides each (scripts/deploy/settings.mjs).
+      "vars": {
+        "VECTOR_BACKEND": "vectorize",
+        "EMBEDDINGS_PROVIDER": "workers-ai",
+        "SEARCH_PROVIDER": "exa",
+        "ENRICH_PROVIDER": "parallel"
+      },
+      // Pushed with each deploy (scripts/deploy), plus the keys the chosen providers need (EXA_API_KEY for exa
+      // search, PARALLEL_API_KEY for parallel enrichment, ...). Not inherited: listed per environment.
+      "secrets": { "required": ["OPENROUTER_API_KEY"] }
     },
     "prod": {
       "name": "mimic-worker-prod",
@@ -100,8 +107,14 @@
         ]
       },
       "ratelimits": [{ "name": "RL", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } }],
-      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
-      "secrets": { "required": ["OPENROUTER_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"] }
+      // Defaults; a value set in the deploy environment (Doppler → GitHub) overrides each (scripts/deploy/settings.mjs).
+      "vars": {
+        "VECTOR_BACKEND": "vectorize",
+        "EMBEDDINGS_PROVIDER": "workers-ai",
+        "SEARCH_PROVIDER": "exa",
+        "ENRICH_PROVIDER": "parallel"
+      },
+      "secrets": { "required": ["OPENROUTER_API_KEY"] }
     }
   }
 }

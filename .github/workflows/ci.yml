@@ -1,23 +1,59 @@
+# Every PR and every push to main. CD (cd.yml) deploys a main commit only after this whole workflow is green on it.
+#
+# The jobs are independent and run in parallel. None of them needs a credential or makes a live provider call
+# (adapters use recorded fixtures; LIVE is unset). `build` is a deploy rehearsal: the same OpenNext build and wrangler
+# bundle a deploy makes, with `--dry-run`, so a broken build or config fails on the PR rather than in CD.
+
 name: CI
 
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# On a PR a new push supersedes the running check. On main nothing is cancelled: CD waits on each commit's result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
+  lint:
+    name: Lint (biome)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm lint
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm typecheck
+
+  test:
+    name: Test
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm typecheck
-      # No live provider calls in CI (LIVE is unset); adapters use recorded fixtures.
+      - uses: ./.github/actions/setup
+      # Vitest across the workspace (worker code in workerd), then the deploy scripts' node tests.
       - run: pnpm test
+
+  build:
+    name: Build (deploy dry run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - run: pnpm deploy:dry-run

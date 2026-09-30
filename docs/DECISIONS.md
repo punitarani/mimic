@@ -242,25 +242,33 @@ Behaviour choices:
 - **Evidence chips:** the design's chip popover also shows "Mimic guessed". The snapshot doesn't carry the
   mimic's guess per evidence item, so the popover shows the question and the person's answer only.
 
-## ADR-0022 — Continuous deployment to Cloudflare from Doppler (2026-09-30)
+## ADR-0022 — Continuous deployment to Cloudflare from Doppler-synced GitHub secrets (2026-09-30)
 
-Prod deploys itself: `.github/workflows/cd.yml` runs when CI completes green on `main`, checks out the commit CI
-tested, and runs `doppler run -- pnpm deploy:prod`. The steps are in `docs/DEPLOY.md`. `scripts/provision.sh`, the
-per-app deploy scripts and `db:migrate:{preview,prod}` are gone.
+Prod deploys itself. CI (`.github/workflows/ci.yml`) runs lint, typecheck, test and a deploy dry run in parallel on
+every PR and push. When it completes green on a push to `main`, `.github/workflows/cd.yml` checks out the commit CI
+tested and runs `pnpm deploy:prod`. The steps are in `docs/DEPLOY.md`. `scripts/provision.sh`, the per-app deploy
+scripts and `db:migrate:{preview,prod}` are gone.
 
-- **Doppler is the source of truth.** The only GitHub secret is `DOPPLER_TOKEN`, on the `production` environment.
-  Secrets go up with each deploy (`wrangler deploy --secrets-file`), so Doppler and the Workers can't drift, and a
-  first deploy works. `wrangler secret bulk` would need the Worker to exist already, and wrangler refuses to create
-  a Worker whose `secrets.required` are unset. Each Worker's `secrets.required` lists the names it gets.
+- **Doppler is the source of truth.** Its GitHub integration syncs project `mimic`, config `prd`, to repository
+  secrets, and CD passes them to the one deploy step. Locally, `doppler run --` supplies the same names.
+- **Secrets go up with each deploy** (`wrangler deploy --secrets-file`), so Doppler and the Workers can't drift, and a
+  first deploy works. `wrangler secret bulk` would need the Worker to exist already, and wrangler refuses to create a
+  Worker whose `secrets.required` are unset.
+- **Settings are deploy-time.** `SEARCH_PROVIDER`, `ENRICH_PROVIDER`, `EMBEDDINGS_PROVIDER` and `VECTOR_BACKEND`
+  default to the `vars` in `wrangler.jsonc`. A value in the deploy environment overrides them. Each provider's key is
+  required only when that provider is chosen, so the worker's `secrets.required` is just `OPENROUTER_API_KEY`.
+  Fixtures and the hash embedder are refused.
 - **Resources are found or created by name** through the Cloudflare API on every deploy. Wrangler's
   auto-provisioning is not used: it gives each Worker its own KV namespace and never creates queues or Vectorize
-  indexes. Real IDs go into a gitignored `wrangler.deploy.jsonc`; the checked-in configs keep `REPLACE_ME_*`. The
-  eval CLI's remote commands use the same generated file (`pnpm deploy:config`).
+  indexes. Real IDs and settings go into a gitignored `wrangler.deploy.jsonc`; the checked-in configs keep
+  `REPLACE_ME_*`. The eval CLI's remote commands use the same generated file (`pnpm deploy:config`).
 - **The lab is behind Cloudflare Access in prod.** The deploy creates the Access app and policy. The web Worker is
   reachable only on `mimic.punitarani.com`, because `workers_dev` and `preview_urls` are off. Preview is on
   `workers.dev` with no Access in front, so it gets no `ADMIN_EMAILS` and its lab is closed.
 - **Gates:**
-  - A preflight job fails fast, naming anything missing.
+  - CI must be green on the exact commit.
+  - Only pushes to this repository's `main` deploy; a fork PR's run never gets secrets.
+  - Preflight fails fast, naming anything missing.
   - Migrations run before code.
   - A smoke test checks the landing page, `/api/health` and the Access redirect on `/lab`.
   - Deploys are serialised and never cancelled mid-flight.

@@ -13,8 +13,9 @@ import {
   WORKER_CONFIG,
   withSecretsFile,
 } from './lib.mjs';
-import { checkNames, customDomain, requiredNames, verifyToken } from './preflight.mjs';
+import { checkNames, customDomain, requiredNames, verifyToken, workerSecrets } from './preflight.mjs';
 import { deployConfig, ensureResources, resourceSpec } from './resources.mjs';
+import { resolveSettings } from './settings.mjs';
 import { smoke } from './smoke.mjs';
 
 const web = readConfig(WEB_CONFIG);
@@ -144,12 +145,41 @@ describe('config', () => {
     // Preview has no Access in front of workers.dev, so no admins: its lab stays closed.
     assert.deepEqual(requiredSecrets(web, 'preview'), web3);
     for (const env of ['preview', 'prod']) {
-      assert.deepEqual(requiredSecrets(worker, env), [
+      assert.deepEqual(requiredSecrets(worker, env), ['OPENROUTER_API_KEY']);
+      // The default providers (exa search, parallel enrichment) add their keys.
+      assert.deepEqual(workerSecrets(worker, env, {}), [
         'OPENROUTER_API_KEY',
         'EXA_API_KEY',
         'PARALLEL_API_KEY',
       ]);
     }
+  });
+
+  it('lets the deploy environment choose providers, and asks only for their keys', () => {
+    const src = {
+      SEARCH_PROVIDER: 'perplexity',
+      ENRICH_PROVIDER: 'none',
+      EMBEDDINGS_PROVIDER: ' openrouter ',
+    };
+    const { vars, problems } = resolveSettings(worker, 'prod', src);
+    assert.deepEqual(problems, []);
+    assert.equal(vars.EMBEDDINGS_PROVIDER, 'openrouter');
+    assert.equal(vars.VECTOR_BACKEND, 'vectorize', 'unset settings keep the config default');
+    assert.deepEqual(workerSecrets(worker, 'prod', src), ['OPENROUTER_API_KEY', 'PERPLEXITY_API_KEY']);
+    assert.deepEqual(workerSecrets(worker, 'prod', { SEARCH_PROVIDER: 'none', ENRICH_PROVIDER: 'none' }), [
+      'OPENROUTER_API_KEY',
+    ]);
+  });
+
+  it('refuses test-only or unknown settings', () => {
+    const { problems } = resolveSettings(worker, 'prod', {
+      SEARCH_PROVIDER: 'fixture',
+      EMBEDDINGS_PROVIDER: 'hash',
+    });
+    assert.deepEqual(problems, [
+      'EMBEDDINGS_PROVIDER must be one of workers-ai, openrouter',
+      'SEARCH_PROVIDER must be one of exa, perplexity, none',
+    ]);
   });
 
   it('serves prod only on the custom domain, with workers.dev and preview URLs off', () => {
@@ -221,6 +251,9 @@ describe('resources', () => {
     assert.equal(out.env.prod.kv_namespaces[0].id, 'KV');
     assert.equal(out.env.preview.d1_databases[0].database_id, 'REPLACE_ME_PREVIEW_D1_ID');
     assert.equal(worker.env.prod.d1_databases[0].database_id, 'REPLACE_ME_PROD_D1_ID', 'original untouched');
+    const withVars = deployConfig(worker, 'prod', { d1Id: 'D1', kvId: 'KV' }, { SEARCH_PROVIDER: 'none' });
+    assert.deepEqual(withVars.env.prod.vars, { SEARCH_PROVIDER: 'none' });
+    assert.equal(withVars.env.preview.vars.SEARCH_PROVIDER, 'exa');
   });
 });
 
@@ -272,7 +305,10 @@ describe('preflight', () => {
 
   it('passes with every name and a matching APP_URL', () => {
     assert.deepEqual(checkNames(full, web, worker, 'prod'), { problems: [], warnings: [] });
-    assert.equal(requiredNames(web, worker, 'prod').length, 9);
+    assert.equal(requiredNames(web, worker, 'prod', full).length, 9);
+    // Without exa search, EXA_API_KEY isn't needed.
+    const noSearch = { ...full, SEARCH_PROVIDER: 'none', EXA_API_KEY: '' };
+    assert.deepEqual(checkNames(noSearch, web, worker, 'prod'), { problems: [], warnings: [] });
   });
 
   it('names what is missing, mismatched or local-only', () => {
@@ -289,7 +325,7 @@ describe('preflight', () => {
       'prod',
     );
     assert.deepEqual(problems, [
-      'EXA_API_KEY is missing or empty in Doppler',
+      'EXA_API_KEY is missing or empty (a GitHub secret synced from Doppler)',
       "APP_URL must be https://mimic.punitarani.com (the web app's custom domain in wrangler.jsonc)",
     ]);
     assert.equal(warnings.length, 1);
