@@ -18,7 +18,7 @@ import { scorePrediction } from '../scoring';
 import { facetCoverage, usesHypotheses } from '../selectors';
 import { buildState, cosine, toStateEvidence } from '../state-builder';
 import type { FactRecord, InsightRecord, KgEdgeRecord, KgNodeRecord, QuestionRecord } from '../store';
-import type { Domain, PersonState } from '../types';
+import { type Domain, isScoredKind, learnsFrom, type PersonState } from '../types';
 import { writeSnapshot } from './artifact';
 import { beliefFromLoaded, loadBeliefSources } from './belief';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
@@ -129,7 +129,7 @@ export async function enqueueMissingPredictions(
   let n = 0;
   for (const q of questions) {
     if (q.seq === null || q.servedAt === null || q.servedAt >= servedBefore) continue;
-    if (q.kind !== 'anchor' && q.kind !== 'adaptive') continue;
+    if (!isScoredKind(q.kind)) continue;
     if (!sealed.has(q.id)) continue;
     for (const predictorId of predictorIds) {
       if (have.has(`${q.id}|${predictorId}`)) continue;
@@ -230,7 +230,7 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
   const rows: ScoredItemRow[] = [];
   for (const r of sources) {
     if (r.role !== 'primary' || r.fallback) continue;
-    if (r.question.kind !== 'anchor' && r.question.kind !== 'adaptive') continue;
+    if (!isScoredKind(r.question.kind)) continue;
     rows.push({
       mimicId: r.mimicId,
       itemKey: r.question.itemKey ?? null,
@@ -476,9 +476,18 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
   const cfg = await loadConfig(deps, m.configHash);
   const loaded = await loadMimicData(deps, m);
   const item = loaded.data.evidence.find((e) => e.seq === seq);
-  if (!item || (item.kind !== 'anchor' && item.kind !== 'adaptive')) return;
-  const learnable = loaded.data.evidence.filter((e) => e.kind === 'anchor' || e.kind === 'adaptive');
+  if (!item || !learnsFrom(item.kind)) return;
+  const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
   const nAnswered = learnable.filter((e) => e.seq <= seq).length;
+  const snapshot = () =>
+    deps.jobs.enqueue(
+      { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
+      { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
+    );
+
+  // Over budget every model call is refused, and the job would retry until dropped. The answer is kept as evidence
+  // and goes into the snapshot; only the reads that need a model are skipped.
+  if (m.spendUsd >= cfg.session.budgetUsd) return snapshot();
 
   // 1) Embed the Q&A (plus the "why").
   try {
@@ -576,10 +585,7 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
   }
 
   // 5) Debounced snapshot.
-  await deps.jobs.enqueue(
-    { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
-    { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
-  );
+  await snapshot();
 }
 
 export async function runReflection(
@@ -597,7 +603,7 @@ export async function runReflection(
   const facets = await facetsFor(deps, m, cfg);
   const lastReflected = existing.reduce((a, i) => Math.max(a, i.seqUpTo), 0);
   const learnable = loaded.data.evidence
-    .filter((e) => (e.kind === 'anchor' || e.kind === 'adaptive') && e.seq <= seq)
+    .filter((e) => learnsFrom(e.kind) && e.seq <= seq)
     .map((e) => toStateEvidence(e));
   const newEvidence = learnable.filter((e) => e.seq > lastReflected);
   const earlier = learnable.filter((e) => e.seq <= lastReflected).slice(-20);

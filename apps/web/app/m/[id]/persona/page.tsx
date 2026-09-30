@@ -12,7 +12,7 @@ type SaveState = 'saved' | 'saving' | 'error';
 const SAVE_DELAY_MS = 600;
 const RECORD_PREVIEW = 8;
 
-/** Persona.md (ADR-0031): choose what goes in, reword what was inferred, add your own words, then download. */
+/** Persona.md (ADR-0033): choose what goes in, reword what was inferred, add your own words, then download. */
 export default function PersonaPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();

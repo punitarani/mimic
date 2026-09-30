@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { FactRecord, FidelityRecord, MimicRecord } from '../store';
+import { QKind } from '../types';
 import { type LoadedMimic, loadMimicData, vectorId } from './data';
 import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
 import { searchCacheKeys } from './identity';
@@ -24,7 +25,7 @@ export const MimicJson = z.object({
   evidence: z.array(
     z.object({
       seq: z.number().int(),
-      kind: z.enum(['anchor', 'adaptive', 'repeat', 'playground']),
+      kind: QKind,
       type: z.enum(['choice', 'noul', 'score']),
       prompt: z.string(),
       options: z.array(z.string()),
@@ -175,7 +176,12 @@ export async function buildMimicJson(deps: EngineDeps, mimicId: string, version:
   return MimicJson.parse(doc);
 }
 
-/** Writes an immutable snapshot unless one already covers `seqUpTo` (this is what debounces learning bursts). */
+/**
+ * Writes an immutable snapshot unless the latest one already holds every answer (this is what debounces learning
+ * bursts). Answers are append-only, so the same count and a seq at least as high mean the same answers. The count
+ * matters because answers don't always arrive in seq order: an asked question on the mimic page can be answered
+ * while a session question below it is still open.
+ */
 export async function writeSnapshot(
   deps: EngineDeps,
   mimicId: string,
@@ -186,7 +192,12 @@ export async function writeSnapshot(
   const latest = snaps.at(-1);
   const answers = await deps.store.listAnswers(m.id);
   const currentSeq = answers.reduce((a, x) => Math.max(a, x.seq), 0);
-  if (latest && latest.seqUpTo >= Math.max(seqUpTo ?? 0, currentSeq)) return null;
+  if (
+    latest &&
+    latest.seqUpTo >= Math.max(seqUpTo ?? 0, currentSeq) &&
+    (await snapshotAnswerCount(deps, latest.r2Key)) === answers.length
+  )
+    return null;
   const version = (latest?.version ?? 0) + 1;
   const doc = await buildMimicJson(deps, m.id, version);
   const key = snapshotKey(m.id, version, deps.newId());
@@ -206,6 +217,15 @@ export async function writeSnapshot(
   }
   await deps.store.updateMimic(m.id, { snapshotVersion: version, updatedAt: deps.clock() });
   return version;
+}
+
+async function snapshotAnswerCount(deps: EngineDeps, key: string): Promise<number | null> {
+  try {
+    const raw = await deps.blobs.get(key);
+    return raw ? ((JSON.parse(raw) as { evidence?: unknown[] }).evidence?.length ?? null) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `GET /export`: the latest snapshot, written fresh if evidence moved past it. */

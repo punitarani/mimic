@@ -23,6 +23,7 @@ import {
   type PersonaDraftRecord,
   type PredictionRecord,
   type PredictionRole,
+  type QKind,
   type QuestionRecord,
   type QuestionStatus,
   type ScoredItemSource,
@@ -104,6 +105,11 @@ const toMimic = (r: MRow): MimicRecord => ({
   createdAt: r.createdAt,
   updatedAt: r.updatedAt,
 });
+
+/** A write lost a race on a unique index (seq, idempotency key or primary key); D1 and libSQL word it alike. */
+function isUniqueViolation(e: unknown): boolean {
+  return /UNIQUE constraint failed/i.test(String((e as { cause?: unknown }).cause ?? e));
+}
 
 const toQuestion = (r: QRow): QuestionRecord => {
   const q: QuestionRecord = {
@@ -372,14 +378,16 @@ export class DrizzleStore implements Store {
     const r = await this.db.select().from(s.questions).where(eq(s.questions.id, id)).get();
     return r ? toQuestion(r) : null;
   }
-  async listQuestions(mimicId: string, status?: QuestionStatus[]) {
+  async listQuestions(mimicId: string, status?: QuestionStatus[], kinds?: QKind[]) {
     const rows = await this.db
       .select()
       .from(s.questions)
       .where(
-        status?.length
-          ? and(eq(s.questions.mimicId, mimicId), inArray(s.questions.status, status))
-          : eq(s.questions.mimicId, mimicId),
+        and(
+          eq(s.questions.mimicId, mimicId),
+          status?.length ? inArray(s.questions.status, status) : undefined,
+          kinds?.length ? inArray(s.questions.kind, kinds) : undefined,
+        ),
       )
       .orderBy(asc(s.questions.createdAt))
       .all();
@@ -419,7 +427,7 @@ export class DrizzleStore implements Store {
     try {
       await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
     } catch (e) {
-      if (/UNIQUE constraint failed/i.test(String((e as { cause?: unknown }).cause ?? e))) return false;
+      if (isUniqueViolation(e)) return false;
       throw e;
     }
     const q = await this.getQuestion(args.questionId);
@@ -470,7 +478,53 @@ export class DrizzleStore implements Store {
     ];
     const scoreRows = args.scores.map((x) => ({ ...x, mimicId: args.answer.mimicId }));
     for (const part of chunk(scoreRows, 8)) stmts.push(this.db.insert(s.scores).values(part));
-    await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    try {
+      await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    } catch (e) {
+      if (isUniqueViolation(e)) return false;
+      throw e;
+    }
+    return true;
+  }
+  async recordFeedback(args: {
+    question: QuestionRecord;
+    answer: AnswerRecord;
+    move?: { questionId: string; toSeq: number };
+  }) {
+    const { question: q, answer: a, move } = args;
+    const stmts: BatchItem<'sqlite'>[] = [];
+    // If the moved question was answered meanwhile it keeps its seq, and the insert below fails on it.
+    if (move)
+      stmts.push(
+        this.db
+          .update(s.questions)
+          .set({ seq: move.toSeq })
+          .where(
+            and(
+              eq(s.questions.id, move.questionId),
+              eq(s.questions.status, 'served'),
+              eq(s.questions.seq, a.seq),
+            ),
+          ),
+      );
+    stmts.push(
+      this.db.insert(s.questions).values(fromQuestion(q)),
+      this.db
+        .update(s.mimics)
+        .set({
+          seqMax: sql`max(${s.mimics.seqMax}, ${Math.max(a.seq, move?.toSeq ?? 0)})`,
+          updatedAt: a.createdAt,
+        })
+        .where(eq(s.mimics.id, a.mimicId)),
+      this.db.insert(s.answers).values(a),
+    );
+    try {
+      await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    } catch (e) {
+      if (isUniqueViolation(e)) return false;
+      throw e;
+    }
+    return true;
   }
   async insertScores(recs: ScoreRecord[]) {
     if (!recs.length) return;
@@ -683,7 +737,7 @@ export class DrizzleStore implements Store {
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
   }
 
-  // Persona.md (ADR-0031)
+  // Persona.md (ADR-0033)
   async insertPersonaDraft(rec: PersonaDraftRecord) {
     const { draft, ...row } = rec;
     await this.db

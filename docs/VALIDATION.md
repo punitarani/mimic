@@ -93,6 +93,24 @@ Playwright against `pnpm dev` (14 answered questions, keyboard only):
 - Browser, live providers: 6 answers → Stop here → scenario → DeepSeek drafts a typed question → Jev predicts
   61% / 39% → generated first-person sentence, labeled → the person answers → download `mimic.json` (`mimic/1`, v2,
   playground evidence included) → delete → `GET /api/mimics/:id` returns 404.
+- Feedback (ADR-0032), `packages/eval/test/artifact.test.ts`: stored as `kind = feedback` in one write, idempotent
+  per key, no predictions or scores, fidelity and progress untouched, learned and included in the next sealed state,
+  kept in the export. Validation gives sentences a person can act on. A feedback write and a concurrent `/next` get
+  distinct seqs. That test caught a real race: `/next` lost its seq to the feedback and returned a 409. Now it keeps
+  its predictions and serves at the next free seq.
+- Review follow-up, `packages/eval/test/feedback.test.ts`:
+  - Feedback given while a session question is open takes its seq, and the question moves. `/next` returns it at
+    the new seq. Answers are learned in seq order. Replay rebuilds the moved question's state to the same hash.
+  - An answer that raced the move is recorded at the new seq.
+  - A reused key with a different answer is refused. Yes/no maps by key in any order.
+  - Over budget, feedback is kept, with no model calls or failed jobs, and is in the snapshot.
+  - An asked question that loses its seq to feedback is served at the next one without predicting again, and
+    leaves no orphaned row.
+  - An answer that arrives below the latest snapshot gets a new snapshot.
+- Browser, live providers: 3 answers → write a question by hand → answer it myself (keyboard 1 and Enter, with a
+  reason) → scenario → DeepSeek drafts a scale question → Jev predicts → leave it → answer it later from the
+  history → mobile and dark. In D1, the next session question's primary has `evidence_seq_max` equal to the
+  feedback's seq, and the worker ran `embed.qa` and `traits.read` on each taught answer.
 
 ## M7 Eval CLI
 

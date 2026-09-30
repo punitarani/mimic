@@ -46,7 +46,7 @@ async function mimic() {
   );
 }
 
-describe('Persona.md (ADR-0031)', () => {
+describe('Persona.md (ADR-0033)', () => {
   it('drafts, curates and exports a persona from the latest snapshot', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await mimic();

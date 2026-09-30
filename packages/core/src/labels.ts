@@ -1,5 +1,5 @@
 /**
- * Display labels shared by the web app and Persona.md (ADR-0031). Client-safe: no imports, so client components can
+ * Display labels shared by the web app and Persona.md (ADR-0033). Client-safe: no imports, so client components can
  * use it through `@mimic/core/labels` without bundling the engine.
  */
 

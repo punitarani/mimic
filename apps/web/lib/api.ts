@@ -1,9 +1,11 @@
 import type {
   AnswerResult,
   ExperimentRecord,
+  FeedbackResult,
   NextResult,
   PersonaSave,
   PersonaView,
+  PlaygroundHistory,
   PlaygroundPrediction,
   PublicQuestion,
   UiSnapshot,
@@ -96,6 +98,14 @@ export interface Draft {
   options: PublicQuestion['options'];
 }
 
+/** A question the person answers themselves, for the mimic to learn from (ADR-0032). */
+export interface FeedbackRequest {
+  question: Draft;
+  answer: string;
+  why?: string;
+  idempotencyKey: string;
+}
+
 export const api = {
   createMimic: (b: IntakeRequest) => call<{ mimicId: string; identity: boolean }>('POST', '/api/mimics', b),
   listMimics: () =>
@@ -136,6 +146,9 @@ export const api = {
       credentials: 'same-origin',
       keepalive: true,
     }).catch(() => {}),
+  teach: (id: string, feedback: FeedbackRequest) =>
+    call<FeedbackResult>('POST', `/api/mimics/${id}/ask`, { feedback }),
+  playground: (id: string) => call<PlaygroundHistory>('GET', `/api/mimics/${id}/ask`),
   stop: (id: string) => call<{ snapshotVersion: number | null }>('POST', `/api/mimics/${id}/stop`),
   remove: (id: string) => call<{ deleted: true }>('DELETE', `/api/mimics/${id}`),
   // Lab (admin only)

@@ -17,7 +17,7 @@ import { loadMimicData } from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, loadConfig, requireMimic } from './deps';
 
 /**
- * Persona.md (ADR-0031). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
+ * Persona.md (ADR-0033). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
  * snapshot (so it can't race the `snapshot.write` job or freeze derived data mid-learning), and a fact the person
  * removes leaves the file at once.
  */

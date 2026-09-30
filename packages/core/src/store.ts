@@ -1,6 +1,6 @@
 import type { FidelityState } from './fidelity';
 import type { PersonaCuration, PersonaDraft } from './persona';
-import type { Distribution, Facet, Insight, Question, TraitEstimate } from './types';
+import type { Distribution, Facet, Insight, QKind, Question, TraitEstimate } from './types';
 
 export type MimicStatus = 'intake' | 'identity' | 'learning' | 'paused' | 'archived';
 /** ADR-0007: sub-state of identity resolution, so the UI can show progress. */
@@ -47,7 +47,7 @@ export interface QuestionRecord extends Question {
   servedAt: number | null;
   /** As-of time of the derived data in this question's sealed states; replay rebuilds them from it (ADR-0017). */
   stateAt: number | null;
-  /** The selector's diagnostics for the winning score, written when served (ADR-0031). */
+  /** The selector's diagnostics for the winning score, written when served (ADR-0027). */
   selection?: Record<string, unknown> | null;
 }
 
@@ -197,7 +197,7 @@ export interface SnapshotRecord {
   createdAt: number;
 }
 
-/** A `persona.v1` draft (ADR-0031): derived from the evidence up to `seqUpTo`, versioned, recomputable. */
+/** A `persona.v1` draft (ADR-0033): derived from the evidence up to `seqUpTo`, versioned, recomputable. */
 export interface PersonaDraftRecord {
   id: string;
   mimicId: string;
@@ -267,7 +267,7 @@ export interface ScoredPredictionRow {
   question: Pick<QuestionRecord, 'id' | 'kind' | 'type' | 'seq' | 'itemKey'>;
 }
 
-/** One scored primary or baseline with what the item statistics need (ADR-0031). */
+/** One scored primary or baseline with what the item statistics need (ADR-0027). */
 export interface ScoredItemSource {
   mimicId: string;
   questionId: string;
@@ -321,7 +321,7 @@ export interface Store {
   // questions
   insertQuestions(recs: QuestionRecord[]): Promise<void>;
   getQuestion(id: string): Promise<QuestionRecord | null>;
-  listQuestions(mimicId: string, status?: QuestionStatus[]): Promise<QuestionRecord[]>;
+  listQuestions(mimicId: string, status?: QuestionStatus[], kinds?: QKind[]): Promise<QuestionRecord[]>;
   updateQuestionStatus(id: string, status: QuestionStatus): Promise<void>;
   /**
    * Atomically marks a question served at `seq` and persists its sealed predictions (PLAN §3.2). Returns false
@@ -346,8 +346,22 @@ export interface Store {
   getAnswerByIdempotencyKey(key: string): Promise<AnswerRecord | null>;
   getAnswerForQuestion(questionId: string): Promise<AnswerRecord | null>;
   listAnswers(mimicId: string): Promise<AnswerRecord[]>;
-  /** Atomically stores the answer, marks the question answered and writes the scores. */
-  recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<void>;
+  /**
+   * Atomically stores the answer, marks the question answered and writes the scores. Returns false, writing
+   * nothing, if the answer's seq or idempotency key is already taken (the question moved, or a duplicate raced).
+   */
+  recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<boolean>;
+  /**
+   * Atomically inserts a question the person wrote and answered themselves (`kind = feedback`, ADR-0032) at
+   * `answer.seq`, with its answer, and advances the mimic's `seqMax`. With `move`, the served session question at
+   * that seq first moves to `move.toSeq`, so it is answered after the feedback. Returns false, writing nothing, if a
+   * seq was already taken, the moved question was answered meanwhile, or the idempotency key was used.
+   */
+  recordFeedback(args: {
+    question: QuestionRecord;
+    answer: AnswerRecord;
+    move?: { questionId: string; toSeq: number };
+  }): Promise<boolean>;
   insertScores(recs: ScoreRecord[]): Promise<void>;
   listScoredPredictions(mimicId: string, roles: PredictionRole[]): Promise<ScoredPredictionRow[]>;
   // derived state
@@ -370,14 +384,14 @@ export interface Store {
   insertSnapshot(rec: SnapshotRecord): Promise<void>;
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
-  // Persona.md (ADR-0031)
+  // Persona.md (ADR-0033)
   insertPersonaDraft(rec: PersonaDraftRecord): Promise<void>;
   latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null>;
   getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null>;
   /** Writes only if `rec.rev` is newer than the stored rev; returns whether it wrote. */
   putPersonaCuration(rec: PersonaCurationRecord): Promise<boolean>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
-  // cross-person item statistics (aggregate only; ADR-0031)
+  // cross-person item statistics (aggregate only; ADR-0027)
   /** Every scored primary and baseline of the matching mimics' anchor and adaptive questions, in one query. */
   listScoredForStats(filter: {
     consentResearch: boolean;

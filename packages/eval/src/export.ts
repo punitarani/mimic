@@ -144,7 +144,7 @@ export async function scrubExport(
     await client.execute({ sql: 'delete from mimics where id = ?', args: [id] });
   }
   await client.execute('delete from jobs');
-  // Persona.md curation is the person's own writing and choices, not research data (ADR-0031). Drafts are free text
+  // Persona.md curation is the person's own writing and choices, not research data (ADR-0033). Drafts are free text
   // written from location and sourced facts, so they go too whenever identity is scrubbed (below).
   await client.execute('delete from persona_curations');
   await client.execute('delete from vectors');

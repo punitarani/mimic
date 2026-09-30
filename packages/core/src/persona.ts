@@ -8,7 +8,7 @@ import { PROMPTS } from './prompts';
 import type { Facet } from './types';
 
 /**
- * Persona.md (ADR-0031): a portable Markdown portrait that any agent can read to represent the person. It is a view of
+ * Persona.md (ADR-0033): a portable Markdown portrait that any agent can read to represent the person. It is a view of
  * the mimic's current evidence and derived data, plus an optional LLM-written draft (`persona.v1`) and the person's
  * curation. Evidence stays the source of truth (PLAN §3.3): drafts are derived and versioned, and curation only
  * filters and rewords what goes into the file. Nothing here feeds back into states or predictions.

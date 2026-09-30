@@ -86,7 +86,7 @@ export const questions = sqliteTable(
     id: text('id').primaryKey(),
     mimicId: text('mimic_id').notNull(),
     seq: integer('seq'),
-    kind: text('kind', { enum: ['anchor', 'adaptive', 'repeat', 'playground'] }).notNull(),
+    kind: text('kind', { enum: ['anchor', 'adaptive', 'repeat', 'playground', 'feedback'] }).notNull(),
     type: text('type', { enum: ['choice', 'noul', 'score'] }).notNull(),
     domain: text('domain', { enum: ['core', 'casual', 'professional'] }).notNull(),
     prompt: text('prompt').notNull(),
@@ -103,7 +103,7 @@ export const questions = sqliteTable(
     servedAt: integer('served_at'),
     /** As-of time of the derived data (traits, insights, facts) in this question's sealed states (ADR-0017). */
     stateAt: integer('state_at'),
-    /** The selector's diagnostics for the winning score (ADR-0031). */
+    /** The selector's diagnostics for the winning score (ADR-0027). */
     selectionJson: text('selection_json'),
   },
   (t) => [
@@ -133,7 +133,7 @@ export const predictions = sqliteTable(
     ok: bool('ok').notNull(),
     error: text('error'),
     fallback: bool('fallback').notNull().default(false),
-    /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0031). */
+    /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0027). */
     hypothesis: text('hypothesis'),
     createdAt: integer('created_at').notNull(),
   },
@@ -360,7 +360,7 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
-/** ADR-0031: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds Persona.md. */
+/** ADR-0033: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds Persona.md. */
 export const personaDrafts = sqliteTable(
   'persona_drafts',
   {
@@ -377,7 +377,7 @@ export const personaDrafts = sqliteTable(
   (t) => [index('persona_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
 );
 
-/** ADR-0031: the person's choices for Persona.md (sections, hidden items, edits, their own words). */
+/** ADR-0033: the person's choices for Persona.md (sections, hidden items, edits, their own words). */
 export const personaCurations = sqliteTable('persona_curations', {
   mimicId: text('mimic_id').primaryKey(),
   json: text('json').notNull(),
@@ -401,7 +401,7 @@ export const vectors = sqliteTable(
 );
 
 /**
- * ADR-0031: cross-person item statistics, aggregate only (no mimic_id, no free text), over research-consented
+ * ADR-0027: cross-person item statistics, aggregate only (no mimic_id, no free text), over research-consented
  * dev-split mimics. Used to rank pooled candidates; never in a prompt or a state.
  */
 export const itemStats = sqliteTable('item_stats', {

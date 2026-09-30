@@ -95,7 +95,7 @@ Intake ─► Identity (search → "Is one of these you?" → facts) ─► Anch
 | Primary | The predictor behind the UI and headline (Jev by default). |
 | Shadow | A predictor that runs for comparison only. |
 | Baseline | The primary predictor on a context-only state (no answers). |
-| Question kinds | `anchor`, `adaptive`, `repeat`, `playground`. |
+| Question kinds | `anchor`, `adaptive`, `repeat`, `playground`, `feedback` (ADR-0032). |
 | Fidelity | The headline metric (§9.10). |
 
 ---
@@ -263,7 +263,7 @@ Cold start needs no LLM. The first 10 questions are static anchors, which gives 
 
 ```ts
 export type QType = 'choice' | 'noul' | 'score';
-export type QKind = 'anchor' | 'adaptive' | 'repeat' | 'playground';
+export type QKind = 'anchor' | 'adaptive' | 'repeat' | 'playground' | 'feedback';
 export type Domain = 'core' | 'casual' | 'professional';
 
 export interface Option { key: string; label: string; description?: string }
@@ -467,7 +467,7 @@ Using a mimic means running any predictor against its snapshot.
 ### 8.3 Persona.md
 
 `mimic.json` is for running predictors. `Persona.md` is for people's own agents: a Markdown portrait that any agent
-can read to represent the person, with decision-making first (ADR-0031). It is a view with three inputs:
+can read to represent the person, with decision-making first (ADR-0033). It is a view with three inputs:
 
 1. **The mimic's current data**, in the same shape as `mimic.json` (§8.1) but read live: viewing never writes a
    snapshot, and a fact the person removes leaves the file at once. The deterministic sections come from it:
@@ -682,7 +682,7 @@ Recomputed after every answer and appended to the `fidelity` table.
 
 **Inputs:**
 
-- **Scored set S:** the most recent 30 primary predictions on anchor and adaptive questions. Repeats and playground questions are excluded.
+- **Scored set S:** the most recent 30 primary predictions on anchor and adaptive questions. Repeats, playground and feedback questions are excluded.
 - **`acc`:** mean `item_acc` over S.
 - **`acc_baseline`:** the same, for the baseline predictions on S.
 - **Self-consistency `c`:** agreement across repeat pairs. For categorical items agreement is 1 if the answers match, else 0. For scale items it is `1 − |a1 − a2| / 4`. Smooth toward a prior:
@@ -711,6 +711,8 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 2. An LLM turns it into a typed question, whose options the person can edit.
 3. Jev predicts on the full state, and the UI shows the distribution. Optionally, an LLM adds one sentence of rationale in the person's voice, labeled "generated".
 4. The person then answers the question themselves. The answer is stored as `kind = playground` evidence and scored separately, which builds a clean, user-verified test set.
+5. Instead of asking (step 3), the person can answer the question themselves right away: "Answer it myself". The question can also be written by hand, without step 2's LLM. The answer is stored as `kind = feedback`, with no predictions, in one atomic write. If a session question is open, the feedback takes its seq and the question moves to the next one, so answers are learned in order. Unlike playground answers, feedback is evidence the mimic learns from: it enters later sealed states, embeddings, trait reads and reflection like a session answer. It is never scored and never counts toward session progress (ADR-0032).
+6. The page lists what was asked and taught, newest first. An asked question left unanswered can be answered from that list.
 
 ---
 
@@ -724,7 +726,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and locks the field. Location and occupation suggest as you type (ADR-0030). |
 | `/m/[id]/identity` | Search progress, "Is one of these you?", then fact review with remove toggles. "Skip" is always available. |
 | `/m/[id]` | The session. |
-| `/m/[id]/mimic` | Talk to your mimic (§9.11); download `mimic.json` and `Persona.md`; delete the mimic. |
+| `/m/[id]/mimic` | Talk to your mimic (§9.11): ask it, or teach it an answer; download `mimic.json` and `Persona.md`; delete the mimic. |
 | `/m/[id]/persona` | Curate `Persona.md` (§8.3): write or rewrite the inferred sections, include or hide sections and items, reword statements, add your own words; preview, copy and download. |
 | `/lab` | Admin only. |
 

@@ -110,7 +110,7 @@ function fakeGateway(content: unknown) {
   return { g, rows, sent };
 }
 
-describe('Persona.md (ADR-0031)', () => {
+describe('Persona.md (ADR-0033)', () => {
   it('renders the deterministic sections without a draft', () => {
     const v = build({ draft: null });
     const md = v.markdown;

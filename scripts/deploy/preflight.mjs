@@ -26,6 +26,18 @@ export function customDomain(webConfig, env) {
   return route ? route.pattern : null;
 }
 
+/**
+ * The web app's public origin, which its link previews are built against (ADR-0031): the custom domain, else the
+ * workers.dev URL on the account's subdomain. Without `cf` (a dry run has no credentials) that second case is null.
+ */
+export async function siteUrl(webConfig, env, cf = null) {
+  const domain = customDomain(webConfig, env);
+  if (domain) return `https://${domain}`;
+  if (!cf) return null;
+  const { subdomain } = await cf.get('/workers/subdomain');
+  return `https://${envBlock(webConfig, env).name}.${subdomain}.workers.dev`;
+}
+
 /** The worker's secrets: its `secrets.required` plus the keys of the providers `source` selects. */
 export function workerSecrets(workerConfig, env, source) {
   const extra = providerSecrets(resolveSettings(workerConfig, env, source).vars);
