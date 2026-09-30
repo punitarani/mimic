@@ -817,7 +817,7 @@ is kept as a rewind, not as evidence (ADR-0036).
 1. **Headline fidelity,** with its CI and state, a rolling sparkline, and lift over baseline.
 2. **Facet bars,** grouped as Personality, Values, Decisions, Work, Everyday and Communication. Each bar shows a mean marker and a certainty band. Hovering a bar shows the answers that support it.
 3. **"What it's learned":** the latest cited insights, each linked to its evidence.
-4. **Mini knowledge graph** (canvas force layout, at most 60 nodes): you, connected to organizations, places, skills, interests and facets.
+4. **Your map** (ADR-0046): the knowledge graph as a network of the things in the person's life (work, places, interests, skills, traits), clustered by category, with typed links inferred between them and a confidence threshold; at most 60 nodes.
 5. **Coverage:** facets not yet explored.
 
 **Lab** (`/lab`):
@@ -837,7 +837,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 - **Color carries meaning.** Graphite is the person's answers; one cool ink color is the mimic's predictions; muted green and rust mark match and miss. Use a cool neutral background, not cream.
 - **Typography.** Question prompts use a readable text serif at a large size, because they are sentences to think about. UI chrome uses one neutral sans. Sentence case, plain verbs, no eyebrow labels.
 - **Motion.** Only the reveal and the fidelity update animate, and reduced-motion settings are respected.
-- **Components.** shadcn/ui with Tailwind; visx (or Recharts) for charts; react-force-graph-2d for the graph.
+- **Components.** shadcn/ui with Tailwind; visx (or Recharts) for charts; d3-force with an SVG renderer for the map (ADR-0046).
 
 ---
 

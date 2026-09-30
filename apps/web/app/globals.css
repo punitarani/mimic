@@ -24,6 +24,12 @@
   --moss10: rgba(53, 107, 78, 0.12);
   --rust10: rgba(155, 75, 62, 0.12);
   --pop-shadow: 0 8px 24px rgba(21, 23, 27, 0.14);
+  /* Map categories (ADR-0046): the original map colors; dark mode lifts them for contrast on the sheet. */
+  --kg-work: #2d4fb3;
+  --kg-place: #4a7f62;
+  --kg-interest: #a9543a;
+  --kg-skill: #66707d;
+  --kg-trait: #aab2bd;
   color-scheme: light;
 }
 
@@ -46,6 +52,11 @@
   --moss10: rgba(127, 191, 154, 0.14);
   --rust10: rgba(217, 138, 116, 0.14);
   --pop-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --kg-work: #6f8ee8;
+  --kg-place: #6fae8a;
+  --kg-interest: #d27c5f;
+  --kg-skill: #8d97a4;
+  --kg-trait: #b9c0ca;
   color-scheme: dark;
 }
 
@@ -69,6 +80,11 @@
     --moss10: rgba(127, 191, 154, 0.14);
     --rust10: rgba(217, 138, 116, 0.14);
     --pop-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    --kg-work: #6f8ee8;
+    --kg-place: #6fae8a;
+    --kg-interest: #d27c5f;
+    --kg-skill: #8d97a4;
+    --kg-trait: #b9c0ca;
     color-scheme: dark;
   }
 }

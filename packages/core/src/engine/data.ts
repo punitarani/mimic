@@ -21,6 +21,8 @@ import { type EngineDeps, facetsFor, loadConfig } from './deps';
 export interface LoadedMimic {
   /** Evidence, traits, insights and facts within the person's scope (ADR-0040). */
   data: MimicData;
+  /** Fact rows within the scope, removed ones included, for views that need their IDs and provenance. */
+  facts: FactRecord[];
   /** Every question and answer, in or out of scope (seq bookkeeping, repeats, fidelity). */
   questions: QuestionRecord[];
   answers: AnswerRecord[];
@@ -88,6 +90,7 @@ function assemble(
       traits,
       insights,
     },
+    facts,
     questions,
     answers,
     scope: view,
