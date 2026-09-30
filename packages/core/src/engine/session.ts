@@ -251,7 +251,7 @@ async function serveWithPredictions(
   rng: () => number,
 ): Promise<NextResult> {
   const primarySpec = cfg.predictor.primary;
-  // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0026); the baseline uses the same prompt.
+  // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0027); the baseline uses the same prompt.
   const primary = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
   const baselinePredictor = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.baseline'));
 

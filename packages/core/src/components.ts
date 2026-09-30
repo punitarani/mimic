@@ -133,7 +133,7 @@ export const DEFAULT_PROMPT_VERSION = { jev: 'jev-predict.v1', llm: 'predict.v1'
 
 /**
  * Registered prediction prompt versions. Add a variant here (never edit one) to ship an optimized candidate; it is then
- * addressable as `llm:<model>@<id>` or `jev:<model>@<id>` in configs and `pnpm backfill` (ADR-0026).
+ * addressable as `llm:<model>@<id>` or `jev:<model>@<id>` in configs and `pnpm backfill` (ADR-0027).
  */
 export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
   'predict.v1': {
@@ -200,7 +200,7 @@ export function renderVariantDoc(v: PredictPromptVariant): string {
   const lines = [
     `# ${v.id} — ${v.title}`,
     '',
-    '> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0026).',
+    '> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0027).',
     '',
     `- Predictor kind: \`${v.kind}\` (use as \`${v.kind}:<model>@${v.id}\`)`,
     `- Source: ${v.source}`,

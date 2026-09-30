@@ -140,7 +140,7 @@ export async function enqueueMissingPredictions(
 
 function checkPredictorId(id: string): void {
   try {
-    // The ID must parse and any `@<promptVersion>` must be registered (ADR-0026).
+    // The ID must parse and any `@<promptVersion>` must be registered (ADR-0027).
     assertPredictorId(id);
   } catch (e) {
     throw new EngineError('invalid', e instanceof Error ? e.message : String(e));

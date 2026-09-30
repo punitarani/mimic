@@ -1,6 +1,6 @@
 # predict.v1 — LLM predictor (incumbent)
 
-> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0026).
+> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0027).
 
 - Predictor kind: `llm` (use as `llm:<model>@predict.v1`)
 - Source: PLAN Appendix A.3

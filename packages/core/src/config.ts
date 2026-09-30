@@ -96,7 +96,7 @@ export type PredictorSpec = { kind: 'jev' | 'llm'; model: string; promptVersion?
 
 /**
  * `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` for a registered prediction prompt variant
- * (packages/core/src/components.ts, ADR-0026). Without a version the predictor uses the incumbent prompt.
+ * (packages/core/src/components.ts, ADR-0027). Without a version the predictor uses the incumbent prompt.
  */
 export function parsePredictorId(id: string): PredictorSpec {
   const idx = id.indexOf(':');

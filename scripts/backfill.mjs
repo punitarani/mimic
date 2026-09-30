@@ -19,7 +19,7 @@ import { cloudflareFromEnv, envBlock, ROOT, readConfig, WORKER_CONFIG } from './
 const ENVS = ['local', 'preview', 'prod'];
 /**
  * `llm:<vendor>/<model>` or `jev:<vendor>/<model>`, optionally `@<promptVersion>` for a registered prediction prompt
- * variant (ADR-0026; the worker rejects an unregistered one). Strict, since the local path inlines it into SQL.
+ * variant (ADR-0027; the worker rejects an unregistered one). Strict, since the local path inlines it into SQL.
  */
 export const PREDICTOR_ID =
   /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*(@[a-z0-9][a-z0-9._-]*)?$/i;

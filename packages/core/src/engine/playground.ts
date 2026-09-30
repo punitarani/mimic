@@ -78,7 +78,7 @@ export async function predictPlayground(
     stateAt: null,
   };
   await deps.store.insertQuestions([q]);
-  // The primary may name a prompt variant (`jev:<model>@<version>`, ADR-0026); the baseline uses the same prompt.
+  // The primary may name a prompt variant (`jev:<model>@<version>`, ADR-0027); the baseline uses the same prompt.
   const primarySpec = cfg.predictor.primary;
   const state = await sealedState(deps, loaded, cfg, seq, [q]);
   const base = contextState(loaded, cfg);

@@ -26,10 +26,11 @@ pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--yes]   # run new pre
 ```
 
 `pnpm dev` serves the web app on http://localhost:3000 and the worker on http://localhost:8787. It copies
-`.dev.vars.example` to `.dev.vars` in both apps on first run (dev invite code: `mimic-dev`).
+`.dev.vars.example` to `.dev.vars` in both apps on first run (dev invite code: `mimic-dev`, or open
+http://localhost:3000/new?invite=mimic-dev).
 It also fires the worker's cron every 10 minutes (stale-job requeue, missing shadows, snapshots; ADR-0019).
 
-Prompt optimization (ADR-0026, docs/OPTIMIZATION.md): `pnpm eval -- evaluate --from stored --data x.sqlite` reports on
+Prompt optimization (ADR-0027, docs/OPTIMIZATION.md): `pnpm eval -- evaluate --from stored --data x.sqlite` reports on
 stored predictions for free; `pnpm eval -- optimize --data x.sqlite --predictor jev:typesafe/jev-1.13 --max-usd 2` runs a
 capped GEPA loop. In prod, run Actions → Optimize. A winner ships only as a registered variant
 (`llm:<model>@<version>`, `packages/core/src/components.ts`), first as a shadow via `pnpm backfill`.

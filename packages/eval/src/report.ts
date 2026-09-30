@@ -344,7 +344,7 @@ function renderOptimize(m: M): string[] {
   }
   if (m.suggestedVersion)
     out.push(
-      `Register it as \`${String(m.suggestedVersion)}\` in \`packages/core/src/components.ts\` (the run directory has the snippet), then run it as a shadow with \`pnpm backfill\` (ADR-0026).`,
+      `Register it as \`${String(m.suggestedVersion)}\` in \`packages/core/src/components.ts\` (the run directory has the snippet), then run it as a shadow with \`pnpm backfill\` (ADR-0027).`,
       '',
     );
   return out;

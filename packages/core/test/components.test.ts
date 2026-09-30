@@ -49,7 +49,7 @@ const state: PersonState = {
   meta: { evidenceSeqMax: 2, stateHash: 'h', builder: 'full.v1', tokens: 1 },
 };
 
-describe('prediction prompt components (ADR-0026)', () => {
+describe('prediction prompt components (ADR-0027)', () => {
   it('the incumbent renders exactly what the original literals produced', () => {
     // The pre-refactor templates (PLAN §9.6 and the old renderStateText), written out literally.
     expect(predictionQuestion(q('choice'))).toEqual({

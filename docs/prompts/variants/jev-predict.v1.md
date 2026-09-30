@@ -1,6 +1,6 @@
 # jev-predict.v1 — Jev prediction templates (incumbent)
 
-> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0026).
+> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0027).
 
 - Predictor kind: `jev` (use as `jev:<model>@jev-predict.v1`)
 - Source: PLAN §9.6

@@ -218,7 +218,7 @@ export function parseJsonLoose(text: string): unknown {
   }
 }
 
-/** A predictor from its ID: `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` (ADR-0026). */
+/** A predictor from its ID: `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` (ADR-0027). */
 export function makePredictor(gateway: Gateway, id: string, ctx: CallContext): Predictor {
   const spec = parsePredictorId(id);
   return spec.kind === 'jev'

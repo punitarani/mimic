@@ -1,13 +1,20 @@
 import Link from 'next/link';
 import { TopBar } from '@/components/brand';
+import { INVITE_PARAM, inviteFromQuery, newMimicHref } from '@/lib/invite';
 import { currentParticipant, deps } from '@/lib/server';
 
 export const dynamic = 'force-dynamic';
 
-export default async function Home() {
-  const { deps: d, env } = await deps();
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ [INVITE_PARAM]?: string | string[] }>;
+}) {
+  const [{ deps: d, env }, sp] = await Promise.all([deps(), searchParams]);
   const pid = await currentParticipant(env);
   const mimics = pid ? await d.store.listMimics({ participantId: pid }) : [];
+  // An invite link can point at the landing page too; the code rides along to the intake form.
+  const invite = inviteFromQuery(sp[INVITE_PARAM]);
   return (
     <div className="flex min-h-dvh flex-col">
       <TopBar />
@@ -17,7 +24,7 @@ export default async function Home() {
         </h1>
         <div className="mt-8">
           <Link
-            href="/new"
+            href={newMimicHref(invite)}
             className="inline-flex h-12 items-center rounded-[10px] bg-graphite px-6 text-base font-medium text-fog hover:bg-graphite-soft"
           >
             Build your mimic
