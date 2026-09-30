@@ -15,7 +15,7 @@ import { type LocalEngine, openLocalEngine } from '../src/local';
 import { continueSession, runSession, SessionScript } from '../src/session';
 
 /**
- * Scope enforcement (ADR-0036), M9: a deselected category is never asked about or learned. Offline fakes; the
+ * Scope enforcement (ADR-0038), M9: a deselected category is never asked about or learned. Offline fakes; the
  * generator tags whatever it is told to target, so these tests check the machinery, not an LLM.
  */
 
@@ -49,7 +49,7 @@ async function trace(key: string): Promise<{ request: unknown }> {
   return JSON.parse((await engine.deps.blobs.get(key))!) as { request: unknown };
 }
 
-describe('deselected categories (ADR-0036)', () => {
+describe('deselected categories (ADR-0038)', () => {
   it('stores the scope and seeds only anchors inside it, in the same per-person order', async () => {
     const allowedAnchors = ANCHORS_V1.filter((a) => questionAllowed(a, BLOCKED)).map((a) => a.itemKey);
     expect(allowedAnchors.length).toBe(7); // trust game, free Saturday and the work anchor are out
@@ -117,7 +117,7 @@ describe('deselected categories (ADR-0036)', () => {
   });
 });
 
-describe('changing the scope later (ADR-0036)', () => {
+describe('changing the scope later (ADR-0038)', () => {
   let m: MimicRecord;
 
   it('shrinking discards pooled questions it put out of reach, stamps scopeAt and hides what was learned', async () => {

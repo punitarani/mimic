@@ -22,7 +22,7 @@ pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Worke
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
 pnpm eval -- <export|replay|select|import|report|session|evaluate|diagnose|optimize> ...
-pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--yes]   # run new predictors over served questions (ADR-0024)
+pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--rate n] [--retry-failed] [--yes]   # new predictors on served questions (ADR-0024, ADR-0037)
 ```
 
 `pnpm dev` serves the web app on http://localhost:3000 and the worker on http://localhost:8787. It copies
@@ -78,7 +78,7 @@ If a task seems to require breaking one of these, stop and ask.
 - Don't send `temperature` to any LLM. Use `reasoning.effort`. JSON-schema calls set `provider.require_parameters: true`.
 - Default LLM is `deepseek/deepseek-v4.1-flash`, routed to Wafer first (ADR-0004); GPT-6 Luna and GLM 5.3 Flash are alternatives and shadows, as are MiMo V2.6 Flash and Qwen3.8 Flash (ADR-0025). Adding a predictor means a new config plus `pnpm backfill` for questions already served (ADR-0024).
 - Question selection is `voi` (value of information) since `cfg.default.v4`: a belief state per person (uncertainty, conflict, weakness, coverage, exposure) scores pooled candidates; `gen.v2` targets the facets with the highest need; cross-person `item_stats` rank candidates and never enter a prompt or a state. Spec: `docs/SELECTION.md`, ADR-0027. `entropy`, `bald`, `coverage` and `random` stay as controls.
-- Scope and consent (ADR-0036, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and opt-in facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
+- Scope and consent (ADR-0038, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and opt-in facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
 - Order prompts for caching: stable prefix (system, ontology, rules) first, variable content last.
 - Test with Vitest, using recorded fixtures in `packages/adapters/fixtures/`. CI makes no live calls. Worker code tests use `@cloudflare/vitest-pool-workers`.
 - Use simulated users for smoke tests only. Never report metrics from LLM-simulated users.

@@ -83,6 +83,7 @@ const MIMIC_TABLES = [
   'questions',
   'predictions',
   'answers',
+  'answer_rewinds',
   'scores',
   'trait_estimates',
   'trait_history',
@@ -168,6 +169,7 @@ export async function scrubExport(
       update model_calls set r2_trace_key = '', job_key = null;
       update snapshots set r2_key = '';
       update answers set idempotency_key = 'k_' || id;
+      update answer_rewinds set idempotency_key = 'k_' || answer_id;
     `);
     const mimics = (await client.execute('select id, participant_id from mimics')).rows;
     for (const r of mimics) {

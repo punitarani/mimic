@@ -11,7 +11,7 @@ export interface ScopeChange {
 }
 
 /**
- * Changes what a mimic may be asked about and learn (ADR-0036). The scope is normalised first (consents of deselected
+ * Changes what a mimic may be asked about and learn (ADR-0038). The scope is normalised first (consents of deselected
  * categories are dropped). When it shrinks, `scopeAt` is stamped, and every pooled or served-but-unanswered session
  * question touching a now-blocked facet is discarded so it is never served; what was learned from earlier answers in
  * that area is hidden from then on by the loaders. Growing the scope changes no stored data: the pool fills with the

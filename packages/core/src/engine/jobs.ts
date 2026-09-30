@@ -1,8 +1,9 @@
 import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
+import type { PipelineConfig } from '../config';
 import { BudgetExceededError } from '../gateway';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
-import { type Job, jobFromKey, jobKey } from '../jobs';
+import { type Job, jobFromKey, jobKey, type QueuedJob } from '../jobs';
 import {
   generateCandidates,
   generateHypotheses,
@@ -17,12 +18,29 @@ import { computeItemStats, type ScoredItemRow } from '../population';
 import { assertPredictorId, makePredictor, promptVersionOf } from '../predictors';
 import { scorePrediction } from '../scoring';
 import { facetCoverage, usesHypotheses } from '../selectors';
-import { buildState, cosine, toStateEvidence } from '../state-builder';
-import type { FactRecord, InsightRecord, KgEdgeRecord, KgNodeRecord, QuestionRecord } from '../store';
+import { buildState, cosine, type EvidenceItem, toStateEvidence } from '../state-builder';
+import {
+  type FactRecord,
+  type InsightRecord,
+  type KgEdgeRecord,
+  type KgNodeRecord,
+  type MimicRecord,
+  type PredictionRecord,
+  type QuestionRecord,
+  StaleEvidenceError,
+} from '../store';
 import { type Domain, isScoredKind, learnsFrom, type PersonState } from '../types';
 import { writeSnapshot } from './artifact';
 import { beliefFromLoaded, loadBeliefSources } from './belief';
-import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
+import {
+  facetCounts,
+  type LoadedMimic,
+  loadMimicData,
+  qaText,
+  stateBlobKey,
+  stateOptions,
+  vectorId,
+} from './data';
 import {
   budgetSpent,
   ctxFor,
@@ -36,7 +54,9 @@ import {
   sessionSpent,
 } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
-import { invalidateItemStatsCache, MAX_POOL, MIN_POOL } from './session';
+import { PENDING_WINDOW_MS } from './lab';
+import { refreshQaVector } from './rewind';
+import { invalidateItemStatsCache, loadHypotheses, MAX_POOL, MIN_POOL } from './session';
 
 export const MAX_JOB_ATTEMPTS = 5;
 
@@ -62,7 +82,7 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
     updatedAt: deps.clock(),
   });
   try {
-    await dispatch(deps, job, key);
+    await dispatch(deps, job, key, attempts);
     await deps.store.putJob({
       key,
       type: job.type,
@@ -73,6 +93,18 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
     });
     return 'done';
   } catch (e) {
+    // An undo landed while the job ran and its writes were refused (ADR-0036): a retry would only be refused again.
+    if (e instanceof StaleEvidenceError) {
+      await deps.store.putJob({
+        key,
+        type: job.type,
+        status: 'done',
+        attempts,
+        lastError: e.message,
+        updatedAt: deps.clock(),
+      });
+      return 'done';
+    }
     const msg = e instanceof Error ? e.message : String(e);
     if (e instanceof BudgetExceededError) {
       await deps.store.putJob({
@@ -136,7 +168,8 @@ export async function enqueueMissingShadows(
 
 /**
  * Enqueues a `predict.shadow` for each of `predictorIds` on each of the mimic's served anchor and adaptive questions
- * that has no prediction from it yet, in any role. The same query as `pnpm backfill`'s dry run (scripts/backfill.mjs).
+ * that has no prediction from it yet, in any role, and none in flight. A shadow whose job used up its attempts
+ * without storing anything is left alone, so the cron can't retry it forever.
  */
 export async function enqueueMissingPredictions(
   deps: EngineDeps,
@@ -144,35 +177,98 @@ export async function enqueueMissingPredictions(
   servedBefore: number,
   predictorIds: readonly string[],
 ): Promise<number> {
-  if (!predictorIds.length) return 0;
-  const [questions, predictions] = await Promise.all([
+  const work = await missingPredictions(deps, mimicId, servedBefore, predictorIds, { live: true });
+  for (const w of work) await deps.jobs.enqueue({ type: 'predict.shadow', mimicId, ...w });
+  return work.length;
+}
+
+/**
+ * A shadow whose call failed before the model answered (a transport error after every attempt, or the budget
+ * guard): a backfill with `retryFailed` may redo it. Unusable output and timeouts are the model's, and stand.
+ */
+export function isFailedCall(p: Pick<PredictionRecord, 'role' | 'ok' | 'errorKind'>): boolean {
+  return p.role === 'shadow' && !p.ok && p.errorKind === 'transport';
+}
+
+/** `${questionId}|${predictorId}` of the mimic's shadow jobs, live or backfill, that are queued or being retried. */
+async function shadowJobs(deps: EngineDeps, mimicId: string) {
+  const now = deps.clock();
+  const [live, backfill] = await Promise.all([
+    deps.store.listJobs(`predict.shadow:${mimicId}:`),
+    deps.store.listJobs(`backfill.shadow:${mimicId}:`),
+  ]);
+  const inFlight = new Set<string>();
+  const exhausted = new Set<string>();
+  for (const r of [...live, ...backfill]) {
+    const job = jobFromKey(r.key);
+    if (r.status === 'done' || !job || !('questionId' in job)) continue;
+    const id = `${job.questionId}|${job.predictorId}`;
+    if (r.attempts >= MAX_JOB_ATTEMPTS && r.status === 'failed') {
+      // A budget refusal isn't exhaustion: it runs again once the cap allows (ADR-0035).
+      if (job.type === 'predict.shadow' && !r.lastError?.startsWith('budget:')) exhausted.add(id);
+    } else if (r.updatedAt >= now - STALE_JOB_MS) inFlight.add(id); // older: its message was lost
+  }
+  return { inFlight, exhausted };
+}
+
+/**
+ * The mimic's anchor and adaptive questions served before `servedBefore`, with a primary (so a sealed state), no
+ * prediction from each predictor in any role (a failed call counts as none with `retryFailed`), and no shadow job
+ * for it in flight. `live`: also skips shadows whose live job gave up. In `seq` order. The same rule as `pnpm
+ * backfill`'s dry run (scripts/backfill.mjs).
+ */
+async function missingPredictions(
+  deps: EngineDeps,
+  mimicId: string,
+  servedBefore: number,
+  predictorIds: readonly string[],
+  opts: { retryFailed?: boolean | undefined; live?: boolean } = {},
+): Promise<Array<{ questionId: string; predictorId: string }>> {
+  if (!predictorIds.length) return [];
+  const [questions, predictions, jobs] = await Promise.all([
     deps.store.listQuestions(mimicId),
     deps.store.listPredictions({ mimicId }),
+    shadowJobs(deps, mimicId),
   ]);
   // Hypothesis rows carry the primary's predictor id but are exploration artifacts, not predictions of the question.
   const have = new Set(
-    predictions.filter((p) => p.role !== 'hypothesis').map((p) => `${p.questionId}|${p.predictorId}`),
+    predictions
+      .filter((p) => p.role !== 'hypothesis' && !(opts.retryFailed && isFailedCall(p)))
+      .map((p) => `${p.questionId}|${p.predictorId}`),
   );
   // A shadow reads the primary's sealed state; without a primary there is nothing to predict from.
   const sealed = new Set(predictions.filter((p) => p.role === 'primary').map((p) => p.questionId));
-  let n = 0;
-  for (const q of questions) {
+  const out: Array<{ questionId: string; predictorId: string }> = [];
+  for (const q of [...questions].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))) {
     if (q.seq === null || q.servedAt === null || q.servedAt >= servedBefore) continue;
-    // A question discarded after it was served (its category was withdrawn, ADR-0036) needs no more predictions.
+    // A question discarded after it was served (its category was withdrawn, ADR-0038) needs no more predictions.
     if (!isScoredKind(q.kind) || q.status === 'discarded') continue;
     if (!sealed.has(q.id)) continue;
     for (const predictorId of predictorIds) {
-      if (have.has(`${q.id}|${predictorId}`)) continue;
-      await deps.jobs.enqueue({ type: 'predict.shadow', mimicId, questionId: q.id, predictorId });
-      n++;
+      const id = `${q.id}|${predictorId}`;
+      if (have.has(id) || jobs.inFlight.has(id) || (opts.live && jobs.exhausted.has(id))) continue;
+      out.push({ questionId: q.id, predictorId });
     }
   }
-  return n;
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Backfill (ADR-0024): a new shadow model run over questions already served, on the same sealed states.
+// Backfill (ADR-0024, ADR-0037): a new shadow model run over questions already served, on the same sealed states.
 // ---------------------------------------------------------------------------------------------------------------
+
+/** Default pace, per predictor: one prediction every 2 s, about what a few live sessions produce. */
+export const BACKFILL_PER_MINUTE = 30;
+/** At most this many predictions per backfill job; a re-run enqueues the rest. */
+export const BACKFILL_MAX_JOBS = 5000;
+/** Queues delay a message by at most 24 h; a run spans at most this, and a re-run enqueues the rest. */
+export const BACKFILL_MAX_DELAY_SECONDS = 12 * 3600;
+
+/** How many predictions one run enqueues at this pace: the job cap, or what fits in the delay horizon. */
+export function backfillLimit(perMinute = BACKFILL_PER_MINUTE, offsetSeconds = 0): number {
+  const fit = Math.floor(((BACKFILL_MAX_DELAY_SECONDS - offsetSeconds) * perMinute) / 60) + 1;
+  return Math.max(0, Math.min(BACKFILL_MAX_JOBS, fit));
+}
 
 function checkPredictorId(id: string): void {
   try {
@@ -183,33 +279,102 @@ function checkPredictorId(id: string): void {
   }
 }
 
-/** One `backfill.mimic` job per mimic (each stays small, however many mimics there are). */
+interface BackfillRun {
+  predictorId: string;
+  perMinute?: number | undefined;
+  retryFailed?: boolean | undefined;
+}
+
+export interface BackfillEnqueued {
+  enqueued: number;
+  /** Stopped at backfillLimit(): anything left waits for a re-run. */
+  capped: boolean;
+}
+
+/**
+ * Enqueues one `backfill.shadow` per missing prediction of these mimics, spaced `60 / perMinute` seconds apart from
+ * `offsetSeconds` on. Pacing keeps a backfill from flooding the queue (live sessions share it) and the provider
+ * (rate limits, slower answers), so its failures and latencies look like a live shadow's. Each one is written to
+ * the ledger as `queued` first: a re-run skips it, and the cron requeues it if its message is lost. Questions
+ * served in the last PENDING_WINDOW_MS are left to the live path.
+ */
+async function enqueueBackfill(
+  deps: EngineDeps,
+  run: BackfillRun,
+  mimicIds: readonly string[],
+  opts: { offsetSeconds?: number | undefined; allMimics: boolean },
+): Promise<BackfillEnqueued> {
+  const offset = opts.offsetSeconds ?? 0;
+  const gap = 60 / (run.perMinute ?? BACKFILL_PER_MINUTE);
+  const limit = backfillLimit(run.perMinute, offset);
+  const now = deps.clock();
+  let enqueued = 0;
+  for (const mimicId of mimicIds) {
+    if (enqueued >= limit) return { enqueued, capped: true };
+    const m = await deps.store.getMimic(mimicId);
+    // Held to the session's share like a shadow (ADR-0035): a mimic that spent it would only queue refusals.
+    if (!m || sessionSpent(deps, m, await loadConfig(deps, m.configHash))) continue;
+    const work = await missingPredictions(deps, mimicId, now - PENDING_WINDOW_MS, [run.predictorId], {
+      retryFailed: run.retryFailed,
+    });
+    const batch: Array<QueuedJob & { delaySeconds: number }> = [];
+    for (const { questionId } of work.slice(0, limit - enqueued)) {
+      const job: Job = { type: 'backfill.shadow', mimicId, questionId, predictorId: run.predictorId };
+      if (run.retryFailed) job.retryFailed = true;
+      if (opts.allMimics) job.allMimics = true;
+      batch.push({ job, delaySeconds: Math.round(offset + (enqueued + batch.length) * gap) });
+    }
+    if (!batch.length) continue;
+    await deps.store.putJobs(
+      batch.map((b) => ({
+        key: jobKey(b.job),
+        type: b.job.type,
+        status: 'queued' as const,
+        attempts: 0,
+        lastError: null,
+        updatedAt: now + b.delaySeconds * 1000,
+      })),
+    );
+    await deps.jobs.enqueueBatch(batch.map((b) => (b.delaySeconds > 0 ? b : { job: b.job })));
+    enqueued += batch.length;
+    if (work.length > batch.length) return { enqueued, capped: true };
+  }
+  return { enqueued, capped: false };
+}
+
+/** Every (consented) mimic, paced as one stream so the predictor sees a steady rate. */
 export async function runBackfillPredictor(
   deps: EngineDeps,
-  job: { runId: string; predictorId: string; consentedOnly: boolean },
-): Promise<number> {
+  job: BackfillRun & { consentedOnly: boolean },
+): Promise<BackfillEnqueued & { mimics: number }> {
   checkPredictorId(job.predictorId);
   const mimics = await deps.store.listMimics(job.consentedOnly ? { consentResearch: true } : {});
-  for (const m of mimics) {
-    await deps.jobs.enqueue({
-      type: 'backfill.mimic',
-      runId: job.runId,
-      mimicId: m.id,
-      predictorId: job.predictorId,
-    });
-  }
-  return mimics.length;
+  const ids = mimics.map((m) => m.id);
+  return {
+    mimics: mimics.length,
+    ...(await enqueueBackfill(deps, job, ids, { allMimics: !job.consentedOnly })),
+  };
 }
 
-export function runBackfillMimic(
+/** One named mimic (the CLI's `--mimic`), chosen by the operator; with `consentedOnly`, only while it consents. */
+export async function runBackfillMimic(
   deps: EngineDeps,
-  job: { mimicId: string; predictorId: string },
-): Promise<number> {
+  job: BackfillRun & {
+    mimicId: string;
+    offsetSeconds?: number | undefined;
+    consentedOnly?: boolean | undefined;
+  },
+): Promise<BackfillEnqueued> {
   checkPredictorId(job.predictorId);
-  return enqueueMissingPredictions(deps, job.mimicId, deps.clock(), [job.predictorId]);
+  if (job.consentedOnly && !(await requireMimic(deps, job.mimicId)).consentResearch)
+    return { enqueued: 0, capped: false };
+  return enqueueBackfill(deps, job, [job.mimicId], {
+    offsetSeconds: job.offsetSeconds,
+    allMimics: !job.consentedOnly,
+  });
 }
 
-async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> {
+async function dispatch(deps: EngineDeps, job: Job, key: string, attempt: number): Promise<void> {
   // A job for a deleted mimic is a no-op.
   if ('mimicId' in job && !(await deps.store.getMimic(job.mimicId))) return;
   switch (job.type) {
@@ -222,9 +387,9 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
     case 'pool.refill':
       return runPoolRefill(deps, job.mimicId, key);
     case 'predict.shadow':
-      return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key);
+      return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key, { attempt });
     case 'learn.answer':
-      return runLearn(deps, job.mimicId, job.seq, key);
+      return runLearn(deps, job.mimicId, job.seq, key, job.answerId);
     case 'hypotheses.refresh':
       return runHypotheses(deps, job.mimicId, job.seqUpTo, key);
     case 'snapshot.write':
@@ -236,6 +401,13 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
     case 'backfill.mimic':
       await runBackfillMimic(deps, job);
       return;
+    case 'backfill.shadow':
+      return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key, {
+        backfill: true,
+        retryFailed: job.retryFailed ?? false,
+        allMimics: job.allMimics ?? false,
+        attempt,
+      });
     case 'stats.refresh':
       await runStatsRefresh(deps);
       return;
@@ -285,20 +457,35 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
 // predict.shadow (PLAN §9.6): the same sealed state (identical stateHash) as the primary.
 // ---------------------------------------------------------------------------------------------------------------
 
+/**
+ * A call that failed before the model answered (a rate limit, provider error or network failure) is thrown, so the
+ * queue retries it with backoff; on the last attempt (MAX_JOB_ATTEMPTS) it is stored as a failed call instead, so
+ * nothing retries it forever and a backfill with `retryFailed` can redo it later. The model's own failures
+ * (unusable output, a timeout) are stored at once (ADR-0037). The unique shadow index makes a concurrent run of
+ * the same shadow a no-op.
+ *
+ * `backfill`: operator research work (ADR-0024). The call is logged as `predict.backfill`, held like a shadow to the
+ * session's share of the budget (ADR-0035); it skips a mimic that no longer consents (unless `allMimics`), and with
+ * `retryFailed` it replaces this predictor's failed call instead of skipping the question.
+ */
 export async function runShadow(
   deps: EngineDeps,
   mimicId: string,
   questionId: string,
   predictorId: string,
   key?: string,
+  opts: { backfill?: boolean; retryFailed?: boolean; allMimics?: boolean; attempt?: number } = {},
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
+  if (opts.backfill && !opts.allMimics && !m.consentResearch) return;
   // Shadows (and `pnpm backfill`) are session and research work, so they never draw on the page's reserve.
   requireSessionBudget(deps, m, await loadConfig(deps, m.configHash));
   const q = await deps.store.getQuestion(questionId);
   if (!q || q.mimicId !== m.id) return;
   const preds = await deps.store.listPredictions({ questionId });
-  if (preds.some((p) => p.role === 'shadow' && p.predictorId === predictorId)) return;
+  const mine = preds.filter((p) => p.predictorId === predictorId && p.role !== 'hypothesis');
+  const redo = opts.backfill && opts.retryFailed ? mine.filter(isFailedCall) : [];
+  if (opts.backfill ? mine.length > redo.length : mine.some((p) => p.role === 'shadow')) return;
   const primary = preds.find((p) => p.role === 'primary');
   if (!primary) return;
   const raw = await deps.blobs.get(stateBlobKey(m.id, primary.stateHash));
@@ -307,15 +494,18 @@ export async function runShadow(
   const { meta, ...body } = state;
   if (hashJson(body) !== meta.stateHash) throw new Error('Sealed state hash mismatch');
 
-  const predictor = makePredictor(deps.gateway, predictorId, ctxFor(m, 'predict.shadow', key));
-  const [r] = await predictor.predict(state, [q]);
+  const ctx = ctxFor(m, opts.backfill ? 'predict.backfill' : 'predict.shadow', key);
+  const [r] = await makePredictor(deps.gateway, predictorId, ctx).predict(state, [q]);
+  const attempt = opts.attempt ?? MAX_JOB_ATTEMPTS;
+  if (!r!.ok && r!.retryable && attempt < MAX_JOB_ATTEMPTS)
+    throw new Error(`${predictorId} call failed (attempt ${attempt} of ${MAX_JOB_ATTEMPTS}): ${r!.error}`);
   const now = deps.clock();
-  const rec = {
+  const rec: PredictionRecord = {
     id: deps.newId(),
     questionId: q.id,
     mimicId: m.id,
     predictorId,
-    role: 'shadow' as const,
+    role: 'shadow',
     dist: r!.dist,
     confidence: r!.confidence ?? null,
     stateHash: meta.stateHash,
@@ -327,10 +517,20 @@ export async function runShadow(
     latencyMs: r!.latencyMs,
     ok: r!.ok,
     error: r!.error ?? null,
+    errorKind: r!.ok ? null : (r!.errorKind ?? null),
     fallback: false,
     createdAt: now,
   };
-  await deps.store.insertPredictions([rec]);
+  const stored = await deps.store.insertShadow(
+    rec,
+    redo.map((p) => p.id),
+  );
+  if (!stored) return; // another run of this shadow got there first
+  // Discarded by an undo while this ran (ADR-0036): its state held the retracted answer.
+  if ((await deps.store.getQuestion(q.id))?.status === 'discarded') {
+    await deps.store.deletePredictions([rec.id]);
+    return;
+  }
   // Sealing is defined by state contents, so a shadow may finish after the answer and still be scored.
   const answer = await deps.store.getAnswerForQuestion(q.id);
   if (answer && rec.ok) {
@@ -507,29 +707,70 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
 
 export const SNAPSHOT_DEBOUNCE_SECONDS = 10;
 
-export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, key?: string): Promise<void> {
+/**
+ * `answerId` (absent on jobs queued before ADR-0036) names the answer being learned; if the person undid it, the job
+ * is a no-op. Every derived write goes through a store guarded by the evidence epoch read here, so if they undo it
+ * while the job runs, nothing the job computes lands after the undo (which removed what had already landed).
+ */
+export async function runLearn(
+  deps: EngineDeps,
+  mimicId: string,
+  seq: number,
+  key?: string,
+  answerId?: string,
+): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
   const loaded = await loadMimicData(deps, m);
+  if (answerId && !loaded.answers.some((a) => a.seq === seq && a.id === answerId)) return;
   const item = loaded.data.evidence.find((e) => e.seq === seq);
   if (!item || !learnsFrom(item.kind)) return;
-  const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
-  const nAnswered = learnable.filter((e) => e.seq <= seq).length;
+  const epoch = m.evidenceEpoch;
   const snapshot = () =>
     deps.jobs.enqueue(
-      { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
+      { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq, epoch },
       { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
     );
+  try {
+    await learnGuarded({ ...deps, store: deps.store.guarded(m.id, epoch) }, m, cfg, loaded, item, seq, key);
+  } catch (e) {
+    if (!(e instanceof StaleEvidenceError)) throw e;
+    await refreshQaVector(deps, m, seq);
+    // An undo of a later answer refuses this job too, though its own answer still stands: learn it again.
+    const current = await deps.store.getAnswerForQuestion(item.questionId);
+    if (current && (!answerId || current.id === answerId))
+      throw new Error('Evidence changed while learning; retrying');
+    throw e;
+  }
+  // The Q&A vector isn't in D1, so the guard can't cover it: an undo after the last guarded write is caught here.
+  if ((await deps.store.getMimic(m.id))?.evidenceEpoch !== epoch) {
+    await refreshQaVector(deps, m, seq);
+    return;
+  }
+  await snapshot();
+}
+
+/** Steps 1–4 of `learn.answer`, with `deps.store` guarded by the epoch the job read. */
+async function learnGuarded(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  loaded: LoadedMimic,
+  item: EvidenceItem,
+  seq: number,
+  key: string | undefined,
+): Promise<void> {
+  const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
+  const nAnswered = learnable.filter((e) => e.seq <= seq).length;
 
   // Learning runs to the whole cap, so answers taught on the mimic page after the session still count (ADR-0035).
   // Over it every model call is refused, and the job would retry until dropped. The answer is kept as evidence and
-  // goes into the snapshot; only the reads that need a model are skipped.
-  if (budgetSpent(deps, m, cfg)) return snapshot();
+  // goes into the snapshot (queued by runLearn); only the reads that need a model are skipped.
+  if (budgetSpent(deps, m, cfg)) return;
 
   // 1) Embed the Q&A (plus the "why").
   try {
-    const text = `${item.prompt} → ${toStateEvidence(item).answer}${item.why ? ` (why: ${item.why})` : ''}`;
-    const emb = await deps.gateway.embed(ctxFor(m, 'embed.qa', key), [text]);
+    const emb = await deps.gateway.embed(ctxFor(m, 'embed.qa', key), [qaText(item)]);
     await deps.vectors.upsert([
       {
         id: vectorId.qa(m.id, seq),
@@ -597,7 +838,12 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
   if (cfg.reflector.model && cfg.reflector.everyN > 0 && nAnswered % cfg.reflector.everyN === 0) {
     await runReflection(deps, m.id, seq, key);
     if (usesHypotheses(cfg.selector))
-      await deps.jobs.enqueue({ type: 'hypotheses.refresh', mimicId: m.id, seqUpTo: seq });
+      await deps.jobs.enqueue({
+        type: 'hypotheses.refresh',
+        mimicId: m.id,
+        seqUpTo: seq,
+        epoch: m.evidenceEpoch,
+      });
   }
 
   // 4) Occupation facets, on the first learn after identity is settled. They belong to "Work and money", so a person
@@ -624,9 +870,6 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
       // Optional enrichment; retried on a later learn.
     }
   }
-
-  // 5) Debounced snapshot.
-  await snapshot();
 }
 
 export async function runReflection(
@@ -656,7 +899,8 @@ export async function runReflection(
     earlierEvidence: earlier,
   });
   const now = deps.clock();
-  for (const c of delta.contradictions) await deps.store.updateInsightStatus(c.insightId, 'superseded', now);
+  for (const c of delta.contradictions)
+    await deps.store.updateInsightStatus(c.insightId, 'superseded', now, seq);
   const insights: InsightRecord[] = delta.insights.map((i) => ({
     id: deps.newId(),
     mimicId: m.id,
@@ -684,8 +928,13 @@ export async function runReflection(
     userState: 'active',
     createdAt: now,
     userStateAt: null,
+    seqUpTo: seq,
   }));
   await addFacts(deps, m, facts);
+  // Fact vectors aren't in D1: if an undo landed after the facts did (and removed them), drop the vectors too, or a
+  // hard delete, which finds vectors through facts, would miss them.
+  if (facts.length && (await deps.store.getMimic(m.id))?.evidenceEpoch !== m.evidenceEpoch)
+    await deps.vectors.deleteByIds(facts.map((f) => vectorId.fact(m.id, f.id))).catch(() => {});
   // Link insights to facet nodes in the KG.
   const kg = await deps.store.listKg(m.id);
   const nodes: KgNodeRecord[] = [];
@@ -739,12 +988,7 @@ export async function runHypotheses(
   if (k < 2) return;
   // Hypotheses only steer session selection, so they stop with the session's share.
   requireSessionBudget(deps, m, cfg);
-  const cur = await deps.kv.get(`hyp:${m.id}`);
-  if (cur) {
-    try {
-      if ((JSON.parse(cur) as { seqUpTo: number }).seqUpTo >= seqUpTo) return;
-    } catch {}
-  }
+  if (((await loadHypotheses(deps, m.id))?.seqUpTo ?? -1) >= seqUpTo) return;
   const loaded = await loadMimicData(deps, m);
   const state = buildState(loaded.data, stateOptions(cfg, seqUpTo + 1));
   const facets = await facetsFor(deps, m, cfg);
@@ -761,5 +1005,14 @@ export async function runHypotheses(
     lowFacets,
     k,
   });
-  if (hypotheses.length) await deps.kv.put(`hyp:${m.id}`, JSON.stringify({ seqUpTo, hypotheses }));
+  if (!hypotheses.length) return;
+  const body = JSON.stringify({ seqUpTo, hypotheses });
+  await deps.kv.put(`hyp:${m.id}`, body);
+  // KV can't join the D1 guard (ADR-0036): if an undo landed while these were drawn from its state, take them back,
+  // unless a newer set has replaced them already.
+  if (
+    (await deps.store.getMimic(m.id))?.evidenceEpoch !== m.evidenceEpoch &&
+    (await deps.kv.get(`hyp:${m.id}`)) === body
+  )
+    await deps.kv.delete(`hyp:${m.id}`);
 }

@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0406aeda-4c95-434a-96b4-90f6e963aab8",
-  "prevId": "6bcc4eef-908a-44c9-93a4-26f4a66f26dc",
+  "id": "d3e1b74e-9e66-41d6-bbbb-7839af070ba0",
+  "prevId": "08f079b1-0b94-4ed7-a7ae-f1acdb4d5453",
   "tables": {
     "answer_rewinds": {
       "name": "answer_rewinds",
@@ -1260,6 +1260,37 @@
           "notNull": true,
           "autoincrement": false
         },
+        "categories_json": {
+          "name": "categories_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[\"psychology\",\"values\",\"life\",\"work\"]'"
+        },
+        "consents_json": {
+          "name": "consents_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "research_consents_json": {
+          "name": "research_consents_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "scope_at": {
+          "name": "scope_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "split": {
           "name": "split",
           "type": "text",
@@ -1421,6 +1452,14 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
         },
         "config_hash": {
           "name": "config_hash",
@@ -1739,6 +1778,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "error_kind": {
+          "name": "error_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "fallback": {
           "name": "fallback",
           "type": "integer",
@@ -1777,6 +1823,15 @@
             "role"
           ],
           "isUnique": false
+        },
+        "predictions_shadow_uq": {
+          "name": "predictions_shadow_uq",
+          "columns": [
+            "question_id",
+            "predictor_id"
+          ],
+          "isUnique": true,
+          "where": "\"predictions\".\"role\" = 'shadow'"
         }
       },
       "foreignKeys": {},

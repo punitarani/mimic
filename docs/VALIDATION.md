@@ -277,7 +277,7 @@ only; scripted answers say nothing about real people. The whole live smoke cost 
   - its Twin-2K-500 step, since Hugging Face is blocked in this environment. That step is best-effort, and the run
     continues without it.
 
-## M9: categories, consent and scoped facets (ADR-0036)
+## M9: categories, consent and scoped facets (ADR-0038)
 
 Offline fakes only (deterministic; the generator tags whatever it is told to target), so nothing below is a research
 result. It validates the machinery. Scripted people now carry a `script:` participant id.

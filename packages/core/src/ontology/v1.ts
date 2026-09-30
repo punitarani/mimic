@@ -3,7 +3,7 @@ import type { Category, Facet } from '../types';
 type L5 = [string, string, string, string, string];
 
 /**
- * The category of each v1 group (ADR-0036). `spending_style` sits in Everyday but belongs to "Work and money", so a
+ * The category of each v1 group (ADR-0038). `spending_style` sits in Everyday but belongs to "Work and money", so a
  * facet keeps one category across ontology versions (it moves to the Money group in v2).
  */
 const GROUP_CATEGORY: Record<string, Category> = {

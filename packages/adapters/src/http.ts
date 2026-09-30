@@ -1,3 +1,5 @@
+import { isTimeoutError, TRANSIENT_HTTP_STATUS } from '@mimic/core';
+
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export interface HttpOptions {
@@ -9,6 +11,11 @@ export interface HttpOptions {
   relay?: string;
   timeoutMs?: number;
   retries?: number;
+  /**
+   * Retry an attempt that timed out (default true). Chat turns it off: a timeout there means the model was too slow,
+   * and a retry would bill a second generation and hide the slowness (ADR-0037).
+   */
+  retryTimeouts?: boolean;
 }
 
 export class HttpError extends Error {
@@ -28,18 +35,20 @@ export function relayUrl(url: string, relay?: string): string {
   return `${relay.replace(/\/+$/, '')}/${u.host}${u.pathname}${u.search}`;
 }
 
-const RETRYABLE = new Set([408, 425, 429, 500, 502, 503, 504, 524, 529]);
-
-/** POST/GET JSON with timeout and bounded retries on transient statuses. Never logs headers. */
+/**
+ * POST/GET JSON with timeout and bounded retries on transient statuses. Never logs headers. `latencyMs` is the
+ * attempt that succeeded: earlier failed attempts and backoff are retry overhead, not the provider's response time.
+ */
 export async function requestJson(
   opts: HttpOptions,
   url: string,
   init: { method?: 'GET' | 'POST'; headers?: Record<string, string>; body?: unknown },
-): Promise<{ json: unknown; status: number }> {
+): Promise<{ json: unknown; status: number; latencyMs: number; attempts: number }> {
   const f = opts.fetch ?? ((i, r) => fetch(i, r));
   const retries = opts.retries ?? 2;
   let lastErr: unknown;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const started = Date.now();
     try {
       const res = await f(relayUrl(url, opts.relay), {
         method: init.method ?? 'POST',
@@ -50,16 +59,22 @@ export async function requestJson(
       const text = await res.text();
       if (!res.ok) {
         const err = new HttpError(res.status, text, url);
-        if (RETRYABLE.has(res.status) && attempt < retries) {
+        if (TRANSIENT_HTTP_STATUS.has(res.status) && attempt < retries) {
           lastErr = err;
           await sleep(250 * 4 ** attempt);
           continue;
         }
         throw err;
       }
-      return { json: text ? JSON.parse(text) : null, status: res.status };
+      return {
+        json: text ? JSON.parse(text) : null,
+        status: res.status,
+        latencyMs: Date.now() - started,
+        attempts: attempt + 1,
+      };
     } catch (e) {
       if (e instanceof HttpError) throw e;
+      if (opts.retryTimeouts === false && isTimeoutError(e)) throw e;
       lastErr = e;
       if (attempt < retries) {
         await sleep(250 * 4 ** attempt);

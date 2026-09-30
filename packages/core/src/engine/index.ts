@@ -7,6 +7,7 @@ export * from './jobs';
 export * from './lab';
 export * from './persona';
 export * from './playground';
+export * from './rewind';
 export * from './scope';
 export * from './session';
 export * from './ui';

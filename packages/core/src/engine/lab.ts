@@ -117,7 +117,7 @@ export async function labOverview(
     for (const p of preds) predsByQ.set(p.questionId, [...(predsByQ.get(p.questionId) ?? []), p]);
     for (const q of questions) {
       // Repeats and person-written feedback carry no predictions by design (PLAN §9.5; ADR-0032). A question discarded
-      // after it was served (its category was withdrawn, ADR-0036) gets no more shadows either.
+      // after it was served (its category was withdrawn, ADR-0038) gets no more shadows either.
       if (q.seq === null || !isPredictedKind(q.kind) || q.status === 'discarded') continue;
       inv.servedQuestions++;
       const ps = predsByQ.get(q.id) ?? [];

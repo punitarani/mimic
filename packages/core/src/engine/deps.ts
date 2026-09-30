@@ -166,6 +166,14 @@ export async function timed<T>(deps: EngineDeps, phase: string, fn: () => Promis
   }
 }
 
+/**
+ * `deps` whose store refuses derived writes and serves once an undo moves the mimic's evidence past what `m` saw
+ * (ADR-0036). Use it for anything built from data read along with `m`.
+ */
+export function guardedDeps(deps: EngineDeps, m: Pick<MimicRecord, 'id' | 'evidenceEpoch'>): EngineDeps {
+  return { ...deps, store: deps.store.guarded(m.id, m.evidenceEpoch) };
+}
+
 export function ctxFor(
   m: Pick<MimicRecord, 'id' | 'configHash'>,
   purpose: string,
@@ -176,7 +184,7 @@ export function ctxFor(
 
 /**
  * The mimic's facets: the config's ontology plus its occupation facets, limited to what the person's scope allows
- * (ADR-0036). This is the single source every generator, gate, trait read, reflection, hypothesis, belief and view
+ * (ADR-0038). This is the single source every generator, gate, trait read, reflection, hypothesis, belief and view
  * uses, so a deselected category or a sensitive area without consent never reaches any of them. `scoped: false` is
  * for code that needs to know what is blocked (the loaders, the export scrub) or what already exists.
  */
@@ -188,7 +196,7 @@ export async function facetsFor(
 ): Promise<Facet[]> {
   const base = getOntology(cfg.ontologyVersion);
   const extra = await deps.store.listMimicFacets(m.id);
-  // Occupation facets stored before ADR-0036 carry no category; they are always "Work and money".
+  // Occupation facets stored before ADR-0038 carry no category; they are always "Work and money".
   const all = [
     ...base,
     ...extra.map((e) => ({ ...e.facet, category: e.facet.category ?? ('work' as const) })),

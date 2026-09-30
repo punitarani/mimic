@@ -47,7 +47,7 @@ It has two research axes:
 - **Fine-tuning or per-person weights.** Deferred to P2 (§16).
 - **Sensitive domains without consent.** Health, sexuality, religion, politics and detailed finances are never asked
   about unless the person opts in to that area. Each is a separate consent under one of four categories the person
-  selects at intake, and only direct, consented questions ever populate them (ADR-0036, `docs/CATEGORIES.md`).
+  selects at intake, and only direct, consented questions ever populate them (ADR-0038, `docs/CATEGORIES.md`).
 - **Voice or multiple languages.**
 
 ---
@@ -224,7 +224,8 @@ Asynchronous jobs, on Queue `mimic-jobs`. The identity jobs a person waits on du
 
 Job rules:
 
-- **Idempotent.** The dedupe key is the job type plus its IDs plus seq.
+- **Idempotent.** The dedupe key is the job type plus its IDs plus seq. `learn.answer` also carries the answer ID, so
+  a re-answer after an undo is learned again (ADR-0036).
 - **Monotonic writes.** A job writes derived state only if its `seqUpTo` is greater than the stored one.
 - **Resilient.** Retries with backoff, and a dead-letter queue.
 - **Logged.** Every job logs its model calls.
@@ -375,9 +376,9 @@ participants        id, email?, is_admin, created_at
 mimics              id, participant_id, display_name, location, occupation?, employer?, links_json,
                     status(intake|identity|learning|paused|archived), config_hash, experiment_id?, arm?,
                     consent_app, consent_search, consent_research,
-                    categories_json, consents_json, research_consents_json, scope_at?   (ADR-0036),
+                    categories_json, consents_json, research_consents_json, scope_at?   (ADR-0038),
                     split(dev|test),
-                    seq_max, snapshot_version, spend_usd, created_at, updated_at
+                    seq_max, evidence_epoch (ADR-0036), snapshot_version, spend_usd, created_at, updated_at
 identity_candidates id, mimic_id, provider, rank, name, headline, location, url, summary,
                     jev_same_person_p, r2_key, status(proposed|confirmed|rejected), created_at
 facts               id, mimic_id, predicate, object, source(intake|search|answer|reflection), source_ref,
@@ -392,6 +393,8 @@ item_stats          key PK, kind(item|archetype), n_people, n_answers, answer_en
                     primary_error, surprise, lift?, mean_latency_ms, updated_at   (aggregate only; §12.6a)
 answers             id, question_id, mimic_id, seq, value, why?, latency_ms, revealed_prediction,
                     idempotency_key UNIQUE, created_at
+answer_rewinds      id, mimic_id, question_id, seq, answer_id UNIQUE, value, why?, latency_ms, revealed_prediction,
+                    idempotency_key, answered_at, rewound_at    (undone answers, ADR-0036)
 scores              prediction_id PK, answer_id, top1, item_acc, log_loss, brier, created_at
 trait_estimates     PK(mimic_id, facet_id, method) method(jev|psychometric), seq_up_to, mean, dist_json,
                     confidence, n_evidence, config_hash, created_at
@@ -519,7 +522,7 @@ Optional consents, each a separate checkbox:
 - "Search the public web for information about me." If unchecked, skip §9.2 entirely.
 - "Use my answers, without my name or location, for research." This gates inclusion in evals.
 
-What to ask about (ADR-0036, `docs/CATEGORIES.md`):
+What to ask about (ADR-0038, `docs/CATEGORIES.md`):
 
 - Four categories, all selected by default, each deselectable: Personality and psychology; Values, beliefs and
   politics; Relationships, sexuality and life; Work and money. A deselected category is never asked about or learned.
@@ -538,7 +541,7 @@ What to ask about (ADR-0036, `docs/CATEGORIES.md`):
 4. **Enrich.** A candidate from Exa search carries its person entity's facts (current role and employer, employer history, schools, location), so confirming it writes them, sourced to the profile, with no call. Otherwise `identity.enrich` runs on confirmation: Exa `/contents` reads the confirmed profile, and a page without an entity (a personal site) gets an Exa schema summary with the same fields a Parallel Task would return, including skills, public projects and writing, and interests. `ENRICH_PROVIDER=parallel` switches to a Parallel Task (ADR-0034).
 5. **Review.** The person sees every fact with its source and can remove any of them. Removed facts never enter any state.
    Special-category facts (politics, religion, sexuality, health) are never requested and are dropped before they
-   are stored, whatever the person consented to (ADR-0036).
+   are stored, whatever the person consented to (ADR-0038).
 6. **Use.** Active facts become `identity` in `PersonState`. Together with intake, they are everything the baseline predictor sees.
 
 If search is declined or finds nothing, continue with intake only.
@@ -759,6 +762,10 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 
 **After answering** (when `reveal = after_answer`), a 600 ms inline reveal shows "Your mimic guessed B (62%)" with a match or miss mark, then the next question.
 
+**Undo.** The latest answer can be undone, once, after a simple confirmation: "Undo" next to Next during the reveal,
+or "Undo last answer" on the question after it. The question comes back with its sealed predictions, and the answer
+is kept as a rewind, not as evidence (ADR-0036).
+
 **Progress** reads "12 of ~30", with "Stop here" always available. Stopping never loses the mimic.
 
 **Model panel** (left):
@@ -802,6 +809,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
+| `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0036) |
 | `POST /api/mimics/:id/ask` | scenario → typed question + prediction | Playground |
 | `GET /api/mimics/:id/export` | → latest `mimic.json` | |
 | `GET /api/mimics/:id/persona` | → Persona view: sections, items, curation, rendered Markdown | §8.3 |
@@ -1006,19 +1014,19 @@ Reasoning tokens can dominate shadow-predictor cost, so cap `max_tokens` and use
 - [ ] A two-arm experiment runs, and `/lab` shows per-arm fidelity-vs-questions curves.
 
 
-### M9–M13 Categories, consent and question quality (ADRs 0036–0040)
+### M9–M13 Categories, consent and question quality (ADRs 0038–0042)
 
 Built on the value-of-information selector (ADR-0027). Each milestone ships with its ADR, `pnpm check` green, and the
 rubric below self-scored with evidence in its PR description; the next starts only when every row the milestone can
 exercise scores at least 4 of 5.
 
-- **M9** Categories, the consent model, scope storage and scoped facets (`docs/CATEGORIES.md`, ADR-0036).
+- **M9** Categories, the consent model, scope storage and scoped facets (`docs/CATEGORIES.md`, ADR-0038).
 - **M10** Ontology v2 with psychological depth and opt-in sensitive facets, `reserve.v2`, `gen.v3` (concrete
-  situations), `gates.v3` recalibrated on a checked-in labelled set (ADR-0037).
+  situations), `gates.v3` recalibrated on a checked-in labelled set (ADR-0039).
 - **M11** Intake and session UI for categories and consent, the full enforcement sweep, leakage tests and the
-  special-category export scrub (ADR-0038).
-- **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v5` (ADR-0039).
-- **M13** Offline v4 vs v5 rubric report and a two-arm experiment on real people (ADR-0040).
+  special-category export scrub (ADR-0040).
+- **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v5` (ADR-0041).
+- **M13** Offline v4 vs v5 rubric report and a two-arm experiment on real people (ADR-0042).
 
 **Rubric (each row scored 1–5 with evidence):**
 
@@ -1041,7 +1049,7 @@ exercise scores at least 4 of 5.
 - **Self-only by design.** The person attests they are modeling themselves, must confirm their own identity, and the UI offers no free search of arbitrary names.
 - **Transparent facts.** Every externally sourced fact shows its source and can be removed.
 - **Separate consents** for app use, web search and research use, plus the categories to ask about and one opt-in
-  per sensitive area (ADR-0036).
+  per sensitive area (ADR-0038).
 - **Sensitive domains are opt-in.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
   inferred from other answers or web facts, and special-category answers leave research exports unless the person
   separately consents to research on them.

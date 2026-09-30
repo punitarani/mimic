@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "0406aeda-4c95-434a-96b4-90f6e963aab8",
-  "prevId": "6bcc4eef-908a-44c9-93a4-26f4a66f26dc",
+  "id": "08f079b1-0b94-4ed7-a7ae-f1acdb4d5453",
+  "prevId": "0406aeda-4c95-434a-96b4-90f6e963aab8",
   "tables": {
     "answer_rewinds": {
       "name": "answer_rewinds",
@@ -1422,6 +1422,14 @@
           "notNull": false,
           "autoincrement": false
         },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
         "config_hash": {
           "name": "config_hash",
           "type": "text",
@@ -1739,6 +1747,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "error_kind": {
+          "name": "error_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "fallback": {
           "name": "fallback",
           "type": "integer",
@@ -1777,6 +1792,15 @@
             "role"
           ],
           "isUnique": false
+        },
+        "predictions_shadow_uq": {
+          "name": "predictions_shadow_uq",
+          "columns": [
+            "question_id",
+            "predictor_id"
+          ],
+          "isUnique": true,
+          "where": "\"predictions\".\"role\" = 'shadow'"
         }
       },
       "foreignKeys": {},

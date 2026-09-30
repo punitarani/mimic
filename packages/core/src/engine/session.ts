@@ -18,13 +18,14 @@ import {
   usesHypotheses,
 } from '../selectors';
 import { cosine, lexicalSimilarity } from '../state-builder';
-import type {
-  AnswerRecord,
-  FidelityRecord,
-  MimicRecord,
-  PredictionRecord,
-  QuestionRecord,
-  Store,
+import {
+  type AnswerRecord,
+  type FidelityRecord,
+  type MimicRecord,
+  type PredictionRecord,
+  type QuestionRecord,
+  StaleEvidenceError,
+  type Store,
 } from '../store';
 import {
   type Distribution,
@@ -53,6 +54,7 @@ import {
   EngineError,
   facetsFor,
   fallbackModel,
+  guardedDeps,
   loadConfig,
   requireMimic,
   sessionSpent,
@@ -93,7 +95,7 @@ export function toPublic(q: QuestionRecord): PublicQuestion {
   };
 }
 
-function progressOf(questions: QuestionRecord[], cfg: PipelineConfig): Progress {
+export function progressOf(questions: QuestionRecord[], cfg: PipelineConfig): Progress {
   const answered = questions.filter((q) => q.status === 'answered' && isSessionKind(q.kind)).length;
   return { answered, target: cfg.session.target };
 }
@@ -131,6 +133,73 @@ export async function serveAtFreeSeq(
  * The primary and baseline predictions are persisted before the question is returned (PLAN §3.2).
  */
 export async function serveNext(deps: EngineDeps, mimicId: string): Promise<NextResult> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await serveOnce(deps, mimicId);
+    } catch (e) {
+      // Built from evidence an undo changed meanwhile, so nothing was served (ADR-0036): build it again.
+      if (!(e instanceof StaleEvidenceError)) throw e;
+      if (attempt >= 2) throw new EngineError('conflict', 'Your last answer changed; try again');
+    }
+  }
+}
+
+/**
+ * Fresh pool copies of served questions being taken back (ADR-0036). A repeat probe gets none: the repeat schedule
+ * picks it again. Copies keep `createdAt`, so anchors keep their per-person order.
+ */
+export function poolCopies(
+  deps: EngineDeps,
+  questions: QuestionRecord[],
+): Array<{ from: QuestionRecord; copy: QuestionRecord }> {
+  return questions
+    .filter((q) => isScoredKind(q.kind))
+    .map((from) => ({
+      from,
+      copy: {
+        ...from,
+        id: deps.newId(),
+        seq: null,
+        status: 'pooled',
+        servedAt: null,
+        stateAt: null,
+        selection: null,
+      },
+    }));
+}
+
+/** Copies keep their prompt embedding (redundancy and retrieval read it by question ID). Best effort. */
+export async function copyQuestionVectors(
+  deps: EngineDeps,
+  mimicId: string,
+  copies: Array<{ from: QuestionRecord; copy: QuestionRecord }>,
+): Promise<void> {
+  if (!copies.length) return;
+  try {
+    const vecs = await deps.vectors.getByIds(copies.map((c) => vectorId.question(mimicId, c.from.id)));
+    const byId = new Map(vecs.map((v) => [v.id, v]));
+    const moved = copies.flatMap(({ from, copy }) => {
+      const v = byId.get(vectorId.question(mimicId, from.id));
+      return v ? [{ ...v, id: vectorId.question(mimicId, copy.id) }] : [];
+    });
+    if (moved.length) await deps.vectors.upsert(moved);
+  } catch {
+    // Falls back to lexical similarity.
+  }
+}
+
+/** Puts pool copies of already-discarded questions back (ADR-0036). */
+export async function requeueDiscarded(deps: EngineDeps, mimicId: string, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const discarded = (await Promise.all(ids.map((id) => deps.store.getQuestion(id)))).filter(
+    (q): q is QuestionRecord => q?.mimicId === mimicId,
+  );
+  const copies = poolCopies(deps, discarded);
+  if (copies.length) await deps.store.insertQuestions(copies.map((c) => c.copy));
+  await copyQuestionVectors(deps, mimicId, copies);
+}
+
+async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   const m = await timed(deps, 'mimic', () => requireMimic(deps, mimicId));
   const cfg = await loadConfig(deps, m.configHash);
   // Derived data is pinned to `stateAt` so the sealed states can be rebuilt exactly from an export (ADR-0017).
@@ -147,7 +216,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
   const seq = maxSeq(questions) + 1;
   const rng = seededRng(`select:${m.id}:${seq}`);
 
-  // Nothing the person's scope hides is ever served (ADR-0036): out-of-scope anchors, repeat sources and pooled
+  // Nothing the person's scope hides is ever served (ADR-0038): out-of-scope anchors, repeat sources and pooled
   // questions are skipped here even if a scope change raced the discard in setScope.
   const inScope = (q: QuestionRecord) => !loaded.scope.hiddenQuestionIds.has(q.id);
 
@@ -183,14 +252,21 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
       stateAt: null,
     };
     await deps.store.insertQuestions([rep]);
-    const at = await serveAtFreeSeq(deps, {
-      questionId: rep.id,
-      mimicId: m.id,
-      seq,
-      servedAt: deps.clock(),
-      stateAt: null,
-      predictions: [],
-    });
+    let at: number | null;
+    try {
+      // Scheduled from the answers read above, so guarded by their epoch like any serve (ADR-0036).
+      at = await serveAtFreeSeq(guardedDeps(deps, m), {
+        questionId: rep.id,
+        mimicId: m.id,
+        seq,
+        servedAt: deps.clock(),
+        stateAt: null,
+        predictions: [],
+      });
+    } catch (e) {
+      if (e instanceof StaleEvidenceError) await deps.store.updateQuestionStatus(rep.id, 'discarded');
+      throw e;
+    }
     if (at === null) return raced(deps, m.id);
     return { status: 'question', question: toPublic({ ...rep, seq: at, status: 'served' }), progress };
   }
@@ -422,6 +498,7 @@ async function serveWithPredictions(
     latencyMs: r.latencyMs,
     ok: r.ok,
     error: r.error ?? null,
+    errorKind: r.ok ? null : (r.errorKind ?? null),
     fallback: isFallback,
     createdAt: now,
   });
@@ -432,8 +509,9 @@ async function serveWithPredictions(
     ...hypothesisRows,
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
+  // Guarded: if an undo changed the evidence since `loaded` was read, nothing is written (ADR-0036).
   const at = await timed(deps, 'persist', () =>
-    serveAtFreeSeq(deps, {
+    serveAtFreeSeq(guardedDeps(deps, m), {
       questionId: chosen.id,
       mimicId: m.id,
       seq,
@@ -603,11 +681,16 @@ export async function submitAnswer(
 ): Promise<AnswerResult> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  const existing = await deps.store.getAnswerByIdempotencyKey(input.idempotencyKey);
+  const [existing, undone] = await Promise.all([
+    deps.store.getAnswerByIdempotencyKey(input.idempotencyKey),
+    deps.store.getAnswerRewindByIdempotencyKey(input.idempotencyKey),
+  ]);
   if (existing) {
     if (existing.mimicId !== m.id) throw new EngineError('conflict', 'Idempotency key reused');
     return replayResult(deps, m, cfg, existing);
   }
+  // A resend of an answer the person undid (a retrying outbox, another tab) must not bring it back (ADR-0036).
+  if (undone) throw new EngineError('conflict', 'This answer was undone');
   // Feedback given while this question is served moves it to a later seq (ADR-0032); an answer that raced the
   // move is recorded again at the question's new seq.
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -652,7 +735,7 @@ export async function submitAnswer(
       if (dup?.mimicId === m.id) return replayResult(deps, m, cfg, dup);
       continue;
     }
-    return afterAnswer(deps, m, q, q.seq, reveal);
+    return afterAnswer(deps, m, q, answer, scores, reveal);
   }
   throw new EngineError('conflict', 'Busy; try again');
 }
@@ -661,16 +744,56 @@ async function afterAnswer(
   deps: EngineDeps,
   m: MimicRecord,
   q: QuestionRecord,
-  seq: number,
+  answer: AnswerRecord,
+  scores: Array<{ predictionId: string }>,
   reveal: Reveal | null,
 ): Promise<AnswerResult> {
+  const seq = answer.seq;
+  // Guarded like any derived write: if the answer was undone right after it was recorded, no fidelity row counts it.
   const fidelity = isSessionKind(q.kind)
-    ? await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seq))
+    ? await timed(deps, 'fidelity', () => recomputeFidelity(guardedDeps(deps, m), m, seq)).catch(
+        (e: unknown) => {
+          if (e instanceof StaleEvidenceError) return null;
+          throw e;
+        },
+      )
     : null;
   if (learnsFrom(q.kind)) {
-    await deferred(deps, () => deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq }));
+    // Keyed by answer, so a re-answer after an undo is learned again (ADR-0036).
+    await deferred(deps, () =>
+      deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq, answerId: answer.id }),
+    );
   }
+  if (isScoredKind(q.kind)) await deferred(deps, () => scoreLateShadows(deps, q, answer, scores));
   return { reveal, fidelity, seq };
+}
+
+/**
+ * A shadow that inserts its prediction after this answer listed them, but looks for the answer before it was
+ * recorded, would be scored by neither side. Listing again after the answer is recorded closes that gap: whichever
+ * write lands second sees the other. Scores are keyed by prediction, so a duplicate is a no-op.
+ */
+async function scoreLateShadows(
+  deps: EngineDeps,
+  q: QuestionRecord,
+  answer: AnswerRecord,
+  scored: Array<{ predictionId: string }>,
+): Promise<void> {
+  const have = new Set(scored.map((s) => s.predictionId));
+  const late = (await deps.store.listPredictions({ questionId: q.id })).filter(
+    // Hypothesis rows are never scored (docs/SELECTION.md §6).
+    (p) => p.ok && p.role !== 'hypothesis' && !have.has(p.id),
+  );
+  if (!late.length) return;
+  const now = deps.clock();
+  await deps.store.insertScores(
+    late.map((p) => ({
+      predictionId: p.id,
+      answerId: answer.id,
+      ...scorePrediction(q.type, p.dist, answer.value),
+      createdAt: now,
+    })),
+  );
 }
 
 function revealOf(q: QuestionRecord, p: PredictionRecord): Reveal {

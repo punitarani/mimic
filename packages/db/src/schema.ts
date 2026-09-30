@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /** PLAN §8. IDs are ULIDs; timestamps are integer ms; *_json columns are validated with zod on read. */
@@ -31,14 +32,16 @@ export const mimics = sqliteTable(
     consentApp: bool('consent_app').notNull(),
     consentSearch: bool('consent_search').notNull(),
     consentResearch: bool('consent_research').notNull(),
-    /** ADR-0036: selected categories, sensitive-area consents and special-category research consents (JSON). */
+    /** ADR-0038: selected categories, sensitive-area consents and special-category research consents (JSON). */
     categoriesJson: text('categories_json').notNull().default('["psychology","values","life","work"]'),
     consentsJson: text('consents_json').notNull().default('{}'),
     researchConsentsJson: text('research_consents_json').notNull().default('{}'),
-    /** When the scope last shrank (ADR-0036). */
+    /** When the scope last shrank (ADR-0038). */
     scopeAt: integer('scope_at'),
     split: text('split', { enum: ['dev', 'test'] }).notNull(),
     seqMax: integer('seq_max').notNull().default(0),
+    /** Bumped by every undo; guarded writes check it in the same batch (ADR-0036). */
+    evidenceEpoch: integer('evidence_epoch').notNull().default(0),
     snapshotVersion: integer('snapshot_version').notNull().default(0),
     spendUsd: real('spend_usd').notNull().default(0),
     createdAt: integer('created_at').notNull(),
@@ -82,6 +85,8 @@ export const facts = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** Last change of user_state (ADR-0017). */
     userStateAt: integer('user_state_at'),
+    /** For reflection facts: the seqUpTo of the reflection that wrote it (ADR-0036). */
+    seqUpTo: integer('seq_up_to'),
   },
   (t) => [index('facts_mimic_idx').on(t.mimicId)],
 );
@@ -138,6 +143,8 @@ export const predictions = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
+    /** Failed rows only: 'output' | 'timeout' (the model's) | 'transport' (the call's); ADR-0037. */
+    errorKind: text('error_kind', { enum: ['output', 'timeout', 'transport'] }),
     fallback: bool('fallback').notNull().default(false),
     /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0027). */
     hypothesis: text('hypothesis'),
@@ -146,6 +153,8 @@ export const predictions = sqliteTable(
   (t) => [
     index('predictions_mimic_idx').on(t.mimicId),
     index('predictions_question_role_idx').on(t.questionId, t.role),
+    // One shadow per question and predictor, however many runs race to store it (ADR-0037).
+    uniqueIndex('predictions_shadow_uq').on(t.questionId, t.predictorId).where(sql`${t.role} = 'shadow'`),
   ],
 );
 
@@ -168,6 +177,31 @@ export const answers = sqliteTable(
     uniqueIndex('answers_mimic_seq_idx').on(t.mimicId, t.seq),
     uniqueIndex('answers_idempotency_idx').on(t.idempotencyKey),
     uniqueIndex('answers_question_idx').on(t.questionId),
+  ],
+);
+
+/** ADR-0036: answers the person undid to re-answer. One row per retracted answer (answer_id is unique). */
+export const answerRewinds = sqliteTable(
+  'answer_rewinds',
+  {
+    id: text('id').primaryKey(),
+    mimicId: text('mimic_id').notNull(),
+    questionId: text('question_id').notNull(),
+    seq: integer('seq').notNull(),
+    answerId: text('answer_id').notNull(),
+    value: text('value').notNull(),
+    why: text('why'),
+    latencyMs: integer('latency_ms').notNull(),
+    revealedPrediction: bool('revealed_prediction').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    answeredAt: integer('answered_at').notNull(),
+    rewoundAt: integer('rewound_at').notNull(),
+  },
+  (t) => [
+    index('answer_rewinds_mimic_idx').on(t.mimicId, t.seq),
+    // Makes a second, concurrent undo of the same answer fail as a whole (ADR-0036).
+    uniqueIndex('answer_rewinds_answer_idx').on(t.answerId),
+    index('answer_rewinds_idempotency_idx').on(t.idempotencyKey),
   ],
 );
 
@@ -227,6 +261,8 @@ export const insights = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** When the status left `active` (ADR-0017: lets replay rebuild the state as it was at serve time). */
     statusChangedAt: integer('status_changed_at'),
+    /** seqUpTo of the reflection that superseded it, so undoing that answer restores it (ADR-0036). */
+    supersededSeq: integer('superseded_seq'),
   },
   (t) => [index('insights_mimic_idx').on(t.mimicId)],
 );
@@ -299,6 +335,8 @@ export const modelCalls = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
+    /** HTTP attempts it took: retries after a 429 or 5xx, which latencyMs (the answering attempt) leaves out. */
+    attempts: integer('attempts').notNull().default(1),
     configHash: text('config_hash'),
     r2TraceKey: text('r2_trace_key').notNull(),
     createdAt: integer('created_at').notNull(),
@@ -347,7 +385,7 @@ export const evalRuns = sqliteTable('eval_runs', {
 export const jobs = sqliteTable('jobs', {
   key: text('key').primaryKey(),
   type: text('type').notNull(),
-  status: text('status', { enum: ['running', 'done', 'failed'] }).notNull(),
+  status: text('status', { enum: ['queued', 'running', 'done', 'failed'] }).notNull(),
   attempts: integer('attempts').notNull(),
   lastError: text('last_error'),
   updatedAt: integer('updated_at').notNull(),
@@ -431,6 +469,7 @@ export const MIMIC_TABLES = [
   questions,
   predictions,
   answers,
+  answerRewinds,
   scores,
   traitEstimates,
   traitHistory,

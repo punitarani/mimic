@@ -52,7 +52,7 @@ export { MAX_PROMPT_WORDS };
 export function validateDraft(
   raw: unknown,
   facetIds: ReadonlySet<string>,
-  /** Facets outside the person's scope (ADR-0036): a draft tagging any of them is rejected, not quietly retagged. */
+  /** Facets outside the person's scope (ADR-0038): a draft tagging any of them is rejected, not quietly retagged. */
   blocked: ReadonlySet<string> = new Set(),
 ): DraftQuestion | { error: string } {
   const p = RawDraft.safeParse(raw);
@@ -102,7 +102,7 @@ export interface GenerateInput {
   traitSummary: string;
   recentPrompts: string[];
   n: number;
-  /** Facet ids outside the person's scope (ADR-0036): drafts tagging them are rejected. */
+  /** Facet ids outside the person's scope (ADR-0038): drafts tagging them are rejected. */
   blocked?: ReadonlySet<string>;
 }
 

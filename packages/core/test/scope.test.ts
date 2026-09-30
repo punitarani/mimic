@@ -4,10 +4,10 @@ import {
   blockedFacetIds,
   CATEGORIES,
   CATEGORY_INFO,
-  citedSeqs,
   DEFAULT_SCOPE,
   type Facet,
   facetAllowed,
+  factCitedSeqs,
   factHidden,
   insightHidden,
   MimicScope,
@@ -48,7 +48,7 @@ const FACETS = [
 
 const scope = (over: Partial<MimicScope> = {}): MimicScope => ({ ...DEFAULT_SCOPE, ...over });
 
-describe('scope model (ADR-0036)', () => {
+describe('scope model (ADR-0038)', () => {
   it('allows a facet only when its category is selected and, if sensitive, its area is consented', () => {
     const all = scope();
     expect(facetAllowed(all, facet('x', 'psychology'))).toBe(true);
@@ -131,8 +131,8 @@ describe('scope model (ADR-0036)', () => {
     expect(v.sensitiveSeqs.has('health_vigilance')).toBe(false);
     expect(questionAllowed({ facetIds: ['openness'] }, v.blocked)).toBe(true);
     expect(questionAllowed({ facetIds: ['autonomy'] }, v.blocked)).toBe(false);
-    expect(citedSeqs({ source: 'reflection', sourceRef: 'answers:1,2' })).toEqual([1, 2]);
-    expect(citedSeqs({ source: 'search', sourceRef: 'answers:2' })).toEqual([]);
+    expect(factCitedSeqs({ source: 'reflection', sourceRef: 'answers:1,2' })).toEqual([1, 2]);
+    expect(factCitedSeqs({ source: 'search', sourceRef: 'answers:2' })).toEqual([]);
     expect(factHidden(v, { source: 'reflection', sourceRef: 'answers:1,2' })).toBe(true);
     expect(factHidden(v, { source: 'reflection', sourceRef: 'answers:1,3' })).toBe(false);
     expect(factHidden(v, { source: 'search', sourceRef: null })).toBe(false);
@@ -170,7 +170,7 @@ describe('scope model (ADR-0036)', () => {
   });
 });
 
-describe('special-category facts from search are never stored (ADR-0036)', () => {
+describe('special-category facts from search are never stored (ADR-0038)', () => {
   it('recognises religion, politics, health and sexuality in personal facts', () => {
     expect(specialAreaOfFact({ predicate: 'hasInterest', object: 'Baptist church choir' })).toBe('religion');
     expect(specialAreaOfFact({ predicate: 'hasInterest', object: 'Sunday mass' })).toBe('religion');

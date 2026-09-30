@@ -864,7 +864,169 @@ the two things they finish the session to do.
 - **UI.** `budgetUsd` in the snapshot is the whole cap. The session's end says what is left: the reserve for the
   mimic page, or, once everything is spent, that answers can still be taught there.
 
-## ADR-0036 — Categories and consent: sensitive domains become opt-in (2026-09-30)
+## ADR-0036 — Undo the latest answer (2026-09-30)
+
+People mis-tap. The session page lets them take back their **latest** answer, once, and answer that question again:
+"Undo" sits next to Next during the reveal, and "Undo last answer" shows on the question after it. Both open a
+simple confirmation that names the question and the answer; while the undo runs the dialog can't be dismissed, and a
+refusal stays in it with the reason (the undo and delete confirmations share one `ConfirmDialog`). `POST /api/mimics/:id/rewind { questionId }` does the work; the client names the
+question it is undoing, so a double click or a stale tab gets a 409 instead of undoing something else. The button is
+only offered for an answer this page sent and the server confirmed (not while it waits in the offline outbox), and
+it is gone after a reload.
+
+What an undo of the answer at seq *t* does, in one D1 batch:
+
+- **The answer leaves the evidence.** It moves to a new `answer_rewinds` table (value, why, latency, whether the
+  guess was revealed, idempotency key, when it was given and undone). Hard delete and research exports cover the
+  table; exports scrub its idempotency keys like the answers'.
+- **The question comes back as it was.** Same row, same seq, same sealed predictions: they were built from answers
+  before *t* (PLAN §3.1), so they still are. Its scores and the fidelity rows from *t* on are deleted, and the
+  re-answer is scored against the same predictions.
+- **What was predicted from the retracted answer is discarded.** The next question is usually prefetched while the
+  reveal shows, and its sealed state holds answer *t*. Every served, unanswered session question after *t* is marked
+  `discarded` with `seq = null`, and its predictions are deleted (the model calls stay logged). The batch selects them
+  by condition, not by the IDs the engine read, and returns them; each gets a fresh pool copy with a new ID (so shadow
+  job keys don't collide), keeping `createdAt` so anchors keep their order, and its prompt embedding. A repeat probe
+  is dropped, since the repeat schedule picks it again.
+- **Derived state from *t* on is rolled back** (PLAN §3.3), so the re-answer is learned from scratch and the
+  monotonic writes don't block it: trait history rows with `seqUpTo ≥ t` are deleted and `trait_estimates` is rebuilt
+  from what remains with the same query serving and replay read; insights with `seqUpTo ≥ t` are deleted with their
+  KG edges; insights that reflection superseded are restored (`insights.superseded_seq` records which reflection did
+  it); reflection facts from a reflection at *t* or later are deleted whatever they cite (`facts.seq_up_to`; older
+  rows by the seqs they cite), with their KG edges and vectors, then reflection nodes left without an edge; persona
+  drafts covering seq ≥ *t* (ADR-0033) are deleted and drafted again on request; the Q&A vector for *t* and
+  hypotheses from *t* on are dropped.
+- **The mimic's `evidence_epoch` goes up by one.**
+
+**The batch decides, not the reads before it.** The engine checks the request first (latest session answer, one
+step only, nothing asked or taught since) for a clear 409, but the batch re-checks what matters atomically: its first
+statement records the rewind with `value` taken from a subquery that is NULL unless the answer still exists and
+nothing was answered, asked or taught after it. `value` is NOT NULL, so otherwise the whole batch aborts (a D1 batch
+is one transaction) and nothing changes. No trigger, no extra round trip; the same trick guards the other writes
+below. A second undo of the same answer fails on the unique `answer_id`.
+
+**Evidence epoch.** Every write built from data read before an undo must not land after it. Rather than re-checking
+in each writer, derived writes and serves go through `Store.guarded(mimicId, epoch)`, which puts a guard statement
+first in the batch: it sets `mimics.updated_at` to itself, or to NULL (aborting) when `evidence_epoch` has moved on.
+A refused write throws `StaleEvidenceError` and writes nothing. Guarded:
+
+- *Serving* (`serveQuestion`, session and repeat): a serve built before the undo is refused and built again, so
+  nothing stale is ever served, and `/next` makes no extra read to check.
+- *`learn.answer`*: trait upserts, reflection (insights, supersessions, facts, KG) and occupation facets. The job reads
+  the epoch once; a job whose answer is gone is a no-op, and one refused by its own answer's undo is marked done (a
+  retry would be refused again). One refused by the undo of a *later* answer, whose own answer stands, fails and is
+  retried. Vectors and KV can't join a D1 batch, so after its writes the job re-reads the epoch: if it moved, it
+  makes the Q&A vector match the answer now at that seq (or removes it), and reflection drops the vectors of facts
+  it wrote. Hypotheses are taken back the same way unless a newer set replaced them.
+- *Fidelity* after an answer, *snapshots* (retried once), and *persona drafts* (a 409 asks to try again).
+- `learn.answer` carries `answerId` in its key; `snapshot.write` and `hypotheses.refresh` carry the epoch, so jobs
+  queued before an undo never stand in for the re-answer's (old keys still parse).
+
+**Answers can't land on a discarded question.** `recordAnswer` takes the answer's seq from its question, still
+served at that seq, in the same statement. An answer that raced an undo (or feedback that moved the question,
+ADR-0032) aborts, and `submitAnswer` re-reads the question and returns 409. An idempotency key that was undone also
+gets a 409, so a retrying outbox or another tab can't bring the answer back.
+
+**Scores.** A score takes its `mimic_id` from its answer in the same statement, so a shadow scoring an answer undone
+meanwhile writes nothing. Found while testing, and older than undo: a shadow that inserts after the answer lists
+predictions, and looks for the answer before it is recorded, was scored by neither; `submitAnswer` now lists again
+after recording (deferred) and scores the stragglers (never `hypothesis` rows). A shadow that lands on a question
+discarded while it ran deletes its own prediction.
+
+**Snapshots.** A snapshot taken before an undo still holds the retracted answer, and after a re-answer it has the
+same answer count and seq, so ADR-0032's count check can't see it. `writeSnapshot` also treats a snapshot older than
+the last undo as stale. Its `createdAt` is now taken before it reads.
+
+**Research caveat.** A re-answer can be influenced by the guess the person saw before undoing. `answer_rewinds`
+marks every re-answered seq and whether the guess was revealed, so analysis can exclude or compare them. Headline
+fidelity counts the re-answer like any answer.
+
+Schema: `answer_rewinds`, `mimics.evidence_epoch`, `facts.seq_up_to`, `insights.superseded_seq`
+(migration `0005_answer_rewinds`).
+
+## ADR-0037 — Backfill accuracy: failure kinds, bounded retries, paced and deduplicated runs (2026-09-30)
+
+After the ADR-0025 backfill, the lab showed Qwen3.8 Flash with 142 failed predictions (78%) and a p50 of 35 s, and
+MiMo V2.6 Flash at 7.8 s. Some of that is the models, and some was how the backfill ran and what it recorded.
+
+**What was the model.** Live `predict.v1` calls, sent one at a time on 8 sealed states from an offline session,
+measured:
+
+| Model | Latency | Result |
+| --- | --- | --- |
+| Qwen3.8 Flash (`effort: low`, 3000 max tokens) | 21–67 s | 3 of 8 spent all 3000 tokens on reasoning and returned no content (`finish_reason: length`) |
+| Qwen3.8 Flash (`effort: low`, 8000 max tokens) | 18–104 s | 7 of 7 valid, with up to 4.5K reasoning tokens; plus one HTTP 429 from Alibaba |
+| Qwen3.8 Flash (`effort: none`) | 1.7–2.7 s | 8 of 8 valid, no reasoning tokens |
+| MiMo V2.6 Flash | 3–11 s | one of 8 was "Provider returned an empty response", in a 200 |
+| GLM 5.3 Flash | 1–3.5 s | 8 of 8 valid |
+
+So Qwen's latency is real at `effort: low`: its provider doesn't cap reasoning at that effort. Its failures were
+mostly the 3000-token cap, recorded as "invalid JSON output". Whether to give it more tokens, run it with reasoning
+off (a prompt variant, ADR-0028) or drop it is a separate decision; this ADR doesn't change the predictor.
+
+**What was the backfill.**
+
+1. **Failed calls were stored as the model failing, forever.** A 429 or a provider error made `LlmPredictor` return
+   a failed prediction, and `runShadow` stored it and marked the job done, so nothing ever retried it. The budget
+   guard did the same on a mimic near its $0.50 session cap.
+2. **Latency counted retries.** Adapters timed a call from before the first attempt, so a success after a 429
+   included the failed attempt and the backoff.
+3. **No pacing.** Each run enqueued every prediction at once, which draws rate limits and slower answers, and queues
+   ahead of live sessions' jobs.
+
+**Decisions.**
+
+- **Failures have a kind, stored with the prediction** (`predictions.error_kind`, main's `errorKind` plus one):
+  - `output`: the model answered but the answer was unusable. Invalid JSON, options not covered, Jev's missing or
+    wrong-typed answer, and now named cutoffs: `output cut off at max_tokens (…)` when `finish_reason` is `length`,
+    and the provider's content filter.
+  - `timeout`: the model didn't answer within the call's timeout. Chat calls no longer retry a timeout in-request
+    (`retryTimeouts: false`): a retry bills a second generation and would record only the fast answers.
+  - `transport`: the call failed before the model answered. `retryable` says whether it may succeed later: rate
+    limits, 5xx, network errors, malformed responses, a 200 carrying an OpenRouter `error` body or a choice with
+    `finish_reason: error`. The budget guard and other 4xx are not.
+  - `output` and `timeout` are the model's: stored at once, counted, never redone. The optimizer still treats a
+    timeout as transient, as before.
+- **Retries are bounded.** A retryable failure makes `runShadow` throw so the queue retries it with backoff. On the
+  last attempt (`MAX_JOB_ATTEMPTS`, from the ledger) it's stored as a `transport` failure instead. The cron's
+  missing-shadow repair then sees the row and stops; it also skips a live shadow whose job used up its attempts.
+- **Latency is the attempt that answered.** `requestJson` returns it with `attempts`, and `model_calls.attempts`
+  records how many HTTP attempts each call took, so retry pressure stays visible.
+- **Backfill predictions are `backfill.shadow` jobs, keyed without a run** (`backfill.shadow:{mimic}:{question}:
+  {predictor}`), so the ledger dedupes them across runs. They are logged as `predict.backfill`.
+- **Pacing.** `backfill.predictor` enqueues them for every (consented) mimic, `60 / perMinute` seconds apart as one
+  stream (default 30 a minute per predictor, `--rate`), through `enqueueBatch` (Queues' `sendBatch`, 100 at a
+  time). `backfill.mimic` does the same for one named mimic from `offsetSeconds`; the CLI staggers several.
+- **Run limits.** A run enqueues at most 5,000, and nothing delayed past 12 h (`backfillLimit`). The CLI says when
+  a run stops there, and a re-run enqueues the rest. The options are part of the job keys, so a job the cron
+  requeues from the ledger keeps its rate.
+- **In flight.** Each prediction is written to the ledger as `queued` (a new status) due at its time before it's
+  sent. The missing rule, in the engine and the CLI, skips a question whose live or backfill shadow job is queued,
+  running or being retried, and not stale. So a re-run never doubles the pace, and neither the cron nor a backfill
+  races a live shadow. A queued job still not done 15 minutes after its time is stale, and the cron requeues it,
+  which also repairs a lost message.
+- **One shadow per question and predictor.** The partial unique index `predictions_shadow_uq` makes a concurrent
+  second run of the same shadow a no-op (`Store.insertShadow` returns whether it stored). The migration first
+  keeps the best of any existing duplicates: ok first, then the earliest.
+- **Legacy failures are classified in the migration:** Jev's `Error: Expected …`, the two LlmPredictor messages and
+  a missing answer are `output`; anything that timed out is `timeout`; the rest is `transport`.
+- **Backfills are held to the session's share of the budget, like shadows** (ADR-0035). A mimic that has spent it
+  is skipped when a run is planned, and a backfilled prediction it refuses is skipped, not stored. The calls are
+  logged as `predict.backfill` (session scope).
+- **Consent is checked again when each prediction runs**, since a paced run can span hours. Named mimics
+  (`--mimic`) skip the check unless `--consented`.
+- **`--retry-failed`** redoes this predictor's `transport` failures, carried on each job. `insertShadow` deletes
+  the failed row and stores the new one atomically, and deletes only failed shadow rows, never primary or baseline
+  ones.
+- **The dry run explains failures.** It splits them by kind and lists the most common messages. It also reports
+  predictions in flight, estimates cost from every charged prediction (unusable output included), and gives the
+  duration and any run limit at the chosen rate. `packages/eval/test/backfill.test.ts` runs the CLI's SQL against
+  the real schema, checks it against the engine's rule, and checks the CLI's copies of the engine's constants.
+- **Queue batches still run all their jobs at once.** Capping them would make live jobs wait behind slow shadows.
+  Pacing keeps backfill batches small; a live burst larger than six calls waiting on headers can still add a
+  little queueing to a shadow's latency.
+
+## ADR-0038 — Categories and consent: sensitive domains become opt-in (2026-09-30)
 
 PLAN §1 excluded health, sexuality, religion, politics and detailed finances, enforced by five prompt rules and the
 `sensitive` Jev gate. The project owner now wants them, gathered as fully as each person permits, and wants people to
@@ -884,10 +1046,10 @@ full policy.
   search or enrichment: those fields are never requested, and a lexicon drops any fact that reveals one before it is
   stored. Hard delete covers it like everything else.
 - **Direct questions only.** A sensitive facet is populated only by answers to questions that ask about it directly;
-  nothing is inferred from other answers or from facts. The reflector is told so and code enforces it (ADR-0038).
+  nothing is inferred from other answers or from facts. The reflector is told so and code enforces it (ADR-0040).
 - **Stored as a `MimicScope`** in `mimics.categories_json`, `consents_json`, `research_consents_json` (NOT NULL with
   constant defaults, so existing rows read as every category and no sensitive consent, which is what they were asked)
-  and `scope_at` (migration 0005). `normalizeScope` keeps categories in canonical order, only `true` flags, drops
+  and `scope_at` (migration 0007). `normalizeScope` keeps categories in canonical order, only `true` flags, drops
   consents of deselected categories (reselecting asks again) and research consents without the area's consent or
   research consent overall.
 - **Enforced in code, from one place.** `facetsFor` returns scoped facets by default; `{ scoped: false }` is only for
@@ -904,5 +1066,5 @@ full policy.
   as for removed facts in ADR-0017); replay reports states served before `scope_at` as `rescoped`.
 - **Scripted people are marked.** `runSession` gives scripted mimics a `script:` participant id (Twin imports already
   use `twin2k:`), so reports can keep real people apart (rubric R10).
-- **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0040); PLAN §14 lists them
+- **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0042); PLAN §14 lists them
   and the rubric each is scored on.

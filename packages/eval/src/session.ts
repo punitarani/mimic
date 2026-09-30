@@ -26,9 +26,9 @@ export const SessionScript = z.object({
     employer: z.string().optional(),
   }),
   consentResearch: z.boolean().default(false),
-  /** Categories to ask about (ADR-0036); every category when absent. */
+  /** Categories to ask about (ADR-0038); every category when absent. */
   categories: z.array(Category).min(1).optional(),
-  /** Sensitive areas consented, e.g. { politics: true } (ADR-0036). */
+  /** Sensitive areas consented, e.g. { politics: true } (ADR-0038). */
   consents: z.record(z.string(), z.boolean()).default({}),
   /** Special-category areas consented for research use. */
   researchConsents: z.record(z.string(), z.boolean()).default({}),
