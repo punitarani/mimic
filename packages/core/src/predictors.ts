@@ -220,7 +220,7 @@ function failed(
 
 /**
  * The provider call threw, so the model never answered: a timeout (the model was too slow) or a transport failure,
- * which may be worth retrying (ADR-0035).
+ * which may be worth retrying (ADR-0036).
  */
 function callFailed(e: unknown, error: string, model: string): PredictionResult {
   if (isTimeoutError(e)) return failed(error, 0, model, 0, 'timeout');

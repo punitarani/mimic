@@ -139,7 +139,7 @@ export interface PredictionResult {
   ok: boolean;
   error?: string;
   /**
-   * Why it failed (set on failures only; stored with the prediction, ADR-0035):
+   * Why it failed (set on failures only; stored with the prediction, ADR-0036):
    * - `output`: the model answered but the answer was unusable (the prompt's or model's fault);
    * - `timeout`: the model didn't answer within the call's timeout (too slow; the model's failure, never redone);
    * - `transport`: the call failed before the model answered (provider error, rate limit, network, budget guard).

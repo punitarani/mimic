@@ -5,7 +5,9 @@ import {
   Gateway,
   type Job,
   type JobQueue,
+  parseSpendLimits,
   type QueuedJob,
+  type SpendLimits,
   ulid,
 } from '@mimic/core';
 import { CfKv, R2Blobs, SqlVectors, StoreBudget, StoreCallLog, VectorizeVectors } from './bindings';
@@ -31,6 +33,10 @@ export interface MimicBindings extends ProviderEnv {
   SESSION_SECRET?: string;
   ADMIN_EMAILS?: string;
   INVITE_CODES?: string;
+  /** Spend cap per mimic in USD on the standard budget (default 1; ADR-0035). A string, or a JSON number. */
+  BUDGET_USD?: string | number;
+  /** Share of the cap the session may spend (0–1, default 0.8); the rest is kept for the mimic page. */
+  BUDGET_SESSION_SHARE?: string | number;
 }
 
 /** Queues' sendBatch limit. */
@@ -99,6 +105,19 @@ export function queueFor(env: MimicBindings): JobQueue {
   return new RoutedQueue(new CfQueue(env.JOBS), env.IDENTITY_JOBS ? new CfQueue(env.IDENTITY_JOBS) : null);
 }
 
+const warned = new Set<string>();
+
+/** Spend limits from the vars; an invalid value keeps its default and is logged once per isolate. */
+export function spendLimitsFor(env: Pick<MimicBindings, 'BUDGET_USD' | 'BUDGET_SESSION_SHARE'>): SpendLimits {
+  const { limits, problems } = parseSpendLimits(env);
+  for (const p of problems) {
+    if (warned.has(p)) continue;
+    warned.add(p);
+    console.warn(p);
+  }
+  return limits;
+}
+
 export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = {}): EngineDeps {
   const local = env.DEV_MODE === '1';
   const db = d1Db(env.DB, { local });
@@ -110,10 +129,12 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
     ...(env.AI ? { ai: env.AI } : {}),
   });
   const clock = () => Date.now();
+  // One object for both: the gateway's guard and the engine's checks always read the same caps.
+  const spend = overrides.spend ?? spendLimitsFor(env);
   const gateway = new Gateway({
     ...providers,
     log: new StoreCallLog(store, blobs),
-    budget: new StoreBudget(store),
+    budget: new StoreBudget(store, spend),
     clock,
     newId: () => ulid(),
   });
@@ -128,5 +149,6 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
     clock,
     newId: () => ulid(),
     ...overrides,
+    spend,
   };
 }

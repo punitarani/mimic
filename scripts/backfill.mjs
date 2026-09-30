@@ -4,13 +4,14 @@
 //
 // Adds predictors (usually new shadow models) to questions that were served before they existed (ADR-0024). Each
 // prediction runs on the sealed state blob the primary used, like a live shadow, so it is sealed (PLAN §3.1), logged
-// through the gateway (as `predict.backfill`, outside the mimic's session budget), and scored against the answer.
+// through the gateway (as `predict.backfill`, held to the session's share of the budget like a shadow, ADR-0035),
+// and scored against the answer. Mimics that spent that share are skipped, and still count as missing here.
 //
 // A dry run by default: checks the model, reports how this predictor has done so far (failures split into the
 // model's, unusable output or a timeout, and failed calls, which aren't), counts the missing predictions per mimic,
 // and estimates cost and duration from what this predictor has cost so far (never a hardcoded price). `--yes`
 // enqueues one job per predictor (or per named mimic); the worker spaces the predictions `--rate` a minute
-// (ADR-0035), so they see the load a live shadow sees. Re-running is safe: predictions already queued or being
+// (ADR-0036), so they see the load a live shadow sees. Re-running is safe: predictions already queued or being
 // retried are skipped, and the count falls to 0 as the queue drains.
 //
 //   --retry-failed  also redo this predictor's failed calls (rate limits and provider errors that outlasted every

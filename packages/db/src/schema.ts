@@ -133,7 +133,7 @@ export const predictions = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
-    /** Failed rows only: 'output' | 'timeout' (the model's) | 'transport' (the call's); ADR-0035. */
+    /** Failed rows only: 'output' | 'timeout' (the model's) | 'transport' (the call's); ADR-0036. */
     errorKind: text('error_kind', { enum: ['output', 'timeout', 'transport'] }),
     fallback: bool('fallback').notNull().default(false),
     /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0027). */
@@ -143,7 +143,7 @@ export const predictions = sqliteTable(
   (t) => [
     index('predictions_mimic_idx').on(t.mimicId),
     index('predictions_question_role_idx').on(t.questionId, t.role),
-    // One shadow per question and predictor, however many runs race to store it (ADR-0035).
+    // One shadow per question and predictor, however many runs race to store it (ADR-0036).
     uniqueIndex('predictions_shadow_uq').on(t.questionId, t.predictorId).where(sql`${t.role} = 'shadow'`),
   ],
 );

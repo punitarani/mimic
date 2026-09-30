@@ -23,7 +23,7 @@ export const Job = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hypotheses.refresh'), mimicId: z.string(), seqUpTo: z.number().int() }),
   z.object({ type: z.literal('snapshot.write'), mimicId: z.string(), seqUpTo: z.number().int() }),
   /**
-   * Backfill (ADR-0024, ADR-0035): enqueues a paced `backfill.shadow` for every (consented) mimic's missing
+   * Backfill (ADR-0024, ADR-0036): enqueues a paced `backfill.shadow` for every (consented) mimic's missing
    * predictions. `runId` makes each run its own job; the options are part of the key, so a job requeued from the
    * ledger keeps them.
    */
@@ -48,7 +48,7 @@ export const Job = z.discriminatedUnion('type', [
     consentedOnly: z.boolean().optional(),
   }),
   /**
-   * One backfilled prediction on the primary's sealed state: like `predict.shadow`, but outside the session budget.
+   * One backfilled prediction on the primary's sealed state, like `predict.shadow` (and held to the same budget).
    * Keyed without a run, so the ledger dedupes it across runs. Consent is checked again when it runs, unless
    * `allMimics`; a job requeued from its key keeps neither flag (the conservative defaults).
    */

@@ -105,7 +105,7 @@ async function cliRow(q: { sql: string; params: string[] }) {
 
 const backfillShadows = () => engine.queue.pending.filter((p) => p.job.type === 'backfill.shadow');
 
-describe('backfilling a new predictor (ADR-0024, ADR-0035)', () => {
+describe('backfilling a new predictor (ADR-0024, ADR-0036)', () => {
   it("shares the engine's pace, caps and windows with the CLI", () => {
     expect(cli.DEFAULT_RATE).toBe(BACKFILL_PER_MINUTE);
     expect(cli.MAX_JOBS).toBe(BACKFILL_MAX_JOBS);
@@ -263,7 +263,7 @@ describe('backfilling a new predictor (ADR-0024, ADR-0035)', () => {
   });
 });
 
-describe('failed calls vs. the model failing (ADR-0035)', () => {
+describe('failed calls vs. the model failing (ADR-0036)', () => {
   const FLAKY = 'llm:acme/flaky';
 
   it('retries a failed call, stores it after the last attempt, and --retry-failed redoes it', async () => {
@@ -330,44 +330,36 @@ describe('failed calls vs. the model failing (ADR-0035)', () => {
     expect(Number(stats.redoable)).toBe(0);
   });
 
-  it("runs outside the mimic's budget, and --retry-failed replaces calls the budget refused", async () => {
-    const { store, gateway } = engine.deps;
-    const PRICED = 'llm:acme/priced';
-    await gateway.deps.budget!.add(private_, 100);
-    const spend = (await store.getMimic(private_))!.spendUsd;
-
-    // A live shadow on an over-budget mimic is refused at once (not retried) and stored as a failed call.
+  it('--retry-failed replaces failed calls stored earlier, such as the 429s of an unpaced run', async () => {
+    const { store } = engine.deps;
+    const OLD = 'llm:acme/old-run';
     const [q1, q2] = await served(private_);
-    for (const q of [q1!, q2!])
-      await runJob(engine.deps, {
-        type: 'predict.shadow',
-        mimicId: private_,
-        questionId: q.id,
-        predictorId: PRICED,
+    const primary = async (qid: string) =>
+      (await store.listPredictions({ questionId: qid })).find((p) => p.role === 'primary')!;
+    for (const [i, q] of [q1!, q2!].entries()) {
+      const p = await primary(q.id);
+      await store.insertShadow({
+        ...p,
+        id: `old-${i}`,
+        predictorId: OLD,
+        role: 'shadow',
+        dist: {},
+        ok: false,
+        error: 'HTTP 429 from openrouter.ai: rate limited',
+        errorKind: 'transport',
       });
-    const refused = await predictionsBy(private_, PRICED);
-    expect(refused.map((p) => [p.ok, p.errorKind, p.error?.slice(0, 15)])).toEqual([
-      [false, 'transport', 'Budget exceeded'],
-      [false, 'transport', 'Budget exceeded'],
-    ]);
-
-    // Without --retry-failed they stand; with it, they are redone, alongside the rest, outside the budget.
+    }
     const all = (await served(private_)).length;
-    expect(await cliMissing(PRICED, { mimics: [private_] })).toBe(all - 2);
-    expect(await cliMissing(PRICED, { mimics: [private_], retryFailed: true })).toBe(all);
-    const r = await runBackfillMimic(engine.deps, {
-      mimicId: private_,
-      predictorId: PRICED,
-      retryFailed: true,
-    });
+    expect(await cliMissing(OLD, { mimics: [private_] })).toBe(all - 2);
+    expect(await cliMissing(OLD, { mimics: [private_], retryFailed: true })).toBe(all);
+    const r = await runBackfillMimic(engine.deps, { mimicId: private_, predictorId: OLD, retryFailed: true });
     expect(r.enqueued).toBe(all);
     await engine.drain();
-    const preds = await predictionsBy(private_, PRICED);
+    const preds = await predictionsBy(private_, OLD);
     expect(preds).toHaveLength(all);
     expect(preds.every((p) => p.ok && p.costUsd === COST)).toBe(true);
-    expect(preds.map((p) => p.id)).not.toContain(refused[0]!.id);
-    expect((await store.getMimic(private_))!.spendUsd).toBe(spend);
-    expect(await cliMissing(PRICED, { mimics: [private_], retryFailed: true })).toBe(0);
+    expect(preds.map((p) => p.id)).not.toContain('old-0');
+    expect(await cliMissing(OLD, { mimics: [private_], retryFailed: true })).toBe(0);
   });
 
   it('gives up on a live shadow after its last attempt instead of re-enqueueing it from the cron', async () => {
@@ -385,5 +377,28 @@ describe('failed calls vs. the model failing (ADR-0035)', () => {
     } finally {
       outages.delete('acme/live-flaky');
     }
+  });
+
+  it("holds backfills to the session's share, like shadows (ADR-0035)", async () => {
+    const { store, gateway } = engine.deps;
+    const PRICED = 'llm:acme/priced';
+    await gateway.deps.budget!.add(private_, 100);
+    // Planning skips the mimic; a job that was already queued is refused before any call, and nothing is stored.
+    expect((await runBackfillMimic(engine.deps, { mimicId: private_, predictorId: PRICED })).enqueued).toBe(
+      0,
+    );
+    const [q] = await served(private_);
+    const job: Job = {
+      type: 'backfill.shadow',
+      mimicId: private_,
+      questionId: q!.id,
+      predictorId: PRICED,
+      allMimics: true, // a private mimic, named by the operator
+    };
+    expect(await runJob(engine.deps, job)).toBe('skipped');
+    expect(await predictionsBy(private_, PRICED)).toHaveLength(0);
+    expect((await store.getJob(`backfill.shadow:${private_}:${q!.id}:${PRICED}`))!.lastError).toMatch(
+      /^budget:/,
+    );
   });
 });

@@ -5,7 +5,7 @@ import { toStateEvidence } from '../state-builder';
 import type { IdentityState, MimicStatus } from '../store';
 import { isScoredKind, isSessionKind } from '../types';
 import { facetCounts, loadMimicData } from './data';
-import { type EngineDeps, facetsFor, loadConfig, requireMimic } from './deps';
+import { capsFor, type EngineDeps, facetsFor, loadConfig, requireMimic } from './deps';
 import { fidelityFromRecord, MIN_POOL } from './session';
 
 export interface UiFacet {
@@ -38,6 +38,10 @@ export interface UiSnapshot {
     arm: string | null;
     createdAt: number;
     spendUsd: number;
+    /**
+     * The whole cap: asking, teaching and Persona.md work until spend reaches it. The session stops earlier, at its
+     * share, and says so through `/next` (ADR-0035).
+     */
     budgetUsd: number;
     snapshotVersion: number;
   };
@@ -140,7 +144,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       arm: m.arm,
       createdAt: m.createdAt,
       spendUsd: m.spendUsd,
-      budgetUsd: cfg.session.budgetUsd,
+      budgetUsd: capsFor(deps, cfg).totalUsd,
       snapshotVersion: m.snapshotVersion,
     },
     progress: {
