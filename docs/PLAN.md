@@ -110,7 +110,7 @@ Intake ─► Identity (search → "Is one of these you?" → facts) ─► Anch
 | Decision | `typesafe/jev-1.13` (pinned) | `POST https://openrouter.ai/api/alpha/decisions`. $0.042/M input, output free; 32K context; answers in 70–500 ms. |
 | Decision | OpenAI Decisions API | Out of scope; `DecisionProvider` stub only. |
 | Search | Exa, `category: "people"` | Candidate discovery for identity resolution. |
-| Search | Parallel Task API with a JSON output schema | Structured enrichment of the confirmed identity. |
+| Search | Exa `/contents` (person entity; schema summary for other pages), Parallel Task API optional | Structured enrichment of the confirmed identity (ADR-0034). |
 | Search | Perplexity | Optional fallback adapter. |
 | Embeddings | A Workers AI embedding model | For question dedupe and evidence retrieval (Vectorize). Pick the model at M1 and record its ID in config. |
 
@@ -208,12 +208,12 @@ Synchronous calls, where the user waits:
 - **`POST /next`** picks from a pre-generated pool. It scores all pooled candidates with one batched Jev call on the current state, and that call's output for the chosen question is the primary prediction. In parallel, a second batched Jev call on the context-only state yields the baseline for every candidate. It persists the chosen question's primary and baseline predictions, then returns. Target p50 ≤ 800 ms.
 - **`POST /answers`** validates and persists the answer, scores the sealed predictions, updates fidelity and enqueues learning. Target p50 ≤ 300 ms.
 
-Asynchronous jobs, on Queue `mimic-jobs`:
+Asynchronous jobs, on Queue `mimic-jobs`. The identity jobs a person waits on during sign-up run on their own Queue, `mimic-identity`, so question generation never holds them up (ADR-0034):
 
 | Job | Trigger | What it does |
 |---|---|---|
 | `identity.search` | Intake submitted, or "Search with a link" | Exa people search (and a lookup of the person's link) finds candidates; Jev pre-ranks them with a `noul` "same person?" question |
-| `identity.enrich` | Person confirms a candidate | Parallel structured enrichment produces facts with sources |
+| `identity.enrich` | Person confirms a candidate | Exa reads the confirmed profile and produces facts with sources (Parallel optional) |
 | `pool.refill` | Pool drops below 6 | LLM generates candidates; they are validated, gated by Jev, deduped and inserted |
 | `predict.shadow` | Question served | LLM predictors run on the sealed state (§3.1) |
 | `learn.answer` | Answer submitted | Embed the Q&A; Jev trait read; every R answers, reflection and KG update; snapshot (debounced) |
@@ -240,6 +240,7 @@ Cold start needs no LLM. The first 10 questions are static anchors, which gives 
 | `CACHE` | KV namespace |
 | `VEC` | Vectorize index `mimic-qa` |
 | `JOBS` | Queue `mimic-jobs` (web produces, worker consumes) |
+| `IDENTITY_JOBS` | Queue `mimic-identity`: `identity.search` and `identity.enrich` (ADR-0034) |
 | `AI` | Workers AI |
 | `RL` | Rate limiter |
 
@@ -516,10 +517,10 @@ Optional consents, each a separate checkbox:
 
 ### 9.2 Identity resolution and enrichment
 
-1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2–3 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0029): `{name}, {occupation} at {employer}, {location}`, the same without the location, and the name alone. If the person gave a link, read it with Exa `/contents` too. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
+1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0029): `{name}, {occupation} at {employer}, {location}` and the same without the location, plus the name alone only if those find nobody with the full name; or `{name}, {location}` and the name alone when there is no role (ADR-0034). If the person gave a link, read it with Exa `/contents` first; when it resolves to a profile with their full name, skip the search. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
 2. **Pre-rank.** For each candidate, one Jev request (all run in parallel, state = intake plus that candidate's summary) asks the `noul` question "Is this profile the same person as the intake?". Store the result as `jev_same_person_p`.
 3. **Confirm.** The UI asks "Is one of these you?" and shows the top 3–5 candidates with name, headline, location and source; namesakes Jev scores low are behind "Show more". The person picks one or chooses "None of these". Never auto-confirm. If they aren't listed, they can search again with a link to their profile.
-4. **Enrich.** `identity.enrich` runs on confirmation. A Parallel Task with a JSON output schema collects current role, employer history, education, skills, public projects and writing, interests and locations, each with a source URL. Optionally, fetch Exa contents for the confirmed URLs.
+4. **Enrich.** A candidate from Exa search carries its person entity's facts (current role and employer, employer history, schools, location), so confirming it writes them, sourced to the profile, with no call. Otherwise `identity.enrich` runs on confirmation: Exa `/contents` reads the confirmed profile, and a page without an entity (a personal site) gets an Exa schema summary with the same fields a Parallel Task would return, including skills, public projects and writing, and interests. `ENRICH_PROVIDER=parallel` switches to a Parallel Task (ADR-0034).
 5. **Review.** The person sees every fact with its source and can remove any of them. Removed facts never enter any state.
 6. **Use.** Active facts become `identity` in `PersonState`. Together with intake, they are everything the baseline predictor sees.
 

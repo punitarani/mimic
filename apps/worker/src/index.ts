@@ -9,7 +9,13 @@ import {
   ulid,
   writeSnapshot,
 } from '@mimic/core';
-import { engineDeps, type MimicBindings } from '@mimic/db/runtime';
+import {
+  engineDeps,
+  isIdentityQueue,
+  type MimicBindings,
+  queueFor,
+  runsOnIdentityLane,
+} from '@mimic/db/runtime';
 
 export interface Env extends MimicBindings {
   JOBS: Queue<Job>;
@@ -47,7 +53,7 @@ export default {
     if (url.pathname === '/__jobs' && req.method === 'POST' && env.DEV_MODE === '1') {
       const parsed = Job.safeParse(await req.json().catch(() => null));
       if (!parsed.success) return json({ error: parsed.error.message }, 400);
-      await env.JOBS.send(parsed.data);
+      await queueFor(env).enqueue(parsed.data); // routed like any other enqueue
       return json({ enqueued: jobKey(parsed.data) });
     }
     const m = url.pathname.match(/^\/health\/job\/(.+)$/);
@@ -60,11 +66,19 @@ export default {
 
   async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
     const d = deps(env);
+    const identityLane = isIdentityQueue(batch.queue);
     await Promise.all(
       batch.messages.map(async (msg) => {
         const parsed = Job.safeParse(msg.body);
         if (!parsed.success) {
           console.error('Dropping malformed job', parsed.error.message);
+          msg.ack();
+          return;
+        }
+        // A job too slow for the identity lane (Parallel enrichment) moves to the shared queue (ADR-0034). Straight
+        // to JOBS: routing it again would send it back here.
+        if (identityLane && !runsOnIdentityLane(parsed.data, env)) {
+          await env.JOBS.send(parsed.data);
           msg.ack();
           return;
         }

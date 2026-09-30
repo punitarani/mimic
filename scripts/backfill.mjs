@@ -200,7 +200,8 @@ export function localTarget({ fetchImpl = fetch, exec = capture } = {}) {
 export function remoteTarget(env, cf, workerConfig = readConfig(WORKER_CONFIG)) {
   const e = envBlock(workerConfig, env);
   const dbName = e.d1_databases?.[0]?.database_name;
-  const queueName = e.queues?.producers?.[0]?.queue;
+  // The shared queue by its binding, not its position: identity jobs have a queue of their own (ADR-0034).
+  const queueName = e.queues?.producers?.find((p) => p.binding === 'JOBS')?.queue;
   let dbId;
   let queueId;
   return {
