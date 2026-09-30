@@ -377,3 +377,29 @@ landing page's button carries it to `/new`.
   Suspense boundary whose fallback is the same form with no code, so the static HTML is what it was before, and
   hydration only fills the field in.
 - Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
+
+## ADR-0027 — Link previews (2026-09-30)
+
+A shared link used to unfurl as a bare title ("Mimic") and a generic compass icon: there was no `og:image`, and the
+only icon was an SVG, which iMessage doesn't use. Every route now shares one preview.
+
+- **The card.** The signature element, "You" and "Mimic" as two overlapping circles (graphite and ink on fog),
+  over one question: "How predictable are you?" There's no subtitle, because it can't be read at chat bubble size.
+  The title ("Mimic: a model that predicts how you decide") and the description under the image do the explaining.
+  The description repeats the session's own promise (your mimic guesses before you answer) and claims no accuracy.
+- **Picked with a rubric.** Four gates: no personal data; no unbacked claims; a 1200×630 PNG under 300 KB with an
+  absolute URL, size and alt; no runtime cost. Eight weighted criteria, out of 48: thumbnail legibility, instant
+  clarity, hook, simplicity, brand fidelity, crop safety, contrast on light and dark chat backgrounds, and copy.
+  Eighteen variants were rendered over five rounds, each at full size, in iMessage-style bubbles on dark and light
+  backgrounds, and as an 84 px square crop. An independent blind review scored the finalists. The fog card beat an
+  ink-field card, 46 to 38, on brand fidelity and simplicity. A 2 px rule gives it an edge on white chat
+  backgrounds, and the headline fits WhatsApp's centered square crop.
+- **Self-only, so no per-mimic previews.** A mimic's pages get the same card and title as the landing page. A
+  preview never carries a name, answers or traits.
+- **Static files, not `next/og`.** `app/opengraph-image.png` (about 44 KB) and `app/apple-icon.png` are
+  committed, and `pnpm --filter @mimic/web gen:share-card` regenerates them. That script renders HTML in
+  Playwright's Chromium with the app's fonts. Next prerenders both routes, so they are served like `icon.svg`
+  (ADR-0023): no image rendering or wasm in the Worker, and `/new` stays prerendered.
+- **`metadataBase` is prod's custom domain** (`lib/site.ts`). Without it, Next resolves image URLs against
+  localhost. A test keeps it equal to the custom domain in `wrangler.jsonc`. Preview and dev links point at prod's
+  copy of the same image.

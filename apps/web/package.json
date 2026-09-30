@@ -9,7 +9,8 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
-    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
+    "gen:share-card": "NODE_USE_ENV_PROXY=1 node scripts/share-card.mjs"
   },
   "dependencies": {
     "@mimic/adapters": "workspace:*",
@@ -33,6 +34,7 @@
     "@types/node": "^22.15.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "playwright": "1.56.1",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "vitest": "~4.1.11",
