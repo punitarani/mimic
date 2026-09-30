@@ -41,6 +41,14 @@ describe('backfill arguments', () => {
       yes: true,
     });
     assert.equal(parseBackfillArgs(['--predictor', MIMO]).env, 'local');
+    // Prompt variants (ADR-0026) are accepted; anything that could break out of the inlined SQL is not.
+    assert.deepEqual(parseBackfillArgs(['--predictor', 'jev:typesafe/jev-1.13@jev-predict.v2']).predictors, [
+      'jev:typesafe/jev-1.13@jev-predict.v2',
+    ]);
+    assert.throws(
+      () => parseBackfillArgs(['--predictor', `${MIMO}@v2'; drop`]),
+      /--predictor must look like/,
+    );
   });
 
   it('takes several predictors, repeated or as a list', () => {
@@ -94,6 +102,8 @@ describe('backfill plan', () => {
     await assert.rejects(checkModel('llm:acme/typo', openRouter), /not an OpenRouter model/);
     await assert.rejects(checkModel('llm:acme/plain', openRouter), /structured outputs/);
     assert.match(await checkModel('jev:typesafe/jev-1.13', openRouter), /Jev/);
+    // A prompt variant is checked as its bare model.
+    assert.match(await checkModel(`${MIMO}@predict.v2`, openRouter), /MiMo-V2\.6-Pro on OpenRouter/);
   });
 });
 

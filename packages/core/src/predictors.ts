@@ -1,36 +1,76 @@
 import { z } from 'zod';
+import {
+  DEFAULT_PROMPT_VERSION,
+  fill,
+  type PredictPrompt,
+  promptHash,
+  resolvePredictPrompt,
+} from './components';
 import { parsePredictorId } from './config';
 import { normalizeDist, optionKeys } from './distribution';
 import type { CallContext, Gateway } from './gateway';
 import { answerToDistribution, confidenceOf, predictionQuestion } from './jev';
 import { PROMPTS } from './prompts';
 import { renderStateText, stateForProvider } from './state-builder';
-import type { DecisionQuestion, PersonState, PredictionResult, Predictor, Question } from './types';
+import type {
+  ChatMessage,
+  DecisionQuestion,
+  PersonState,
+  PredictionResult,
+  Predictor,
+  Question,
+} from './types';
 
 /** Jev key for a question inside a batched request. */
 export function jevKey(q: Pick<Question, 'id'>): string {
   return `q_${q.id}`;
 }
 
+/**
+ * A predictor's prompt: a registered version (the default when omitted), or an unregistered candidate from the
+ * optimizer, which is labeled by its content hash so it can never pass for a registered version.
+ */
+export type PromptRef = string | Omit<PredictPrompt, 'version'> | undefined;
+
+function promptOf(kind: 'jev' | 'llm', ref: PromptRef): PredictPrompt {
+  if (ref === undefined) return resolvePredictPrompt(DEFAULT_PROMPT_VERSION[kind], kind);
+  if (typeof ref === 'string') return resolvePredictPrompt(ref, kind);
+  if (ref.kind !== kind) throw new Error(`A ${ref.kind} prompt can't drive a ${kind} predictor`);
+  return { ...ref, version: `cand-${promptHash(ref).slice(0, 12)}` };
+}
+
+function predictorIdOf(kind: 'jev' | 'llm', model: string, prompt: PredictPrompt): string {
+  return prompt.version === DEFAULT_PROMPT_VERSION[kind]
+    ? `${kind}:${model}`
+    : `${kind}:${model}@${prompt.version}`;
+}
+
 /** Primary / baseline predictor: one batched Jev request per shared state (PLAN §5.1). */
 export class JevPredictor implements Predictor {
   readonly id: string;
+  readonly prompt: PredictPrompt;
   constructor(
     private readonly gateway: Gateway,
     private readonly model: string,
     private readonly ctx: CallContext,
+    prompt?: PromptRef,
   ) {
-    this.id = `jev:${model}`;
+    this.prompt = promptOf('jev', prompt);
+    this.id = predictorIdOf('jev', model, this.prompt);
   }
 
   async predict(state: PersonState, qs: Question[]): Promise<PredictionResult[]> {
     if (qs.length === 0) return [];
     const questions: Record<string, DecisionQuestion> = {};
-    for (const q of qs) questions[jevKey(q)] = predictionQuestion(q);
+    const c = this.prompt.components;
+    for (const q of qs) questions[jevKey(q)] = predictionQuestion(q, c);
     try {
       const res = await this.gateway.decide(this.ctx, {
         model: this.model,
-        state: stateForProvider(state),
+        state:
+          this.prompt.harness.jevState === 'text'
+            ? renderStateText(stateForProvider(state), c)
+            : stateForProvider(state),
         questions,
       });
       const share = res.usage.costUsd / qs.length;
@@ -66,42 +106,71 @@ const LlmProbs = z.union([
 
 export const LLM_PREDICTOR_MAX_TOKENS = 3000;
 
-/** LLM shadow predictor (PLAN §9.6, prompt predict.v1). One chat call per question, run in parallel. */
+const REASONED_SCHEMA = {
+  type: 'object',
+  properties: {
+    reasoning: { type: 'string' },
+    probs: PROMPTS['predict.v1'].schema.properties.probs,
+  },
+  required: ['reasoning', 'probs'],
+  additionalProperties: false,
+} as const;
+
+/** LLM shadow predictor (PLAN §9.6, prompt predict.v1 by default). One chat call per question, run in parallel. */
 export class LlmPredictor implements Predictor {
   readonly id: string;
+  readonly prompt: PredictPrompt;
   constructor(
     private readonly gateway: Gateway,
     private readonly model: string,
     private readonly ctx: CallContext,
+    prompt?: PromptRef,
   ) {
-    this.id = `llm:${model}`;
+    this.prompt = promptOf('llm', prompt);
+    this.id = predictorIdOf('llm', model, this.prompt);
   }
 
   predict(state: PersonState, qs: Question[]): Promise<PredictionResult[]> {
-    const stateText = renderStateText(state);
+    const stateText = renderStateText(state, this.prompt.components);
     return Promise.all(qs.map((q) => this.one(stateText, q)));
   }
 
+  /** The chat messages for one question (exposed for the optimizer's traces). */
+  messages(stateText: string, q: Question): ChatMessage[] {
+    const c = this.prompt.components;
+    return [
+      { role: 'system', content: c['predict.system'] },
+      {
+        role: 'user',
+        content: fill(c['predict.user'], {
+          state: stateText,
+          prompt: q.prompt,
+          options: q.options.map((o) => `${o.key}: ${o.label}`).join('\n'),
+        }),
+      },
+    ];
+  }
+
   private async one(stateText: string, q: Question): Promise<PredictionResult> {
-    const p = PROMPTS['predict.v1'];
+    const h = this.prompt.harness;
     const keys = optionKeys(q);
     try {
       const res = await this.gateway.chat(this.ctx, {
         model: this.model,
-        messages: [
-          { role: 'system', content: p.system },
-          {
-            role: 'user',
-            content: `STATE:\n${stateText}\n\nQUESTION: ${q.prompt}\nOPTIONS:\n${q.options
-              .map((o) => `${o.key}: ${o.label}`)
-              .join('\n')}`,
-          },
-        ],
-        jsonSchema: { name: 'probs', schema: p.schema },
-        reasoningEffort: 'low',
-        maxTokens: LLM_PREDICTOR_MAX_TOKENS,
+        messages: this.messages(stateText, q),
+        jsonSchema: {
+          name: 'probs',
+          schema: h.schema === 'reasoned' ? REASONED_SCHEMA : PROMPTS['predict.v1'].schema,
+        },
+        reasoningEffort: h.reasoningEffort,
+        maxTokens: h.maxTokens,
       });
-      const base = { costUsd: res.usage.costUsd, latencyMs: res.latencyMs, modelSnapshot: res.modelSnapshot };
+      const base = {
+        costUsd: res.usage.costUsd,
+        latencyMs: res.latencyMs,
+        modelSnapshot: res.modelSnapshot,
+        raw: res.content.slice(0, 2000),
+      };
       const parsed = LlmProbs.safeParse(parseJsonLoose(res.content));
       if (!parsed.success) return { ...base, dist: {}, ok: false, error: 'invalid JSON output' };
       const raw: Record<string, number> =
@@ -147,9 +216,22 @@ export function parseJsonLoose(text: string): unknown {
   }
 }
 
+/** A predictor from its ID: `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` (ADR-0026). */
 export function makePredictor(gateway: Gateway, id: string, ctx: CallContext): Predictor {
   const spec = parsePredictorId(id);
   return spec.kind === 'jev'
-    ? new JevPredictor(gateway, spec.model, ctx)
-    : new LlmPredictor(gateway, spec.model, ctx);
+    ? new JevPredictor(gateway, spec.model, ctx, spec.promptVersion)
+    : new LlmPredictor(gateway, spec.model, ctx, spec.promptVersion);
+}
+
+/** The prompt version stored with a prediction from this predictor (invariant 4). */
+export function promptVersionOf(predictorId: string): string {
+  const spec = parsePredictorId(predictorId);
+  return spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind];
+}
+
+/** Throws unless the ID parses and names a registered prompt version of the right kind. */
+export function assertPredictorId(id: string): void {
+  const spec = parsePredictorId(id);
+  resolvePredictPrompt(spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind], spec.kind);
 }

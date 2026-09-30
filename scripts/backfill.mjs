@@ -17,8 +17,12 @@ import { join } from 'node:path';
 import { cloudflareFromEnv, envBlock, ROOT, readConfig, WORKER_CONFIG } from './deploy/lib.mjs';
 
 const ENVS = ['local', 'preview', 'prod'];
-/** `llm:<vendor>/<model>` or `jev:<vendor>/<model>`. Strict, since the local path inlines it into SQL. */
-export const PREDICTOR_ID = /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
+/**
+ * `llm:<vendor>/<model>` or `jev:<vendor>/<model>`, optionally `@<promptVersion>` for a registered prediction prompt
+ * variant (ADR-0026; the worker rejects an unregistered one). Strict, since the local path inlines it into SQL.
+ */
+export const PREDICTOR_ID =
+  /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*(@[a-z0-9][a-z0-9._-]*)?$/i;
 const MIMIC_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const LOCAL_WORKER = 'http://127.0.0.1:8787';
 
@@ -35,7 +39,9 @@ export function parseBackfillArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (!out.predictors.length || !out.predictors.every((p) => PREDICTOR_ID.test(p)))
-    throw new Error('--predictor must look like llm:<vendor>/<model> or jev:<vendor>/<model>');
+    throw new Error(
+      '--predictor must look like llm:<vendor>/<model> or jev:<vendor>/<model>, optionally @<promptVersion>',
+    );
   out.predictors = [...new Set(out.predictors)];
   if (!ENVS.includes(out.env)) throw new Error(`--env must be one of ${ENVS.join(', ')}`);
   for (const m of out.mimics) if (!MIMIC_ID.test(m ?? '')) throw new Error(`--mimic ${m} is not a mimic ID`);
@@ -84,9 +90,10 @@ export function backfillJobs({ predictor, consented, mimics }, runId) {
 
 /** An LLM shadow must exist on OpenRouter and support structured outputs (predict.v1 is a JSON-schema call). */
 export async function checkModel(predictor, fetchImpl = fetch) {
+  // A prompt variant (`@<promptVersion>`) runs on the same model, so check the bare model.
   const [kind, model] = [
     predictor.slice(0, predictor.indexOf(':')),
-    predictor.slice(predictor.indexOf(':') + 1),
+    predictor.slice(predictor.indexOf(':') + 1).replace(/@[^@]*$/, ''),
   ];
   if (kind !== 'llm') return `${model} (Jev decisions API)`;
   const res = await fetchImpl('https://openrouter.ai/api/v1/models');

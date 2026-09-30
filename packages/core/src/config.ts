@@ -92,13 +92,23 @@ export function configHash(config: PipelineConfig): string {
   return sha256Hex(canonicalJson(PipelineConfig.parse(config)));
 }
 
-export type PredictorSpec = { kind: 'jev'; model: string } | { kind: 'llm'; model: string };
+export type PredictorSpec = { kind: 'jev' | 'llm'; model: string; promptVersion?: string };
 
+/**
+ * `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` for a registered prediction prompt variant
+ * (packages/core/src/components.ts, ADR-0026). Without a version the predictor uses the incumbent prompt.
+ */
 export function parsePredictorId(id: string): PredictorSpec {
   const idx = id.indexOf(':');
   const kind = id.slice(0, idx);
-  const model = id.slice(idx + 1);
+  const rest = id.slice(idx + 1);
+  const at = rest.lastIndexOf('@');
+  const model = at >= 0 ? rest.slice(0, at) : rest;
+  const promptVersion = at >= 0 ? rest.slice(at + 1) : undefined;
   if (idx < 0 || !model) throw new Error(`Invalid predictor id: ${id}`);
-  if (kind === 'jev' || kind === 'llm') return { kind, model };
+  if (promptVersion !== undefined && !/^[a-z0-9][a-z0-9._-]*$/i.test(promptVersion))
+    throw new Error(`Invalid prompt version in predictor id: ${id}`);
+  if (kind === 'jev' || kind === 'llm')
+    return promptVersion === undefined ? { kind, model } : { kind, model, promptVersion };
   throw new Error(`Unknown predictor kind: ${id}`);
 }

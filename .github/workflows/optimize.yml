@@ -1,0 +1,142 @@
+# Evaluate and optimize the prediction prompts on prod data (docs/OPTIMIZATION.md, ADR-0026), from the Actions tab:
+# Actions → Optimize → Run workflow.
+#
+#   report    (default) a report from the predictions already stored online: every predictor per split, person and
+#             question type, self-consistency, and calibration/pooling fits. No model calls, so it costs nothing.
+#   optimize  the report, then a GEPA-style run on the seed predictor's prompt components, capped by metric calls and
+#             dollars. A winner is not deployed: the report says whether it beat the noise floor, and the artifact
+#             holds the candidate and a ready-to-paste `PREDICT_PROMPTS` entry to register and backfill as a shadow.
+#
+# Data: the prod export, consented mimics only, scrubbed of names, locations and links (ADR-0018), plus optionally
+# Twin-2K-500 people. Only aggregates and prompt text leave the runner: the step summary, /lab (if "publish") and
+# the artifact. Per-question records, traces and the export stay on the runner and are discarded with it.
+
+name: Optimize
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: report (free) or optimize (spends up to max_usd)
+        type: choice
+        options: [report, optimize]
+        default: report
+      predictor:
+        description: Seed predictor, e.g. jev:typesafe/jev-1.13 or llm:deepseek/deepseek-v4.1-flash
+        type: string
+        default: jev:typesafe/jev-1.13
+      components:
+        description: Components to rewrite, comma-separated (empty uses the defaults for the predictor kind)
+        type: string
+        default: ''
+      max_metric_calls:
+        description: Budget in predictions (GEPA metric calls)
+        type: string
+        default: '400'
+      max_usd:
+        description: Spend cap in USD for the optimize run
+        type: string
+        default: '2'
+      reflection_model:
+        description: Reflection model on OpenRouter
+        type: string
+        default: anthropic/claude-sonnet-5.5
+      twin_people:
+        description: Twin-2K-500 people to add as extra training data (0 = prod data only)
+        type: string
+        default: '0'
+      publish:
+        description: Publish the reports to /lab
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: optimize-production
+  cancel-in-progress: false
+
+jobs:
+  optimize:
+    name: ${{ inputs.mode }} ${{ inputs.predictor }} (prod)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Export prod (consented, scrubbed)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm deploy:config --env prod
+          pnpm eval -- export --env prod --out data/prod.sqlite
+
+      # Optional and best-effort: if Hugging Face or the conversion fails, the run continues on prod data alone.
+      - name: Twin-2K-500
+        if: inputs.twin_people != '0'
+        continue-on-error: true
+        env:
+          TWIN_PEOPLE: ${{ inputs.twin_people }}
+        run: |
+          python -m pip install --quiet datasets
+          python - <<'EOF'
+          import os
+          import datasets
+          n = int(os.environ["TWIN_PEOPLE"])
+          ds = datasets.load_dataset("LLM-Digital-Twin/Twin-2K-500", "wave_split")["data"]
+          ds.select(range(min(n, len(ds)))).to_json("data/twin.jsonl")
+          EOF
+          pnpm eval -- import twin2k500 --path data/twin.jsonl --out data/twin.sqlite
+
+      - name: Report on stored predictions (no model calls)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PUBLISH: ${{ inputs.publish }}
+        # Inputs reach the scripts as environment variables, never interpolated into the shell.
+        run: |
+          args=(--from stored --data data/prod.sqlite --name "Stored predictions (prod)" --summary "$GITHUB_STEP_SUMMARY")
+          [ "$PUBLISH" = true ] && args+=(--publish prod)
+          pnpm eval -- evaluate "${args[@]}"
+
+      - name: Optimize
+        if: inputs.mode == 'optimize'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREDICTOR: ${{ inputs.predictor }}
+          COMPONENTS: ${{ inputs.components }}
+          MAX_CALLS: ${{ inputs.max_metric_calls }}
+          MAX_USD: ${{ inputs.max_usd }}
+          REFLECTION_MODEL: ${{ inputs.reflection_model }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          data=data/prod.sqlite
+          [ -f data/twin.sqlite ] && data="$data,data/twin.sqlite"
+          args=(--data "$data" --predictor "$PREDICTOR" --max-metric-calls "$MAX_CALLS" --max-usd "$MAX_USD"
+            --reflection-model "$REFLECTION_MODEL" --run-dir data/optimize/run --summary "$GITHUB_STEP_SUMMARY")
+          [ -n "$COMPONENTS" ] && args+=(--components "$COMPONENTS")
+          [ "$PUBLISH" = true ] && args+=(--publish prod)
+          pnpm eval -- optimize "${args[@]}"
+
+      # The candidate and its report only: prompt text that passed the leakage lint, and aggregate metrics.
+      - name: Upload the result
+        if: inputs.mode == 'optimize'
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimize-result
+          if-no-files-found: ignore
+          retention-days: 30
+          path: |
+            data/optimize/run/report.md
+            data/optimize/run/best.candidate.json
+            data/optimize/run/variant.snippet.txt

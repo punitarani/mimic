@@ -8,6 +8,7 @@ import { sql } from 'drizzle-orm';
 import { datasetHash, exportData } from './export';
 import { calibrateGates } from './gates';
 import { openLocalEngine } from './local';
+import { diagnoseCmd, evaluateCmd, optimizeCmd } from './optimize/commands';
 import { replay, reproduceOnline } from './replay';
 import { publishReport, renderReport, writeReport } from './report';
 import { simulateSelection } from './select';
@@ -37,6 +38,17 @@ Commands
             --data <file.sqlite> --selector random|coverage|entropy --budget 5,10,20 [--split dev] [--limit N]
   import    import twin2k500 --path <twin2k500.jsonl> --out <file.sqlite> [--limit N]
   report    --data <file.sqlite> --run <id> [--to local|preview|prod]   writes report.{json,md}; --to publishes to /lab
+  evaluate  Score prediction prompts on sealed instances (docs/OPTIMIZATION.md §5)
+            --data <a.sqlite>[,<b.sqlite>] --from stored        stored online predictions, calibration fits; no calls
+            --data … --predictor <id>[,<id>] [--candidate <cand.json>[,…]] [--repeat] [--max-usd 2]
+            [--split dev|test|all] [--k 30] [--limit N] [--max-targets 40] [--publish local|preview|prod]
+  diagnose  Failure analysis of a stored predictor by the reflection model (one call)
+            --data … --predictor <id> [--role primary|shadow] [--cases 40] [--reflection-model <id>]
+  optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
+            --data … --predictor jev:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
+            [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]
+            [--max-iterations 30] [--reflection-model anthropic/claude-sonnet-5.5] [--no-noise] [--run-dir <dir>]
+            [--k 30] [--publish local|preview|prod] [--offline]
 
 Every eval command records its run in the data file's eval_runs table and writes data/reports/<run>/.
 `;
@@ -294,6 +306,12 @@ async function main() {
       return importCmd(rest);
     case 'report':
       return reportCmd(rest);
+    case 'evaluate':
+      return evaluateCmd(rest);
+    case 'diagnose':
+      return diagnoseCmd(rest);
+    case 'optimize':
+      return optimizeCmd(rest);
     default:
       console.log(USAGE);
       if (cmd && cmd !== 'help' && cmd !== '--help') process.exitCode = 1;

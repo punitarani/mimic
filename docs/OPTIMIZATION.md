@@ -1,6 +1,41 @@
 # Mimic — Evals and GEPA-style prompt and harness optimization
 
-Proposal v1 · 2026-09-30 · Status: proposal, nothing here is built yet
+v1 · 2026-09-30 · Status: M9 (evaluator) and M10 (optimizer, shipping path) are built, and M11's fits are
+reported; see ADR-0026 and "What is built" below. M12 (re-derivation) and M13 (generator) are not built yet.
+
+## What is built
+
+| Piece | Where | Notes |
+| --- | --- | --- |
+| Prompt components and registered variants | `packages/core/src/components.ts`, `docs/prompts/variants/` | `predict.system`, `predict.user`, `state.evidence.line`, `jev.instructions`, `jev.choice`, `jev.noul.true`, `jev.noul.false`; harness: reasoning effort, max tokens, `probs`/`reasoned` schema, Jev state as JSON or text |
+| Variant predictor IDs | `parsePredictorId`, `makePredictor`, `pnpm backfill` | `llm:<model>@<version>`, `jev:<model>@<version>`; unsuffixed IDs unchanged |
+| `mimic-eval evaluate` | `packages/eval/src/optimize/` | `--from stored` (free: per predictor, split, person and type; self-consistency; temperature, shrinkage and pooling fits) or live candidates with paired deltas and `--repeat` for the noise floor |
+| `mimic-eval diagnose` | same | One reflection-model call over the costliest misses of a stored predictor; local only |
+| `mimic-eval optimize` | same | GEPA loop: Pareto sampling, minibatch reflection, noise-margin acceptance, leakage lint, spend and call caps, resume, holdout check, verdict, `PREDICT_PROMPTS` snippet |
+| Actions → Optimize | `.github/workflows/optimize.yml` | Export prod (scrubbed), optional Twin-2K-500, free report, optional capped run; publishes to `/lab` |
+
+Decisions taken for v1 are in §14 and ADR-0026. Deviations from the proposal below: cache hits are not logged as
+zero-cost `model_calls` rows (they are not calls; the run's own cache is in `--run-dir`); the components not yet
+exposed (`state.section.*`, `state.trait.line`, `jev.state.keys`, `jev.trait.instructions`, `reflect.system`,
+`hyp.system`, `gen.system`) wait for M12/M13; prompt versions travel in predictor IDs rather than a new config field,
+so no config schema change was needed.
+
+### How to run it
+
+```
+# Free: a report from the predictions already stored online (every predictor, calibration fits)
+pnpm eval -- export --env prod --out data/prod.sqlite          # or Actions → Optimize, mode "report"
+pnpm eval -- evaluate --from stored --data data/prod.sqlite
+
+# Capped optimization of Jev's templates (dominated by ~$0.03 reflection calls)
+pnpm eval -- optimize --data data/prod.sqlite --predictor jev:typesafe/jev-1.13 --max-usd 2
+
+# Compare registered variants or candidate files on the same instances
+pnpm eval -- evaluate --data data/prod.sqlite --predictor llm:deepseek/deepseek-v4.1-flash --candidate best.json
+```
+
+A winner: paste the printed `PREDICT_PROMPTS` entry into `packages/core/src/components.ts`, run
+`pnpm --filter @mimic/core gen:docs`, merge, then `pnpm backfill --predictor jev:typesafe/jev-1.13@jev-predict.v2`.
 
 > Scope: how to turn the two real sessions we have (50–90 questions each) plus Twin-2K-500 into an honest eval loop,
 > and how to run DSPy/GEPA-style reflective optimization over the prompts and the harness without breaking the
@@ -615,15 +650,15 @@ The reflection model dominates: budget it explicitly (`--max-reflection-usd`) an
 
 ## 14. Decisions to confirm
 
-| # | Decision | Proposed default |
+| # | Decision | Decided (v1) |
 | --- | --- | --- |
-| 1 | Language of the optimizer loop | TypeScript in `packages/eval`; keep the evaluator's JSON contract stable so Python `gepa` can drive it if wanted |
-| 2 | Reflection model | A frontier model via OpenRouter, chosen per run, never in a production config; verify the slug before the first run |
-| 3 | Training data for optimization | Twin-2K-500 dev subsample (60 train / 150 val people, seeded); real sessions for validation only (LOPO) |
-| 4 | First optimization target | Jev input templates and state shape (primary path, nearly free), then the DeepSeek `predict.*` prompt |
-| 5 | Identity in local validation runs | `--keep-identity` export allowed for local validation, never committed; scrubbed for optimization; ADR to record it |
-| 6 | Predictor ID format for prompt variants | `llm:<model>@<promptVersion>`; `jev:<model>@<promptVersion>` for Jev template variants |
-| 7 | Where calibration lives | A versioned `postprocess` config field applied before persistence; raw output in the trace |
+| 1 | Language of the optimizer loop | TypeScript in `packages/eval`, running the real engine code |
+| 2 | Reflection model | `anthropic/claude-sonnet-5.5` on OpenRouter, low effort; `--reflection-model` overrides; never in a production config |
+| 3 | Training data for optimization | Every consented dev person in the given files (prod export, plus Twin-2K-500 if added); by person with ≥ 6 dev people, else by question; test people are the holdout only |
+| 4 | First optimization target | Jev's `jev.instructions` and `jev.choice` (default for `jev:` seeds); `predict.system` and `predict.user` for `llm:` seeds |
+| 5 | Identity in local validation runs | Scrubbed exports everywhere by default, including Actions; `--keep-identity` stays reserved for the reproduction check |
+| 6 | Predictor ID format for prompt variants | `llm:<model>@<version>` and `jev:<model>@<version>` (built) |
+| 7 | Where calibration lives | Fits are reported (`evaluate --from stored`); applying one online is a later config field |
 
 ---
 

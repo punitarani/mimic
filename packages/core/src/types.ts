@@ -108,6 +108,8 @@ export interface PredictionResult {
   modelSnapshot: string;
   ok: boolean;
   error?: string;
+  /** Raw model output (LLM only, truncated). Kept in memory for eval traces; never persisted with the prediction. */
+  raw?: string;
 }
 
 export interface Predictor {
