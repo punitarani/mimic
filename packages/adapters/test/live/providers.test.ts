@@ -116,11 +116,10 @@ describe.skipIf(!LIVE)('live providers', () => {
 
   it('Exa enrichment maps a LinkedIn profile to sourced facts', async () => {
     const url = 'https://www.linkedin.com/in/williamhgates';
-    const r = await new ExaEnricher(env.EXA_API_KEY ? { apiKey: env.EXA_API_KEY } : {}).enrich({
-      name: 'Bill Gates',
-      location: 'Seattle',
-      url,
-    });
+    const r = await new ExaEnricher(env.EXA_API_KEY ? { apiKey: env.EXA_API_KEY } : {}).enrich(
+      { name: 'Bill Gates', location: 'Seattle', url },
+      (_model, _request, call) => call(),
+    );
     expect(r.facts.some((f) => f.predicate === 'worksAt' || f.predicate === 'workedAt')).toBe(true);
     expect(r.facts.every((f) => f.sourceUrl === url)).toBe(true);
     expect(r.costUsd).toBeGreaterThan(0);
@@ -134,6 +133,7 @@ describe.skipIf(!LIVE)('live providers', () => {
         location: 'London',
         url: 'https://en.wikipedia.org/wiki/Ada_Lovelace',
       },
+      (_model, _request, call) => call(),
     );
     expect(Array.isArray(r.facts)).toBe(true);
   }, 200_000);

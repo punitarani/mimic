@@ -3,6 +3,7 @@ import {
   type EnrichmentResult,
   type PeopleSearch,
   type PeopleSearchResult,
+  type ProviderCallRunner,
   profileKey,
 } from '@mimic/core';
 import exaFixture from '../fixtures/exa-people-search.json';
@@ -46,13 +47,15 @@ export class FixturePeopleSearch implements PeopleSearch {
 export class FixtureEnricher implements Enricher {
   readonly provider = 'fixture';
   calls = 0;
-  async enrich(): Promise<EnrichmentResult> {
-    this.calls++;
-    return {
-      facts: parallelFacts(parallelFixture as Parameters<typeof parallelFacts>[0]),
-      costUsd: 0,
-      latencyMs: 0,
-      raw: parallelFixture,
-    };
+  enrich(subject: Parameters<Enricher['enrich']>[0], run: ProviderCallRunner): Promise<EnrichmentResult> {
+    return run('fixture:task', subject, async () => {
+      this.calls++;
+      return {
+        facts: parallelFacts(parallelFixture as Parameters<typeof parallelFacts>[0]),
+        costUsd: 0,
+        latencyMs: 0,
+        raw: parallelFixture,
+      };
+    });
   }
 }

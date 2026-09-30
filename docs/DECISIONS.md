@@ -766,25 +766,42 @@ the two ADR-0029 test people. The prices are Exa's and Parallel's published ones
 
 **Changed**
 
-- **Enrichment uses Exa, not Parallel, by default** (`ENRICH_PROVIDER=exa`; `parallel` stays selectable).
-  - Exa `/contents` on a LinkedIn profile returns the same structured person entity as search, for $0.001 in
-    0.2–0.6 s. A Parallel `base` task costs $0.010 and takes tens of seconds.
-  - The entity gives the current role and employers, employer history, education and location. They map to facts
-    directly (confidence 0.85, sourced to the profile). A live check returned 9 clean facts in 0.94 s.
-  - A page with no entity (a personal site) gets one more call: an Exa schema summary with Parallel's output
-    schema ($0.001, 2.5–4.7 s), including skills, projects and interests, at confidence 0.6.
-  - For entity profiles, skills and interests aren't extracted: the summary on a LinkedIn profile listed things
-    like "100Bs tokens" as skills.
+- **Search results carry their facts, so confirming costs nothing.**
+  - Exa people search returns each profile's structured person entity: the current role and employers, past
+    employers, schools and location. `exaCandidate` maps it to facts on the candidate.
+  - The search stores them in one R2 blob (`search/{mimicId}/facts/{at}.json`, the candidate's `r2_key`).
+  - Confirming such a candidate writes those facts, sourced to its URL, and goes straight to `review`: no
+    enrichment call, no job, no wait.
+- **Enrichment otherwise uses Exa, not Parallel** (`ENRICH_PROVIDER=exa`; `parallel` stays selectable).
+  - Exa `/contents` returns the same entity for $0.001 in 0.2–0.6 s. A Parallel `base` task costs $0.010 and takes
+    tens of seconds.
+  - A readable page with no entity (a personal site) gets one more call: an Exa schema summary with Parallel's
+    output schema ($0.001, 2.5–4.7 s). It is validated with zod, at confidence 0.6.
+  - No second call when Exa couldn't read the page, or for a LinkedIn page without an entity. A summary of a
+    LinkedIn profile listed things like "100Bs tokens" as skills.
+  - Each call is logged as its own `model_calls` row (`exa:contents`, `exa:summary`). The gateway hands the
+    enricher a per-call runner (`ProviderCallRunner`).
+- **Entity facts, precisely.**
+  - A role is current only when it has a start date and no end. Undated roles are past employers.
+  - Schools are named alone, so "Pomona College" is one organization in the KG whatever the degree.
 - **Two search queries, not three.** Given a role, the name-only query never found anyone the other two missed,
-  and each query costs $0.007. Without a role, the queries are `{name}, {location}` and the name alone.
-- **The person's link short-circuits search.** When the link resolves to a profile with their name ($0.001),
-  searching as well would only add namesakes, so it is skipped. A link that doesn't match still leads a normal
-  search.
+  and each query costs $0.007. It now runs only as a fallback: when the role queries find nobody with the person's
+  full name (a role or school that isn't on their profile). Without a role, the queries are `{name}, {location}`
+  and the name alone.
+- **The person's link short-circuits search.**
+  - When the link resolves to a profile with their full name ($0.001), searching as well would only add
+    namesakes, so it is skipped.
+  - The lookup gets a 1.5-second head start; if it is slower, or matches only part of the name, search runs
+    alongside it.
 - **Identity jobs have their own queue** (`IDENTITY_JOBS` → `mimic-identity`, same DLQ).
   - Cloudflare Queues adds consumers only after a batch finishes. On the shared queue, a 2-second search sat behind
     a `pool.refill` batch for 1 to 4 minutes, and so did enrichment.
-  - `RoutedQueue` sends `identity.search` and `identity.enrich` to the new queue when it is bound. Parallel
-    enrichment, which takes minutes, stays on the shared queue.
+  - Producers send `identity.search` and `identity.enrich` there by type alone.
+  - The consumer, whose `ENRICH_PROVIDER` is the one that counts, forwards minutes-long Parallel enrichment to the
+    shared queue.
+  - Identity calls to Exa are bounded (search 10 s, page 8 s, one retry; summary 15 s, none), so one bad page
+    can't hold the lane for long.
+  - `/__jobs` enqueues through the same routing, and backfill publishes to the `JOBS` binding by name.
   - Deploy finds or creates the queue by name, like the others.
 
 **Kept, after measuring**
@@ -800,15 +817,15 @@ the two ADR-0029 test people. The prices are Exa's and Parallel's published ones
 
 | Path | Search | Rank (Jev) | Enrich | Total | Before |
 | --- | --- | --- | --- | --- | --- |
-| No link | $0.014 (2 queries) | ~$0.0003 | $0.001 | ~$0.015 | ~$0.031 |
-| Link that resolves | $0.001 (lookup) | ~$0.00003 | $0.001 | ~$0.002 | ~$0.032 |
+| No link, profile from search | $0.014 (2 queries) | ~$0.0003 | $0 (carried) | ~$0.014 | ~$0.031 |
+| Link that resolves | $0.001 (lookup) | ~$0.00003 | $0 (carried) | ~$0.001 | ~$0.032 |
+| No full-name match (fallback query) | $0.021 | ~$0.0003 | $0 | ~$0.021 | ~$0.031 |
+| Profile without an entity (personal site) | as above | | $0.001–0.002 | | |
 
-On the local stack, with a 35-second `pool.refill` batch running on the main queue, the jobs took:
+On the local stack, with a 35-second `pool.refill` batch running on the main queue:
 
-- search, 1.9 s;
+- search took 1.9 s;
 - search with a link, 0.65 s;
-- enrichment, 0.94 s.
-
-Each job now waits only for its own queue's ~1-second batch window.
+- enrichment through Exa, 0.94 s. A candidate's carried facts need none.
 
 A deploy-time `ENRICH_PROVIDER` set in Doppler overrides the new default (ADR-0022). Remove it, or set it to `exa`.

@@ -16,7 +16,7 @@ export interface ProviderEnv {
   EMBEDDINGS_PROVIDER?: string;
   /** People search provider: 'exa' (default) | 'perplexity' | 'fixture' | 'none'. */
   SEARCH_PROVIDER?: string;
-  /** Enrichment provider: 'parallel' (default) | 'fixture' | 'none'. */
+  /** Enrichment provider: 'exa' (default) | 'parallel' | 'fixture' | 'none'. */
   ENRICH_PROVIDER?: string;
 }
 

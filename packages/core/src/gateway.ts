@@ -11,6 +11,7 @@ import type {
   LlmClient,
   PeopleSearch,
   PeopleSearchResult,
+  ProviderCallRunner,
   Usage,
 } from './types';
 
@@ -243,17 +244,20 @@ export class Gateway {
     );
   }
 
+  /** True when confirming a search candidate that carries facts needs no enrichment call (ADR-0034). */
+  get enrichmentUsesSearchFacts(): boolean {
+    return this.deps.enricher?.usesSearchFacts === true;
+  }
+
+  /** Each provider call the enricher makes is logged as its own `model_calls` row (PLAN §3.5). */
   async enrich(ctx: CallContext, subject: Parameters<Enricher['enrich']>[0]): Promise<EnrichmentResult> {
     const en = this.deps.enricher;
     if (!en) throw new Error('No enricher configured');
-    return withModelCall(
-      this.deps,
-      { ...ctx, provider: en.provider, model: `${en.provider}:task` },
-      subject,
-      async () => {
-        const r = await en.enrich(subject);
+    const run: ProviderCallRunner = (model, request, call) =>
+      withModelCall(this.deps, { ...ctx, provider: en.provider, model }, request, async () => {
+        const r = await call();
         return { ...r, usage: { inputTokens: 0, outputTokens: 0, costUsd: r.costUsd }, modelSnapshot: null };
-      },
-    );
+      });
+    return en.enrich(subject, run);
   }
 }

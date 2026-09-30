@@ -38,8 +38,7 @@ export function resolveSettings(config, env, source) {
 
 /** The secrets the chosen providers need, beyond each Worker's `secrets.required`. */
 export function providerSecrets(vars) {
-  const keys = Object.entries(PROVIDER_KEYS)
-    .map(([name, byChoice]) => byChoice[vars[name]])
+  return Object.entries(PROVIDER_KEYS)
+    .map(([name, keys]) => keys[vars[name]])
     .filter(Boolean);
-  return [...new Set(keys)]; // Exa search and Exa enrichment share one key
 }

@@ -108,6 +108,61 @@ describe('identity (PLAN §9.2, M3)', () => {
     expect(rest.map((c) => c.url)).toEqual(['https://www.linkedin.com/in/avery-quinn-example']);
   });
 
+  it('skips search only for a link to a profile with their full name', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    // The fixture lookup resolves this link to Rowan Ellis: only the last name is shared with the intake.
+    const link = 'https://www.linkedin.com/in/rowan-ellis-example';
+    await createMimic(engine.deps, { ...intake, name: 'Avery Ellis', link, consentSearch: true }, 'p1');
+    await engine.drain();
+    expect(search().lookups).toBe(1);
+    expect(search().calls).toBeGreaterThanOrEqual(2); // a shared first or last name is not "their profile"
+  });
+
+  it('adds the name-only query when the role queries find nobody with the full name', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    await createMimic(engine.deps, { ...intake, name: 'Nobody Known', consentSearch: true }, 'p1');
+    await engine.drain();
+    expect(search().queries).toEqual([
+      'Nobody Known, Software engineer, San Francisco, US',
+      'Nobody Known, Software engineer',
+      'Nobody Known',
+    ]);
+    // With a full-name match in the role results, the fallback isn't paid for.
+    engine.close();
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    expect(search().queries).toHaveLength(2);
+  });
+
+  it('confirms a candidate with the facts it carried from search, with no enrichment call', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    Object.assign(enricher(), { usesSearchFacts: true }); // as the Exa enricher declares
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    const [top] = await engine.deps.store.listCandidates(m.id);
+    expect(top!.r2Key).toMatch(new RegExp(`^search/${m.id}/facts/`));
+    await confirmIdentity(engine.deps, m.id, top!.id);
+    // Straight to review: nothing queued, nothing called.
+    expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('review');
+    await engine.drain();
+    expect(enricher().calls).toBe(0);
+    const calls = await engine.deps.store.listModelCalls({ mimicId: m.id });
+    expect(calls.some((c) => c.purpose === 'identity.enrich')).toBe(false);
+    const facts = await engine.deps.store.listFacts(m.id);
+    expect(facts.map((f) => [f.predicate, f.object])).toEqual(
+      expect.arrayContaining([
+        ['jobTitle', 'Senior Software Engineer'],
+        ['worksAt', 'Northwind Labs'],
+        ['workedAt', 'Contoso'],
+        ['educatedAt', 'Example State University'],
+      ]),
+    );
+    expect(facts.every((f) => f.sourceUrl === top!.url)).toBe(true);
+    // The candidate's location and the entity's are one fact, not two.
+    expect(facts.filter((f) => f.predicate === 'livesIn')).toHaveLength(1);
+  });
+
   it('never caches an empty search', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await createMimic(engine.deps, { ...intake, name: 'Nobody Known', consentSearch: true }, 'p1');

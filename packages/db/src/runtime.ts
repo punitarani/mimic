@@ -35,11 +35,23 @@ export class CfQueue implements JobQueue {
 /**
  * Job types a person waits on during sign-up. They get their own queue: Cloudflare Queues adds consumers only after
  * a batch finishes, so on a shared queue a 1–4 minute `pool.refill` batch held a 2-second search for its whole run.
+ * Producers route by type alone, whatever their own settings say (ADR-0034).
  */
-export function identityJobTypes(env: Pick<MimicBindings, 'ENRICH_PROVIDER'>): ReadonlySet<Job['type']> {
-  // Parallel enrichment takes minutes, which would hold the fast lane the same way; it stays on the shared queue.
-  return new Set(
-    env.ENRICH_PROVIDER === 'parallel' ? ['identity.search'] : ['identity.search', 'identity.enrich'],
+export const IDENTITY_JOB_TYPES: ReadonlySet<Job['type']> = new Set(['identity.search', 'identity.enrich']);
+
+/** Identity queues: `mimic-identity` plus the environment suffix (wrangler.jsonc). */
+export function isIdentityQueue(name: string): boolean {
+  return /^mimic-identity(?:-|$)/.test(name);
+}
+
+/**
+ * Whether the identity lane runs this job itself. Decided by the consumer, which is where enrichment runs and whose
+ * ENRICH_PROVIDER counts: Parallel enrichment takes minutes and would hold the lane the way `pool.refill` held the
+ * shared queue, so the consumer forwards it there.
+ */
+export function runsOnIdentityLane(job: Job, env: Pick<MimicBindings, 'ENRICH_PROVIDER'>): boolean {
+  return (
+    job.type === 'identity.search' || (job.type === 'identity.enrich' && env.ENRICH_PROVIDER !== 'parallel')
   );
 }
 
@@ -48,18 +60,16 @@ export class RoutedQueue implements JobQueue {
   constructor(
     private readonly main: JobQueue,
     private readonly identity: JobQueue | null,
-    private readonly identityTypes: ReadonlySet<Job['type']>,
   ) {}
   enqueue(job: Job, opts?: { delaySeconds?: number }) {
-    const q = this.identity && this.identityTypes.has(job.type) ? this.identity : this.main;
+    const q = this.identity && IDENTITY_JOB_TYPES.has(job.type) ? this.identity : this.main;
     return q.enqueue(job, opts);
   }
 }
 
 export function queueFor(env: MimicBindings): JobQueue {
   if (!env.JOBS) throw new Error('No job queue bound');
-  const identity = env.IDENTITY_JOBS ? new CfQueue(env.IDENTITY_JOBS) : null;
-  return new RoutedQueue(new CfQueue(env.JOBS), identity, identityJobTypes(env));
+  return new RoutedQueue(new CfQueue(env.JOBS), env.IDENTITY_JOBS ? new CfQueue(env.IDENTITY_JOBS) : null);
 }
 
 export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = {}): EngineDeps {
