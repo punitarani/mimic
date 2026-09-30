@@ -71,7 +71,9 @@ export interface SelectResult {
  * are revealed), then the remaining pool is predicted and scored. Biased (the pool was itself selected online);
  * use for iteration only. States use the `raw` strategy so derived traits/insights from the full history never leak.
  * For `voi`, the belief state is rebuilt from the simulated evidence alone: no trait reads, so uncertainty stays 1,
- * while weakness comes from the sealed predictions made during the simulation, as it does online.
+ * while weakness comes from the sealed predictions made during the simulation, as it does online. Selection, weakness
+ * and the reported accuracy all use Jev on its raw scale: what online selection reads under both cfg.default.v6 and
+ * the calibrated v7 primary (`selectionView`, `rawScale`; ADR-0048), so selectors compare the same way for either.
  */
 export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, datasetHash: string) {
   const all = await deps.store.listMimics({ consentResearch: true });
@@ -109,10 +111,12 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
     const pool = loaded.data.evidence.filter((e) => e.kind === 'adaptive' && inScope(e));
     for (const { label, selector: selCfg } of spec.selectors) {
       const selector = makeSelector(selCfg);
-      for (const budget of spec.series ? [maxBudget] : spec.budgets) {
-        if (pool.length <= budget) continue;
+      // A series is one trajectory per person, as long as their pool allows (one question is always left to score),
+      // so a person with a short pool still counts at every budget they reach; the budget rows are points on it.
+      for (const budget of spec.series ? [Math.min(maxBudget, pool.length - 1)] : spec.budgets) {
+        if (budget < 1 || pool.length <= budget) continue;
         const trace: number[] = [];
-        const rng = seededRng(`${spec.seed}:${label}:${m.id}:${budget}`);
+        const rng = seededRng(`${spec.seed}:${label}:${m.id}:${spec.series ? 'series' : budget}`);
         const chosen: EvidenceItem[] = [];
         const itemAccByQuestion = new Map<string, number>();
         let remaining = [...pool];

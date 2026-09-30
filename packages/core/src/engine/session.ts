@@ -7,7 +7,7 @@ import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
 import { getReserveSet, type ItemTemplate, reserveSetId } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
-import { LlmPredictor, makePredictor, promptVersionOf } from '../predictors';
+import { LlmPredictor, makePredictor, promptVersionOf, rawScale, selectionView } from '../predictors';
 import { pickRepeat } from '../repeats';
 import { questionAllowed } from '../scope';
 import { repeatAgreement, scorePrediction } from '../scoring';
@@ -38,7 +38,7 @@ import {
   type PredictionResult,
   type Question,
 } from '../types';
-import { beliefFromLoaded, loadBeliefSources } from './belief';
+import { beliefFromLoaded, loadBeliefSources, visibleScoredAnswers, visibleServedScored } from './belief';
 import {
   contextState,
   facetCounts,
@@ -305,14 +305,12 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
  */
 export function rampAllows(
   cfg: PipelineConfig,
-  loaded: Pick<LoadedMimic, 'questions' | 'scope'>,
+  loaded: Pick<LoadedMimic, 'questions' | 'answers' | 'scope'>,
 ): (q: { facetIds: string[] }) => boolean {
   const ramp = cfg.selector.type === 'voi' ? cfg.selector.trustRamp : undefined;
   if (!ramp) return () => true;
-  const answered = loaded.questions.filter(
-    (q) => q.status === 'answered' && isScoredKind(q.kind) && !loaded.scope.hiddenQuestionIds.has(q.id),
-  ).length;
-  if (answered >= ramp.minAnswered) return () => true;
+  // The belief's own count (`person.nAnswered`), so this pre-filter and the selector's ramp agree.
+  if (visibleScoredAnswers(loaded).length >= ramp.minAnswered) return () => true;
   return (q) => !q.facetIds.some((f) => loaded.scope.sensitiveFacets.has(f));
 }
 
@@ -351,11 +349,9 @@ async function coverageTopUp(
   if (cfg.selector.type !== 'voi') return [];
   const { balance, trustRamp } = cfg.selector;
   if (!balance && !trustRamp) return [];
-  const visible = loaded.questions.filter((q) => !loaded.scope.hiddenQuestionIds.has(q.id));
-  const asked = visible.filter(
-    (q) => (q.status === 'answered' || q.status === 'served') && isScoredKind(q.kind),
-  );
-  const answered = asked.filter((q) => q.status === 'answered');
+  // The belief's own answered and waiting questions, so the top-up covers exactly what the selector sees as missing.
+  const answered = visibleScoredAnswers(loaded);
+  const asked = [...answered, ...visibleServedScored(loaded)];
   const facets = await facetsFor(deps, m, cfg);
   const byId = new Map(facets.map((f) => [f.id, f]));
   const pooledHas = (want: (q: { facetIds: string[] }) => boolean) => pool.some(want);
@@ -529,8 +525,10 @@ async function serveWithPredictions(
 ): Promise<NextResult> {
   const primarySpec = cfg.predictor.primary;
   // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
-  const primary = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
   const baselinePredictor = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.baseline'));
+  // Selection scores candidates on the primary's raw scale and calibrates only what it stores, so a calibrated primary
+  // changes what is stored and shown, not which question is asked (ADR-0048).
+  const view = selectionView(deps.gateway, primarySpec);
 
   const state = await timed(deps, 'state', () => sealedState(deps, loaded, cfg, seq, pool));
   const baseState = contextState(loaded, cfg);
@@ -548,13 +546,14 @@ async function serveWithPredictions(
   const hypothesisStates: PersonState[] = [];
   if (fixed) {
     chosen = fixed;
+    const primary = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
     [primaryResult] = (await timed(deps, 'select', () => primary.predict(state, [fixed]))) as [
       PredictionResult,
     ];
   } else {
     const selector = makeSelector(cfg.selector);
-    // Same prompt as the primary, including a prompt variant (ADR-0028); logged under its own purpose.
-    const explore = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'select.bald'));
+    // Same prompt and scale as selection's primary (ADR-0028, ADR-0048); logged under its own purpose.
+    const explore = view.predictor(ctxFor(m, 'select.bald'));
     const [hyp, redundancy, voi] = await Promise.all([
       usesHypotheses(cfg.selector) ? loadHypothesisSet(deps, m, loaded) : undefined,
       timed(deps, 'redundancy', () => redundancyFn(deps, m, pool, asked)),
@@ -564,7 +563,7 @@ async function serveWithPredictions(
       selector.select({
         pool,
         state,
-        primary,
+        primary: view.predictor(ctxFor(m, 'predict.primary')),
         coverage: (q) => questionCoverage(counts, q),
         redundancy,
         rng,
@@ -576,20 +575,22 @@ async function serveWithPredictions(
       }),
     );
     chosen = sel.question as QuestionRecord;
-    primaryResult = sel.primary;
+    primaryResult = view.calibrate(sel.primary, chosen);
     selection = { selector: cfg.selector.type, ...sel.diagnostics };
     if (hyp && sel.hypothesisPreds) {
       selection.hypothesisWeights = hyp.weights.map((w) => Math.round(w * 1000) / 1000);
       for (const h of sel.hypothesisPreds) {
         hypothesisStates.push(h.state);
+        // Stored as the primary's own output, like every row it makes; the posterior reads it on the raw scale.
+        const r = view.calibrate(h.result, chosen);
         hypothesisRows.push({
           id: deps.newId(),
           questionId: chosen.id,
           mimicId: m.id,
           predictorId: primarySpec,
           role: 'hypothesis',
-          dist: h.result.dist,
-          confidence: h.result.confidence ?? null,
+          dist: r.dist,
+          confidence: r.confidence ?? null,
           stateHash: h.state.meta.stateHash,
           evidenceSeqMax: h.state.meta.evidenceSeqMax,
           configHash: m.configHash,
@@ -742,7 +743,8 @@ export async function loadHypothesisSet(
     if (!tag || tag.seqUpTo !== set.seqUpTo) continue;
     const a = answerByQ.get(r.questionId);
     if (!a) continue;
-    obs.push({ index: tag.index, pAnswer: r.dist[a.value] ?? 0 });
+    // On the raw scale the posterior was built for, whatever the primary's calibration (ADR-0048).
+    obs.push({ index: tag.index, pAnswer: rawScale(r.predictorId, r.dist)[a.value] ?? 0 });
   }
   return { ...set, weights: hypothesisPosterior(obs, set.hypotheses.length) };
 }

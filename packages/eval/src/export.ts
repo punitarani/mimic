@@ -17,6 +17,7 @@ import {
   stripSpecialAreas,
 } from '@mimic/core';
 import { openLocalDb } from '@mimic/db/local';
+import { NOT_REAL_PREFIXES } from './rubric';
 import { remoteFlags, WORKER_DIR } from './wrangler';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -210,7 +211,9 @@ export async function scrubExport(
     }
     for (const r of (await client.execute('select id from participants')).rows) {
       const oldId = String(r.id);
-      const newId = pseudo('p', oldId);
+      // The population marker (scripted, imported) is not identifying, and reports must keep telling them apart.
+      const keep = NOT_REAL_PREFIXES.find((x) => oldId.startsWith(x)) ?? '';
+      const newId = `${keep}${pseudo('p', oldId)}`;
       await client.execute({ sql: 'update participants set id = ? where id = ?', args: [newId, oldId] });
       await client.execute({
         sql: 'update mimics set participant_id = ? where participant_id = ?',

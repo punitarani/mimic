@@ -21,7 +21,7 @@ import {
   sweeps,
   touchesSensitive,
   VOI_SELECTOR,
-  VOI_SELECTOR_V7,
+  VOI_SELECTOR_V8,
   VoiSelector,
 } from '../src';
 
@@ -32,7 +32,7 @@ const ALL: MimicScope = {
   consents: { politics: true, religion: true, sexuality: true, health: true, money: true },
 };
 const scoped = (scope: MimicScope) => ONTOLOGY_V2.filter((f) => facetAllowed(scope, f));
-const RAMP = VOI_SELECTOR_V7.trustRamp!;
+const RAMP = VOI_SELECTOR_V8.trustRamp!;
 const mix = { core: 0.15, casual: 0.55, professional: 0.3 };
 
 function answer(seq: number, facetIds: string[], over: Partial<BeliefAnswer> = {}): BeliefAnswer {
@@ -243,9 +243,9 @@ describe('the balanced, ramped voi selector (ADR-0044)', () => {
 
   it('balance pulls toward the category and group furthest behind', async () => {
     const b = belief(psychology(10));
-    const v7 = new VoiSelector({ ...VOI_SELECTOR_V7, trustRamp: undefined, piPopulation: 0, nuBurden: 0 });
+    const v8 = new VoiSelector({ ...VOI_SELECTOR_V8, trustRamp: undefined, piPopulation: 0, nuBurden: 0 });
     const pool = [q('psych', ['self_control']), q('values', ['care_harm'])];
-    const sel = await v7.select(ctx(pool, b));
+    const sel = await v8.select(ctx(pool, b));
     expect(sel.question.id).toBe('values');
     expect(sel.diagnostics.category).toBeCloseTo(1, 12);
     expect(sel.diagnostics.group).toBe(1);
@@ -253,11 +253,11 @@ describe('the balanced, ramped voi selector (ADR-0044)', () => {
 
   it('skips a candidate whose categories are over the cap while another is not', () => {
     const b = belief(psychology(10));
-    const v7 = new VoiSelector(VOI_SELECTOR_V7);
+    const v8 = new VoiSelector(VOI_SELECTOR_V8);
     const pool = [q('psych', ['self_control']), q('work', ['leadership_drive'])];
-    expect(v7.eligible(ctx(pool, b))).toEqual([false, true]);
+    expect(v8.eligible(ctx(pool, b))).toEqual([false, true]);
     // Unless every candidate is over the cap.
-    expect(v7.eligible(ctx([q('p1', ['self_control']), q('p2', ['growth_mindset'])], b))).toEqual([
+    expect(v8.eligible(ctx([q('p1', ['self_control']), q('p2', ['growth_mindset'])], b))).toEqual([
       true,
       true,
     ]);
@@ -271,12 +271,12 @@ describe('the balanced, ramped voi selector (ADR-0044)', () => {
       ...[8, 9, 10].map((s) => answer(s, ['social_energy'])),
     ]);
     expect(b.categories.work!.shortfall).toBe(1);
-    const v7 = new VoiSelector(VOI_SELECTOR_V7);
+    const v8 = new VoiSelector(VOI_SELECTOR_V8);
     expect(
-      v7.eligible(ctx([q('values', ['fairness_cheating']), q('work', ['leadership_drive'])], b)),
+      v8.eligible(ctx([q('values', ['fairness_cheating']), q('work', ['leadership_drive'])], b)),
     ).toEqual([false, true]);
     // Without a work candidate, nothing is held back.
-    expect(v7.eligible(ctx([q('values', ['fairness_cheating']), q('life', ['forgiveness'])], b))).toEqual([
+    expect(v8.eligible(ctx([q('values', ['fairness_cheating']), q('life', ['forgiveness'])], b))).toEqual([
       true,
       true,
     ]);
@@ -284,14 +284,14 @@ describe('the balanced, ramped voi selector (ADR-0044)', () => {
 
   it('holds sensitive candidates back before the ramp opens, even when they are all there is', async () => {
     const early = belief(psychology(RAMP.minAnswered - 1));
-    const v7 = new VoiSelector(VOI_SELECTOR_V7);
+    const v8 = new VoiSelector(VOI_SELECTOR_V8);
     const sensitive = q('pol', ['political_leaning']);
     expect(touchesSensitive(early, sensitive)).toBe(true);
-    expect(v7.eligible(ctx([sensitive, q('ok', ['care_harm'])], early))).toEqual([false, true]);
-    const sel = await v7.select(ctx([sensitive, q('ok', ['care_harm'])], early));
+    expect(v8.eligible(ctx([sensitive, q('ok', ['care_harm'])], early))).toEqual([false, true]);
+    const sel = await v8.select(ctx([sensitive, q('ok', ['care_harm'])], early));
     expect(sel.question.id).toBe('ok');
     const open = belief(psychology(RAMP.minAnswered));
-    expect(v7.eligible(ctx([sensitive, q('ok', ['care_harm'])], open))).toEqual([true, true]);
+    expect(v8.eligible(ctx([sensitive, q('ok', ['care_harm'])], open))).toEqual([true, true]);
   });
 
   it('the cap and the floor choose among what the ramp allows, never narrowing to held-back candidates only', async () => {
@@ -302,21 +302,21 @@ describe('the balanced, ramped voi selector (ADR-0044)', () => {
     ]);
     expect(b.person.nAdaptive).toBe(4);
     expect(rampOpen(b, RAMP)).toBe(false);
-    const v7 = new VoiSelector(VOI_SELECTOR_V7);
+    const v8 = new VoiSelector(VOI_SELECTOR_V8);
     // The only candidate outside psychology is sensitive: held back, so the psychology one stays eligible.
     const pool = [q('pol', ['political_leaning']), q('psych', ['self_control'])];
-    expect(v7.eligible(ctx(pool, b))).toEqual([false, true]);
-    const sel = await v7.select(ctx(pool, b));
+    expect(v8.eligible(ctx(pool, b))).toEqual([false, true]);
+    const sel = await v8.select(ctx(pool, b));
     expect(sel.question.id).toBe('psych');
     expect(sel.diagnostics.failed).toBeUndefined();
   });
 
   it('from sweepFrom, prefers a consented sensitive facet not yet asked about', async () => {
     const b = belief(psychology(RAMP.sweepFrom));
-    const v7 = new VoiSelector({ ...VOI_SELECTOR_V7, balance: undefined, piPopulation: 0, nuBurden: 0 });
+    const v8 = new VoiSelector({ ...VOI_SELECTOR_V8, balance: undefined, piPopulation: 0, nuBurden: 0 });
     const pool = [q('plain', ['care_harm']), q('sweep', ['religiosity'])];
     expect(sweeps(b, RAMP, pool[1]!)).toBe(true);
-    const sel = await v7.select(ctx(pool, b));
+    const sel = await v8.select(ctx(pool, b));
     expect(sel.question.id).toBe('sweep');
     expect(sel.diagnostics.sweep).toBe(1);
     // Once asked, it no longer sweeps.
@@ -340,21 +340,21 @@ describe('the balanced, ramped voi selector (ADR-0044)', () => {
     // Ten answers spread evenly over the four categories but only four groups: six groups are untouched.
     const spread = ['openness', 'care_harm', 'social_energy', 'leadership_drive'];
     const b = belief(Array.from({ length: 10 }, (_, i) => answer(i + 1, [spread[i % 4]!])));
-    const v7 = new VoiSelector(VOI_SELECTOR_V7);
+    const v8 = new VoiSelector(VOI_SELECTOR_V8);
     const pool = [q('touched', ['fairness_cheating']), q('fresh', ['growth_mindset'])];
     // Question 12: nine questions left to 20 for six groups; nothing forced.
-    expect(v7.eligible({ ...ctx(pool, b), seq: 12 })).toEqual([true, true]);
+    expect(v8.eligible({ ...ctx(pool, b), seq: 12 })).toEqual([true, true]);
     // Question 16: five questions left for six groups.
-    expect(v7.eligible({ ...ctx(pool, b), seq: 16 })).toEqual([false, true]);
+    expect(v8.eligible({ ...ctx(pool, b), seq: 16 })).toEqual([false, true]);
   });
 
   it('when the sweep deadline presses, only unswept consented sensitive candidates are eligible, never before the ramp', () => {
-    const v7 = new VoiSelector({ ...VOI_SELECTOR_V7, balance: undefined });
+    const v8 = new VoiSelector({ ...VOI_SELECTOR_V8, balance: undefined });
     const pool = [q('plain', ['care_harm']), q('sweep', ['religiosity'])];
     const b = belief(psychology(RAMP.sweepFrom));
-    expect(v7.eligible({ ...ctx(pool, b), seq: 15 })).toEqual([true, true]);
-    expect(v7.eligible({ ...ctx(pool, b), seq: 25 })).toEqual([false, true]); // 11 unswept, 6 questions left
+    expect(v8.eligible({ ...ctx(pool, b), seq: 15 })).toEqual([true, true]);
+    expect(v8.eligible({ ...ctx(pool, b), seq: 25 })).toEqual([false, true]); // 11 unswept, 6 questions left
     const early = belief(psychology(RAMP.minAnswered - 1));
-    expect(v7.eligible({ ...ctx(pool, early), seq: 29 })).toEqual([true, false]);
+    expect(v8.eligible({ ...ctx(pool, early), seq: 29 })).toEqual([true, false]);
   });
 });

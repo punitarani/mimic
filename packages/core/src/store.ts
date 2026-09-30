@@ -340,6 +340,9 @@ export interface ScoredItemSource {
   questionId: string;
   role: 'primary' | 'baseline';
   fallback: boolean;
+  /** The row's predictor and distribution, so a calibrated primary can be re-scored on its raw scale (ADR-0048). */
+  predictorId: string;
+  dist: Distribution;
   itemAcc: number;
   logLoss: number;
   question: Pick<QuestionRecord, 'kind' | 'type' | 'domain' | 'facetIds' | 'options' | 'itemKey'>;

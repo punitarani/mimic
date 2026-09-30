@@ -10,8 +10,9 @@ import {
 
 /**
  * The M10 candidate (ADR-0042): cfg.default.v6 on ontology v2 with reserve.v2, gen.v3, gates.v3, reflect.v2 and an
- * everyday-first domain mix. An eval config only: cfg.default.v7 (ADR-0044) is this with the selector's category
- * balance and trust ramp, so comparing the two isolates the selector.
+ * everyday-first domain mix. Pinned to v6, so the calibrated primary (cfg.default.v7, ADR-0048) does not change what
+ * it measures or its hash. An eval config only: cfg.default.v8 (ADR-0044) adds the selector's category balance and
+ * trust ramp on top of it.
  */
 export const M10_CANDIDATE_CONFIG: PipelineConfig = {
   ...DEFAULT_CONFIG_V6,

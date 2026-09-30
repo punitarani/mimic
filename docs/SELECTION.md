@@ -39,7 +39,8 @@ Per facet *f*:
   of insights citing *f* that were superseded by contradiction; repeat-probe disagreement on items touching *f*;
   plus half the share of *torn* answers on *f* (latency above twice the person's own median: near indifference).
 - **weakness(f)** — the mimic's recent prediction error on questions touching *f*: `1 − item_acc` of the sealed
-  primary over the last 12 such questions, shrunk toward the person's overall error with prior weight 2.
+  primary over the last 12 such questions, shrunk toward the person's overall error with prior weight 2. A calibrated
+  primary is scored on its raw scale here (`rawScale`, ADR-0048), so calibration never moves selection.
 - **coverage(f)** — `min(1, n_f / 3)` as before; **exposure(f)** — share of the person's adaptive questions touching *f*.
 - **need(f)** — the weighted sum the generator targets: `0.35·uncertainty + 0.25·conflict + 0.25·weakness + 0.15·(1 − coverage)`.
 
@@ -91,7 +92,7 @@ facets over the exposure cap are listed as ones to avoid.
 
 Population statistics never enter the generator prompt (PLAN §3.8).
 
-## 5a. Categories, the trust ramp and the sensitive sweep (`cfg.default.v7`, ADR-0044)
+## 5a. Categories, the trust ramp, the sensitive sweep and coverage deadlines (`cfg.default.v8`, ADR-0044)
 
 Value of information alone asks where the mimic is least sure, which after the anchors (seven of ten on psychology)
 kept sessions on psychology and life: offline, the M10 candidate gave psychology 50% of the first 30 questions and
@@ -169,7 +170,8 @@ A cron job (`stats.refresh`, hourly) aggregates the scored questions of research
 
 - **items** with a stable `item_key` (anchors, reserve bank): the number of people, the normalised entropy of their
   answers (discrimination: an item everyone answers the same way carries no information about individuals), the
-  context-only baseline's error, the primary's error and log loss, lift, and mean latency;
+  context-only baseline's error, the primary's error and log loss, lift, and mean latency (all on the predictor's raw
+  scale, so people on calibrated and uncalibrated configs pool; ADR-0048);
 - **archetypes** `facet | domain | type`: the same, minus answer entropy, because generated prompts are unique per person.
 
 `pop(q)` is an item's `½·answer entropy + ½·baseline error` (or, for generated questions, the mean over its facets'
@@ -221,7 +223,7 @@ Across people:
 - `pnpm eval -- rubric --data x.sqlite` reports concreteness, category shares, groups reached, sensitive coverage and
   ordering by population (real, scripted, imported) and config; `--arm` splits by experiment arm.
 - Online: E3 arms `entropy` vs `voi` on questions-to-sustained-fidelity and fidelity at 20 (PLAN §12.7), and E3b
-  `cfg.default.v6` vs `cfg.default.v7` (ADR-0045).
+  the M10 candidate (v4's `voi` on ontology v2) vs `cfg.default.v8` (ADR-0045).
 - `latencyHints` is a state ablation for replay (E2).
 
 ## 11. What changes in code

@@ -641,7 +641,7 @@ money" in scope, workplace scenes are rejected in code and the professional quot
 ### 9.5 Selection
 
 Every strategy scores pooled questions only. Repeat probes are scheduled outside the selector. The default since
-`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; `cfg.default.v7` adds
+`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; `cfg.default.v8` adds
 category and facet-group balance, the trust ramp and the sensitive sweep (`docs/SELECTION.md` §5a, ADR-0044). The
 strategies below remain as controls and experiment arms.
 
@@ -1071,8 +1071,10 @@ exercise scores at least 4 of 5.
   situations), `gates.v3` recalibrated on a checked-in labelled set (ADR-0042).
 - **M11** Intake and session UI for categories and consent, the full enforcement sweep, leakage tests and the
   special-category export scrub (ADR-0043).
-- **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v7` (ADR-0044).
-- **M13** Offline v6 vs v7 rubric report and a two-arm experiment on real people (ADR-0045).
+- **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v8` (ADR-0044; v7 went to the
+  calibrated primary, ADR-0048).
+- **M13** Offline rubric report of v8 against the M10 candidate (pinned to v6; calibration doesn't change which
+  questions are asked, ADR-0048) and a two-arm experiment on real people (ADR-0045).
 
 **Rubric (each row scored 1–5 with evidence):**
 

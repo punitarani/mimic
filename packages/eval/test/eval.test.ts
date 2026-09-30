@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { curateSoul, draftSoul, SoulCuration, VOI_SELECTOR, VOI_SELECTOR_V7 } from '@mimic/core';
+import { curateSoul, draftSoul, SoulCuration, VOI_SELECTOR, VOI_SELECTOR_V8 } from '@mimic/core';
 import { schema } from '@mimic/db';
 import type { MemoryBlobs } from '@mimic/db/local';
 import { sql } from 'drizzle-orm';
@@ -138,7 +138,7 @@ describe('replay (M7)', () => {
       name: 's',
       selectors: [
         { label: 'voi', selector: VOI_SELECTOR },
-        { label: 'voi-v7', selector: VOI_SELECTOR_V7 },
+        { label: 'voi-v8', selector: VOI_SELECTOR_V8 },
       ],
       budgets: [3, 6],
       split: 'all' as const,
@@ -159,11 +159,16 @@ describe('replay (M7)', () => {
     }
     expect((r.run.metrics!.sustained as Array<{ selector: string }>).map((x) => x.selector)).toEqual([
       'voi',
-      'voi-v7',
+      'voi-v8',
     ]);
     const md = renderReport(r.run);
     expect(md).toContain('Questions to sustain 75.0% accuracy on the rest');
     expect(md).toContain('| 6 |');
+
+    // A budget past someone's pool doesn't drop them from the budgets they do reach.
+    const long = await simulateSelection(engine.deps, { ...spec, budgets: [3, 500] }, 'hash');
+    expect(long.results.find((x) => x.selector === 'voi' && x.budget === 3)!.people).toBe(1);
+    expect(long.results.find((x) => x.selector === 'voi' && x.budget === 500)!.people).toBe(0);
 
     // As if the person had turned "Work and money" off: no work question is picked or predicted.
     const narrow = await simulateSelection(

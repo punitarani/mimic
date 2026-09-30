@@ -11,6 +11,7 @@ import {
   DEFAULT_CONFIG_V4,
   DEFAULT_CONFIG_V5,
   DEFAULT_CONFIG_V6,
+  DEFAULT_CONFIG_V7,
   entropy,
   expectedCalibrationError,
   gateFailures,
@@ -162,24 +163,32 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v7 and its predecessors (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v8 and its predecessors (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
-    // v7 (ADR-0044): v6's predictors on ontology v2 with reserve.v2, gen.v3, gates.v3, reflect.v2, an everyday-first
-    // domain mix and the balanced, ramped selector.
-    expect(DEFAULT_CONFIG_LABEL).toBe('cfg.default.v7');
-    expect(DEFAULT_CONFIG.predictor).toEqual(DEFAULT_CONFIG_V6.predictor);
+    // v8 (ADR-0044): v7's calibrated primary and shadows on ontology v2 with reserve.v2, gen.v3, gates.v3, reflect.v2,
+    // an everyday-first domain mix and the balanced, ramped selector.
+    expect(DEFAULT_CONFIG_LABEL).toBe('cfg.default.v8');
+    expect(DEFAULT_CONFIG.predictor).toEqual(DEFAULT_CONFIG_V7.predictor);
     expect(DEFAULT_CONFIG.selector).toEqual({
-      ...DEFAULT_CONFIG_V6.selector,
+      ...DEFAULT_CONFIG_V7.selector,
       balance: { category: 0.35, group: 0.25, cap: 0.4, groupsBy: 20 },
       trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3, sweepBy: 30 },
     });
     expect(DEFAULT_CONFIG.ontologyVersion).toBe('v2');
     expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v3');
     expect(configHash(DEFAULT_CONFIG)).toBe(
-      '253b81e3004bb664d61e2ad24a8c9e9a8201fa14dba79676ae8e2efe0e8b3d9d',
+      '08956a2222de74c94bb21e6ace0a7a2c69e4d441a41e0cbe4be5a26d638ac44f',
     );
-    // v6 (ADR-0041): every LLM shadow on predict.v2, with v5's reasoning-off Qwen kept as a control; nothing else
-    // changes. Calibrated Jev is derived from the stored primary, not a second Jev call.
+    // v7 (ADR-0048): v6 with the calibrated primary and without the reasoning-off Qwen control; nothing else changes.
+    expect(DEFAULT_CONFIG_V7.predictor).toEqual({
+      primary: 'jev:typesafe/jev-1.13@jev-predict.v2',
+      shadows: DEFAULT_CONFIG_V4.predictor.shadows.map((s) => `${s}@predict.v2`),
+    });
+    expect({ ...DEFAULT_CONFIG_V7, predictor: DEFAULT_CONFIG_V6.predictor }).toEqual(DEFAULT_CONFIG_V6);
+    expect(configHash(DEFAULT_CONFIG_V7)).toBe(
+      '23db631f6895e863b4ee690fefa3e1903d160f5b8b045c9ee725f2096e156d15',
+    );
+    // v6 (ADR-0041): every LLM shadow on predict.v2, with v5's reasoning-off Qwen kept as a control.
     expect(DEFAULT_CONFIG_V6.predictor.shadows).toEqual([
       ...DEFAULT_CONFIG_V4.predictor.shadows.map((s) => `${s}@predict.v2`),
       'llm:qwen/qwen3.8-flash@predict.v1-direct',

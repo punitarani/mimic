@@ -1,10 +1,22 @@
 import { type BeliefAnswer, type BeliefState, buildBelief } from '../belief';
 import type { PipelineConfig } from '../config';
-import { repeatAgreement } from '../scoring';
+import { calibrationTemperatureOf, rawScale } from '../predictors';
+import { repeatAgreement, scorePrediction } from '../scoring';
 import type { AnswerRecord, InsightRecord, MimicRecord, QuestionRecord, ScoredPredictionRow } from '../store';
 import { type Facet, isScoredKind } from '../types';
 import type { LoadedMimic } from './data';
 import type { EngineDeps } from './deps';
+
+/**
+ * A scored primary's item accuracy on its predictor's raw scale: re-scored with calibration undone when the primary
+ * is calibrated (ADR-0048), the stored score otherwise.
+ */
+export function rawItemAcc(r: ScoredPredictionRow, answer: string | undefined): number {
+  if (answer === undefined || calibrationTemperatureOf(r.prediction.predictorId) === 1)
+    return r.score.itemAcc;
+  return scorePrediction(r.question.type, rawScale(r.prediction.predictorId, r.prediction.dist), answer)
+    .itemAcc;
+}
 
 export interface BeliefSources {
   /** Every insight, including superseded ones (contradictions raise a facet's conflict). */
@@ -50,6 +62,30 @@ export function beliefAnswers(
 }
 
 /**
+ * The anchor and adaptive answers the person's scope still shows, as the belief state counts them. The trust ramp and
+ * the reserve top-up (ADR-0044) count with this too, so the engine's pre-filter and the selector can never disagree
+ * on how many questions have been answered.
+ */
+export function visibleScoredAnswers(
+  loaded: Pick<LoadedMimic, 'questions' | 'answers' | 'scope'>,
+  accByQ: ReadonlyMap<string, number> = new Map(),
+  beforeSeq = Number.MAX_SAFE_INTEGER,
+): BeliefAnswer[] {
+  const qById = new Map(loaded.questions.map((q) => [q.id, q]));
+  const visible = loaded.answers.filter((a) => !loaded.scope.hiddenQuestionIds.has(a.questionId));
+  return beliefAnswers(visible, qById, accByQ, beforeSeq);
+}
+
+/** Anchor and adaptive questions served and waiting for an answer, in scope (the belief's `served`). */
+export function visibleServedScored(
+  loaded: Pick<LoadedMimic, 'questions' | 'scope'>,
+): Array<{ type: QuestionRecord['type']; domain: QuestionRecord['domain']; facetIds: string[] }> {
+  return loaded.questions
+    .filter((q) => q.status === 'served' && isScoredKind(q.kind) && !loaded.scope.hiddenQuestionIds.has(q.id))
+    .map((q) => ({ type: q.type, domain: q.domain, facetIds: q.facetIds }));
+}
+
+/**
  * The person's belief state from loaded data (docs/SELECTION.md §3). Answered anchor and adaptive questions with
  * seq < `beforeSeq` count as answers; served, unanswered ones count toward coverage and exposure only.
  */
@@ -62,14 +98,14 @@ export function beliefFromLoaded(
 ): BeliefState {
   const beforeSeq = opts.beforeSeq ?? Number.MAX_SAFE_INTEGER;
   const qById = new Map(loaded.questions.map((q) => [q.id, q]));
-  const accByQ = new Map(sources.scored.map((r) => [r.question.id, r.score.itemAcc]));
-  // Answers the scope hides (a withdrawn category) never count toward any belief (ADR-0040).
-  const visible = loaded.answers.filter((a) => !loaded.scope.hiddenQuestionIds.has(a.questionId));
-  const answers = beliefAnswers(visible, qById, accByQ, beforeSeq);
   const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
-  const served = loaded.questions
-    .filter((q) => q.status === 'served' && isScoredKind(q.kind) && !loaded.scope.hiddenQuestionIds.has(q.id))
-    .map((q) => ({ type: q.type, domain: q.domain, facetIds: q.facetIds }));
+  // The weakness term reads the primary's accuracy on its raw scale, the one it was tuned on (ADR-0048).
+  const accByQ = new Map(
+    sources.scored.map((r) => [r.question.id, rawItemAcc(r, answerByQ.get(r.question.id)?.value)]),
+  );
+  // Answers the scope hides (a withdrawn category) never count toward any belief (ADR-0040).
+  const answers = visibleScoredAnswers(loaded, accByQ, beforeSeq);
+  const served = visibleServedScored(loaded);
   const repeats: Array<{ facetIds: string[]; agreement: number }> = [];
   for (const q of loaded.questions) {
     if (q.kind !== 'repeat' || !q.repeatOf || loaded.scope.hiddenQuestionIds.has(q.id)) continue;

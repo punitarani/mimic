@@ -1,5 +1,6 @@
 import {
   categoryQuota,
+  categoryShares,
   categoryTargets,
   domainQuota,
   overExposed,
@@ -24,7 +25,13 @@ import {
 } from '../learning';
 import { allOntologyFacets, getAnchorSet } from '../ontology';
 import { computeItemStats, type ScoredItemRow } from '../population';
-import { assertPredictorId, makePredictor, promptVersionOf } from '../predictors';
+import {
+  assertPredictorId,
+  calibrationTemperatureOf,
+  makePredictor,
+  promptVersionOf,
+  rawScale,
+} from '../predictors';
 import { guardHypothesisText, guardInsight, reflectionFactAllowed, researchAllowed } from '../scope';
 import { scorePrediction } from '../scoring';
 import { facetCoverage, usesHypotheses } from '../selectors';
@@ -37,11 +44,12 @@ import {
   type MimicRecord,
   type PredictionRecord,
   type QuestionRecord,
+  type ScoredItemSource,
   StaleEvidenceError,
 } from '../store';
 import { type Domain, isScoredKind, learnsFrom, type PersonState } from '../types';
 import { writeSnapshot } from './artifact';
-import { beliefFromLoaded, loadBeliefSources } from './belief';
+import { beliefFromLoaded, loadBeliefSources, visibleScoredAnswers, visibleServedScored } from './belief';
 import {
   facetCounts,
   type LoadedMimic,
@@ -66,7 +74,7 @@ import {
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
 import { PENDING_WINDOW_MS } from './lab';
 import { refreshQaVector } from './rewind';
-import { invalidateItemStatsCache, loadHypotheses, MAX_POOL, MIN_POOL } from './session';
+import { invalidateItemStatsCache, loadHypotheses, MAX_POOL, MIN_POOL, rampAllows } from './session';
 
 export const MAX_JOB_ATTEMPTS = 5;
 
@@ -440,8 +448,14 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
   // only from people who consented to research use of that area.
   const people = new Map((await deps.store.listMimics({ consentResearch: true })).map((m) => [m.id, m]));
   const facetById = allOntologyFacets();
+  // Item statistics feed selection (VOI's population term), so they read every primary and baseline on its raw
+  // scale: a calibrated primary's rows are re-scored with calibration undone (ADR-0048).
+  const rawScores = (r: ScoredItemSource) =>
+    calibrationTemperatureOf(r.predictorId) === 1
+      ? { itemAcc: r.itemAcc, logLoss: r.logLoss }
+      : scorePrediction(r.question.type, rawScale(r.predictorId, r.dist), r.answer.value);
   const baselineByQ = new Map(
-    sources.filter((r) => r.role === 'baseline').map((r) => [r.questionId, r.itemAcc]),
+    sources.filter((r) => r.role === 'baseline').map((r) => [r.questionId, rawScores(r).itemAcc]),
   );
   const rows: ScoredItemRow[] = [];
   for (const r of sources) {
@@ -449,6 +463,7 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
     if (!isScoredKind(r.question.kind)) continue;
     const who = people.get(r.mimicId);
     if (!who || !researchAllowed(who.scope, r.question.facetIds, facetById)) continue;
+    const raw = rawScores(r);
     rows.push({
       mimicId: r.mimicId,
       itemKey: r.question.itemKey ?? null,
@@ -457,8 +472,8 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
       type: r.question.type,
       answer: r.answer.value,
       nOptions: r.question.options.length,
-      primaryItemAcc: r.itemAcc,
-      primaryLogLoss: r.logLoss,
+      primaryItemAcc: raw.itemAcc,
+      primaryLogLoss: raw.logLoss,
       baselineItemAcc: baselineByQ.get(r.questionId) ?? null,
       latencyMs: r.answer.latencyMs,
     });
@@ -584,7 +599,10 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   const pool = loaded.questions.filter(
     (q) => q.kind === 'adaptive' && q.status === 'pooled' && !loaded.scope.hiddenQuestionIds.has(q.id),
   );
-  if (pool.length >= MIN_POOL) return;
+  // Only what the trust ramp lets the next serve offer counts (ADR-0044), as it does in serveNext: a pool of
+  // sensitive items waiting for the ramp is still a low pool.
+  const servable = pool.filter(rampAllows(cfg, loaded));
+  if (servable.length >= MIN_POOL) return;
   // Candidates only feed the session, so refills stop with it and never draw on the page's reserve.
   requireSessionBudget(deps, m, cfg);
   const facets = await facetsFor(deps, m, cfg);
@@ -612,8 +630,14 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
     const cap = voi ? voi.exposureCap : 1;
     if (voi?.balance) {
       // Category-aware targets and quota (ADR-0044). The anchors still waiting are served before anything this batch
-      // writes, so they count toward the trust ramp and the sweep.
+      // writes, so they count toward the trust ramp and the sweep, and as asked in the category shares: the first
+      // batch sees the anchors' lean toward psychology instead of an even start.
       const lookahead = waitingAnchors.length;
+      belief.categories = categoryShares(facets, [
+        ...visibleScoredAnswers(loaded).map((a) => a.facetIds),
+        ...visibleServedScored(loaded).map((q) => q.facetIds),
+        ...waitingAnchors.map((q) => q.facetIds),
+      ]);
       targetDetails = categoryTargets(belief, facets, BALANCED_TARGETS, {
         exposureCap: cap,
         lookahead,

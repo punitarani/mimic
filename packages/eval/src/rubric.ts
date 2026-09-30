@@ -32,6 +32,12 @@ export const BY = { shares: 30, groups: 20, sensitive: 30, early: 5 } as const;
 export const POPULATIONS = ['real', 'scripted', 'twin2k'] as const;
 export type Population = (typeof POPULATIONS)[number];
 
+/**
+ * Participant-ID prefixes that mark people who are not real users. Exports keep the prefix when they pseudonymise the
+ * ID (`scrubExport`), so a scripted session in an exported file is never reported as a real person.
+ */
+export const NOT_REAL_PREFIXES = ['script:', 'twin2k:'] as const;
+
 export function populationOf(participantId: string): Population {
   if (participantId.startsWith('script:')) return 'scripted';
   if (participantId.startsWith('twin2k:')) return 'twin2k';

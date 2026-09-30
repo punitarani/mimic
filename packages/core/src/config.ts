@@ -237,36 +237,53 @@ export const DEFAULT_CONFIG_V6: PipelineConfig = {
 };
 
 /**
+ * `cfg.default.v7` (ADR-0048): v6 with the primary calibrated (`jev-predict.v2`, temperature 4) and without the
+ * reasoning-off Qwen control. On the held-out people calibration cut the primary's log loss from 1.80 to 1.12 with
+ * accuracy unchanged; selection keeps Jev's raw scale, so the questions asked are chosen as before. The control showed
+ * reasoning makes Qwen more accurate and reliable, which answers its question. Everything else is v6.
+ */
+export const DEFAULT_CONFIG_V7: PipelineConfig = {
+  ...DEFAULT_CONFIG_V6,
+  predictor: {
+    primary: `jev:${JEV_MODEL}@jev-predict.v2`,
+    shadows: DEFAULT_CONFIG_V6.predictor.shadows.filter(
+      (s) => s !== `llm:${LLM.qwenFlash}@predict.v1-direct`,
+    ),
+  },
+};
+
+/**
  * The v4 selector with category and facet-group balance and the trust ramp (ADR-0044): categories take 35% of the gap
  * term and facet groups 25%; no category above 40% while another is below it; nothing sensitive before six answers;
  * from ten answers, consented sensitive facets not yet asked about are targeted and preferred. Two coverage deadlines
  * hold whatever the information says: every facet group touched by question 20, every consented sensitive facet by 30.
  */
-export const VOI_SELECTOR_V7: Extract<PipelineConfig['selector'], { type: 'voi' }> = {
+export const VOI_SELECTOR_V8: Extract<PipelineConfig['selector'], { type: 'voi' }> = {
   ...VOI_SELECTOR,
   balance: { category: 0.35, group: 0.25, cap: 0.4, groupsBy: 20 },
   trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3, sweepBy: 30 },
 };
 
 /**
- * `cfg.default.v7` (ADR-0044): v6's predictors on ontology v2 (ADR-0042) with reserve.v2, concrete `gen.v3` questions
- * checked by `gates.v3`, `reflect.v2`, an everyday-first domain mix, and the balanced, ramped selector. Sensitive
- * areas are asked about only with the person's consent (ADR-0040, ADR-0043). Older mimics keep their config.
+ * `cfg.default.v8` (ADR-0044): v7's calibrated primary and shadows (ADR-0048) on ontology v2 (ADR-0042) with
+ * reserve.v2, concrete `gen.v3` questions checked by `gates.v3`, `reflect.v2`, an everyday-first domain mix, and the
+ * balanced, ramped selector. Sensitive areas are asked about only with the person's consent (ADR-0040, ADR-0043).
+ * Older mimics keep their config.
  */
 export const DEFAULT_CONFIG: PipelineConfig = {
-  ...DEFAULT_CONFIG_V6,
+  ...DEFAULT_CONFIG_V7,
   ontologyVersion: 'v2',
   reserve: { setId: 'reserve.v2' },
   generator: {
-    ...DEFAULT_CONFIG_V6.generator,
+    ...DEFAULT_CONFIG_V7.generator,
     promptVersion: 'gen.v3',
     gates: 'gates.v3',
     domainMix: { core: 0.15, casual: 0.55, professional: 0.3 },
   },
-  selector: VOI_SELECTOR_V7,
-  reflector: { ...DEFAULT_CONFIG_V6.reflector, promptVersion: 'reflect.v2' },
+  selector: VOI_SELECTOR_V8,
+  reflector: { ...DEFAULT_CONFIG_V7.reflector, promptVersion: 'reflect.v2' },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v7';
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v8';
 
 /**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never
