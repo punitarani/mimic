@@ -1,0 +1,7 @@
+{
+  "intake": { "name": "Maria Santos", "location": "Porto, PT", "occupation": "Nurse" },
+  "consentResearch": true,
+  "consents": { "politics": true, "religion": true, "sexuality": true, "health": true, "money": true },
+  "seed": "m12-nurse",
+  "policy": "consistent"
+}

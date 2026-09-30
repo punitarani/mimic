@@ -17,6 +17,7 @@ import {
   stripSpecialAreas,
 } from '@mimic/core';
 import { openLocalDb } from '@mimic/db/local';
+import { NOT_REAL_PREFIXES } from './rubric';
 import { remoteFlags, WORKER_DIR } from './wrangler';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -210,7 +211,9 @@ export async function scrubExport(
     }
     for (const r of (await client.execute('select id from participants')).rows) {
       const oldId = String(r.id);
-      const newId = pseudo('p', oldId);
+      // The population marker (scripted, imported) is not identifying, and reports must keep telling them apart.
+      const keep = NOT_REAL_PREFIXES.find((x) => oldId.startsWith(x)) ?? '';
+      const newId = `${keep}${pseudo('p', oldId)}`;
       await client.execute({ sql: 'update participants set id = ? where id = ?', args: [newId, oldId] });
       await client.execute({
         sql: 'update mimics set participant_id = ? where participant_id = ?',
@@ -248,15 +251,16 @@ export interface Withheld {
 export async function scrubSpecialCategories(client: Client): Promise<Withheld> {
   const out = { questions: 0, traits: 0, insights: 0, facts: 0 };
   const ontology = allOntologyFacets();
-  const people = (
-    await client.execute('select id, categories_json, consents_json, research_consents_json from mimics')
-  ).rows;
+  // `select *`: data files made before ADR-0050 have no confirmation or decline columns, and read as none.
+  const people = (await client.execute('select * from mimics')).rows;
   for (const r of people) {
     const id = String(r.id);
     const parsed = MimicScope.safeParse({
       categories: json(r.categories_json, []),
       consents: json(r.consents_json, {}),
       researchConsents: json(r.research_consents_json, {}),
+      confirmed: json(r.confirmed_json, {}),
+      declined: json(r.declined_json, []),
     });
     if (!parsed.success) continue;
     const scope = parsed.data;

@@ -36,6 +36,9 @@ export const mimics = sqliteTable(
     categoriesJson: text('categories_json').notNull().default('["psychology","values","life","work"]'),
     consentsJson: text('consents_json').notNull().default('{}'),
     researchConsentsJson: text('research_consents_json').notNull().default('{}'),
+    /** ADR-0050: special-category areas the person affirmatively chose, and the facets they declined (JSON). */
+    confirmedJson: text('confirmed_json').notNull().default('{}'),
+    declinedJson: text('declined_json').notNull().default('[]'),
     /** When the scope last shrank (ADR-0040). */
     scopeAt: integer('scope_at'),
     split: text('split', { enum: ['dev', 'test'] }).notNull(),

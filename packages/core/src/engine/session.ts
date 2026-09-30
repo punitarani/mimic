@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { BEHIND_SHORTFALL, categoryShares, EXPOSURE_MIN_ADAPTIVE } from '../belief';
 import { DEFAULT_PROMPT_VERSION } from '../components';
 import type { PipelineConfig } from '../config';
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
-import { getReserveSet, reserveSetId } from '../ontology';
+import { allOntologyFacets, getReserveSet, type ItemTemplate, reserveSetId } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
 import { LlmPredictor, makePredictor, promptVersionOf, rawScale, selectionView } from '../predictors';
 import { pickRepeat } from '../repeats';
@@ -28,6 +29,7 @@ import {
   type Store,
 } from '../store';
 import {
+  CATEGORIES,
   type Distribution,
   isScoredKind,
   isSessionKind,
@@ -36,7 +38,7 @@ import {
   type PredictionResult,
   type Question,
 } from '../types';
-import { beliefFromLoaded, loadBeliefSources } from './belief';
+import { beliefFromLoaded, loadBeliefSources, visibleScoredAnswers, visibleServedScored } from './belief';
 import {
   contextState,
   facetCounts,
@@ -73,6 +75,8 @@ export interface PublicQuestion {
   type: Question['type'];
   prompt: string;
   options: Question['options'];
+  /** Touches a sensitive facet: the session offers "Prefer not to say" (ADR-0050). */
+  sensitive?: true;
 }
 
 export type NextResult =
@@ -84,6 +88,8 @@ export interface Progress {
   target: number;
 }
 
+const FACETS = allOntologyFacets();
+
 export function toPublic(q: QuestionRecord): PublicQuestion {
   return {
     id: q.id,
@@ -92,6 +98,7 @@ export function toPublic(q: QuestionRecord): PublicQuestion {
     type: q.type,
     prompt: q.prompt,
     options: q.options,
+    ...(q.facetIds.some((f) => FACETS.get(f)?.sensitive) ? { sensitive: true as const } : {}),
   };
 }
 
@@ -271,16 +278,45 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
     return { status: 'question', question: toPublic({ ...rep, seq: at, status: 'served' }), progress };
   }
 
-  // 3) Adaptive pool (reserve bank when the generated pool is empty).
-  let pool = questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled' && inScope(q));
+  // 3) Adaptive pool (reserve bank when the generated pool is empty). Before the trust ramp opens, nothing touching
+  // a sensitive facet is offered at all (ADR-0044).
+  const ramp = rampAllows(cfg, loaded);
+  // A reserve item is asked once: two serves racing through the top-up below can each pool a copy of it.
+  const askedKeys = new Set(
+    questions.filter((q) => q.status === 'served' || q.status === 'answered').map((q) => q.itemKey),
+  );
+  let pool = questions.filter(
+    (q) =>
+      q.kind === 'adaptive' &&
+      q.status === 'pooled' &&
+      inScope(q) &&
+      ramp(q) &&
+      !(q.itemKey && askedKeys.has(q.itemKey)),
+  );
   if (pool.length < MIN_POOL) {
     await deferred(deps, () => deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq }));
   }
+  if (pool.length > 0) pool = [...pool, ...(await coverageTopUp(deps, m, cfg, loaded, pool, ramp, seq))];
   if (pool.length === 0) {
-    pool = await addReserve(deps, m, cfg, questions, loaded.scope.blocked);
+    pool = await addReserve(deps, m, cfg, questions, loaded.scope.blocked, ramp);
     if (pool.length === 0) return { status: 'waiting', progress };
   }
   return serveWithPredictions(deps, m, cfg, loaded, stateAt, seq, null, pool, progress, rng);
+}
+
+/**
+ * The trust ramp (ADR-0044): until the person has answered `minAnswered` anchor and adaptive questions, a question
+ * touching a sensitive facet may not be served. Counts what the belief state counts: answered, in scope.
+ */
+export function rampAllows(
+  cfg: PipelineConfig,
+  loaded: Pick<LoadedMimic, 'questions' | 'answers' | 'scope'>,
+): (q: { facetIds: string[] }) => boolean {
+  const ramp = cfg.selector.type === 'voi' ? cfg.selector.trustRamp : undefined;
+  if (!ramp) return () => true;
+  // The belief's own count (`person.nAnswered`), so this pre-filter and the selector's ramp agree.
+  if (visibleScoredAnswers(loaded).length >= ramp.minAnswered) return () => true;
+  return (q) => !q.facetIds.some((f) => loaded.scope.sensitiveFacets.has(f));
 }
 
 async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
@@ -295,6 +331,73 @@ async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
 
 const RESERVE_BATCH = 3;
 
+/** At most this many reserve items are added per serve to back coverage (ADR-0044). */
+const TOP_UP_MAX = RESERVE_BATCH;
+
+/**
+ * Coverage backed by the reserve bank (ADR-0044): the selector's deadlines and floor can only choose from the pool,
+ * so when the pool has nothing for what they need, reserve items are added, one per need, up to TOP_UP_MAX per serve:
+ * first facet groups nothing has touched (until `balance.groupsBy`), then consented sensitive facets not yet asked
+ * about (once the sweep has begun), then categories below BEHIND_SHORTFALL of their even share (once a few adaptive
+ * questions are answered). A generator that missed its targets, or whose drafts the gates rejected, can't leave a gap.
+ * Reserve items are hand-written, concrete and plainly worded (reserve.v2). Configs without balance or ramp skip this.
+ */
+async function coverageTopUp(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  loaded: LoadedMimic,
+  pool: QuestionRecord[],
+  ramp: (q: { facetIds: string[] }) => boolean,
+  seq: number,
+): Promise<QuestionRecord[]> {
+  if (cfg.selector.type !== 'voi') return [];
+  const { balance, trustRamp } = cfg.selector;
+  if (!balance && !trustRamp) return [];
+  // The belief's own answered and waiting questions, so the top-up covers exactly what the selector sees as missing.
+  const answered = visibleScoredAnswers(loaded);
+  const asked = [...answered, ...visibleServedScored(loaded)];
+  const facets = await facetsFor(deps, m, cfg);
+  const byId = new Map(facets.map((f) => [f.id, f]));
+  const pooledHas = (want: (q: { facetIds: string[] }) => boolean) => pool.some(want);
+  const wants: Array<(q: { facetIds: string[] }) => boolean> = [];
+
+  if (balance && seq <= balance.groupsBy) {
+    const touched = new Set(asked.flatMap((q) => q.facetIds.map((f) => byId.get(f)?.group)));
+    for (const g of new Set(facets.map((f) => f.group))) {
+      const want = (q: { facetIds: string[] }) => q.facetIds.some((f) => byId.get(f)?.group === g);
+      if (!touched.has(g) && !pooledHas(want)) wants.push(want);
+    }
+  }
+  if (trustRamp && answered.length >= Math.max(trustRamp.minAnswered, trustRamp.sweepFrom)) {
+    const hit = new Set(answered.flatMap((q) => q.facetIds));
+    for (const f of facets) {
+      const want = (q: { facetIds: string[] }) => q.facetIds.includes(f.id);
+      if (f.sensitive && !hit.has(f.id) && !pooledHas(want)) wants.push(want);
+    }
+  }
+  if (balance && answered.filter((q) => q.kind === 'adaptive').length >= EXPOSURE_MIN_ADAPTIVE) {
+    const shares = categoryShares(
+      facets,
+      asked.map((q) => q.facetIds),
+    );
+    for (const c of CATEGORIES) {
+      const want = (q: { facetIds: string[] }) => q.facetIds.some((f) => byId.get(f)?.category === c);
+      if ((shares[c]?.shortfall ?? 0) >= BEHIND_SHORTFALL && !pooledHas(want)) wants.push(want);
+    }
+  }
+
+  // One pass over the reserve in its usual order, one item per need, and a single insert.
+  const ordered = reserveItems(m, cfg, loaded.questions, loaded.scope.blocked, ramp);
+  const picked: ItemTemplate[] = [];
+  for (const want of wants) {
+    if (picked.length >= TOP_UP_MAX) break;
+    const item = ordered.find((r) => want(r) && !picked.includes(r));
+    if (item) picked.push(item);
+  }
+  return insertReserve(deps, m, cfg, picked);
+}
+
 /**
  * Reserve items for an empty pool (ADR-0006), from the config's set (ADR-0042), inside the person's scope. reserve.v1
  * keeps its fixed order; later sets put items whose facets have been asked least first, so a stalled generator
@@ -306,27 +409,50 @@ async function addReserve(
   cfg: PipelineConfig,
   questions: QuestionRecord[],
   blocked: ReadonlySet<string>,
+  allow: (q: { facetIds: string[] }) => boolean = () => true,
 ): Promise<QuestionRecord[]> {
+  return insertReserve(deps, m, cfg, reserveItems(m, cfg, questions, blocked, allow).slice(0, RESERVE_BATCH));
+}
+
+/** The reserve items not yet used that the scope and `allow` admit, in the order `addReserve` offers them. */
+function reserveItems(
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  questions: QuestionRecord[],
+  blocked: ReadonlySet<string>,
+  allow: (q: { facetIds: string[] }) => boolean,
+): ItemTemplate[] {
   const setId = reserveSetId(cfg);
   const used = new Set(questions.map((q) => q.itemKey).filter(Boolean));
-  const now = deps.clock();
   // Without "Work and money", no workplace scenes either (ADR-0042).
   const professional = m.scope.categories.includes('work');
-  let items = getReserveSet(setId).filter(
+  const items = getReserveSet(setId).filter(
     (r) =>
-      !used.has(r.itemKey) && questionAllowed(r, blocked) && (professional || r.domain !== 'professional'),
+      !used.has(r.itemKey) &&
+      questionAllowed(r, blocked) &&
+      allow(r) &&
+      (professional || r.domain !== 'professional'),
   );
-  if (setId !== 'reserve.v1') {
-    const asked = new Map<string, number>();
-    for (const q of questions)
-      if (q.seq !== null) for (const f of q.facetIds) asked.set(f, (asked.get(f) ?? 0) + 1);
-    const load = (r: { facetIds: string[] }) => Math.max(...r.facetIds.map((f) => asked.get(f) ?? 0));
-    items = items
-      .map((r, i) => ({ r, i, l: load(r) }))
-      .sort((a, b) => a.l - b.l || a.i - b.i)
-      .map((x) => x.r);
-  }
-  const recs: QuestionRecord[] = items.slice(0, RESERVE_BATCH).map((item, i) => ({
+  if (setId === 'reserve.v1') return items;
+  const asked = new Map<string, number>();
+  for (const q of questions)
+    if (q.seq !== null) for (const f of q.facetIds) asked.set(f, (asked.get(f) ?? 0) + 1);
+  const load = (r: { facetIds: string[] }) => Math.max(...r.facetIds.map((f) => asked.get(f) ?? 0));
+  return items
+    .map((r, i) => ({ r, i, l: load(r) }))
+    .sort((a, b) => a.l - b.l || a.i - b.i)
+    .map((x) => x.r);
+}
+
+async function insertReserve(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  items: ItemTemplate[],
+): Promise<QuestionRecord[]> {
+  const setId = reserveSetId(cfg);
+  const now = deps.clock();
+  const recs: QuestionRecord[] = items.map((item, i) => ({
     id: deps.newId(),
     mimicId: m.id,
     seq: null,
@@ -447,6 +573,8 @@ async function serveWithPredictions(
         redundancy,
         rng,
         sessionTarget: cfg.session.target,
+        seq,
+        repeatsEvery: cfg.repeats.every,
         ...(hyp ? { hypotheses: hyp.hypotheses, hypothesisWeights: hyp.weights, explore } : {}),
         ...(voi ?? {}),
       }),

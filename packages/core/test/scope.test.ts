@@ -11,6 +11,7 @@ import {
   factHidden,
   insightHidden,
   MimicScope,
+  newlyDeclined,
   normalizeScope,
   ONTOLOGY_V1,
   questionAllowed,
@@ -21,6 +22,7 @@ import {
   specialAreaOfFact,
   specialFacetIds,
   stripSpecialText,
+  unconfirmedAreas,
   validateDraft,
 } from '../src';
 
@@ -53,10 +55,14 @@ describe('scope model (ADR-0040)', () => {
     const all = scope();
     expect(facetAllowed(all, facet('x', 'psychology'))).toBe(true);
     expect(facetAllowed(all, facet('x', 'values', 'politics'))).toBe(false);
-    const consented = scope({ consents: { politics: true } });
+    const consented = scope({ consents: { politics: true }, confirmed: { politics: true } });
     expect(facetAllowed(consented, facet('x', 'values', 'politics'))).toBe(true);
     expect(facetAllowed(consented, facet('x', 'values', 'religion'))).toBe(false);
-    const noValues = scope({ categories: ['psychology', 'life', 'work'], consents: { politics: true } });
+    const noValues = scope({
+      categories: ['psychology', 'life', 'work'],
+      consents: { politics: true },
+      confirmed: { politics: true },
+    });
     expect(facetAllowed(noValues, facet('x', 'values', 'politics'))).toBe(false);
     expect(facetAllowed(noValues, facet('x', 'values'))).toBe(false);
     expect(scopedFacets(consented, FACETS).map((f) => f.id)).toEqual([
@@ -105,6 +111,33 @@ describe('scope model (ADR-0040)', () => {
     });
   });
 
+  it('asks about a special-category area only once it is confirmed; money needs its consent alone (ADR-0050)', () => {
+    const preTicked = scope({ consents: { politics: true, money: true } });
+    expect(facetAllowed(preTicked, facet('x', 'values', 'politics'))).toBe(false);
+    expect(facetAllowed(preTicked, facet('y', 'work', 'money'))).toBe(true);
+    expect(unconfirmedAreas(preTicked)).toEqual(['politics']);
+    const confirmed = { ...preTicked, confirmed: { politics: true } };
+    expect(facetAllowed(confirmed, facet('x', 'values', 'politics'))).toBe(true);
+    expect(unconfirmedAreas(confirmed)).toEqual([]);
+    // A confirmation without the consent is dropped; declined facets are blocked and de-duplicated.
+    expect(
+      normalizeScope({ ...preTicked, consents: { money: true }, confirmed: { politics: true } }, false),
+    ).toEqual({ categories: [...CATEGORIES], consents: { money: true }, researchConsents: {} });
+    const declined = normalizeScope(
+      { ...confirmed, declined: ['political_leaning', 'political_leaning'] },
+      false,
+    );
+    expect(declined.declined).toEqual(['political_leaning']);
+    expect(facetAllowed(declined, facet('political_leaning', 'values', 'politics'))).toBe(false);
+    expect(facetAllowed(declined, facet('political_engagement', 'values', 'politics'))).toBe(true);
+    // Removing a confirmation narrows; declining is reported separately.
+    expect(scopeShrank(confirmed, preTicked)).toBe(true);
+    expect(scopeShrank(preTicked, confirmed)).toBe(false);
+    expect(scopeShrank(confirmed, declined)).toBe(false);
+    expect(newlyDeclined(confirmed, declined)).toEqual(['political_leaning']);
+    expect(newlyDeclined(declined, confirmed)).toEqual([]);
+  });
+
   it('shrinks only when a category or a sensitive consent is removed', () => {
     const base = scope({ consents: { health: true } });
     expect(scopeShrank(base, scope())).toBe(true);
@@ -115,7 +148,11 @@ describe('scope model (ADR-0040)', () => {
   });
 
   it('hides mixed questions, their answers, insights and reflection facts; maps sensitive facets to direct questions', () => {
-    const s = scope({ categories: ['psychology', 'values', 'life'], consents: { politics: true } });
+    const s = scope({
+      categories: ['psychology', 'values', 'life'],
+      consents: { politics: true },
+      confirmed: { politics: true },
+    });
     const qs = [
       { id: 'q1', seq: 1, facetIds: ['openness'] },
       { id: 'q2', seq: 2, facetIds: ['openness', 'autonomy'] }, // mixed: hidden

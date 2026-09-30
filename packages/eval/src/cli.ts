@@ -2,7 +2,13 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { type EvalRunRecord, type PipelineConfig, VOI_SELECTOR } from '@mimic/core';
+import {
+  Category,
+  type EvalRunRecord,
+  type PipelineConfig,
+  VOI_SELECTOR,
+  VOI_SELECTOR_V8,
+} from '@mimic/core';
 import { schema } from '@mimic/db';
 import { sql } from 'drizzle-orm';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
@@ -12,6 +18,7 @@ import { openLocalEngine } from './local';
 import { diagnoseCmd, evaluateCmd, optimizeCmd } from './optimize/commands';
 import { replay, reproduceOnline } from './replay';
 import { publishReport, renderReport, writeReport } from './report';
+import { POPULATIONS, type Population, rubricRun } from './rubric';
 import { simulateSelection } from './select';
 import { runSession, SessionScript } from './session';
 import { importTwin } from './twin';
@@ -24,7 +31,7 @@ Commands
             --db <path>            SQLite path (default data/session.sqlite)
             --blobs <dir>          directory standing in for R2 (default data/blobs)
             --turns <n>            number of questions (default 30)
-            --config <name>        default | v3 | m10-candidate (default: default)
+            --config <name>        default | v3 | v6 | m10-candidate (default: default)
             --live                 use real providers (costs money); default is offline fakes
             --simulate <persona>   LLM-simulated user for unscripted questions (smoke tests only; never report
                                    metrics from simulated users)
@@ -39,8 +46,13 @@ Commands
             --checkpoints 10,20,30 --split dev|test|all [--targets later|heldout] [--limit N] [--offline]
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
   select    Pool-restricted selection simulation (biased; iteration only)
-            --data <file.sqlite> --selector random|coverage|entropy|bald|voi[,…] --budget 5,10,20 [--split dev]
-            [--limit N] [--no-population]   several selectors run on the same people and report side by side
+            --data <file.sqlite> --selector random|coverage|entropy|bald|voi|voi-v8[,…] --budget 5,10,20
+            [--split dev] [--limit N] [--no-population]   several selectors run on the same people, side by side
+            [--series]   accuracy on the rest after every pick, and questions to sustain 75%
+            [--categories psychology,values,life]   as if only these categories were selected
+  rubric    What the question loop served, by population and config: concreteness, category shares, groups,
+            sensitive coverage and ordering (ADR-0044; no model calls)
+            --data <file.sqlite> [--arm] [--population real,scripted,twin2k]
   import    import twin2k500 --path <twin2k500.jsonl> --out <file.sqlite> [--limit N]
   report    --data <file.sqlite> --run <id> [--to local|preview|prod]   writes report.{json,md}; --to publishes to /lab
   evaluate  Score prediction prompts on sealed instances (docs/OPTIMIZATION.md §5)
@@ -248,6 +260,8 @@ async function selectCmd(argv: string[]) {
       seed: { type: 'string', default: 'select' },
       offline: { type: 'boolean', default: false },
       'no-population': { type: 'boolean', default: false },
+      series: { type: 'boolean', default: false },
+      categories: { type: 'string' },
     },
   });
   if (!values.data) throw new Error('--data is required');
@@ -259,19 +273,58 @@ async function selectCmd(argv: string[]) {
     entropy: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
     bald: { type: 'bald', k: 4, lambdaCoverage: 0.3 },
     voi: VOI_SELECTOR,
+    'voi-v8': VOI_SELECTOR_V8,
   };
+  const categories = values.categories
+    ? values.categories.split(',').map((c) => Category.parse(c.trim()))
+    : undefined;
   const chosen = values.selector.split(',').map((s) => s.trim());
   for (const s of chosen) if (!selectors[s]) throw new Error(`unknown selector ${s}`);
   const { run } = await simulateSelection(
     engine.deps,
     {
-      name: `select ${chosen.join(' vs ')}`,
+      name: `select ${chosen.join(' vs ')}${categories ? ` (${categories.join(', ')})` : ''}`,
       selectors: chosen.map((label) => ({ label, selector: selectors[label]! })),
       budgets: list(values.budget),
       split: values.split as 'dev' | 'test' | 'all',
       seed: values.seed,
       population: !values['no-population'],
+      series: values.series,
+      ...(categories ? { categories } : {}),
       ...(values.limit ? { limitPeople: Number(values.limit) } : {}),
+    },
+    await datasetHash(engine.client),
+  );
+  const files = writeReport(run);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}`);
+  engine.close();
+}
+
+async function rubricCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      arm: { type: 'boolean', default: false },
+      population: { type: 'string' },
+      name: { type: 'string' },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
+  const population = values.population?.split(',').map((p) => {
+    const x = p.trim();
+    if (!(POPULATIONS as readonly string[]).includes(x))
+      throw new Error(`unknown population ${x} (${POPULATIONS.join(', ')})`);
+    return x as Population;
+  });
+  const { run } = await rubricRun(
+    engine.deps,
+    {
+      name: values.name ?? 'rubric',
+      byArm: values.arm,
+      ...(population ? { population } : {}),
     },
     await datasetHash(engine.client),
   );
@@ -356,6 +409,8 @@ async function main() {
   switch (cmd) {
     case 'session':
       return session(rest);
+    case 'rubric':
+      return rubricCmd(rest);
     case 'gates':
       return gates(rest);
     case 'drafts':

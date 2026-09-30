@@ -2,6 +2,7 @@ import {
   beliefAnswers,
   buildBelief,
   buildState,
+  type Category,
   type EngineDeps,
   type EvalRunRecord,
   type EvidenceItem,
@@ -17,6 +18,7 @@ import {
   populationScore,
   type QuestionRecord,
   questionCoverage,
+  questionsToSustain,
   scorePrediction,
   seededRng,
   shuffle,
@@ -34,7 +36,27 @@ export interface SelectSpec {
   seed: string;
   /** `voi` only: use the data file's `item_stats` (default) or run without population statistics. */
   population?: boolean;
+  /**
+   * Record accuracy on the rest after every pick up to the largest budget (ADR-0044), so questions to sustained
+   * accuracy and accuracy at a budget can be compared per selector on the same people.
+   */
+  series?: boolean;
+  /**
+   * Simulate a person who selected only these of their categories: facets, anchors and pool are restricted to them.
+   * Intersected with each person's own selection, so a category they turned off is never turned back on.
+   */
+  categories?: Category[];
 }
+
+export interface SeriesPoint {
+  selector: string;
+  k: number;
+  people: number;
+  accuracy: number | null;
+}
+
+/** Accuracy on the rest that counts as sustained, as `questionsToSustain` reads fidelity in the lab (E3). */
+export const SUSTAIN_TARGET = 0.75;
 
 export interface SelectResult {
   selector: string;
@@ -65,19 +87,36 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
   );
   const acc = new Map<string, number[]>();
   const keyOf = (label: string, budget: number) => `${label}|${budget}`;
+  const series = new Map<string, number[]>();
+  /** Per selector, per person: the first k from which accuracy on the rest stays ≥ 0.75, or null. */
+  const sustain = new Map<string, Array<number | null>>();
+  const maxBudget = Math.max(...spec.budgets);
 
-  for (const m of mimics) {
+  for (const m0 of mimics) {
+    // Narrows the person's own categories, never widens them: a category they turned off stays off, so the answers
+    // their scope hides never reach a state or a model (ADR-0040).
+    const m = spec.categories
+      ? {
+          ...m0,
+          scope: { ...m0.scope, categories: m0.scope.categories.filter((c) => spec.categories!.includes(c)) },
+        }
+      : m0;
     const cfg = await loadConfig(deps, m.configHash);
     const facets = await facetsFor(deps, m, cfg);
+    const allowed = new Set(facets.map((f) => f.id));
+    const inScope = (e: EvidenceItem) => !spec.categories || e.facetIds.every((f) => allowed.has(f));
     const loaded = await loadMimicData(deps, m);
     const qById = new Map(loaded.questions.map((q) => [q.id, q]));
-    const anchors = loaded.data.evidence.filter((e) => e.kind === 'anchor');
-    const pool = loaded.data.evidence.filter((e) => e.kind === 'adaptive');
+    const anchors = loaded.data.evidence.filter((e) => e.kind === 'anchor' && inScope(e));
+    const pool = loaded.data.evidence.filter((e) => e.kind === 'adaptive' && inScope(e));
     for (const { label, selector: selCfg } of spec.selectors) {
       const selector = makeSelector(selCfg);
-      for (const budget of spec.budgets) {
-        if (pool.length <= budget) continue;
-        const rng = seededRng(`${spec.seed}:${label}:${m.id}:${budget}`);
+      // A series is one trajectory per person, as long as their pool allows (one question is always left to score),
+      // so a person with a short pool still counts at every budget they reach; the budget rows are points on it.
+      for (const budget of spec.series ? [Math.min(maxBudget, pool.length - 1)] : spec.budgets) {
+        if (budget < 1 || pool.length <= budget) continue;
+        const trace: number[] = [];
+        const rng = seededRng(`${spec.seed}:${label}:${m.id}:${spec.series ? 'series' : budget}`);
         const chosen: EvidenceItem[] = [];
         const itemAccByQuestion = new Map<string, number>();
         let remaining = [...pool];
@@ -117,6 +156,7 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
             redundancy: (q) => Math.max(0, ...chosen.map((c) => lexicalSimilarity(q.prompt, c.prompt))),
             rng,
             sessionTarget: cfg.session.target,
+            seq: evidence.length + 1,
             ...(selCfg.type === 'voi'
               ? {
                   belief: beliefFor(evidence),
@@ -135,22 +175,43 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
           chosen.push(picked);
           for (const f of picked.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
           remaining = remaining.filter((e) => e !== picked);
+          if (spec.series) {
+            const a = await accuracyOnRest([...anchors, ...chosen], remaining);
+            // No scored prediction is no evidence of fidelity: it counts as below the target, never as sustained
+            // (`questionsToSustain` only looks for values under it, and NaN is never under anything).
+            trace.push(a ?? 0);
+            const key = keyOf(label, chosen.length);
+            if (a !== null) series.set(key, [...(series.get(key) ?? []), a]);
+            if (spec.budgets.includes(chosen.length) && a !== null)
+              acc.set(key, [...(acc.get(key) ?? []), a]);
+          }
         }
-        const state = stateFor([...anchors, ...chosen]);
-        const targets = remaining.map((e) => qById.get(e.questionId)!);
-        const preds = await primary.predict(state, targets);
-        const accs = targets
-          .map((q, i) => {
-            const p = preds[i]!;
-            const answer = remaining[i]!.answer;
-            return p.ok ? scorePrediction(q.type, p.dist, answer).itemAcc : null;
-          })
-          .filter((x): x is number => x !== null);
-        if (accs.length) {
+        if (spec.series) {
+          sustain.set(label, [...(sustain.get(label) ?? []), questionsToSustain(trace, SUSTAIN_TARGET)]);
+          continue;
+        }
+        const a = await accuracyOnRest([...anchors, ...chosen], remaining);
+        if (a !== null) {
           const k = keyOf(label, budget);
-          acc.set(k, [...(acc.get(k) ?? []), accs.reduce((a, b) => a + b, 0) / accs.length]);
+          acc.set(k, [...(acc.get(k) ?? []), a]);
         }
       }
+    }
+
+    async function accuracyOnRest(evidence: EvidenceItem[], rest: EvidenceItem[]): Promise<number | null> {
+      const state = buildState(
+        { ...loaded.data, evidence, traits: [], insights: [] },
+        stateOptions(cfg, Number.MAX_SAFE_INTEGER, { strategy: 'raw' }),
+      );
+      const targets = rest.map((e) => qById.get(e.questionId)!);
+      const preds = await primary.predict(state, targets);
+      const accs = targets
+        .map((q, i) => {
+          const p = preds[i]!;
+          return p.ok ? scorePrediction(q.type, p.dist, rest[i]!.answer).itemAcc : null;
+        })
+        .filter((x): x is number => x !== null);
+      return accs.length ? accs.reduce((x, y) => x + y, 0) / accs.length : null;
     }
   }
   const results: SelectResult[] = spec.selectors.flatMap(({ label }) =>
@@ -164,6 +225,31 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
       };
     }),
   );
+  const seriesOut: SeriesPoint[] = spec.series
+    ? spec.selectors.flatMap(({ label }) =>
+        Array.from({ length: maxBudget }, (_, i) => {
+          const xs = series.get(keyOf(label, i + 1)) ?? [];
+          return {
+            selector: label,
+            k: i + 1,
+            people: xs.length,
+            accuracy: xs.length ? xs.reduce((a, c) => a + c, 0) / xs.length : null,
+          };
+        }),
+      )
+    : [];
+  const sustained = spec.series
+    ? spec.selectors.map(({ label }) => {
+        const ks = sustain.get(label) ?? [];
+        const reached = ks.filter((k): k is number => k !== null);
+        return {
+          selector: label,
+          people: ks.length,
+          reached: reached.length,
+          meanQuestions: reached.length ? reached.reduce((a, b) => a + b, 0) / reached.length : null,
+        };
+      })
+    : [];
   const run: EvalRunRecord = {
     id: ulid(),
     name: spec.name,
@@ -175,7 +261,7 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
     },
     datasetHash,
     status: 'done',
-    metrics: { results },
+    metrics: { results, ...(spec.series ? { series: seriesOut, sustained, target: SUSTAIN_TARGET } : {}) },
     r2ReportKey: null,
     createdAt: deps.clock(),
   };

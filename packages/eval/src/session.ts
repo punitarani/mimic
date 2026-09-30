@@ -32,6 +32,11 @@ export const SessionScript = z.object({
   consents: z.record(z.string(), z.boolean()).default({}),
   /** Special-category areas consented for research use. */
   researchConsents: z.record(z.string(), z.boolean()).default({}),
+  /**
+   * Special-category areas confirmed (ADR-0050). A script's consents are choices, so by default every consented
+   * special area is confirmed; pass `{}` to script a person who left intake's pre-ticked boxes alone.
+   */
+  confirmed: z.record(z.string(), z.boolean()).optional(),
   seed: z.string().default('script'),
   /** Fallback for questions the script doesn't cover. `consistent` answers the same prompt the same way. */
   policy: z.enum(['consistent', 'first', 'last']).default('consistent'),
@@ -135,6 +140,7 @@ export async function runSession(
         categories: script.categories ?? DEFAULT_SCOPE.categories,
         consents: script.consents,
         researchConsents: script.researchConsents,
+        confirmed: script.confirmed ?? script.consents,
       }),
     },
     // Scripted people are marked so reports can keep them apart from real ones (R10).

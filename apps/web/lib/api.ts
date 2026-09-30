@@ -131,6 +131,8 @@ export const api = {
   searchAgain: (id: string, link: string) =>
     call<{ ok: true }>('POST', `/api/mimics/${id}/identity/search`, { link }),
   setScope: (id: string, scope: MimicScope) => call<ScopeChange>('PATCH', `/api/mimics/${id}/scope`, scope),
+  decline: (id: string, questionId: string) =>
+    call<ScopeChange>('POST', `/api/mimics/${id}/decline`, { questionId }),
   setFact: (id: string, factId: string, userState: 'active' | 'removed') =>
     call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
   next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),

@@ -3,7 +3,8 @@ import type { ScopeChange } from '@mimic/core';
 import type { MimicScope } from '@mimic/core/scope';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import { canSave, narrows, sameScope } from '@/lib/scope-form';
+import { allowDeclined, canSave, narrows, sameScope } from '@/lib/scope-form';
+import { sentence } from '@/lib/session-view';
 import { ScopeResearch, ScopeTopics } from '../scope-form';
 import { cn } from '../ui';
 
@@ -16,12 +17,15 @@ export function TopicsDialog({
   mimicId,
   scope,
   consentResearch,
+  declined = [],
   onClose,
   onSaved,
 }: {
   mimicId: string;
   scope: MimicScope;
   consentResearch: boolean;
+  /** Facets the person chose not to answer, with their names (ADR-0050). */
+  declined?: Array<{ id: string; name: string }>;
   onClose: () => void;
   onSaved: (change: ScopeChange) => void;
 }) {
@@ -78,6 +82,36 @@ export function TopicsDialog({
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-4">
           <ScopeTopics value={draft} onChange={setDraft} idPrefix="topics" />
           {consentResearch && <ScopeResearch value={draft} onChange={setDraft} idPrefix="topics" />}
+          {declined.some((f) => draft.declined?.includes(f.id)) && (
+            <section aria-labelledby={`${id}-declined`} className="space-y-2">
+              <h3 id={`${id}-declined`} className="m-0 text-[15px] font-medium text-graphite">
+                You chose not to answer
+              </h3>
+              <p className="m-0 text-[13px] text-muted">
+                We won&apos;t ask about these again unless you say so.
+              </p>
+              <ul className="m-0 list-none space-y-1 p-0">
+                {declined
+                  .filter((f) => draft.declined?.includes(f.id))
+                  .map((f) => (
+                    <li
+                      key={f.id}
+                      className="flex items-center justify-between gap-3 text-[14px] text-graphite"
+                    >
+                      <span>{sentence(f.name)}</span>
+                      <button
+                        type="button"
+                        aria-label={`Ask again about ${f.name}`}
+                        onClick={() => setDraft(allowDeclined(draft, f.id))}
+                        className="h-8 rounded-[6px] px-2 text-[13px] font-medium text-graphite underline underline-offset-2 hover:bg-g8"
+                      >
+                        Ask again
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          )}
         </div>
         <div className="flex-none space-y-3 border-t border-rule px-6 py-4">
           {narrowing && (

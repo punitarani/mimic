@@ -31,6 +31,7 @@ export const M10_CANDIDATE_CONFIG: PipelineConfig = {
 export const NAMED_CONFIGS: Record<string, { config: PipelineConfig; label: string }> = {
   default: { config: DEFAULT_CONFIG, label: DEFAULT_CONFIG_LABEL },
   v3: { config: DEFAULT_CONFIG_V3, label: 'cfg.default.v3' },
+  v6: { config: DEFAULT_CONFIG_V6, label: 'cfg.default.v6' },
   'm10-candidate': { config: M10_CANDIDATE_CONFIG, label: 'cfg.m10.candidate' },
 };
 

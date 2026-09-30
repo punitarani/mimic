@@ -9,15 +9,19 @@ import {
   runStatsRefresh,
 } from '@mimic/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { registerNamedConfig } from '../src/configs';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 import { runSession, SessionScript } from '../src/session';
 
 let engine: LocalEngine;
 let ids: string[] = [];
+let configHash = '';
 const PEOPLE = 10;
 
+// ADR-0027's selector and gen.v2, as cfg.default.v6 has them; v7's balance and ramp are tested in balance.test.ts.
 beforeAll(async () => {
   engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'voi-cohort' });
+  configHash = await registerNamedConfig(engine.deps, 'v6');
   ids = [];
   for (let i = 0; i < PEOPLE; i++) {
     const script = SessionScript.parse({
@@ -25,7 +29,7 @@ beforeAll(async () => {
       consentResearch: true,
       seed: `voi${i}`,
     });
-    ids.push((await runSession(engine, script, { turns: 24 })).mimicId);
+    ids.push((await runSession(engine, script, { turns: 24, configHash })).mimicId);
   }
 }, 180_000);
 
@@ -159,7 +163,7 @@ describe('value-of-information selection (ADR-0027)', () => {
         consentResearch: true,
         seed: `again${i}`,
       });
-      await runSession(engine, script, { turns: 14 });
+      await runSession(engine, script, { turns: 14, configHash });
     }
     await runStatsRefresh(engine.deps);
     expect((await store.listItemStats()).length).toBeGreaterThan(0);
@@ -169,7 +173,7 @@ describe('value-of-information selection (ADR-0027)', () => {
       consentResearch: true,
       seed: 'late',
     });
-    const { mimicId } = await runSession(engine, script, { turns: 14 });
+    const { mimicId } = await runSession(engine, script, { turns: 14, configHash });
     const adaptive = (await store.listQuestions(mimicId)).filter(
       (q) => q.kind === 'adaptive' && q.seq !== null,
     );

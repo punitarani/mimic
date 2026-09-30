@@ -641,8 +641,9 @@ money" in scope, workplace scenes are rejected in code and the professional quot
 ### 9.5 Selection
 
 Every strategy scores pooled questions only. Repeat probes are scheduled outside the selector. The default since
-`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; the strategies
-below remain as controls and experiment arms.
+`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; `cfg.default.v8` adds
+category and facet-group balance, the trust ramp and the sensitive sweep (`docs/SELECTION.md` §5a, ADR-0044). The
+strategies below remain as controls and experiment arms.
 
 - **`random`** is the control arm.
 - **`coverage`** takes the facet with the lowest coverage, breaking ties randomly.
@@ -851,7 +852,8 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `POST /api/mimics/:id/identity/confirm` | `{ candidateId \| null }` | Enqueues `identity.enrich` |
 | `POST /api/mimics/:id/identity/search` | `{ link }` | Searches again led by the link; only while a choice is pending (ADR-0029) |
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
-| `PATCH /api/mimics/:id/scope` | `MimicScope` → `{ scope, scopeAt, discarded }` | Categories and consents; narrowing hides what was learned in the withdrawn areas (ADR-0043) |
+| `PATCH /api/mimics/:id/scope` | `MimicScope` → `{ scope, scopeAt, discarded }` | Categories, consents and confirmations; narrowing hides what was learned in the withdrawn areas (ADR-0043, ADR-0050) |
+| `POST /api/mimics/:id/decline` | `{ questionId }` → `{ scope, scopeAt, discarded }` | "Prefer not to say" on the served sensitive question: its sensitive facets are never asked again; 409 for a question on no sensitive facet (ADR-0050) |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
 | `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0036) |
@@ -1096,7 +1098,9 @@ exercise scores at least 4 of 5.
 - **Self-only by design.** The person attests they are modeling themselves, must confirm their own identity, and the UI offers no free search of arbitrary names.
 - **Transparent facts.** Every externally sourced fact shows its source and can be removed.
 - **Separate consents** for app use, web search and research use, plus the categories to ask about and one consent
-  per sensitive area (ADR-0040), ticked by default at intake and each removable (ADR-0049).
+  per sensitive area (ADR-0040), ticked by default at intake and each removable (ADR-0049). A special-category area
+  is asked about only once the person confirms it, and any sensitive question can be skipped with "Prefer not to
+  say" (ADR-0050).
 - **Sensitive domains need their consent.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
   inferred from other answers or web facts, and special-category answers leave research exports unless the person
   separately consents to research on them.
