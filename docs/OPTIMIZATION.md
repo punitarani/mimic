@@ -10,7 +10,7 @@ reported; see ADR-0028 and "What is built" below. M12 (re-derivation) and M13 (g
 | Prompt components and registered variants | `packages/core/src/components.ts`, `docs/prompts/variants/` | `predict.system`, `predict.user`, `state.evidence.line`, `jev.instructions`, `jev.choice`, `jev.noul.true`, `jev.noul.false`; harness: reasoning effort or budget, max tokens, `probs`/`reasoned` schema, Jev state as JSON or text, calibration temperature; per-model harness overrides (ADR-0041) |
 | Variant predictor IDs | `parsePredictorId`, `makePredictor`, `pnpm backfill` | `llm:<model>@<version>`, `jev:<model>@<version>`; unsuffixed IDs unchanged |
 | `mimic-eval evaluate` | `packages/eval/src/optimize/` | `--from stored` (free: per predictor, split, person and type; paired comparisons of each model's versions on shared questions; self-consistency; temperature, shrinkage and pooling fits) or live candidates with paired deltas and `--repeat` for the noise floor |
-| `mimic-eval diagnose` | same | One reflection-model call over the costliest misses of a stored predictor; local only |
+| `mimic-eval diagnose` | same | One reflection-model call per person (up to `--people`) over a stored predictor's costliest misses; local only |
 | `mimic-eval optimize` | same | GEPA loop: Pareto sampling, minibatch reflection, noise-margin acceptance, leakage lint, spend and call caps, resume, holdout check, verdict ("Improved" only when the gain replicates on the holdout, ADR-0048), `PREDICT_PROMPTS` snippet |
 | Actions → Optimize | `.github/workflows/optimize.yml` | Export prod (scrubbed), optional Twin-2K-500, free report, optional capped run; publishes to `/lab` |
 
@@ -376,7 +376,7 @@ reflection model reasons about the mechanism rather than skimming 3K tokens of e
 
 ### 5.5 `mimic-eval diagnose`: reflective evals without optimizing anything
 
-The same reflective dataset, sent once to the reflection model with a "cluster and explain" prompt instead of a
+The same reflective dataset, sent to the reflection model once per person (invariant 8: no prompt mixes people) with a "cluster and explain" prompt instead of a
 "rewrite" prompt, gives a failure analysis per predictor: which question types and facets it misses, whether it
 ignores the "why", whether score items collapse to the middle, whether it over-weights identity facts. Output is
 markdown under `data/evals/<run>/diagnose.md`, publishable with `report --to`. This is the deliverable for "run evals
