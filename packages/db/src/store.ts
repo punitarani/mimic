@@ -648,7 +648,7 @@ export class DrizzleStore implements Store {
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
   }
 
-  // cross-person item statistics (ADR-0026)
+  // cross-person item statistics (ADR-0027)
   async putItemStats(recs: ItemStatRecord[]) {
     for (const part of chunk(recs, 11)) {
       await this.db

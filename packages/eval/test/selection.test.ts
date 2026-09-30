@@ -30,7 +30,7 @@ beforeAll(async () => {
 
 afterAll(() => engine.close());
 
-describe('value-of-information selection (ADR-0026)', () => {
+describe('value-of-information selection (ADR-0027)', () => {
   it('is the default config and records the winning score’s components on every adaptive question', async () => {
     expect(DEFAULT_CONFIG.selector.type).toBe('voi');
     const { store } = engine.deps;

@@ -184,7 +184,7 @@ export class BaldSelector implements Selector {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Value of information (docs/SELECTION.md §4, ADR-0026)
+// Value of information (docs/SELECTION.md §4, ADR-0027)
 // ---------------------------------------------------------------------------------------------------------------
 
 export type VoiConfig = Extract<PipelineConfig['selector'], { type: 'voi' }>;

@@ -56,7 +56,7 @@ recently asked prompts (don't repeat these), number of questions to write.`,
   },
   'gen.v2': {
     id: 'gen.v2',
-    title: 'Question generator, belief-driven (ADR-0026)',
+    title: 'Question generator, belief-driven (ADR-0027)',
     system: `You write short, concrete questions that reveal how one specific person makes decisions.
 Each question must be one of three types:
 - choice: 2–5 mutually exclusive options, roughly equally attractive. Option keys are "a", "b", "c", …

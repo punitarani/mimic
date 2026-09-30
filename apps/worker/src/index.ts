@@ -101,7 +101,7 @@ export default {
       }
     }
     if (shadows) console.log(`enqueued ${shadows} missing shadows`);
-    // Cross-person item statistics, at most once an hour (the ledger dedupes the bucket; ADR-0026).
+    // Cross-person item statistics, at most once an hour (the ledger dedupes the bucket; ADR-0027).
     await d.jobs.enqueue({ type: 'stats.refresh', bucket: new Date().toISOString().slice(0, 13) });
   },
 } satisfies ExportedHandler<Env>;

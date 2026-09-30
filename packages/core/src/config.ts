@@ -17,7 +17,7 @@ export const PipelineConfig = z.object({
     z.object({ type: z.literal('coverage') }),
     z.object({ type: z.literal('entropy'), lambdaCoverage: z.number(), muRedundancy: z.number() }),
     z.object({ type: z.literal('bald'), k: z.number().int(), lambdaCoverage: z.number() }),
-    /** Value of information (docs/SELECTION.md §4, ADR-0026). */
+    /** Value of information (docs/SELECTION.md §4, ADR-0027). */
     z.object({
       type: z.literal('voi'),
       /** Persona hypotheses per selection; below 2 the information term is predictive entropy. */
@@ -118,7 +118,7 @@ export const DEFAULT_CONFIG_V3: PipelineConfig = {
 };
 
 /**
- * `cfg.default.v4` (ADR-0026): v3 with the value-of-information selector, belief-driven generation (`gen.v2`) and
+ * `cfg.default.v4` (ADR-0027): v3 with the value-of-information selector, belief-driven generation (`gen.v2`) and
  * latency hints in the state. Configs are immutable, so older mimics keep the config they were created with;
  * `pnpm backfill` adds new shadows to their served questions. Deviation (ADR-0004): generator and reflector default
  * to DeepSeek V4.1 Flash, not GPT-6 Luna.

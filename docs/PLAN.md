@@ -352,7 +352,7 @@ export const PipelineConfig = z.object({
 |---|---|
 | Anchors | `anchors.v1`, 10 items |
 | Generator | GPT-6 Luna, low reasoning effort, batch of 12, domain mix core 10 / casual 45 / professional 45 |
-| Selector | `entropy` with λ = 0.3, μ = 0.5 (v1–v3); `voi` since v4: K 4, λ 0.3, μ 0.5, β 0.25, γ 0.25, π 0.15, ν 0.2, exposure cap 0.35 (ADR-0026) |
+| Selector | `entropy` with λ = 0.3, μ = 0.5 (v1–v3); `voi` since v4: K 4, λ 0.3, μ 0.5, β 0.25, γ 0.25, π 0.15, ν 0.2, exposure cap 0.35 (ADR-0027) |
 | Predictors | Primary `jev:typesafe/jev-1.13`; shadows are the three LLMs |
 | State builder | `full`, 8,000 tokens, retrievalK 12, recentN 6 |
 | Trait reader | Jev, after every answer |
@@ -513,7 +513,7 @@ The anchors serve three purposes: a cross-person comparable eval set, a psychome
 2. Ontology facet list with definitions
 3. Question-type specs
 4. Exclusion list
-5. Target facets: the 5 with the lowest coverage or confidence, plus the domain quota from `domainMix` (`gen.v1`). Since `gen.v2` (ADR-0026): the 5 with the highest belief-state need, each with why it is targeted and the person's current reading, facets over the exposure cap to avoid, and a quota tilted toward the weakest domains (§9.5).
+5. Target facets: the 5 with the lowest coverage or confidence, plus the domain quota from `domainMix` (`gen.v1`). Since `gen.v2` (ADR-0027): the 5 with the highest belief-state need, each with why it is targeted and the person's current reading, facets over the exposure cap to avoid, and a quota tilted toward the weakest domains (§9.5).
 6. Person context: compact identity facts, trait summary, the last 10 questions (to avoid repeats), and occupation-specific facets
 
 **Generator output** (JSON schema):
@@ -547,7 +547,7 @@ The anchors serve three purposes: a cross-person comparable eval set, a psychome
 ### 9.5 Selection
 
 Every strategy scores pooled questions only. Repeat probes are scheduled outside the selector. The default since
-`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0026; the strategies
+`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; the strategies
 below remain as controls and experiment arms.
 
 - **`random`** is the control arm.
@@ -691,7 +691,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | Route | Purpose |
 |---|---|
 | `/` | One sentence on what Mimic does, and one button: "Build your mimic". |
-| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. |
+| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and locks the field. |
 | `/m/[id]/identity` | Search progress, "Is one of these you?", then fact review with remove toggles. "Skip" is always available. |
 | `/m/[id]` | The session. |
 | `/m/[id]/mimic` | Talk to your mimic (§9.11); download `mimic.json`; delete the mimic. |
@@ -755,7 +755,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
-**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
+**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and locks the field, and unlocks it only if the server rejects the code (ADR-0026). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
 **Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd ≥ session.budgetUsd`.
 
@@ -815,7 +815,7 @@ Twin-2K-500 covers about 2,000 respondents, each with 500 input questions and 88
 
 Item-level answer frequencies from other consented dev-split people, used as an extra baseline and predictor feature. Off by default, behind an experiment flag, and aggregate-only.
 
-#### 12.6a Item statistics for selection (ADR-0026)
+#### 12.6a Item statistics for selection (ADR-0027)
 
 `item_stats` holds aggregate rows per stable item (`item_key`) and per archetype (`facet | domain | type`) over
 research-consented, dev-split mimics: people, answers, the population's answer entropy (items only), the

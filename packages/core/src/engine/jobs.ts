@@ -213,7 +213,7 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// stats.refresh (ADR-0026): cross-person item statistics over research-consented, dev-split mimics.
+// stats.refresh (ADR-0027): cross-person item statistics over research-consented, dev-split mimics.
 // ---------------------------------------------------------------------------------------------------------------
 
 /**

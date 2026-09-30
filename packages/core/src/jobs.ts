@@ -28,7 +28,7 @@ export const Job = z.discriminatedUnion('type', [
     mimicId: z.string(),
     predictorId: z.string(),
   }),
-  /** Recomputes cross-person item statistics (ADR-0026); `bucket` (an hour) makes each run its own job. */
+  /** Recomputes cross-person item statistics (ADR-0027); `bucket` (an hour) makes each run its own job. */
   z.object({ type: z.literal('stats.refresh'), bucket: z.string() }),
 ]);
 export type Job = z.infer<typeof Job>;

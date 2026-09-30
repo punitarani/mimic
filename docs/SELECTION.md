@@ -1,6 +1,6 @@
 # Question selection v2: value of information
 
-Design note for the adaptive loop in PLAN §9.4–9.5 (ADR-0026). It replaces "ask what the predictor is unsure about"
+Design note for the adaptive loop in PLAN §9.4–9.5 (ADR-0027). It replaces "ask what the predictor is unsure about"
 with "ask what would most improve the mimic's decisions per question asked", and it makes the loop learn twice:
 within a person as their answers arrive, and across people as more of them use it, without either loop being able
 to make the other worse.

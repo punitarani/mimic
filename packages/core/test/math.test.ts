@@ -166,7 +166,7 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(DEFAULT_CONFIG.selector.type).toBe('voi');
     expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v2');
     expect(DEFAULT_CONFIG.stateBuilder.latencyHints).toBe(true);
-    // v3 (ADR-0025) must keep its hash even though the schema gained optional fields (ADR-0026).
+    // v3 (ADR-0025) must keep its hash even though the schema gained optional fields (ADR-0027).
     expect(configHash(DEFAULT_CONFIG_V3)).toBe(
       '076c57200e027d35b7a23582003c1161501b635469800fd1189c369d97160993',
     );

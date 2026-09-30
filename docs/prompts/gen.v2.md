@@ -1,4 +1,4 @@
-# gen.v2 — Question generator, belief-driven (ADR-0026)
+# gen.v2 — Question generator, belief-driven (ADR-0027)
 
 > Generated from `packages/core/src/prompts.ts`. Changing a prompt means adding a new ID.
 

@@ -46,7 +46,7 @@ export interface QuestionRecord extends Question {
   servedAt: number | null;
   /** As-of time of the derived data in this question's sealed states; replay rebuilds them from it (ADR-0017). */
   stateAt: number | null;
-  /** The selector's diagnostics for the winning score, written when served (ADR-0026). */
+  /** The selector's diagnostics for the winning score, written when served (ADR-0027). */
   selection?: Record<string, unknown> | null;
 }
 
@@ -326,7 +326,7 @@ export interface Store {
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
-  // cross-person item statistics (aggregate only; ADR-0026)
+  // cross-person item statistics (aggregate only; ADR-0027)
   putItemStats(recs: import('./population').ItemStatRecord[]): Promise<void>;
   listItemStats(): Promise<import('./population').ItemStatRecord[]>;
   // jobs ledger

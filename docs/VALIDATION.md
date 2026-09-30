@@ -190,7 +190,7 @@ Screenshots are in `docs/screenshots/v2-*.png`; videos are `docs/media/session-v
     the snapshot's history bands, basics and facet labels.
   - `next build` compiles.
 
-## Selection v2: value of information (ADR-0026)
+## Selection v2: value of information (ADR-0027)
 
 Offline fakes only (deterministic; outputs are arbitrary), so nothing below is a research result. It validates the
 machinery: `pnpm check` passes with 74 core unit tests and 41 eval integration tests.
