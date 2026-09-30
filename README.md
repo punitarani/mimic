@@ -40,12 +40,10 @@ flowchart LR
 
 | Component | Role |
 | --- | --- |
-| `apps/web` | UI and the synchronous path. `POST /next` serves a pooled question with its sealed primary and baseline predictions (target p50 ≤ 800 ms). `POST /answers` stores and scores the answer. |
-| `apps/worker` | Async jobs: identity search, question generation (`pool.refill`), shadow predictions, learning (trait reads, reflection, KG), snapshots. Cron requeues stale jobs and refreshes item stats. |
-| `packages/core` | Pure TypeScript engine: configs, state builder, selectors, scoring, fidelity. No Cloudflare, Next or Node imports, so the same code runs in both apps and the CLI. |
-| `packages/adapters` | OpenRouter chat, Jev decisions, Exa, Parallel, Perplexity and embeddings. Tested against recorded fixtures. |
-| `packages/db` | Drizzle schema, migrations and the `Store`, plus R2, KV and Vectorize helpers. |
-| `packages/eval` | Node CLI: export, replay, selection simulation, Twin-2K-500 import, reports and GEPA-style prompt optimization. |
+| `apps/web` | UI and the synchronous path: serves each question with its sealed primary and baseline predictions, then scores the answer. |
+| `apps/worker` | Async jobs: identity search, question generation, shadow predictions, learning (traits, insights, knowledge graph) and snapshots. |
+| `packages/core` | The pure TypeScript engine (state, selection, scoring, fidelity), shared by both apps and the CLI. |
+| `packages/eval` | Offline CLI: export consented data, replay, simulate selection and optimize prompts. |
 
 <details>
 <summary>Tech stack</summary>
@@ -60,74 +58,35 @@ flowchart LR
 
 </details>
 
-## Quickstart (local)
+## Quickstart
 
-**Prerequisites:** Node ≥ 22.12, pnpm 10 (`corepack enable`), and an [OpenRouter](https://openrouter.ai) API key. No Cloudflare account is needed: D1, R2, KV and Queues run locally in Miniflare.
+Requires Node ≥ 22.12, pnpm 10 and an [OpenRouter](https://openrouter.ai) API key. No Cloudflare account is needed locally.
 
 ```bash
 git clone https://github.com/punitarani/mimic.git && cd mimic
 pnpm i
 cp apps/web/.dev.vars.example apps/web/.dev.vars && cp apps/worker/.dev.vars.example apps/worker/.dev.vars
-# set OPENROUTER_API_KEY (and optionally EXA_API_KEY) in both .dev.vars files
+# set OPENROUTER_API_KEY in both .dev.vars files
 pnpm dev
 ```
 
-Open **http://localhost:3000/new?invite=mimic-dev**. The worker runs on http://localhost:8787. `pnpm dev` applies migrations and copies any missing `.dev.vars` from the example.
+Open **http://localhost:3000/new?invite=mimic-dev**. Run `pnpm check` (lint, typecheck, tests) before every commit.
 
-Configuration lives in `apps/web/.dev.vars` and `apps/worker/.dev.vars` (gitignored). There is no `.env` file. The templates are [`apps/web/.dev.vars.example`](apps/web/.dev.vars.example) and [`apps/worker/.dev.vars.example`](apps/worker/.dev.vars.example).
+[CONTRIBUTING.md](CONTRIBUTING.md) covers every environment variable, the other commands and the rules PRs are held to.
 
-| Variable | Needed? | Purpose |
-| --- | --- | --- |
-| `OPENROUTER_API_KEY` | **Yes** | Jev, the LLMs and embeddings |
-| `EXA_API_KEY` | For web search | Identity search and enrichment. Without it, untick "Search the public web" on `/new`, or use the fixtures below. |
-| `SEARCH_PROVIDER`, `ENRICH_PROVIDER` | No | `fixture` for an offline identity demo with fictional people; `none` to disable |
-| `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY` | No | Alternative enrichment and search providers |
-| `INVITE_CODES` | Web only | Comma-separated invite codes (dev: `mimic-dev`) |
-| `SESSION_SECRET` | Web only | Signs the participant cookie. Change it outside local dev. |
-| `ADMIN_EMAILS` | Web only | Who may open `/lab` |
-| `EGRESS_RELAY` | Keep as is | Routes provider calls through a local relay (`scripts/egress-relay.mjs`, ADR-0002) |
-| `DEV_MODE` | Local only | Opens `/lab`, and every mimic, to any visitor. The deploy preflight refuses it. |
+## Deploy
 
-<details>
-<summary>Other commands</summary>
+Mimic runs on Cloudflare Workers. There is no Docker image. One idempotent command creates the resources, runs the
+migrations, deploys both Workers, puts `/lab` behind Cloudflare Access and smoke-tests the result:
 
 ```bash
-pnpm check            # lint + typecheck + test; no live provider calls
-pnpm test:live        # live smoke tests (LIVE=1, needs keys)
-pnpm eval -- --help   # export | replay | select | import | report | session | evaluate | diagnose | optimize
-pnpm eval -- export --env local --out data/x.sqlite   # consented mimics only, PII scrubbed
-pnpm backfill --predictor <id>                        # run a new predictor on questions already served
+doppler run -- pnpm deploy:prod
 ```
 
-</details>
+[docs/DEPLOY.md](docs/DEPLOY.md) lists the secrets, token scopes and preview setup.
 
-## Self-host / deploy
-
-There is no Docker setup. Mimic targets Cloudflare Workers, and one idempotent command provisions and deploys everything: D1, R2, KV, Queues, Vectorize, both Workers, migrations, the Access policy for `/lab`, and a smoke test.
-
-```bash
-pnpm deploy:dry-run                 # rehearsal (CI's build job): OpenNext build + wrangler --dry-run; no credentials
-doppler run -- pnpm deploy:prod     # real deploy; secrets come from Doppler (or plain env vars)
-```
-
-| Required | Value |
-| --- | --- |
-| `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` | Token scopes are listed in [docs/DEPLOY.md](docs/DEPLOY.md) |
-| `APP_URL` | Your custom domain, e.g. `https://mimic.example.com` |
-| `OPENROUTER_API_KEY`, `SESSION_SECRET` | `openssl rand -base64 32` for the secret |
-| `INVITE_CODES`, `ADMIN_EMAILS` | Cohort invite codes; admins allowed into `/lab` |
-
-Optional settings: `SEARCH_PROVIDER`, `ENRICH_PROVIDER`, `EMBEDDINGS_PROVIDER`, `VECTOR_BACKEND`, `BUDGET_USD` (default $1 per mimic) and `BUDGET_SESSION_SHARE` (default 0.8).
-
-**Security basics**
-
-- Keys stay server-side. The browser never calls a provider, and preflight prints secret names, never values.
-- Sign-up needs an invite code. `/lab` sits behind Cloudflare Access plus `ADMIN_EMAILS`.
-- Preview deploys on `workers.dev` without Access, so its lab stays closed.
-- Never expose a `DEV_MODE=1` server (such as `pnpm dev`): it treats every visitor as an admin.
-- A spend cap per mimic refuses model calls once it is reached.
-
-CD (`.github/workflows/cd.yml`) deploys `main` after green CI. See [docs/DEPLOY.md](docs/DEPLOY.md) for the full path.
+> [!WARNING]
+> `pnpm dev` treats every visitor as an admin (`DEV_MODE=1`). Never expose it to the internet. Deployed sign-up needs an invite code, and provider keys never reach the browser.
 
 ## Project structure
 
@@ -138,7 +97,7 @@ packages/core/     Pure TS engine: configs, prompts, selection, scoring, fidelit
 packages/adapters/ Provider clients + recorded fixtures
 packages/db/       Drizzle schema, migrations, Store, R2/KV/Vectorize helpers
 packages/eval/     Offline eval + optimization CLI
-docs/              PLAN (spec), DECISIONS (ADRs), SELECTION, OPTIMIZATION, VALIDATION, DEPLOY, ontology, prompts
+docs/              Spec (PLAN), decisions (ADRs), design notes, validation log, ontology, prompts
 scripts/           Dev orchestrator, egress relay, backfill, deploy
 ```
 
@@ -159,14 +118,13 @@ Findings so far. These are about the models and the pipeline, not about people:
 
 - Jev is not bit-for-bit deterministic across calls, so replay compares within a tolerance.
 - Run-to-run noise per question is 0.031 nats for Jev and 0.14–0.20 for DeepSeek V4.1 Flash, which makes Jev the cheaper optimization target.
-- With reasoning at low effort, Qwen3.8 Flash failed 78% of prod predictions. With reasoning off it answers in about 2 s (ADR-0038).
 
-All 39 decisions are in [docs/DECISIONS.md](docs/DECISIONS.md).
+Every design decision is logged as an ADR in [docs/DECISIONS.md](docs/DECISIONS.md).
 
 ## License and contributing
 
 - **License:** none yet. No `LICENSE` file is checked in, so default copyright applies.
-- **Contributing:** open a PR against `main`. Run `pnpm check` first, and add an ADR to [docs/DECISIONS.md](docs/DECISIONS.md) for any deviation from [docs/PLAN.md](docs/PLAN.md).
+- **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Citation
 
