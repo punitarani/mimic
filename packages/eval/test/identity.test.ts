@@ -12,7 +12,7 @@ import {
   submitAnswer,
 } from '@mimic/core';
 import type { MemoryBlobs } from '@mimic/db/local';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 
 const intake = {
@@ -119,15 +119,74 @@ describe('identity (PLAN §9.2, M3)', () => {
 
     const all = await engine.deps.store.listCandidates(m.id);
     const open = all.filter((c) => c.status === 'proposed');
-    expect(all.find((c) => c.id === first!.id)?.status).toBe('rejected');
+    // Set aside, not judged: "superseded" never reads as the person saying "not me".
+    expect(all.find((c) => c.id === first!.id)?.status).toBe('superseded');
     expect(open[0]).toMatchObject({ url: link, name: 'Avery Quinn' });
     expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('candidates');
     // Only a candidate from the latest search can be confirmed.
     await expect(confirmIdentity(engine.deps, m.id, first!.id)).rejects.toMatchObject({ code: 'not_found' });
     await confirmIdentity(engine.deps, m.id, open[0]!.id);
     expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('enriching');
+    const after = await engine.deps.store.listCandidates(m.id);
+    expect(after.find((c) => c.id === open[0]!.id)?.status).toBe('confirmed');
+    expect(
+      after.filter((c) => c.id !== open[0]!.id && open.some((o) => o.id === c.id)).map((c) => c.status),
+    ).toEqual(open.slice(1).map(() => 'rejected'));
+    expect(after.find((c) => c.id === first!.id)?.status).toBe('superseded'); // earlier searches stay as they were
     // Once a profile is confirmed, the search is over.
     await expect(searchIdentityAgain(engine.deps, m.id, link)).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('lets only one of two concurrent searches again start a search', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    engine.queue.drain(); // nothing pending
+    const results = await Promise.allSettled([
+      searchIdentityAgain(engine.deps, m.id, 'https://linkedin.com/in/a'),
+      searchIdentityAgain(engine.deps, m.id, 'https://linkedin.com/in/b'),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'conflict' } });
+    expect(engine.queue.drain().filter((j) => j.type === 'identity.search')).toHaveLength(1);
+  });
+
+  it('puts the choice back when the search job cannot be enqueued', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    const before = await engine.deps.store.listCandidates(m.id);
+    vi.spyOn(engine.deps.jobs, 'enqueue').mockRejectedValueOnce(new Error('queue unavailable'));
+    await expect(searchIdentityAgain(engine.deps, m.id, 'https://linkedin.com/in/a')).rejects.toThrow(
+      'queue unavailable',
+    );
+    // Not stuck in "searching" with no job: the person can pick from the same list, or try again.
+    expect(await engine.deps.store.getMimic(m.id)).toMatchObject({ identityState: 'candidates', links: [] });
+    expect(await engine.deps.store.listCandidates(m.id)).toEqual(before);
+    await searchIdentityAgain(engine.deps, m.id, 'https://linkedin.com/in/a');
+    expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('searching');
+  });
+
+  it('finishes a search whose candidates landed but whose state update was lost', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    const n = (await engine.deps.store.listCandidates(m.id)).length;
+    // As if the job failed right after inserting its candidates and was delivered again.
+    await engine.deps.store.updateMimic(m.id, { identityState: 'searching' });
+    await runIdentitySearch(engine.deps, m.id);
+    expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('candidates');
+    expect(await engine.deps.store.listCandidates(m.id)).toHaveLength(n); // no second set
+  });
+
+  it('confirms only while a choice is pending', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    const [top] = await engine.deps.store.listCandidates(m.id);
+    await engine.deps.store.updateMimic(m.id, { identityState: 'searching' });
+    await expect(confirmIdentity(engine.deps, m.id, top!.id)).rejects.toMatchObject({ code: 'conflict' });
+    expect((await engine.deps.store.listCandidates(m.id)).every((c) => c.status === 'proposed')).toBe(true);
   });
 
   it('searches again only with consent and within a few links', async () => {

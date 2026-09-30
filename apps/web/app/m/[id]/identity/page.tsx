@@ -1,10 +1,11 @@
 'use client';
+import { hostLabel, isWebLink, withScheme } from '@mimic/core/links';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams, useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { TopBar } from '@/components/brand';
 import { Button, cn, ErrorText, Input, Spinner } from '@/components/ui';
-import { api, type IdentityView, withScheme } from '@/lib/api';
+import { api, type IdentityView } from '@/lib/api';
 
 const PREDICATE_LABEL: Record<string, string> = {
   headline: 'Headline',
@@ -55,6 +56,17 @@ export default function IdentityPage() {
     onSuccess: () => router.push(`/m/${id}`),
     onError,
   });
+  // Owned here, not by the form, so the picker's buttons wait while a link search is on its way.
+  const search = useMutation({
+    mutationFn: (link: string) => api.searchAgain(id, link),
+    onSuccess: () => {
+      setError(null); // a new search makes any earlier error stale
+      return refresh();
+    },
+  });
+  const linkSearch = (label?: string) => (
+    <LinkSearch onSearch={(url) => search.mutateAsync(url)} pending={search.isPending} label={label} />
+  );
   const toggle = useMutation({
     mutationFn: (f: { id: string; userState: 'active' | 'removed' }) => api.setFact(id, f.id, f.userState),
     onMutate: async (f) => {
@@ -89,12 +101,12 @@ export default function IdentityPage() {
         {status === 'candidates' && data && (
           <CandidatePicker
             candidates={data.candidates.filter((c) => c.status === 'proposed')}
-            busy={confirm.isPending}
+            busy={confirm.isPending || search.isPending}
             onConfirm={(candidateId) => {
               setError(null);
               confirm.mutate(candidateId);
             }}
-            linkSearch={<LinkSearch mimicId={id} onSearched={refresh} />}
+            linkSearch={linkSearch()}
           />
         )}
 
@@ -107,7 +119,7 @@ export default function IdentityPage() {
               That's fine: your mimic learns from your answers. If you have a LinkedIn profile or a personal
               site, we can look it up.
             </p>
-            <LinkSearch mimicId={id} onSearched={refresh} label="Link to your profile" />
+            {linkSearch('Link to your profile')}
             <Button className="mt-8 w-full sm:w-auto" size="lg" onClick={() => finish.mutate()}>
               Start answering
             </Button>
@@ -144,14 +156,14 @@ export default function IdentityPage() {
                         <p className={cn('text-[15px]', removed && 'line-through')}>{f.object}</p>
                         <p className="text-[12px] text-slate">
                           Source:{' '}
-                          {f.sourceUrl && webLink(f.sourceUrl) ? (
+                          {f.sourceUrl && isWebLink(f.sourceUrl) ? (
                             <a
                               href={f.sourceUrl}
                               target="_blank"
                               rel="noreferrer noopener"
                               className="underline underline-offset-2"
                             >
-                              {safeHost(f.sourceUrl)}
+                              {hostLabel(f.sourceUrl)}
                             </a>
                           ) : (
                             f.source
@@ -209,14 +221,17 @@ function CandidatePicker({
   const more = candidates.filter((c) => !upFront.includes(c));
   // A profile picked from "Show more" stays in view when the list collapses again.
   const shown = showAll ? candidates : candidates.filter((c) => upFront.includes(c) || c.id === selected);
-  const single = upFront.length === 1;
+  // The heading follows what's on screen. "Not me" rejects every candidate, including those behind "Show more", so
+  // it's only offered when there is just one.
+  const oneShown = shown.length === 1;
+  const onlyOne = candidates.length === 1;
   const confident = candidates.some((c) => c.fromLink || (c.samePerson ?? 0) >= CLOSE_P);
   const chosen = candidates.find((c) => c.id === selected);
 
   return (
     <section aria-labelledby="pick">
       <h1 id="pick" className="font-serif text-3xl tracking-tight">
-        {single ? 'Is this you?' : 'Is one of these you?'}
+        {oneShown ? 'Is this you?' : 'Is one of these you?'}
       </h1>
       <p className="mt-2 text-slate">
         {confident
@@ -258,7 +273,7 @@ function CandidatePicker({
           disabled={busy}
           onClick={() => onConfirm(null)}
         >
-          {single ? 'Not me' : 'None of these'}
+          {onlyOne ? 'Not me' : 'None of these'}
         </Button>
       </div>
 
@@ -296,7 +311,7 @@ function CandidateCard({ c, checked, onSelect }: { c: Candidate; checked: boolea
         <span className="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-[13px] text-slate">
           {c.location && <span className="truncate">{c.location}</span>}
           {c.location && <span aria-hidden="true">·</span>}
-          {webLink(c.url) ? (
+          {isWebLink(c.url) ? (
             <a
               href={c.url}
               target="_blank"
@@ -326,32 +341,29 @@ function Tag({ className, children }: { className: string; children: React.React
 
 /** "Not here? Search with a link": a new search led by the person's LinkedIn or personal site. */
 function LinkSearch({
-  mimicId,
-  onSearched,
+  onSearch,
+  pending,
   label,
 }: {
-  mimicId: string;
-  onSearched: () => void;
+  onSearch: (url: string) => Promise<unknown>;
+  pending: boolean;
   /** Set when the page already explains the search; otherwise it follows a list as "Not here?". */
-  label?: string;
+  label?: string | undefined;
 }) {
   const [link, setLink] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const search = useMutation({
-    mutationFn: (url: string) => api.searchAgain(mimicId, url),
-    onSuccess: onSearched,
-    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Something went wrong.'),
-  });
   function submit(e: FormEvent) {
     e.preventDefault();
     const url = withScheme(link);
     if (!url) return;
-    if (!looksLikeWebLink(url)) {
+    if (!isWebLink(url)) {
       setError("That doesn't look like a web link. Try one like linkedin.com/in/you.");
       return;
     }
     setError(null);
-    search.mutate(url);
+    onSearch(url).catch((err: unknown) =>
+      setError(err instanceof Error ? err.message : 'Something went wrong.'),
+    );
   }
   return (
     <form onSubmit={submit} className={cn(label ? 'mt-6' : 'mt-8 border-t border-rule pt-6')} noValidate>
@@ -379,9 +391,9 @@ function LinkSearch({
           type="submit"
           variant="secondary"
           className="h-11 shrink-0"
-          disabled={!link.trim() || search.isPending}
+          disabled={!link.trim() || pending}
         >
-          {search.isPending ? 'Searching…' : 'Search'}
+          {pending ? 'Searching…' : 'Search'}
         </Button>
       </div>
       {error && (
@@ -401,25 +413,4 @@ function Waiting({ title, body }: { title: string; body: string }) {
       <p className="text-slate">{body}</p>
     </div>
   );
-}
-
-function looksLikeWebLink(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return webLink(url) && u.hostname.includes('.');
-  } catch {
-    return false;
-  }
-}
-
-function webLink(url: string): boolean {
-  return /^https?:\/\//i.test(url);
-}
-
-function safeHost(url: string): string {
-  try {
-    return new URL(url).host.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
 }

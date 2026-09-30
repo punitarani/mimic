@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hostLabel,
+  IntakeInput,
+  isWebLink,
   mergeCandidates,
   nameMatch,
   type PersonCandidate,
@@ -7,6 +10,7 @@ import {
   searchCacheKey,
   searchCacheKeys,
   searchQueries,
+  withScheme,
 } from '../src';
 
 const person = (name: string, url: string): PersonCandidate => ({ provider: 'exa', name, url, summary: '' });
@@ -36,6 +40,25 @@ describe('identity search queries (ADR-0027)', () => {
       'Sam Lee',
     ]);
   });
+
+  it('never lets a blank occupation hide the employer or school', () => {
+    const base = { displayName: 'Rosa Ibarra', location: 'Claremont, CA' };
+    expect(searchQueries({ ...base, occupation: '  ', employer: 'Pomona College' })[1]).toBe(
+      'Rosa Ibarra, Pomona College',
+    );
+    // And intake stores a blank field as absent in the first place.
+    const input = IntakeInput.parse({
+      name: 'Rosa Ibarra',
+      location: 'Claremont, CA',
+      occupation: '   ',
+      employer: '',
+      attestSelf: true,
+      consentSearch: true,
+      consentResearch: false,
+    });
+    expect(input.occupation).toBeUndefined();
+    expect(input.employer).toBeUndefined();
+  });
 });
 
 describe('nameMatch', () => {
@@ -45,8 +68,17 @@ describe('nameMatch', () => {
     expect(nameMatch('Rosa Ibarra', 'Rosa M. Ibarra')).toBe(2);
   });
 
-  it('counts a last initial, as LinkedIn shows names outside your network', () => {
+  it('counts a last initial that ends the name, as LinkedIn shows names outside your network', () => {
     expect(nameMatch('Rosa Ibarra', 'Rosa I.')).toBe(2);
+    // A middle initial is not a last name.
+    expect(nameMatch('Rosa Ibarra', 'Rosa I. Guerrero')).toBe(1);
+  });
+
+  it('ignores suffixes and apostrophes', () => {
+    expect(nameMatch('John Smith Jr.', 'John Smith')).toBe(2);
+    expect(nameMatch('John Smith', 'John Smith, PhD')).toBe(2);
+    expect(nameMatch("Mike O'Brien", 'Michael OBrien')).toBe(1);
+    expect(nameMatch("Mike O'Brien", 'Mike O’Brien')).toBe(2);
   });
 
   it('scores namesakes as partial and strangers as none', () => {
@@ -64,7 +96,33 @@ describe('profileKey', () => {
     expect(profileKey('https://ca.linkedin.com/in/rosa-ibarra/')).toBe(k);
     expect(profileKey('linkedin.com/in/rosa-ibarra?trk=abc')).toBe(k);
     expect(profileKey('HTTP://LinkedIn.com/in/Rosa-Ibarra#about')).toBe(k);
+    expect(profileKey('https://m.linkedin.com/in/rosa-ibarra')).toBe(k);
+    expect(profileKey('https://www.linkedin.com/in/rosa-ibarra?originalSubdomain=ca')).toBe(k);
     expect(profileKey('https://www.rosa.dev/')).toBe('rosa.dev');
+  });
+
+  it('keeps query parameters that name the page, and path case outside LinkedIn', () => {
+    const a = profileKey('https://www.facebook.com/profile.php?id=1');
+    expect(profileKey('https://www.facebook.com/profile.php?id=2')).not.toBe(a);
+    expect(profileKey('https://facebook.com/profile.php?utm_source=x&id=1')).toBe(a);
+    expect(profileKey('https://example.com/People/Rosa')).toBe('example.com/People/Rosa');
+  });
+});
+
+describe('link helpers', () => {
+  it('accepts only http(s) links with a real host', () => {
+    expect(isWebLink('https://linkedin.com/in/rosa')).toBe(true);
+    expect(isWebLink('http://rosa.dev')).toBe(true);
+    expect(isWebLink('javascript:alert(1)')).toBe(false);
+    expect(isWebLink('https://localhost')).toBe(false);
+    expect(isWebLink('not a link')).toBe(false);
+  });
+
+  it('adds a scheme only when one is missing, and labels hosts', () => {
+    expect(withScheme(' linkedin.com/in/rosa ')).toBe('https://linkedin.com/in/rosa');
+    expect(withScheme('HTTP://rosa.dev')).toBe('HTTP://rosa.dev');
+    expect(withScheme('')).toBe('');
+    expect(hostLabel('https://www.linkedin.com/in/rosa')).toBe('linkedin.com');
   });
 });
 

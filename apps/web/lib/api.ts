@@ -52,12 +52,6 @@ export interface IntakeRequest {
   consentResearch: boolean;
 }
 
-/** People type "linkedin.com/in/you"; the API wants a full web link. */
-export function withScheme(link: string): string {
-  const v = link.trim();
-  return !v || /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`;
-}
-
 export interface IdentityView {
   status: UiSnapshot['mimic']['identityState'];
   candidates: Array<{
@@ -71,7 +65,8 @@ export interface IdentityView {
     samePerson: number | null;
     /** The profile at a link the person gave. */
     fromLink: boolean;
-    status: 'proposed' | 'confirmed' | 'rejected';
+    /** Only the latest search's candidates are listed: open or confirmed. */
+    status: 'proposed' | 'confirmed';
   }>;
   facts: Array<{
     id: string;

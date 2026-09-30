@@ -1,11 +1,13 @@
 import {
   type AnswerRecord,
   type CandidateRecord,
+  type CandidateStatus,
   type ConfigRecord,
   type EvalRunRecord,
   type ExperimentRecord,
   type FactRecord,
   type FidelityRecord,
+  type IdentityState,
   type InsightRecord,
   type JobRecord,
   type KgEdgeRecord,
@@ -64,6 +66,14 @@ type QRow = typeof s.questions.$inferSelect;
 type PRow = typeof s.predictions.$inferSelect;
 type MRow = typeof s.mimics.$inferSelect;
 type TRow = typeof s.traitEstimates.$inferSelect;
+
+/** A MimicRecord patch as column values (`links` is stored as JSON). */
+function mimicPatch(patch: Partial<Omit<MimicRecord, 'id'>>): Partial<typeof s.mimics.$inferInsert> {
+  const { links, ...rest } = patch;
+  const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
+  if (links) set.linksJson = JSON.stringify(links);
+  return set;
+}
 
 const toMimic = (r: MRow): MimicRecord => ({
   id: r.id,
@@ -267,10 +277,20 @@ export class DrizzleStore implements Store {
     return rows.map(toMimic);
   }
   async updateMimic(id: string, patch: Partial<Omit<MimicRecord, 'id'>>) {
-    const { links, ...rest } = patch;
-    const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
-    if (links) set.linksJson = JSON.stringify(links);
+    const set = mimicPatch(patch);
     if (Object.keys(set).length) await this.db.update(s.mimics).set(set).where(eq(s.mimics.id, id));
+  }
+  async transitionIdentity(
+    id: string,
+    from: readonly IdentityState[],
+    patch: Partial<Omit<MimicRecord, 'id'>>,
+  ) {
+    const r = await this.db
+      .update(s.mimics)
+      .set(mimicPatch(patch))
+      .where(and(eq(s.mimics.id, id), inArray(s.mimics.identityState, [...from])))
+      .returning({ id: s.mimics.id });
+    return r.length > 0;
   }
   async addSpend(id: string, usd: number) {
     await this.db
@@ -299,8 +319,18 @@ export class DrizzleStore implements Store {
       .orderBy(asc(s.identityCandidates.rank))
       .all();
   }
-  async updateCandidate(id: string, patch: Partial<Pick<CandidateRecord, 'status' | 'jevSamePersonP'>>) {
-    await this.db.update(s.identityCandidates).set(patch).where(eq(s.identityCandidates.id, id));
+  async setCandidateStatus(mimicId: string, ids: readonly string[], status: CandidateStatus) {
+    for (let i = 0; i < ids.length; i += 90) {
+      await this.db
+        .update(s.identityCandidates)
+        .set({ status })
+        .where(
+          and(
+            eq(s.identityCandidates.mimicId, mimicId),
+            inArray(s.identityCandidates.id, ids.slice(i, i + 90)),
+          ),
+        );
+    }
   }
   async insertFacts(recs: FactRecord[]) {
     await this.insertChunked(s.facts, recs);

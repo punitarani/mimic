@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { PipelineConfig } from '../config';
 import { hashJson, seededRng, sha256Hex, shuffle } from '../hash';
 import { samePersonQuestion } from '../jev';
+import { isWebLink, profileKey } from '../links';
 import { getAnchorSet } from '../ontology';
 import type {
   CandidateRecord,
@@ -30,25 +31,22 @@ import {
 export const HttpUrl = z
   .string()
   .trim()
-  .url()
   .max(300)
-  .refine((u) => /^https?:\/\//i.test(u), 'Use a web link that starts with https://');
+  .refine(isWebLink, 'Use a web link, like https://linkedin.com/in/you');
+
+/** An optional intake field: blank (after trimming) is absent, so it can't hide another field downstream. */
+const OptionalText = z
+  .string()
+  .trim()
+  .max(120)
+  .transform((v) => v || undefined)
+  .optional();
 
 export const IntakeInput = z.object({
   name: z.string().trim().min(1).max(120),
   location: z.string().trim().min(2).max(120),
-  occupation: z
-    .string()
-    .trim()
-    .max(120)
-    .optional()
-    .or(z.literal('').transform(() => undefined)),
-  employer: z
-    .string()
-    .trim()
-    .max(120)
-    .optional()
-    .or(z.literal('').transform(() => undefined)),
+  occupation: OptionalText,
+  employer: OptionalText,
   link: HttpUrl.optional().or(z.literal('').transform(() => undefined)),
   attestSelf: z.literal(true),
   consentSearch: z.boolean(),
@@ -182,47 +180,48 @@ export function searchCacheKeys(m: SearchSubject): string[] {
 export function searchQueries(
   m: Pick<MimicRecord, 'displayName' | 'location' | 'occupation' | 'employer'>,
 ): string[] {
-  const role =
-    m.occupation && m.employer ? `${m.occupation} at ${m.employer}` : (m.occupation ?? m.employer ?? '');
+  // `||`, not `??`: a blank occupation must not hide the employer or school.
+  const occupation = m.occupation?.trim();
+  const employer = m.employer?.trim();
+  const role = occupation && employer ? `${occupation} at ${employer}` : occupation || employer || '';
   const qs = role
     ? [`${m.displayName}, ${role}, ${m.location}`, `${m.displayName}, ${role}`, m.displayName]
     : [`${m.displayName}, ${m.location}`, m.displayName];
   return [...new Set(qs.map((q) => q.replace(/\s+/g, ' ').trim()))];
 }
 
-/** A profile URL's identity for dedupe: no scheme, `www.` or LinkedIn country subdomain, query or trailing slash. */
-export function profileKey(url: string): string {
-  return url
-    .trim()
-    .toLowerCase()
-    .replace(/^[a-z][a-z0-9+.-]*:\/\//, '')
-    .replace(/[?#].*$/, '')
-    .replace(/\/+$/, '')
-    .replace(/^(?:www\.|[a-z]{2}\.)(linkedin\.com\/)/, '$1')
-    .replace(/^www\./, '');
-}
+const NAME_SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii', 'iv', 'phd', 'md', 'mba', 'cpa', 'esq']);
 
-/** Lowercase name parts without accents or punctuation: "Alondra M." → ["alondra", "m"]. */
+/**
+ * Lowercase name parts without accents, apostrophes (O'Brien = OBrien), other punctuation or suffixes (Jr., PhD):
+ * "Alondra M." → ["alondra", "m"].
+ */
 function nameTokens(s: string): string[] {
-  return s
+  const tokens = s
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
     .toLowerCase()
+    .replace(/['’`]/g, '')
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
+  const named = tokens.filter((t) => !NAME_SUFFIXES.has(t));
+  return named.length ? named : tokens;
 }
 
 /**
- * How well a profile's name matches the intake name: 2 when the first and last names match (a last initial counts,
- * since LinkedIn shows "Alondra M." to people outside someone's network), 1 when any part matches, 0 otherwise.
+ * How well a profile's name matches the intake name: 2 when the first and last names match, 1 when any part
+ * matches, 0 otherwise. A last initial that ends the name counts, since LinkedIn shows "Alondra M." to people
+ * outside someone's network; a middle initial ("Rosa I. Guerrero") doesn't.
  */
 export function nameMatch(intakeName: string, profileName: string): 0 | 1 | 2 {
   const want = nameTokens(intakeName);
-  const got = new Set(nameTokens(profileName));
+  const gotList = nameTokens(profileName);
+  const got = new Set(gotList);
   const first = want[0];
   const last = want[want.length - 1];
   if (!first || !last || !got.size) return 0;
-  if (got.has(first) && (got.has(last) || got.has(last[0]!))) return 2;
+  const lastOk = got.has(last) || (want.length > 1 && gotList[gotList.length - 1] === last[0]);
+  if (got.has(first) && lastOk) return 2;
   return want.some((t) => got.has(t)) ? 1 : 0;
 }
 
@@ -291,8 +290,15 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
   const m = await requireMimic(deps, mimicId);
   if (!m.consentSearch) return; // declining search makes zero search calls
   if (m.identityState !== 'searching') return; // skipped (or already done) before the job ran
-  // A redelivered job whose candidates already landed. Candidates from an earlier search were rejected.
-  if ((await deps.store.listCandidates(m.id)).some((c) => c.status === 'proposed')) return;
+  // A redelivered job whose candidates already landed (an earlier search's are superseded): finish what that run
+  // started rather than leave the person waiting on a search that is over.
+  if ((await deps.store.listCandidates(m.id)).some((c) => c.status === 'proposed')) {
+    await deps.store.transitionIdentity(m.id, ['searching'], {
+      identityState: 'candidates',
+      updatedAt: deps.clock(),
+    });
+    return;
+  }
   const now = deps.clock();
   const link = m.links[0];
 
@@ -375,9 +381,8 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
     createdAt: now,
   }));
   await deps.store.insertCandidates(recs);
-  const latest = await requireMimic(deps, m.id);
-  if (latest.identityState !== 'searching') return; // the person skipped while we searched
-  await deps.store.updateMimic(m.id, {
+  // Only from 'searching': the person may have skipped while we searched.
+  await deps.store.transitionIdentity(m.id, ['searching'], {
     identityState: recs.length ? 'candidates' : 'none_found',
     updatedAt: deps.clock(),
   });
@@ -386,30 +391,46 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
 /** Distinct links a person can search with; each costs a few search calls. */
 export const MAX_LINKS = 4;
 
+const PENDING_CHOICE = ['candidates', 'none_found'] as const;
+const NOT_WAITING = 'Search is not waiting for a choice';
+
 /**
  * "Search with a link": the person didn't see themselves and gave a profile link. The open candidates are set
- * aside as rejected and a new search runs with the link as its first lead. Only while a choice is pending.
+ * aside as superseded (they weren't judged, so they aren't "not me") and a new search runs with the link as its
+ * first lead. Only while a choice is pending.
  */
 export async function searchIdentityAgain(deps: EngineDeps, mimicId: string, link: string): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   if (!m.consentSearch) throw new EngineError('forbidden', 'Web search is off for this mimic');
-  if (m.identityState !== 'candidates' && m.identityState !== 'none_found') {
-    throw new EngineError('conflict', 'Search is not waiting for a choice');
-  }
   const key = profileKey(link);
   const others = m.links.filter((l) => profileKey(l) !== key);
   if (others.length >= MAX_LINKS) throw new EngineError('conflict', 'That is as many links as we can search');
   const now = deps.clock();
-  // State first, so a poll in between shows the search rather than an empty list.
-  await deps.store.updateMimic(m.id, {
+  // One statement claims the search, so two requests at once can't start two. State goes first, so a poll in
+  // between shows the search rather than an empty list.
+  const claimed = await deps.store.transitionIdentity(m.id, PENDING_CHOICE, {
     links: [link, ...others],
     identityState: 'searching',
     updatedAt: now,
   });
-  for (const c of await deps.store.listCandidates(m.id)) {
-    if (c.status === 'proposed') await deps.store.updateCandidate(c.id, { status: 'rejected' });
+  if (!claimed) throw new EngineError('conflict', NOT_WAITING);
+  const open = (await deps.store.listCandidates(m.id))
+    .filter((c) => c.status === 'proposed')
+    .map((c) => c.id);
+  await deps.store.setCandidateStatus(m.id, open, 'superseded');
+  try {
+    await deps.jobs.enqueue({ type: 'identity.search', mimicId: m.id, attempt: now });
+  } catch (e) {
+    // Without a job nothing would ever leave 'searching' (no ledger row for the cron to requeue): put the choice
+    // back as it was, so the person can pick or try again.
+    await deps.store.setCandidateStatus(m.id, open, 'proposed');
+    await deps.store.transitionIdentity(m.id, ['searching'], {
+      links: m.links,
+      identityState: open.length ? 'candidates' : 'none_found',
+      updatedAt: deps.clock(),
+    });
+    throw e;
   }
-  await deps.jobs.enqueue({ type: 'identity.search', mimicId: m.id, attempt: now });
 }
 
 /** The person picks a candidate or "None of these". Never auto-confirmed (PLAN §9.2 step 3). */
@@ -419,26 +440,40 @@ export async function confirmIdentity(
   candidateId: string | null,
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
-  const candidates = await deps.store.listCandidates(m.id);
-  // Only a candidate from the latest search can be confirmed.
-  if (candidateId && !candidates.some((c) => c.id === candidateId && c.status === 'proposed')) {
-    throw new EngineError('not_found', 'Candidate not found');
-  }
-  for (const c of candidates) {
-    await deps.store.updateCandidate(c.id, { status: c.id === candidateId ? 'confirmed' : 'rejected' });
-  }
-  if (!candidateId) {
+  // Only a candidate from the latest search can be confirmed; earlier ones are superseded or already decided.
+  const open = (await deps.store.listCandidates(m.id)).filter((c) => c.status === 'proposed');
+  const chosen = candidateId ? open.find((c) => c.id === candidateId) : undefined;
+  if (candidateId && !chosen) throw new EngineError('not_found', 'Candidate not found');
+  if (!chosen) {
+    await deps.store.setCandidateStatus(
+      m.id,
+      open.map((c) => c.id),
+      'rejected',
+    );
     await finishIdentity(deps, m.id);
     return;
   }
-  const chosen = candidates.find((c) => c.id === candidateId)!;
   const now = deps.clock();
+  // Claimed in one statement: a search again (or another tab) that moved on first wins.
+  if (
+    !(await deps.store.transitionIdentity(m.id, ['candidates'], {
+      identityState: 'enriching',
+      updatedAt: now,
+    }))
+  ) {
+    throw new EngineError('conflict', NOT_WAITING);
+  }
+  await deps.store.setCandidateStatus(
+    m.id,
+    open.filter((c) => c.id !== chosen.id).map((c) => c.id),
+    'rejected',
+  );
+  await deps.store.setCandidateStatus(m.id, [chosen.id], 'confirmed');
   const facts: FactRecord[] = [];
   if (chosen.headline) facts.push(fact(deps, m.id, 'headline', chosen.headline, chosen.url, 0.8, now));
   if (chosen.location) facts.push(fact(deps, m.id, 'livesIn', chosen.location, chosen.url, 0.7, now));
   await addFacts(deps, m, facts);
-  await deps.store.updateMimic(m.id, { identityState: 'enriching', updatedAt: now });
-  await deps.jobs.enqueue({ type: 'identity.enrich', mimicId: m.id, candidateId });
+  await deps.jobs.enqueue({ type: 'identity.enrich', mimicId: m.id, candidateId: chosen.id });
 }
 
 function fact(

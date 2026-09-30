@@ -74,8 +74,6 @@ const ExaResponse = z
         .passthrough(),
     ),
     costDollars: z.object({ total: z.number() }).passthrough().optional(),
-    /** `/contents` only: one per requested URL. */
-    statuses: z.array(z.object({ id: z.string(), status: z.string() }).passthrough()).optional(),
   })
   .passthrough();
 

@@ -1,9 +1,10 @@
 'use client';
+import { withScheme } from '@mimic/core/links';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import { TopBar } from '@/components/brand';
 import { Button, Checkbox, ErrorText, Field, Input } from '@/components/ui';
-import { api, withScheme } from '@/lib/api';
+import { api } from '@/lib/api';
 import { INVITE_PARAM, inviteFromQuery } from '@/lib/invite';
 
 export default function NewMimic() {

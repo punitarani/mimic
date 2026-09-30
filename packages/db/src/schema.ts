@@ -55,7 +55,7 @@ export const identityCandidates = sqliteTable(
     summary: text('summary').notNull(),
     jevSamePersonP: real('jev_same_person_p'),
     r2Key: text('r2_key'),
-    status: text('status', { enum: ['proposed', 'confirmed', 'rejected'] }).notNull(),
+    status: text('status', { enum: ['proposed', 'confirmed', 'rejected', 'superseded'] }).notNull(),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [index('identity_candidates_mimic_idx').on(t.mimicId)],
