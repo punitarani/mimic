@@ -8,6 +8,7 @@ import {
   MimicJson,
   predictPlayground,
   searchCacheKey,
+  searchCacheKeys,
   serveNext,
   submitAnswer,
   writeSnapshot,
@@ -152,15 +153,14 @@ describe('mimic artifact (M6)', () => {
     for (const k of traceKeys) expect(await blobs.get(k)).toBeNull();
     for (const [, v] of blobs.data) expect(v).not.toContain(m.id);
     expect([...kv.data.keys()].filter((k) => k.includes(m.id))).toEqual([]);
-    expect(
-      await kv.get(
-        searchCacheKey({
-          displayName: 'Avery Quinn',
-          location: 'San Francisco, US',
-          occupation: 'Software engineer',
-        }),
-      ),
-    ).toBeNull();
+    for (const k of searchCacheKeys({
+      displayName: 'Avery Quinn',
+      location: 'San Francisco, US',
+      occupation: 'Software engineer',
+      employer: null,
+      links: [],
+    }))
+      expect(await kv.get(k)).toBeNull();
     // Deletion is scoped: the other mimic is untouched.
     expect(await engine.deps.store.getMimic(keep.id)).not.toBeNull();
     expect((await engine.deps.store.listAnswers(keep.id)).length).toBe(3);

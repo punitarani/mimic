@@ -1,0 +1,62 @@
+{
+  "requestId": "example",
+  "results": [
+    {
+      "id": "https://exa.ai/library/person/example-avery",
+      "title": "Avery Quinn",
+      "url": "https://www.linkedin.com/in/avery-quinn-example",
+      "publishedDate": "2026-09-21T06:35:49.000Z",
+      "author": null,
+      "text": "# Avery Quinn\n\nBuilding data tools at Northwind Labs\n\nSan Francisco, California, United States (US)\n\n500 connections • 900 followers\n\n## About\n\nI like making slow things fast.\n\n## Experience\n\n### Northwind Labs\n\n#### Senior Software Engineer (Current)\n\nMar 2021 - Present in San Francisco, California, United States",
+      "entities": [
+        {
+          "id": "https://exa.ai/library/person/example-avery",
+          "type": "person",
+          "version": 1,
+          "properties": {
+            "name": "Avery Quinn",
+            "firstName": "Avery",
+            "lastName": "Quinn",
+            "location": "San Francisco, California, United States",
+            "workHistory": [
+              {
+                "title": "Senior Software Engineer",
+                "location": "San Francisco, California, United States",
+                "dates": { "from": "2021-03-01", "to": null },
+                "company": { "id": null, "name": "Northwind Labs" }
+              },
+              {
+                "title": "Software Engineer",
+                "location": null,
+                "dates": { "from": "2017-06-01", "to": "2021-02-01" },
+                "company": { "id": null, "name": "Contoso" }
+              }
+            ],
+            "educationHistory": [
+              {
+                "degree": "B.S. Computer Science",
+                "dates": null,
+                "institution": { "id": null, "name": "Example State University" }
+              }
+            ],
+            "research": null
+          }
+        }
+      ]
+    }
+  ],
+  "statuses": [
+    {
+      "id": "https://www.linkedin.com/in/avery-quinn-example",
+      "status": "success",
+      "source": "cached"
+    }
+  ],
+  "costDollars": {
+    "total": 0.001,
+    "contents": {
+      "text": 0.001
+    }
+  },
+  "searchTime": 8.93
+}

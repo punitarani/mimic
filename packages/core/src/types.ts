@@ -204,6 +204,8 @@ export interface PeopleSearchResult {
 export interface PeopleSearch {
   readonly provider: string;
   search(query: string, opts: { numResults: number }): Promise<PeopleSearchResult>;
+  /** Resolves a profile URL the person gave into a candidate (none if the page can't be read). */
+  lookup?(url: string): Promise<PeopleSearchResult>;
 }
 
 export interface EnrichedFact {

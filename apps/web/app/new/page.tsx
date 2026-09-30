@@ -3,7 +3,7 @@ import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
 import { TopBar } from '@/components/brand';
 import { Button, Checkbox, ErrorText, Field, Input } from '@/components/ui';
-import { api } from '@/lib/api';
+import { api, withScheme } from '@/lib/api';
 
 export default function NewMimic() {
   const router = useRouter();
@@ -38,7 +38,7 @@ export default function NewMimic() {
         location: f.location,
         ...(f.occupation ? { occupation: f.occupation } : {}),
         ...(f.employer ? { employer: f.employer } : {}),
-        ...(f.link ? { link: f.link } : {}),
+        ...(f.link.trim() ? { link: withScheme(f.link) } : {}),
         attestSelf: true,
         consentSearch: search,
         consentResearch: research,
@@ -94,7 +94,7 @@ export default function NewMimic() {
                 autoComplete="organization-title"
               />
             </Field>
-            <Field label="Employer" htmlFor="employer">
+            <Field label="Employer or school" htmlFor="employer">
               <Input
                 id="employer"
                 value={f.employer}
@@ -108,7 +108,17 @@ export default function NewMimic() {
             htmlFor="link"
             hint="LinkedIn or a personal site. It makes finding you much more accurate."
           >
-            <Input id="link" type="url" value={f.link} onChange={set('link')} placeholder="https://" />
+            <Input
+              id="link"
+              type="url"
+              inputMode="url"
+              autoComplete="url"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={f.link}
+              onChange={set('link')}
+              placeholder="linkedin.com/in/you"
+            />
           </Field>
           <div className="space-y-4 border-t border-line pt-5">
             <Checkbox

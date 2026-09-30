@@ -46,6 +46,12 @@ export interface IntakeRequest {
   consentResearch: boolean;
 }
 
+/** People type "linkedin.com/in/you"; the API wants a full web link. */
+export function withScheme(link: string): string {
+  const v = link.trim();
+  return !v || /^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`;
+}
+
 export interface IdentityView {
   status: UiSnapshot['mimic']['identityState'];
   candidates: Array<{
@@ -57,6 +63,8 @@ export interface IdentityView {
     source: string;
     provider: string;
     samePerson: number | null;
+    /** The profile at a link the person gave. */
+    fromLink: boolean;
     status: 'proposed' | 'confirmed' | 'rejected';
   }>;
   facts: Array<{
@@ -102,6 +110,8 @@ export const api = {
   confirm: (id: string, candidateId: string | null) =>
     call<{ ok: true }>('POST', `/api/mimics/${id}/identity/confirm`, { candidateId }),
   finishIdentity: (id: string) => call<{ ok: true }>('POST', `/api/mimics/${id}/identity/finish`),
+  searchAgain: (id: string, link: string) =>
+    call<{ ok: true }>('POST', `/api/mimics/${id}/identity/search`, { link }),
   setFact: (id: string, factId: string, userState: 'active' | 'removed') =>
     call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
   next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),

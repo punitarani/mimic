@@ -6,6 +6,7 @@ describe('job keys', () => {
     const jobs: Job[] = [
       { type: 'noop', id: 'x:y' },
       { type: 'identity.search', mimicId: 'M' },
+      { type: 'identity.search', mimicId: 'M', attempt: 1790000000000 },
       { type: 'identity.enrich', mimicId: 'M', candidateId: 'C' },
       { type: 'pool.refill', mimicId: 'M', seq: 3 },
       { type: 'predict.shadow', mimicId: 'M', questionId: 'Q', predictorId: 'llm:openai/gpt-6-luna' },
