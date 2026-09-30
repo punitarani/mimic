@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { answerToDistribution, predictionQuestion } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
+  ExaEnricher,
   ExaPeopleSearch,
   type FetchLike,
   JevDecisions,
@@ -243,6 +244,60 @@ describe('Exa people search', () => {
     });
     const r = await new ExaPeopleSearch({ fetch }).lookup('https://linkedin.com/in/nobody');
     expect(r.candidates).toEqual([]);
+  });
+});
+
+describe('Exa enrichment', () => {
+  const subject = { name: 'Avery Quinn', location: 'San Francisco' };
+
+  it('maps a profile with a person entity to sourced facts in one call', async () => {
+    const { fetch, calls } = replay({ json: fixture('exa-contents.json') });
+    const url = 'https://www.linkedin.com/in/avery-quinn-example';
+    const r = await new ExaEnricher({ fetch, apiKey: 'exa' }).enrich({ ...subject, url });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe('https://api.exa.ai/contents');
+    expect(calls[0]!.body).toMatchObject({ urls: [url] });
+    expect(r.costUsd).toBe(0.001);
+    expect(r.facts.map((f) => [f.predicate, f.object])).toEqual([
+      ['jobTitle', 'Senior Software Engineer'],
+      ['worksAt', 'Northwind Labs'],
+      ['workedAt', 'Contoso'],
+      ['educatedAt', 'Example State University (B.S. Computer Science)'],
+      ['livesIn', 'San Francisco, California, United States'],
+    ]);
+    expect(r.facts.every((f) => f.sourceUrl === url && f.confidence === 0.85)).toBe(true);
+  });
+
+  it('asks for a schema summary only when the page has no person entity', async () => {
+    const { fetch, calls } = replay(
+      { json: fixture('exa-contents-page.json') },
+      { json: fixture('exa-contents-summary.json') },
+    );
+    const url = 'https://avery.example.dev';
+    const r = await new ExaEnricher({ fetch }).enrich({ ...subject, url });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.body).toMatchObject({ urls: [url], summary: { schema: { type: 'object' } } });
+    expect(r.costUsd).toBe(0.002);
+    expect(r.facts).toContainEqual({
+      predicate: 'worksAt',
+      object: 'Northwind Labs',
+      confidence: 0.6,
+      sourceUrl: url,
+    });
+    expect(r.facts).toContainEqual({
+      predicate: 'hasInterest',
+      object: 'Bouldering',
+      confidence: 0.6,
+      sourceUrl: url,
+    });
+  });
+
+  it('gives no facts for a summary that is not JSON', async () => {
+    const summary = fixture('exa-contents-summary.json') as { results: Array<{ summary: string }> };
+    summary.results[0]!.summary = 'not json';
+    const { fetch } = replay({ json: fixture('exa-contents-page.json') }, { json: summary });
+    const r = await new ExaEnricher({ fetch }).enrich({ ...subject, url: 'https://avery.example.dev' });
+    expect(r.facts).toEqual([]);
   });
 });
 

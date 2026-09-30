@@ -1,0 +1,15 @@
+{
+  "requestId": "example",
+  "results": [
+    {
+      "id": "https://avery.example.dev",
+      "title": "Avery Quinn",
+      "url": "https://avery.example.dev",
+      "author": null,
+      "summary": "{\"current_role\":\"Senior Software Engineer\",\"current_employer\":\"Northwind Labs\",\"employer_history\":[\"Contoso\"],\"education\":[\"B.S. Computer Science, Example State University\"],\"skills\":[\"Data tooling\",\"Performance engineering\"],\"projects_and_writing\":[\"Fast CSV parser\"],\"interests\":[\"Bouldering\"],\"locations\":[\"San Francisco\"]}"
+    }
+  ],
+  "statuses": [{ "id": "https://avery.example.dev", "status": "success", "source": "cached" }],
+  "costDollars": { "total": 0.001, "contents": { "summary": 0.001 } },
+  "searchTime": 3972.8
+}

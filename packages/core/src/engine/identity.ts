@@ -13,7 +13,7 @@ import type {
   MimicRecord,
   QuestionRecord,
 } from '../store';
-import type { PersonCandidate } from '../types';
+import type { PeopleSearchResult, PersonCandidate } from '../types';
 import { vectorId } from './data';
 import {
   allocateArm,
@@ -175,7 +175,8 @@ export function searchCacheKeys(m: SearchSubject): string[] {
 /**
  * Query variants for Exa people search (PLAN §9.2 step 1, ADR-0029). The index is semantic: a quoted name is not
  * a phrase match, and in live checks it returned strangers or nothing at all. So each query is a plain description
- * that leads with the name, from most to least specific.
+ * that leads with the name, from most to least specific. Two, not three (ADR-0034): with a role, the name alone never
+ * found anyone the other two missed, and each query is $0.007.
  */
 export function searchQueries(
   m: Pick<MimicRecord, 'displayName' | 'location' | 'occupation' | 'employer'>,
@@ -185,7 +186,7 @@ export function searchQueries(
   const employer = m.employer?.trim();
   const role = occupation && employer ? `${occupation} at ${employer}` : occupation || employer || '';
   const qs = role
-    ? [`${m.displayName}, ${role}, ${m.location}`, `${m.displayName}, ${role}`, m.displayName]
+    ? [`${m.displayName}, ${role}, ${m.location}`, `${m.displayName}, ${role}`]
     : [`${m.displayName}, ${m.location}`, m.displayName];
   return [...new Set(qs.map((q) => q.replace(/\s+/g, ' ').trim()))];
 }
@@ -305,16 +306,27 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
   const cacheKey = searchCacheKey(m);
   let candidates = parseCached(await deps.kv.get(cacheKey));
   if (!candidates) {
-    const calls = [
-      ...(link && deps.gateway.canLookupPeople
-        ? [deps.gateway.lookupPerson(ctxFor(m, 'identity.lookup', jobKey), link)]
-        : []),
-      ...searchQueries(m).map((q) =>
-        deps.gateway.searchPeople(ctxFor(m, 'identity.search', jobKey), q, RESULTS_PER_QUERY),
-      ),
-    ];
-    const results = await Promise.all(calls.map((p) => p.catch(() => null)));
-    const ok = results.filter((r): r is NonNullable<typeof r> => r !== null);
+    const results: Array<PeopleSearchResult | null> = [];
+    // The person's own link first ($0.001). When it resolves to a profile with their name, that is the answer:
+    // searching as well would cost $0.014 and a second or two to offer namesakes of someone who said who they are.
+    if (link && deps.gateway.canLookupPeople) {
+      results.push(
+        await deps.gateway.lookupPerson(ctxFor(m, 'identity.lookup', jobKey), link).catch(() => null),
+      );
+    }
+    const own = results[0]?.candidates[0];
+    if (!own || nameMatch(m.displayName, own.name) === 0) {
+      results.push(
+        ...(await Promise.all(
+          searchQueries(m).map((q) =>
+            deps.gateway
+              .searchPeople(ctxFor(m, 'identity.search', jobKey), q, RESULTS_PER_QUERY)
+              .catch(() => null),
+          ),
+        )),
+      );
+    }
+    const ok = results.filter((r): r is PeopleSearchResult => r !== null);
     await deps.blobs.put(
       `search/${m.id}/${ok[0]?.candidates[0]?.provider ?? 'exa'}/${now}.json`,
       JSON.stringify(ok.map((r) => r.raw)),

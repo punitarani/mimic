@@ -758,3 +758,57 @@ beliefs, opinions and biases, and above all how the person thinks and decides. P
   location and sourced facts.
 - **Synchronous.** Drafting is a route handler call like the playground's, not a queue job: the person is waiting
   on the page for it, and it is one LLM call.
+
+## ADR-0034 — Identity search and enrichment: cheaper, and on their own queue (2026-09-30)
+
+The goal was the cheapest, fastest identity step that is still reasonably accurate. Each option was measured live on
+the two ADR-0029 test people. The prices are Exa's and Parallel's published ones.
+
+**Changed**
+
+- **Enrichment uses Exa, not Parallel, by default** (`ENRICH_PROVIDER=exa`; `parallel` stays selectable).
+  - Exa `/contents` on a LinkedIn profile returns the same structured person entity as search, for $0.001 in
+    0.2–0.6 s. A Parallel `base` task costs $0.010 and takes tens of seconds.
+  - The entity gives the current role and employers, employer history, education and location. They map to facts
+    directly (confidence 0.85, sourced to the profile). A live check returned 9 clean facts in 0.94 s.
+  - A page with no entity (a personal site) gets one more call: an Exa schema summary with Parallel's output
+    schema ($0.001, 2.5–4.7 s), including skills, projects and interests, at confidence 0.6.
+  - For entity profiles, skills and interests aren't extracted: the summary on a LinkedIn profile listed things
+    like "100Bs tokens" as skills.
+- **Two search queries, not three.** Given a role, the name-only query never found anyone the other two missed,
+  and each query costs $0.007. Without a role, the queries are `{name}, {location}` and the name alone.
+- **The person's link short-circuits search.** When the link resolves to a profile with their name ($0.001),
+  searching as well would only add namesakes, so it is skipped. A link that doesn't match still leads a normal
+  search.
+- **Identity jobs have their own queue** (`IDENTITY_JOBS` → `mimic-identity`, same DLQ).
+  - Cloudflare Queues adds consumers only after a batch finishes. On the shared queue, a 2-second search sat behind
+    a `pool.refill` batch for 1 to 4 minutes, and so did enrichment.
+  - `RoutedQueue` sends `identity.search` and `identity.enrich` to the new queue when it is bound. Parallel
+    enrichment, which takes minutes, stays on the shared queue.
+  - Deploy finds or creates the queue by name, like the others.
+
+**Kept, after measuring**
+
+- **Exa `auto` search.** Every search type costs the same, $7 per 1k.
+  - `fast` (0.38 s median) and `instant` (0.29 s) found the true profile in 7 of 9 queries; `auto` (1.65 s) found
+    it in 9.
+  - The two misses were the hardest intake (a short school name that is also a city).
+- **One Jev request per candidate.** One batched request with every candidate in a single state was about 0.4 s
+  faster and $0.0001 cheaper per search. But it pushed the true profile from #1 to #2 in one case.
+
+**Result.** Per person, with the listed prices:
+
+| Path | Search | Rank (Jev) | Enrich | Total | Before |
+| --- | --- | --- | --- | --- | --- |
+| No link | $0.014 (2 queries) | ~$0.0003 | $0.001 | ~$0.015 | ~$0.031 |
+| Link that resolves | $0.001 (lookup) | ~$0.00003 | $0.001 | ~$0.002 | ~$0.032 |
+
+On the local stack, with a 35-second `pool.refill` batch running on the main queue, the jobs took:
+
+- search, 1.9 s;
+- search with a link, 0.65 s;
+- enrichment, 0.94 s.
+
+Each job now waits only for its own queue's ~1-second batch window.
+
+A deploy-time `ENRICH_PROVIDER` set in Doppler overrides the new default (ADR-0022). Remove it, or set it to `exa`.

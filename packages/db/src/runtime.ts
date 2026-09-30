@@ -11,6 +11,8 @@ export interface MimicBindings extends ProviderEnv {
   BLOBS: R2Bucket;
   CACHE: KVNamespace;
   JOBS?: Queue<Job>;
+  /** Identity jobs' own lane, so a person never waits behind question generation (ADR-0034). Optional. */
+  IDENTITY_JOBS?: Queue<Job>;
   VEC?: VectorizeIndex;
   AI?: { run(model: string, input: { text: string[] }): Promise<unknown> };
   RL?: RateLimit;
@@ -30,9 +32,34 @@ export class CfQueue implements JobQueue {
   }
 }
 
+/**
+ * Job types a person waits on during sign-up. They get their own queue: Cloudflare Queues adds consumers only after
+ * a batch finishes, so on a shared queue a 1–4 minute `pool.refill` batch held a 2-second search for its whole run.
+ */
+export function identityJobTypes(env: Pick<MimicBindings, 'ENRICH_PROVIDER'>): ReadonlySet<Job['type']> {
+  // Parallel enrichment takes minutes, which would hold the fast lane the same way; it stays on the shared queue.
+  return new Set(
+    env.ENRICH_PROVIDER === 'parallel' ? ['identity.search'] : ['identity.search', 'identity.enrich'],
+  );
+}
+
+/** Routes identity jobs to IDENTITY_JOBS when it is bound; everything else (and all jobs without it) to JOBS. */
+export class RoutedQueue implements JobQueue {
+  constructor(
+    private readonly main: JobQueue,
+    private readonly identity: JobQueue | null,
+    private readonly identityTypes: ReadonlySet<Job['type']>,
+  ) {}
+  enqueue(job: Job, opts?: { delaySeconds?: number }) {
+    const q = this.identity && this.identityTypes.has(job.type) ? this.identity : this.main;
+    return q.enqueue(job, opts);
+  }
+}
+
 export function queueFor(env: MimicBindings): JobQueue {
   if (!env.JOBS) throw new Error('No job queue bound');
-  return new CfQueue(env.JOBS);
+  const identity = env.IDENTITY_JOBS ? new CfQueue(env.IDENTITY_JOBS) : null;
+  return new RoutedQueue(new CfQueue(env.JOBS), identity, identityJobTypes(env));
 }
 
 export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = {}): EngineDeps {

@@ -3,7 +3,7 @@ import { FixtureEnricher, FixturePeopleSearch } from './fixture-providers';
 import type { FetchLike } from './http';
 import { HashEmbedder, WorkersAiEmbedder } from './misc';
 import { JevDecisions, OpenRouterChat, OpenRouterEmbedder } from './openrouter';
-import { ExaPeopleSearch, ParallelEnricher, PerplexityPeopleSearch } from './search';
+import { ExaEnricher, ExaPeopleSearch, ParallelEnricher, PerplexityPeopleSearch } from './search';
 
 export interface ProviderEnv {
   OPENROUTER_API_KEY?: string;
@@ -59,8 +59,11 @@ export function makeProviders(
       ...(env.PERPLEXITY_API_KEY ? { apiKey: env.PERPLEXITY_API_KEY } : {}),
     });
   }
-  const enrichProvider = env.ENRICH_PROVIDER ?? 'parallel';
+  // Exa by default: $0.001 and under a second for a professional profile (ADR-0034). Parallel stays selectable.
+  const enrichProvider = env.ENRICH_PROVIDER ?? 'exa';
   if (enrichProvider === 'fixture') p.enricher = new FixtureEnricher();
+  else if (enrichProvider === 'exa')
+    p.enricher = new ExaEnricher({ ...http, ...(env.EXA_API_KEY ? { apiKey: env.EXA_API_KEY } : {}) });
   else if (enrichProvider === 'parallel') {
     p.enricher = new ParallelEnricher({
       ...http,

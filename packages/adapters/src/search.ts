@@ -244,28 +244,42 @@ const FIELD_PREDICATES: Record<string, string> = {
 
 const CONFIDENCE: Record<string, number> = { low: 0.4, medium: 0.65, high: 0.85 };
 
-export function parallelFacts(result: z.infer<typeof RunResult>): EnrichedFact[] {
-  const content = (
-    typeof result.output.content === 'string' ? JSON.parse(result.output.content) : result.output.content
-  ) as Record<string, unknown> | null;
+/**
+ * Facts from an object shaped like ENRICH_OUTPUT_SCHEMA (a Parallel task output or an Exa schema summary). `source`
+ * gives each field's confidence and source URL.
+ */
+export function schemaFacts(
+  content: unknown,
+  source: (field: string) => { confidence: number; url?: string | undefined },
+): EnrichedFact[] {
   if (!content || typeof content !== 'object') return [];
-  const basis = new Map(result.output.basis.map((b) => [b.field, b]));
   const facts: EnrichedFact[] = [];
   for (const [field, predicate] of Object.entries(FIELD_PREDICATES)) {
-    const v = content[field];
+    const v = (content as Record<string, unknown>)[field];
     const values = (Array.isArray(v) ? v : [v]).filter(
       (x): x is string => typeof x === 'string' && x.trim().length > 0,
     );
-    const b = basis.get(field);
-    const conf = CONFIDENCE[(b?.confidence ?? 'medium').toLowerCase()] ?? 0.6;
+    const { confidence, url } = source(field);
     for (const value of values.slice(0, 8)) {
-      const f: EnrichedFact = { predicate, object: value.trim().slice(0, 200), confidence: conf };
-      const url = b?.citations[0]?.url;
+      const f: EnrichedFact = { predicate, object: value.trim().slice(0, 200), confidence };
       if (url) f.sourceUrl = url;
       facts.push(f);
     }
   }
   return facts;
+}
+
+export function parallelFacts(result: z.infer<typeof RunResult>): EnrichedFact[] {
+  const content: unknown =
+    typeof result.output.content === 'string' ? JSON.parse(result.output.content) : result.output.content;
+  const basis = new Map(result.output.basis.map((b) => [b.field, b]));
+  return schemaFacts(content, (field) => {
+    const b = basis.get(field);
+    return {
+      confidence: CONFIDENCE[(b?.confidence ?? 'medium').toLowerCase()] ?? 0.6,
+      url: b?.citations[0]?.url,
+    };
+  });
 }
 
 export interface ParallelOptions extends HttpOptions {
@@ -307,6 +321,100 @@ export class ParallelEnricher implements Enricher {
     const r = RunResult.parse(json);
     // Parallel prices by processor and does not return a per-run cost; recorded as 0 (see ADR-0009).
     return { facts: parallelFacts(r), costUsd: 0, latencyMs: Date.now() - started, raw: json };
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Exa enrichment: facts from the confirmed profile (ADR-0034). The default: a LinkedIn profile resolves to Exa's
+// structured person entity for $0.001 in well under a second, where a Parallel task costs $0.01 and takes tens of
+// seconds.
+// ---------------------------------------------------------------------------------------------------------------
+
+type ExaPerson = NonNullable<z.infer<typeof ExaEntity>['properties']>;
+
+/** Structured data from a professional profile: reliable, so facts from it rank above extracted ones. */
+const ENTITY_CONFIDENCE = 0.85;
+/** Fields an LLM pulled out of a page's text. */
+const EXTRACTED_CONFIDENCE = 0.6;
+
+/**
+ * Facts from an Exa person entity: the current role and employers, past employers, education and location. Skills
+ * and interests aren't in the entity; extracting them from profile text was noisy in live checks, so they are left
+ * to the person's answers.
+ */
+export function exaEntityFacts(person: ExaPerson, url: string): EnrichedFact[] {
+  const facts: EnrichedFact[] = [];
+  const add = (predicate: string, object: string | null | undefined) => {
+    const v = object?.trim();
+    if (!v) return;
+    if (facts.some((f) => f.predicate === predicate && f.object.toLowerCase() === v.toLowerCase())) return;
+    facts.push({ predicate, object: v.slice(0, 200), confidence: ENTITY_CONFIDENCE, sourceUrl: url });
+  };
+  const jobs = (person.workHistory ?? []).filter((w) => w.title || w.company?.name);
+  const current = jobs.filter((w) => !w.dates?.to);
+  add('jobTitle', current[0]?.title);
+  for (const w of current.slice(0, 3)) add('worksAt', w.company?.name);
+  const currentEmployers = new Set(current.map((w) => w.company?.name?.trim().toLowerCase()));
+  for (const w of jobs.filter((j) => j.dates?.to).slice(0, 8)) {
+    if (!currentEmployers.has(w.company?.name?.trim().toLowerCase())) add('workedAt', w.company?.name);
+  }
+  for (const e of (person.educationHistory ?? []).slice(0, 4)) {
+    const school = e.institution?.name?.trim();
+    add('educatedAt', school && e.degree ? `${school} (${e.degree.trim()})` : school);
+  }
+  add('livesIn', person.location);
+  return facts;
+}
+
+const ENRICH_SUMMARY_QUERY =
+  'Public professional information about this person. Leave out health, religion, politics, sexuality and finances.';
+
+export class ExaEnricher implements Enricher {
+  readonly provider = 'exa';
+  constructor(private readonly opts: ExaOptions = {}) {}
+
+  /**
+   * Reads the confirmed profile with `/contents`. A professional profile has a person entity, mapped to facts
+   * directly. Any other page (a personal site) gets one more call: an Exa schema summary with the fields Parallel
+   * would return ($0.001, a few seconds).
+   */
+  async enrich(subject: Parameters<Enricher['enrich']>[0]): Promise<EnrichmentResult> {
+    const started = Date.now();
+    const contents = (body: Record<string, unknown>) =>
+      requestJson(
+        { timeoutMs: 20_000, ...this.opts },
+        `${this.opts.baseUrl ?? 'https://api.exa.ai'}/contents`,
+        {
+          headers: authHeader('x-api-key', this.opts.apiKey),
+          body: { urls: [subject.url], ...body },
+        },
+      ).then(({ json }) => ({ json, r: ExaResponse.parse(json) }));
+
+    const page = await contents({ text: { maxCharacters: 500 } });
+    const person = page.r.results[0]?.entities?.find((e) => e.type === 'person')?.properties;
+    if (person) {
+      return {
+        facts: exaEntityFacts(person, subject.url),
+        costUsd: page.r.costDollars?.total ?? 0,
+        latencyMs: Date.now() - started,
+        raw: page.json,
+      };
+    }
+    const summary = await contents({
+      summary: { query: ENRICH_SUMMARY_QUERY, schema: ENRICH_OUTPUT_SCHEMA },
+    });
+    let content: unknown = null;
+    try {
+      content = JSON.parse(summary.r.results[0]?.summary ?? 'null');
+    } catch {
+      // A summary that isn't JSON gives no facts; the person still reviews the candidate's own facts.
+    }
+    return {
+      facts: schemaFacts(content, () => ({ confidence: EXTRACTED_CONFIDENCE, url: subject.url })),
+      costUsd: (page.r.costDollars?.total ?? 0) + (summary.r.costDollars?.total ?? 0),
+      latencyMs: Date.now() - started,
+      raw: { contents: page.json, summary: summary.json },
+    };
   }
 }
 

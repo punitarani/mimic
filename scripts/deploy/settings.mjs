@@ -10,13 +10,13 @@ export const SETTINGS = {
   VECTOR_BACKEND: ['vectorize', 'sql'],
   EMBEDDINGS_PROVIDER: ['workers-ai', 'openrouter'],
   SEARCH_PROVIDER: ['exa', 'perplexity', 'none'],
-  ENRICH_PROVIDER: ['parallel', 'none'],
+  ENRICH_PROVIDER: ['exa', 'parallel', 'none'],
 };
 
 /** The key each provider choice needs (packages/adapters/src/factory.ts). */
 const PROVIDER_KEYS = {
   SEARCH_PROVIDER: { exa: 'EXA_API_KEY', perplexity: 'PERPLEXITY_API_KEY' },
-  ENRICH_PROVIDER: { parallel: 'PARALLEL_API_KEY' },
+  ENRICH_PROVIDER: { exa: 'EXA_API_KEY', parallel: 'PARALLEL_API_KEY' },
 };
 
 /**
@@ -38,7 +38,8 @@ export function resolveSettings(config, env, source) {
 
 /** The secrets the chosen providers need, beyond each Worker's `secrets.required`. */
 export function providerSecrets(vars) {
-  return Object.entries(PROVIDER_KEYS)
-    .map(([name, keys]) => keys[vars[name]])
+  const keys = Object.entries(PROVIDER_KEYS)
+    .map(([name, byChoice]) => byChoice[vars[name]])
     .filter(Boolean);
+  return [...new Set(keys)]; // Exa search and Exa enrichment share one key
 }

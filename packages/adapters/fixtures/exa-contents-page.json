@@ -1,0 +1,15 @@
+{
+  "requestId": "example",
+  "results": [
+    {
+      "id": "https://avery.example.dev",
+      "title": "Avery Quinn",
+      "url": "https://avery.example.dev",
+      "author": null,
+      "text": "Avery Quinn\n\nHi, I'm Avery\n\nSoftware engineer at Northwind Labs\n\n## About\n\nI like making slow things fast."
+    }
+  ],
+  "statuses": [{ "id": "https://avery.example.dev", "status": "success", "source": "cached" }],
+  "costDollars": { "total": 0.001, "contents": { "text": 0.001 } },
+  "searchTime": 212.4
+}

@@ -13,7 +13,7 @@ The command runs `scripts/deploy/deploy.mjs`. Every step is idempotent, so a re-
 | Step | What it does |
 | --- | --- |
 | Preflight | Checks that every name below is set, that the settings are valid and their providers' keys are present, that `APP_URL` is the custom domain, and that the Cloudflare token is active and can use every resource, Access and the zone (read-only probes that name each missing permission). It prints names only, never values. |
-| Resources | Finds or creates D1 `mimic-prod`, KV `mimic-cache-prod`, R2 `mimic-blobs-prod`, queues `mimic-jobs-prod` and `mimic-jobs-prod-dlq`, and Vectorize `mimic-qa-prod` (768-d cosine, metadata indexes `mimicId` and `kind`). It writes `apps/*/wrangler.deploy.jsonc` with the real IDs and the settings; that file is gitignored. |
+| Resources | Finds or creates D1 `mimic-prod`, KV `mimic-cache-prod`, R2 `mimic-blobs-prod`, queues `mimic-jobs-prod`, `mimic-identity-prod` and `mimic-jobs-prod-dlq`, and Vectorize `mimic-qa-prod` (768-d cosine, metadata indexes `mimicId` and `kind`). It writes `apps/*/wrangler.deploy.jsonc` with the real IDs and the settings; that file is gitignored. |
 | Migrations | `wrangler d1 migrations apply DB --remote`, run before any code that expects the new schema. |
 | Worker | Deploys `mimic-worker-prod` (the queue consumer and cron) with its secrets via `--secrets-file`: `OPENROUTER_API_KEY` plus the chosen providers' keys. |
 | Web | Runs the OpenNext build with `SITE_URL` set to the environment's origin (the custom domain, or the `workers.dev` URL for preview), which link previews are built against. Then it deploys `mimic-web-prod` with its secrets and the custom domain. The domain's DNS record and certificate are created by Cloudflare. |
@@ -64,7 +64,7 @@ Settings (optional; each unset one keeps the default in `apps/worker/wrangler.js
 | Name | Allowed | Default | Needs |
 | --- | --- | --- | --- |
 | `SEARCH_PROVIDER` | `exa`, `perplexity`, `none` | `exa` | `EXA_API_KEY` for `exa`; `PERPLEXITY_API_KEY` for `perplexity` |
-| `ENRICH_PROVIDER` | `parallel`, `none` | `parallel` | `PARALLEL_API_KEY` for `parallel` |
+| `ENRICH_PROVIDER` | `exa`, `parallel`, `none` | `exa` | `EXA_API_KEY` for `exa`, `PARALLEL_API_KEY` for `parallel` |
 | `EMBEDDINGS_PROVIDER` | `workers-ai`, `openrouter` | `workers-ai` | — (the same 768-d bge-base model either way) |
 | `VECTOR_BACKEND` | `vectorize`, `sql` | `vectorize` | — |
 
