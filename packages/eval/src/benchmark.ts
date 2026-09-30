@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { DEFAULT_CONFIG, JEV_MODEL, parsePredictorId, quantile, SPAN_MODEL, ulid } from '@mimic/core';
@@ -9,6 +9,7 @@ import {
   type Candidate,
   type EvalRecord,
   evaluateCandidate,
+  groupBy,
   jevRequests,
   Meter,
   metricsOf,
@@ -72,6 +73,11 @@ export interface BenchmarkRow {
   p95LatencyMs: number;
   costUsd: number;
   costPerRequestUsd: number;
+  /**
+   * Quality per question type. span-01 answers yes/no questions directly and choice and score questions one option
+   * at a time (ADR-0050), so the types can differ a lot.
+   */
+  byType: Record<string, { predictions: number; errors: number; logLoss: number; itemAcc: number }>;
 }
 
 /** One Decisions request: the instances that shared a state (as production batches them). */
@@ -114,6 +120,14 @@ export function summarize(
     p95LatencyMs: latencies.length ? quantile(latencies, 0.95) : 0,
     costUsd,
     costPerRequestUsd: paid ? costUsd / paid : 0,
+    byType: Object.fromEntries(
+      [...groupBy(recs, (r) => r.type).entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([type, rs]) => {
+          const t = metricsOf(rs);
+          return [type, { predictions: t.n, errors: t.failures, logLoss: t.logLoss, itemAcc: t.itemAcc }];
+        }),
+    ),
   };
 }
 
@@ -252,6 +266,20 @@ export function renderMarkdown(meta: BenchmarkMeta, rows: BenchmarkRow[], v: Ver
     row('Errors', (r) => `${r.errors} of ${r.predictions} (${(r.errorRate * 100).toFixed(1)}%)`),
     row('Requests (answered)', (r) => `${r.requests} (${r.answeredRequests})`),
     '',
+    '## By question type',
+    '',
+    '| Type | Predictions | Log loss: Jev | Log loss: span-01 | Item accuracy: Jev | Item accuracy: span-01 |',
+    '| --- | --- | --- | --- | --- | --- |',
+    ...[...new Set([...Object.keys(inc.byType), ...Object.keys(chal.byType)])].sort().map((type) => {
+      const a = inc.byType[type];
+      const b = chal.byType[type];
+      const f = (x: number | undefined) => (x === undefined ? '-' : x.toFixed(4));
+      return `| ${type} | ${a?.predictions ?? b?.predictions ?? 0} | ${f(a?.logLoss)} | ${f(b?.logLoss)} | ${f(a?.itemAcc)} | ${f(b?.itemAcc)} |`;
+    }),
+    '',
+    'span-01 takes only yes/no questions: it answers a choice or score question as one yes/no per option, normalized',
+    '(ADR-0050).',
+    '',
     `## Verdict: ${v.enable ? 'enable span-01' : 'keep Jev'}`,
     '',
     '| Check | Pass | Detail |',
@@ -281,6 +309,7 @@ export async function benchmarkCmd(argv: string[]): Promise<void> {
       concurrency: { type: 'string', default: '4' },
       offline: { type: 'boolean', default: false },
       out: { type: 'string' },
+      summary: { type: 'string' },
     },
   });
   if (!values.data) throw new Error('--data is required');
@@ -355,6 +384,8 @@ export async function benchmarkCmd(argv: string[]): Promise<void> {
   };
   const md = renderMarkdown(meta, rows, verdict);
   writeFileSync(join(runDir, 'benchmark.md'), md);
+  // GitHub's step summary (the Benchmark workflow): aggregates only, never a person's questions or answers.
+  if (values.summary) appendFileSync(values.summary, `${md}\n`);
   writeFileSync(join(runDir, 'benchmark.csv'), renderCsv(rows));
   writeFileSync(join(runDir, 'benchmark.json'), `${JSON.stringify({ meta, rows, verdict }, null, 2)}\n`);
   writeFileSync(

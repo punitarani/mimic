@@ -6,7 +6,6 @@
 // give the web app and the worker separate KV namespaces, and it never creates queues or Vectorize indexes.
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { ensureFlags } from './flags.mjs';
 import { DEPLOY_CONFIG_NAME, envBlock, readConfig, WEB_CONFIG, WORKER_CONFIG } from './lib.mjs';
 import { resolveSettings } from './settings.mjs';
 
@@ -99,18 +98,13 @@ export async function ensureResources(cf, spec, log = console.log) {
 
 /**
  * The checked-in config with this environment's resource IDs (in place of the REPLACE_ME_<ENV>_* placeholders) and,
- * when given, its resolved vars. Without a Flagship app ID (`ids.flagsAppId` null: no Flagship access) the FLAGS
- * binding is dropped, and every flag reads its default (ADR-0050).
+ * when given, its resolved vars. The Flagship app ID is pinned in the config (ADR-0050), so it passes through.
  */
 export function deployConfig(config, env, ids, vars) {
   const out = structuredClone(config);
   const e = envBlock(out, env);
   for (const d of e.d1_databases ?? []) d.database_id = ids.d1Id;
   for (const k of e.kv_namespaces ?? []) k.id = ids.kvId;
-  if (e.flagship) {
-    if (ids.flagsAppId) for (const f of e.flagship) f.app_id = ids.flagsAppId;
-    else delete e.flagship;
-  }
   if (vars) e.vars = vars;
   return out;
 }
@@ -132,11 +126,8 @@ export function writeDeployConfig(configPath, config) {
 export async function prepareConfigs(cf, env, source, log = console.log) {
   const worker = readConfig(WORKER_CONFIG);
   const web = readConfig(WEB_CONFIG);
+  const ids = await ensureResources(cf, resourceSpec(worker, env), log);
   const vars = (config) => resolveSettings(config, env, source).vars;
-  const ids = {
-    ...(await ensureResources(cf, resourceSpec(worker, env), log)),
-    flagsAppId: await ensureFlags(cf, env, vars(worker), log),
-  };
   return {
     worker: writeDeployConfig(WORKER_CONFIG, deployConfig(worker, env, ids, vars(worker))),
     web: writeDeployConfig(WEB_CONFIG, deployConfig(web, env, ids, vars(web))),

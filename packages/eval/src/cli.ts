@@ -55,6 +55,7 @@ Commands
             cost per request, error rate, and the enable/keep verdict; writes benchmark.{md,csv,json}
             --data <a.sqlite>[,<b.sqlite>] [--split test] [--seed benchmark] [--limit N] [--max-targets 40]
             [--incumbent jev:typesafe/jev-1.13@jev-predict.v2] [--challenger <id>] [--max-usd 1] [--offline]
+            [--summary <file>]   also appends the Markdown there (GitHub's step summary)
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
             --data … --predictor jev:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
             [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]

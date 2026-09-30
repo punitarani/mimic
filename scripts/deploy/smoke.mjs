@@ -1,6 +1,6 @@
 // A deploy that isn't checked is a hope. After each deploy: the landing page is the real page, its link preview
-// points at a card served on this host, /api/health reaches D1, R2 and the queue, and the lab is behind Access
-// (never a 200 without a login).
+// points at a card served on this host, /api/health reaches D1, R2, the queue and every flag (ADR-0050), and the lab
+// is behind Access (never a 200 without a login).
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -44,6 +44,11 @@ export async function smoke(
         const res = await fetchImpl(`${base}/api/health`);
         const json = await res.json().catch(() => null);
         if (res.status !== 200 || json?.ok !== true) return `returned ${res.status} ${JSON.stringify(json)}`;
+        // Every flag evaluates through the Worker's FLAGS binding (ADR-0050); an unbound environment reports none.
+        if (json.flags?.ok === false) {
+          const bad = Object.entries(json.flags.flags ?? {}).filter(([, f]) => !f.ok);
+          return `flags don't evaluate: ${bad.map(([k, f]) => `${k} (${f.errorCode ?? JSON.stringify(f.value)})`).join(', ')}`;
+        }
         return null;
       },
     },

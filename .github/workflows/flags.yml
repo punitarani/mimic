@@ -1,0 +1,38 @@
+# Holds the prod Flagship app to the flag registry (ADR-0050, docs/CHALLENGER.md): every flag the code reads is
+# defined, every variation is a value the code accepts, and each flag evaluates. On every PR and push to main, and
+# daily, since flags change in the dashboard without a commit. Deploy preflight runs the same check before CD ships.
+#
+# Read-only: CLOUDFLARE_API_TOKEN needs only Flagship App · Read and Evaluate on the app. A fork's PR gets no secrets,
+# so the check is skipped there with a notice rather than failed.
+
+name: Flags
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flags-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Flags (Flagship)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: pnpm flags:check --optional
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

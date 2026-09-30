@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   answerToDistribution,
+  type DecisionRequest,
   isTimeoutError,
   isTransientError,
   type ProviderCallRunner,
+  planDecision,
   predictionQuestion,
 } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
@@ -25,6 +27,8 @@ import {
   requestJson,
   schemaFacts,
 } from '../src';
+
+const argmaxKey = (d: Record<string, number>) => Object.entries(d).sort((a, b) => b[1] - a[1])[0]![0];
 
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(join(import.meta.dirname, '..', 'fixtures', name), 'utf8'));
@@ -80,19 +84,54 @@ describe('Jev decisions (PLAN §5.1)', () => {
     expect(res.answers.q_c).toMatchObject({ type: 'score', score: 2.53, confidence: 0.6 });
   });
 
-  it('span-01 runs on the same client and response shape (ADR-0050)', async () => {
+  it('span-01 gets the request it takes, and its answers come back as asked (ADR-0050)', async () => {
+    const asked = fixture('span-decisions.asked.json') as DecisionRequest;
+    const plan = planDecision(asked);
+    // The exact request span-01 accepted live: the state as JSON text, each option a yes/no question.
+    expect(plan.request).toEqual(fixture('span-decisions.request.json'));
+    expect(typeof plan.request.state).toBe('string');
+    expect(Object.values(plan.request.questions).every((q) => q.type === 'noul')).toBe(true);
+    // Jev's requests pass through untouched.
+    const jevReq = { ...asked, model: 'typesafe/jev-1.13' };
+    expect(planDecision(jevReq).request).toBe(jevReq);
+
     const { fetch, calls } = replay({ json: fixture('span-decisions.json') });
-    const res = await new JevDecisions({ fetch, apiKey: 'k' }).decide({
-      model: 'respan/span-01-20260925',
-      state: { a: 1 },
-      questions: { q_b: { type: 'noul', instructions: 'x', criteria: { true: 'y', false: 'n' } } },
-    });
+    const raw = await new JevDecisions({ fetch, apiKey: 'k' }).decide(plan.request);
     expect(calls[0]!.url).toBe('https://openrouter.ai/api/alpha/decisions');
     expect(calls[0]!.body).toMatchObject({ model: 'respan/span-01-20260925' });
-    expect(res.modelSnapshot).toBe('respan/span-01-20260925');
-    expect(res.usage).toEqual({ inputTokens: 556, outputTokens: 0, costUsd: 1.112e-5 });
-    expect(res.answers.q_b).toEqual({ type: 'noul', p: 0.22 });
-    expect(res.answers.q_c).toMatchObject({ type: 'score', score: 1.18 });
+    expect(raw.modelSnapshot).toBe('respan/span-01-20260925');
+    expect(raw.usage.outputTokens).toBe(0);
+    expect(raw.usage.costUsd).toBeGreaterThan(0);
+
+    const res = plan.answer(raw);
+    expect(Object.keys(res.answers).sort()).toEqual(['q_a', 'q_b', 'q_c']);
+    expect(res.answers.q_b).toEqual({ type: 'noul', p: 0.07934557 });
+    const choice = res.answers.q_a!;
+    const score = res.answers.q_c!;
+    if (choice.type !== 'choice' || score.type !== 'score') throw new Error('wrong answer types');
+    expect(Object.keys(choice.probabilities)).toEqual(['a', 'b', 'c']);
+    expect(Object.values(choice.probabilities).reduce((x, y) => x + y, 0)).toBeCloseTo(1, 10);
+    expect(Object.keys(score.probabilities)).toEqual(['0', '1', '2', '3', '4']);
+    expect(score.score).toBeGreaterThan(0);
+    // The recomposed answers map onto our option keys like Jev's do.
+    const dist = answerToDistribution(
+      { type: 'score', options: ['0', '1', '2', '3', '4'].map((key) => ({ key, label: key })) },
+      score,
+    );
+    expect(argmaxKey(dist)).toBe('1');
+  });
+
+  it('span-01 refuses a JSON-object state and non-yes/no questions with a 400, not retried', async () => {
+    for (const name of ['span-decisions-object-state-400.json', 'span-decisions-choice-400.json']) {
+      const { fetch, calls } = replay({ status: 400, json: fixture(name) });
+      const err = await new JevDecisions({ fetch })
+        .decide({ model: 'respan/span-01-20260925', state: {}, questions: {} })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as HttpError).status).toBe(400);
+      expect(isTransientError(err)).toBe(false);
+      expect(calls).toHaveLength(1);
+    }
   });
 
   it('a span-01 blocked by the account’s allowed providers fails at once, without retries', async () => {

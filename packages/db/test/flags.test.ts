@@ -1,15 +1,29 @@
-import { FLAG_KEYS, JEV_MODEL, NO_FLAGS, SPAN_MODEL } from '@mimic/core';
+import { FLAG_KEYS, JEV_MODEL, NO_FLAGS, providerValue, SPAN_MODEL } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
-import { type FlagshipBinding, FlagshipFlags, flaggedEnv, flagsFor, providerValue } from '../src/flags';
+import { type FlagshipBinding, FlagshipFlags, flaggedEnv, flagHealth, flagsFor } from '../src/flags';
 import { engineDeps, type MimicBindings, runtimeEngineDeps } from '../src/runtime';
 
-/** A Flagship binding over a map: a missing key returns the default, as Flagship does. */
+/**
+ * A Flagship binding over a map. A missing key returns the default, as Flagship does; the details methods report a
+ * reason, and FLAG_NOT_FOUND or TYPE_MISMATCH the way Flagship does.
+ */
 function flagship(values: Record<string, unknown>, opts: { throws?: boolean } = {}): FlagshipBinding {
+  const details = <T>(key: string, fallback: T) => {
+    if (opts.throws) throw new Error('flagship unavailable');
+    if (!Object.hasOwn(values, key))
+      return { flagKey: key, value: fallback, reason: 'ERROR', errorCode: 'FLAG_NOT_FOUND' };
+    const v = values[key];
+    return typeof v === typeof fallback
+      ? { flagKey: key, value: v as T, reason: 'DEFAULT', variant: String(v) }
+      : { flagKey: key, value: fallback, reason: 'ERROR', errorCode: 'TYPE_MISMATCH' };
+  };
   return {
     get: async (key: string, fallback?: unknown) => {
       if (opts.throws) throw new Error('flagship unavailable');
       return Object.hasOwn(values, key) ? values[key] : fallback;
     },
+    getStringDetails: async (key: string, fallback: string) => details(key, fallback),
+    getNumberDetails: async (key: string, fallback: number) => details(key, fallback),
   };
 }
 
@@ -72,24 +86,22 @@ describe('Flagship flags (ADR-0050)', () => {
         [FLAG_KEYS.enrichProvider]: 'exa',
         [FLAG_KEYS.embeddingsProvider]: 'Workers-AI',
         [FLAG_KEYS.budgetUsd]: 1,
-        [FLAG_KEYS.budgetSessionShare]: 0.8,
       }),
     });
     const out = await flaggedEnv(e);
     for (const k of ['SEARCH_PROVIDER', 'ENRICH_PROVIDER', 'EMBEDDINGS_PROVIDER', 'BUDGET_USD'] as const)
       expect(out[k]).toBe(e[k]);
-    expect(out.BUDGET_SESSION_SHARE).toBeUndefined();
   });
 
   it('flags override the vars when valid, and leave them when not', async () => {
     const out = await flaggedEnv(
       env({
+        BUDGET_SESSION_SHARE: '0.5',
         FLAGS: flagship({
           [FLAG_KEYS.embeddingsProvider]: 'OpenRouter',
           [FLAG_KEYS.searchProvider]: 'Perplexity', // no PERPLEXITY_API_KEY deployed
           [FLAG_KEYS.enrichProvider]: 'Carrier pigeon',
           [FLAG_KEYS.budgetUsd]: '5',
-          [FLAG_KEYS.budgetSessionShare]: 1.5,
         }),
       }),
     );
@@ -97,7 +109,10 @@ describe('Flagship flags (ADR-0050)', () => {
     expect(out.SEARCH_PROVIDER).toBe('exa');
     expect(out.ENRICH_PROVIDER).toBe('exa');
     expect(out.BUDGET_USD).toBe('5');
-    expect(out.BUDGET_SESSION_SHARE).toBeUndefined();
+    // No flag: the session share stays the var.
+    expect(out.BUDGET_SESSION_SHARE).toBe('0.5');
+    const bad = await flaggedEnv(env({ BUDGET_USD: '3', FLAGS: flagship({ [FLAG_KEYS.budgetUsd]: -1 }) }));
+    expect(bad.BUDGET_USD).toBe('3');
     const d = await runtimeEngineDeps(env({ FLAGS: flagship({ [FLAG_KEYS.budgetUsd]: 4 }) }));
     expect(d.spend).toEqual({ budgetUsd: 4 });
   });
@@ -109,5 +124,30 @@ describe('Flagship flags (ADR-0050)', () => {
     expect(await off.gateway.deps.decisionRouter!(ctx, req)).toBeNull();
     const on = await runtimeEngineDeps(env({ FLAGS: flagship({ 'decisions-model': 'span-01' }) }));
     expect(await on.gateway.deps.decisionRouter!(ctx, req)).toBe(SPAN_MODEL);
+  });
+
+  it('flagHealth reports every registry flag as the binding resolves it', async () => {
+    expect(await flagHealth({})).toEqual({ bound: false, ok: true, flags: {} });
+    const all = {
+      'decisions-model': 'jev',
+      'budget-usd': 1,
+      'search-provider': 'exa',
+      'enrich-provider': 'exa',
+      'embeddings-provider': 'workers-ai',
+    };
+    const good = await flagHealth({ FLAGS: flagship(all) });
+    expect(good.ok).toBe(true);
+    expect(Object.keys(good.flags).sort()).toEqual(Object.values(FLAG_KEYS).sort());
+    expect(good.flags['decisions-model']).toEqual({ value: 'jev', reason: 'DEFAULT', ok: true });
+
+    const { 'budget-usd': _, ...missing } = all;
+    const bad = await flagHealth({
+      FLAGS: flagship({ ...missing, 'decisions-model': 'not a model', 'search-provider': 7 }),
+    });
+    expect(bad.ok).toBe(false);
+    expect(bad.flags['budget-usd']).toMatchObject({ errorCode: 'FLAG_NOT_FOUND', ok: false });
+    expect(bad.flags['decisions-model']).toMatchObject({ ok: false });
+    expect(bad.flags['search-provider']).toMatchObject({ errorCode: 'TYPE_MISMATCH', ok: false });
+    expect((await flagHealth({ FLAGS: flagship(all, { throws: true }) })).ok).toBe(false);
   });
 });

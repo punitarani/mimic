@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { accessApp, adminEmails, ensureAccess, LAB_PATHS } from './access.mjs';
-import { ensureFlags, flagCatalog, flagsAppName } from './flags.mjs';
+import { environmentFlagsApp, flagsAppId, flagsCheckArgs } from './flags.mjs';
 import {
   cloudflare,
   parseJsonc,
@@ -15,7 +15,6 @@ import {
   withSecretsFile,
 } from './lib.mjs';
 import {
-  checkFlagship,
   checkNames,
   checkPermissions,
   customDomain,
@@ -45,8 +44,6 @@ function fakeCloudflare({ zeroTrust = true, deny = [], zones = ['punitarani.com'
     indexes: new Map(),
     apps: [],
     policies: new Map(),
-    flagApps: [],
-    flags: new Map(),
   };
   const calls = [];
   let n = 0;
@@ -134,21 +131,6 @@ function fakeCloudflare({ zeroTrust = true, deny = [], zones = ['punitarani.com'
     if (path === '/vectorize/v2/indexes' && method === 'POST') {
       state.indexes.set(body.name, { config: body.config, metadata: [] });
       return reply(200, { name: body.name });
-    }
-    const flagsOf = path.match(/^\/flagship\/apps\/([^/]+)\/flags$/);
-    if (path === '/flagship/apps' && method === 'GET') return reply(200, state.flagApps);
-    if (path === '/flagship/apps' && method === 'POST') {
-      const a = { id: id('fapp'), name: body.name };
-      state.flagApps.push(a);
-      state.flags.set(a.id, []);
-      return reply(200, a);
-    }
-    if (flagsOf && method === 'GET') return reply(200, state.flags.get(flagsOf[1]) ?? []);
-    if (flagsOf && method === 'POST') {
-      const list = state.flags.get(flagsOf[1]);
-      if (list.some((f) => f.key === body.key)) return reply(409, null);
-      list.push(body);
-      return reply(200, body);
     }
     if (path.startsWith('/access/') && !zeroTrust) return reply(403, null);
     if (path === '/access/apps' && method === 'GET')
@@ -463,6 +445,7 @@ describe('smoke', () => {
       labStatus,
       labLocation = 'https://team.cloudflareaccess.com/cdn-cgi/access/login',
       card = 'https://mimic.punitarani.com/share-card.png?v=1',
+      health = { ok: true },
     ) =>
     async (url) => {
       const path = new URL(url).pathname;
@@ -472,7 +455,7 @@ describe('smoke', () => {
         });
       if (path === '/share-card.png')
         return new Response(new Uint8Array(8), { headers: { 'content-type': 'image/png' } });
-      if (path === '/api/health') return Response.json({ ok: true });
+      if (path === '/api/health') return Response.json(health);
       return new Response(null, { status: labStatus, headers: { location: labLocation } });
     };
 
@@ -498,6 +481,31 @@ describe('smoke', () => {
     );
   });
 
+  it("fails when a flag doesn't evaluate through the Worker's binding (ADR-0050)", async () => {
+    const flags = {
+      bound: true,
+      ok: false,
+      flags: {
+        'decisions-model': { value: 'jev', reason: 'DEFAULT', ok: true },
+        'budget-usd': { value: 1, reason: 'ERROR', errorCode: 'FLAG_NOT_FOUND', ok: false },
+      },
+    };
+    await assert.rejects(
+      smoke('https://mimic.punitarani.com', {
+        fetchImpl: site(302, undefined, undefined, { ok: true, flags }),
+        attempts: 1,
+        log: quiet,
+      }),
+      /flags don't evaluate: budget-usd \(FLAG_NOT_FOUND\)/,
+    );
+    const healthy = { ok: true, flags: { ...flags, ok: true, flags: {} } };
+    await smoke('https://mimic.punitarani.com', {
+      fetchImpl: site(302, undefined, undefined, healthy),
+      attempts: 1,
+      log: quiet,
+    });
+  });
+
   it('retries while a new custom domain comes up', async () => {
     let calls = 0;
     const flaky = async (url, init) =>
@@ -507,70 +515,38 @@ describe('smoke', () => {
 });
 
 describe('flags (ADR-0050)', () => {
-  it("both apps bind the environment's Flagship app as FLAGS", () => {
-    for (const c of [web, worker])
-      for (const env of ['preview', 'prod'])
-        assert.deepEqual(c.env[env].flagship, [
-          { binding: 'FLAGS', app_id: `REPLACE_ME_${env.toUpperCase()}_FLAGS_APP_ID` },
-        ]);
+  const APP = 'c4598f95-4f82-48c0-a8c5-62588cc2b598';
+
+  it('both Workers bind the Flagship app mimic in prod, and nothing in preview', () => {
+    for (const c of [web, worker]) {
+      assert.deepEqual(c.env.prod.flagship, [{ binding: 'FLAGS', app_id: APP }]);
+      assert.equal(c.env.preview.flagship, undefined);
+      assert.equal(c.flagship, undefined, 'local dev and tests bind no flags');
+    }
+    assert.equal(environmentFlagsApp('prod'), APP);
+    assert.equal(environmentFlagsApp('preview'), null);
   });
 
-  it('creates the app and every flag at its default once, and never overwrites a flag', async () => {
-    const { cf, state, calls } = fakeCloudflare();
-    const appId = await ensureFlags(cf, 'prod', {}, quiet);
-    assert.deepEqual(state.flagApps, [{ id: appId, name: 'mimic' }]);
-    const flags = state.flags.get(appId);
-    assert.deepEqual(
-      flags.map((f) => f.key),
-      flagCatalog().map((f) => f.key),
-    );
-    const challenger = flags.find((f) => f.key === 'decisions-model');
-    assert.equal(challenger.variations[challenger.default_variation], 'jev', 'Jev stays the default');
-    assert.deepEqual(challenger.rules, []);
-    // Someone switches it in the dashboard; the next deploy leaves it switched.
-    challenger.default_variation = 'span-01';
-    const posts = calls.filter((c) => c.startsWith('POST')).length;
-    assert.equal(await ensureFlags(cf, 'prod', {}, quiet), appId);
-    assert.equal(calls.filter((c) => c.startsWith('POST')).length, posts, 'a second run creates nothing');
-    assert.equal(challenger.default_variation, 'span-01');
+  it('refuses Workers bound to different apps', () => {
+    const other = structuredClone(web);
+    other.env.prod.flagship[0].app_id = 'other';
+    assert.throws(() => environmentFlagsApp('prod', other, worker), /bind the same one/);
+    assert.equal(flagsAppId(other, 'prod'), 'other');
   });
 
-  it('finds the prod app made in the dashboard, and adds only the flags it lacks', async () => {
-    const { cf, state } = fakeCloudflare();
-    state.flagApps.push({ id: 'c4598f95', name: 'mimic' });
-    state.flags.set('c4598f95', [
-      { key: 'decisions-model', default_variation: 'jev', variations: { jev: 'jev', 'span-01': 'span-01' } },
-    ]);
-    assert.equal(await ensureFlags(cf, 'prod', {}, quiet), 'c4598f95');
-    const keys = state.flags.get('c4598f95').map((f) => f.key);
-    assert.equal(keys.filter((k) => k === 'decisions-model').length, 1);
-    assert.deepEqual(
-      [...keys].sort(),
-      flagCatalog()
-        .map((f) => f.key)
-        .sort(),
-    );
-    assert.equal(flagsAppName('preview'), 'mimic-preview');
+  it('passes the pinned app through a deploy config untouched', () => {
+    const out = deployConfig(worker, 'prod', { d1Id: 'D1', kvId: 'KV' });
+    assert.deepEqual(out.env.prod.flagship, [{ binding: 'FLAGS', app_id: APP }]);
   });
 
-  it("seeds the provider and budget flags from the environment's settings", () => {
-    const value = (cat, key) => {
-      const f = cat.find((x) => x.key === key);
-      return f.variations[f.default_variation];
-    };
-    const prod = resolveSettings(worker, 'prod', { BUDGET_USD: '2.5', BUDGET_SESSION_SHARE: '0.6' }).vars;
-    const seeded = flagCatalog(prod);
-    assert.equal(value(seeded, 'budget-usd'), 2.5);
-    assert.equal(value(seeded, 'budget-session-share'), 0.6);
-    assert.equal(value(seeded, 'embeddings-provider'), 'workers-ai');
-    assert.equal(value(seeded, 'search-provider'), 'exa');
-    assert.equal(value(flagCatalog({}), 'budget-usd'), 1);
-    assert.equal(value(flagCatalog({}), 'budget-session-share'), 0.8);
-    assert.equal(
-      flagCatalog().find((f) => f.key === 'vector-backend'),
-      undefined,
-      'the vector backend is infrastructure',
-    );
+  it('checks prod with the resolved settings, and has nothing to check in preview', () => {
+    const args = flagsCheckArgs('prod', { EMBEDDINGS_PROVIDER: 'openrouter' }, { optional: true });
+    assert.ok(args[2].endsWith('packages/db/src/flags-check.cli.ts'));
+    assert.equal(args[args.indexOf('--app') + 1], APP);
+    assert.equal(JSON.parse(args[args.indexOf('--settings') + 1]).EMBEDDINGS_PROVIDER, 'openrouter');
+    assert.ok(args.includes('--optional'));
+    assert.ok(!args.includes('--create-missing'));
+    assert.equal(flagsCheckArgs('preview', {}), null);
   });
 
   it('pushes every provider key that is set, so a provider flag can switch at runtime', () => {
@@ -578,18 +554,5 @@ describe('flags (ADR-0050)', () => {
       presentProviderSecrets({ EXA_API_KEY: 'x', PARALLEL_API_KEY: ' ', PERPLEXITY_API_KEY: 'p' }),
       ['EXA_API_KEY', 'PERPLEXITY_API_KEY'],
     );
-  });
-
-  it('without Flagship access, warns and ships without the FLAGS binding', async () => {
-    const { cf, state } = fakeCloudflare({ deny: ['/flagship'] });
-    assert.match(await checkFlagship(cf), /Account · Flagship · Edit/);
-    assert.equal(await ensureFlags(cf, 'prod', {}, quiet), null);
-    assert.equal(state.flagApps.length, 0);
-    const out = deployConfig(worker, 'prod', { d1Id: 'D1', kvId: 'KV', flagsAppId: null });
-    assert.equal(out.env.prod.flagship, undefined);
-    const bound = deployConfig(worker, 'prod', { d1Id: 'D1', kvId: 'KV', flagsAppId: 'F1' });
-    assert.deepEqual(bound.env.prod.flagship, [{ binding: 'FLAGS', app_id: 'F1' }]);
-    assert.equal(worker.env.prod.flagship[0].app_id, 'REPLACE_ME_PROD_FLAGS_APP_ID', 'original untouched');
-    assert.equal(await checkFlagship(fakeCloudflare().cf), null);
   });
 });

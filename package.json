@@ -20,6 +20,7 @@
     "deploy:preflight": "node scripts/deploy/preflight.mjs --env prod",
     "deploy:preview": "node scripts/deploy/deploy.mjs --env preview",
     "deploy:prod": "node scripts/deploy/deploy.mjs --env prod",
+    "flags:check": "NODE_USE_ENV_PROXY=1 node scripts/deploy/flags.mjs --env prod",
     "eval": "NODE_USE_ENV_PROXY=1 tsx packages/eval/src/cli.ts",
     "backfill": "NODE_USE_ENV_PROXY=1 node scripts/backfill.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test"

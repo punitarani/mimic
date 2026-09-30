@@ -105,6 +105,15 @@ export const JEV_MODEL = 'typesafe/jev-1.13';
  * `decisions-model` flag (variant `span-01`), off by default (ADR-0050).
  */
 export const SPAN_MODEL = 'respan/span-01-20260925';
+
+/**
+ * The `decisions-model` flag's variants and the pinned model each serves (ADR-0050). A variant names a model here
+ * rather than in the flag, so changing what `span-01` means is a reviewed code change, not a dashboard edit.
+ */
+export const DECISION_MODELS: Readonly<Record<string, string>> = {
+  jev: JEV_MODEL,
+  'span-01': SPAN_MODEL,
+};
 export const LLM = {
   luna: 'openai/gpt-6-luna',
   deepseek: 'deepseek/deepseek-v4.1-flash',

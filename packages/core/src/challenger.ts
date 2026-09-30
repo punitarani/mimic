@@ -1,5 +1,5 @@
-import { JEV_MODEL, SPAN_MODEL } from './config';
-import { FLAG_KEYS, type FlagReader } from './flags';
+import { JEV_MODEL } from './config';
+import { decisionModelOf, FLAG_SPECS, type FlagReader } from './flags';
 import type { CallContext } from './gateway';
 import type { DecisionRequest, DecisionResponse } from './types';
 
@@ -10,10 +10,10 @@ import type { DecisionRequest, DecisionResponse } from './types';
 export type DecisionRouter = (ctx: CallContext, req: DecisionRequest) => Promise<string | null>;
 
 /**
- * The purposes a challenger may serve by default: the served predictions (primary, baseline, selection's scoring,
- * the playground's pair). Gates, trait reads and identity ranking stay on Jev: their thresholds were tuned on Jev's
- * probabilities (ADR-0015, ADR-0042). Shadows, backfills and eval calls name their model explicitly and are never
- * rerouted, since the model is part of the predictor ID they store.
+ * The purposes a challenger may serve: the served predictions (primary, baseline, selection's scoring, the
+ * playground's pair). Gates, trait reads and identity ranking stay on Jev: their thresholds were tuned on Jev's
+ * probabilities (ADR-0015, ADR-0042), so widening this is a reviewed change. Shadows, backfills and eval calls name
+ * their model explicitly and are never rerouted, since the model is part of the predictor ID they store.
  */
 export const CHALLENGER_PURPOSES = [
   'predict.primary',
@@ -23,46 +23,20 @@ export const CHALLENGER_PURPOSES = [
   'playground.baseline',
 ] as const;
 
-const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
-
 /**
- * The `decisions-model` variants and the pinned model each serves. A variant names a model here rather than in the
- * flag, so changing what `span-01` means is a reviewed code change, not a dashboard edit.
- */
-export const DECISION_MODELS: Readonly<Record<string, string>> = {
-  jev: JEV_MODEL,
-  'span-01': SPAN_MODEL,
-};
-
-/**
- * The model a `decisions-model` value names: a variant of DECISION_MODELS (case and spacing ignored, so a label such
- * as "Span-01" works), or an OpenRouter Decisions model ID. Null for anything else, which leaves Jev in place.
- */
-export function decisionModelOf(value: string): string | null {
-  const v = value.trim();
-  const key = v.toLowerCase().replace(/[\s_]+/g, '-');
-  if (Object.hasOwn(DECISION_MODELS, key)) return DECISION_MODELS[key]!;
-  return MODEL_ID.test(v) ? v : null;
-}
-
-/**
- * A router over the `decisions-model` flags. Only requests for the incumbent Jev model are candidates; the flag is
- * evaluated with the mimic as its targeting key (so a percentage rollout keeps each person on one model for primary
- * and baseline alike) and the purpose as an attribute (so Flagship rules can target purposes too). With the flag at
- * `jev`, one flag read is the only difference from having no router.
+ * A router over the `decisions-model` flag. Only requests for the incumbent Jev model, for the served purposes, are
+ * candidates. The flag is evaluated with the mimic as its targeting key (so a percentage rollout keeps each person on
+ * one model for primary and baseline alike) and the purpose as an attribute (so Flagship rules can narrow the
+ * purposes further). With the flag at `jev`, one flag read is the only difference from having no router.
  */
 export function decisionChallenger(flags: FlagReader, incumbent: string = JEV_MODEL): DecisionRouter {
+  const spec = FLAG_SPECS.decisionsModel;
   return async (ctx, req) => {
-    if (req.model !== incumbent) return null;
+    if (req.model !== incumbent || !(CHALLENGER_PURPOSES as readonly string[]).includes(ctx.purpose))
+      return null;
     const fctx = { targetingKey: ctx.mimicId ?? 'none', purpose: ctx.purpose };
-    const model = decisionModelOf(await flags.string(FLAG_KEYS.decisionsModel, 'jev', fctx));
-    if (!model || model === incumbent) return null;
-    const purposes = await flags.string(
-      FLAG_KEYS.decisionsModelPurposes,
-      CHALLENGER_PURPOSES.join(','),
-      fctx,
-    );
-    return purposes.split(',').some((p) => p.trim() === ctx.purpose) ? model : null;
+    const model = decisionModelOf(await flags.string(spec.key, spec.fallback, fctx));
+    return model && model !== incumbent ? model : null;
   };
 }
 

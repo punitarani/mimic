@@ -85,6 +85,9 @@ describe('benchmark (ADR-0050)', () => {
     expect(r.p50LatencyMs).toBe(350);
     expect(r.p95LatencyMs).toBe(575);
     expect(r.costPerRequestUsd).toBeCloseTo((N * 0.00001) / 6, 10);
+    expect(r.byType).toEqual({
+      choice: { predictions: N, errors: 6, logLoss: r.logLoss, itemAcc: r.itemAcc },
+    });
   });
 
   it('enables span-01 only when it is better and nothing else regresses', () => {
@@ -154,6 +157,9 @@ describe('benchmark (ADR-0050)', () => {
     expect(a.verdict.enable).toBe(false);
     const quality = (r: BenchmarkRow) => [r.predictions, r.logLoss, r.itemAcc, r.errors];
     expect(b.rows.map(quality)).toEqual(a.rows.map(quality));
-    expect(readFileSync(join(dir, 'a', 'benchmark.md'), 'utf8')).toContain('Offline run with fake providers');
+    const md = readFileSync(join(dir, 'a', 'benchmark.md'), 'utf8');
+    expect(md).toContain('Offline run with fake providers');
+    expect(md).toContain('## By question type');
+    expect(Object.keys(a.rows[0]!.byType).length).toBeGreaterThan(0);
   }, 60_000);
 });

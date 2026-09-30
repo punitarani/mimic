@@ -1,0 +1,108 @@
+# Jev vs span-01 on the same sealed instances (ADR-0050, docs/CHALLENGER.md), from the Actions tab:
+# Actions → Benchmark → Run workflow. It decides whether `decisions-model` may move to span-01: the step summary holds
+# the side-by-side table (quality, p50/p95 latency, cost per request, error rate, by question type) and the verdict
+# of DECISION_RULE.
+#
+# Data: the prod export (consented mimics only, scrubbed of names, locations and links; ADR-0018), Twin-2K-500 people
+# (public survey data from real people), or both. Only aggregates leave the runner: the step summary and the artifact
+# (benchmark.md, .csv, .json). Per-question records, traces and the export are discarded with the runner. Both models
+# are live, capped at max_usd.
+
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      data:
+        description: prod (the consented export), twin (Twin-2K-500 people) or both
+        type: choice
+        options: [prod, twin, both]
+        default: both
+      twin_people:
+        description: Twin-2K-500 people to include (with twin or both)
+        type: string
+        default: '100'
+      split:
+        description: test (held-out people; the calibration was fitted on dev), dev or all
+        type: choice
+        options: [test, dev, all]
+        default: test
+      challenger:
+        description: Challenger predictor ID (empty is the production primary on span-01)
+        type: string
+        default: ''
+      max_usd:
+        description: Spend cap in USD for both models together
+        type: string
+        default: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-production
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: Jev vs span-01 (${{ inputs.data }}, ${{ inputs.split }})
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Export prod (consented, scrubbed)
+        if: inputs.data != 'twin'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm deploy:config --env prod
+          pnpm eval -- export --env prod --out data/prod.sqlite
+
+      - name: Twin-2K-500
+        if: inputs.data != 'prod'
+        env:
+          TWIN_PEOPLE: ${{ inputs.twin_people }}
+        run: |
+          python -m pip install --quiet datasets
+          python - <<'EOF'
+          import os
+          import datasets
+          n = int(os.environ["TWIN_PEOPLE"])
+          ds = datasets.load_dataset("LLM-Digital-Twin/Twin-2K-500", "wave_split")["data"]
+          ds.select(range(min(n, len(ds)))).to_json("data/twin.jsonl")
+          EOF
+          pnpm eval -- import twin2k500 --path data/twin.jsonl --out data/twin.sqlite
+
+      - name: Benchmark
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          SPLIT: ${{ inputs.split }}
+          CHALLENGER: ${{ inputs.challenger }}
+          MAX_USD: ${{ inputs.max_usd }}
+        # Inputs reach the script as environment variables, never interpolated into the shell.
+        run: |
+          data=""
+          for f in data/prod.sqlite data/twin.sqlite; do [ -f "$f" ] && data="${data:+$data,}$f"; done
+          args=(--data "$data" --split "$SPLIT" --max-usd "$MAX_USD" --out data/benchmark/run --summary "$GITHUB_STEP_SUMMARY")
+          [ -n "$CHALLENGER" ] && args+=(--challenger "$CHALLENGER")
+          pnpm eval -- benchmark "${args[@]}"
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-result
+          if-no-files-found: ignore
+          retention-days: 30
+          path: |
+            data/benchmark/run/benchmark.md
+            data/benchmark/run/benchmark.csv
+            data/benchmark/run/benchmark.json

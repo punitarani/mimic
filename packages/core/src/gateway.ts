@@ -1,4 +1,5 @@
 import { type DecisionRouter, unansweredQuestions } from './challenger';
+import { planDecision } from './decision-models';
 import type {
   ChatRequest,
   ChatResponse,
@@ -289,13 +290,18 @@ export class Gateway {
     }
   }
 
+  /**
+   * One logged call. A model with request limits (`planDecision`: span-01 takes a string state and yes/no questions)
+   * gets the request it can take, which is what the trace records; its answers come back keyed and typed as asked.
+   */
   private decideOnce(ctx: CallContext, req: DecisionRequest, complete = false): Promise<DecisionResponse> {
+    const plan = planDecision(req);
     return withModelCall(
       this.deps,
       { ...ctx, provider: this.deps.decisions.provider, model: req.model },
-      req,
+      plan.request,
       async () => {
-        const res = await this.deps.decisions.decide(req);
+        const res = plan.answer(await this.deps.decisions.decide(plan.request));
         const missing = complete ? unansweredQuestions(req, res) : [];
         if (missing.length)
           throw new Error(

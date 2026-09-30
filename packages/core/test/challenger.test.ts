@@ -185,16 +185,16 @@ describe('the decisions-model flag (ADR-0050)', () => {
     expect(seen.slice(6)).toEqual(Array(CHALLENGER_PURPOSES.length).fill(SPAN_MODEL));
   });
 
-  it('the purposes flag widens or narrows what the challenger serves', async () => {
+  it('Flagship rules can narrow the purposes by the purpose attribute, never widen them', async () => {
     const { g, seen } = gateway(
       new StaticFlags({
-        [FLAG_KEYS.decisionsModel]: 'span-01',
-        [FLAG_KEYS.decisionsModelPurposes]: 'pool.gate, traits.read',
+        [FLAG_KEYS.decisionsModel]: (c) => (c.purpose === 'predict.baseline' ? 'jev' : 'span-01'),
       }),
     );
     await g.decide({ ...ctx, purpose: 'pool.gate' }, req());
+    await g.decide({ ...ctx, purpose: 'predict.baseline' }, req());
     await g.decide(ctx, req());
-    expect(seen).toEqual([SPAN_MODEL, JEV_MODEL]);
+    expect(seen).toEqual([JEV_MODEL, JEV_MODEL, SPAN_MODEL]);
   });
 
   it('evaluates the flag per mimic and purpose, so a rollout keeps each person on one model', async () => {
@@ -276,8 +276,11 @@ describe('call sites are unchanged (ADR-0050)', () => {
     expect(a!.modelSnapshot).toBe(`${JEV_MODEL}-snap`);
     expect(b!.modelSnapshot).toBe(`${SPAN_MODEL}-snap`);
     expect(c!.modelSnapshot).toBe(`${JEV_MODEL}-snap`);
-    // The same prompt and calibration apply to whichever model answered.
-    expect(b!.dist).toEqual(a!.dist);
+    // span-01 answered the choice as one yes/no per option (0.7 each), recomposed to an even split; Jev's own
+    // answer was 0.8/0.2. The same prompt and calibration apply to whichever model answered.
+    expect(b!.dist.a).toBeCloseTo(0.5, 6);
+    expect(a!.dist.a).toBeGreaterThan(0.5);
+    expect(c!.dist).toEqual(a!.dist);
     expect(on.log.rows[0]!.purpose).toBe('predict.primary');
     expect(jevKey(question)).toBe('q_q1');
   });

@@ -23,6 +23,7 @@ doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DE
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
 pnpm eval -- <export|replay|select|import|report|session|evaluate|diagnose|optimize|benchmark|drafts|gates> ...
 pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--rate n] [--retry-failed] [--yes]   # new predictors on served questions (ADR-0024, ADR-0037)
+pnpm flags:check [--create-missing]   # Flagship app `mimic` vs the flag registry; needs CLOUDFLARE_API_TOKEN/ACCOUNT_ID (ADR-0050)
 ```
 
 `pnpm dev` serves the web app on http://localhost:3000 and the worker on http://localhost:8787. It copies
@@ -47,7 +48,7 @@ trait rows.
 apps/web           Next.js on Workers (@opennextjs/cloudflare): UI + synchronous route handlers
 apps/worker        Queue consumer (async jobs) + cron
 packages/core      Pure TS engine. Must not import Cloudflare, Next or Node-only modules; receives deps by injection.
-packages/adapters  OpenRouter chat, Jev decisions, OpenAI-decisions stub, Exa, Parallel, Perplexity, embeddings
+packages/adapters  OpenRouter chat, Jev and span-01 decisions, OpenAI-decisions stub, Exa, Parallel, Perplexity, embeddings
 packages/db        Drizzle schema + migrations + Store; R2/KV/Vectorize helpers; runtime wiring (db/runtime)
 packages/eval      Node CLI for offline evaluation and the scripted session loop
 docs/              PLAN.md, DECISIONS.md, ontology/*.json, prompts/*.md (generated from packages/core)
@@ -91,9 +92,9 @@ Check the provider's current docs, since these APIs are new and change: OpenRout
 
 ## Environment
 
-- Bindings (both apps): `DB` (D1), `BLOBS` (R2), `CACHE` (KV), `VEC` (Vectorize, metadata indexes on `mimicId` and `kind`; deployed envs only), `JOBS` (Queue), `IDENTITY_JOBS` (Queue for `identity.*`, so sign-up never waits behind other jobs; ADR-0034), `AI` (Workers AI; deployed envs only), `RL` (rate limiter), `FLAGS` (Cloudflare Flagship; deployed envs only, optional: unbound means every flag reads its default; ADR-0050).
+- Bindings (both apps): `DB` (D1), `BLOBS` (R2), `CACHE` (KV), `VEC` (Vectorize, metadata indexes on `mimicId` and `kind`; deployed envs only), `JOBS` (Queue), `IDENTITY_JOBS` (Queue for `identity.*`, so sign-up never waits behind other jobs; ADR-0034), `AI` (Workers AI; deployed envs only), `RL` (rate limiter), `FLAGS` (Cloudflare Flagship app `mimic`; prod only: unbound means every flag reads its default; ADR-0050).
 - Secrets: `OPENROUTER_API_KEY`, `EXA_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY` (optional), `SESSION_SECRET`, `ADMIN_EMAILS`, `INVITE_CODES`. Keep local copies in `.dev.vars`, which is gitignored. Settings: `SEARCH_PROVIDER`, `ENRICH_PROVIDER`, `EMBEDDINGS_PROVIDER`, `VECTOR_BACKEND`, `BUDGET_USD`, `BUDGET_SESSION_SHARE` (`scripts/deploy/settings.mjs`; spend caps, ADR-0035).
-- Flags (ADR-0050, docs/CHALLENGER.md): runtime flags and tunables live in Flagship (app `mimic`), read through `FlagReader` in core and `flaggedEnv` in `packages/db`. `decisions-model` (`jev` | `span-01`) picks the model for Jev's served predictions and defaults to `jev`. Provider and budget flags override their vars. Secrets and infrastructure stay env vars. Every flag read has a code default that equals today's behaviour.
+- Flags (ADR-0050, docs/CHALLENGER.md): every flag is defined once in `FLAG_SPECS` (`packages/core/src/flags.ts`); read them through `FlagReader` in core and `flaggedEnv` in `packages/db`, never the binding directly. `decisions-model` (`jev` | `span-01`) picks the model for Jev's served predictions and defaults to `jev`; the provider and `budget-usd` flags override their vars. Every read has a code default that equals the behaviour before the flag. Adding a flag means a registry entry plus the flag in the `mimic` app; `pnpm flags:check` (CI's Flags workflow and deploy preflight) fails until both agree. Secrets and infrastructure stay env vars.
 - Local dev in the Claude Code remote env: provider keys are injected by the outbound proxy and can't be read. `EGRESS_RELAY=http://127.0.0.1:8790` routes provider calls from workerd and Next through `scripts/egress-relay.mjs`, which uses Node's proxy-aware fetch (ADR-0002). Parallel's API host is blocked by this env's egress policy.
 - Environments: dev (local), preview and prod, each with separate resources. Prod deploys from `.github/workflows/cd.yml`
   after green CI on `main`. Every secret and setting lives in Doppler (`mimic/prd`), synced to GitHub repository

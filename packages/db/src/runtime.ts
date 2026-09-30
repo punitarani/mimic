@@ -17,7 +17,7 @@ import { type FlagshipBinding, flaggedEnv, flagsFor } from './flags';
 import { d1Db } from './index';
 import { DrizzleStore } from './store';
 
-export { flaggedEnv } from './flags';
+export { flaggedEnv, flagHealth } from './flags';
 
 /** Bindings shared by apps/web and apps/worker (PLAN §6.5). */
 export interface MimicBindings extends ProviderEnv {
@@ -44,10 +44,10 @@ export interface MimicBindings extends ProviderEnv {
   INVITE_CODES?: string;
   /**
    * Spend cap per mimic in USD on the standard budget (default 1; ADR-0035). A string, or a JSON number. The
-   * `budget-usd` flag overrides it where Flagship is bound (ADR-0050); this var seeds the flag and backs it up.
+   * `budget-usd` flag overrides it where Flagship is bound (ADR-0050); this var is the fallback.
    */
   BUDGET_USD?: string | number;
-  /** Share of the cap the session may spend (0–1, default 0.8); the `budget-session-share` flag overrides it. */
+  /** Share of the cap the session may spend (0–1, default 0.8); the rest is kept for the mimic page. */
   BUDGET_SESSION_SHARE?: string | number;
 }
 

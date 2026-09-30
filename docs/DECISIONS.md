@@ -1656,51 +1656,67 @@ with the copy "Turn off anything you'd rather not share. All topics are enabled 
   Revisit both before an ontology v2 config (or experiment arm) serves sensitive questions, and before opening
   sign-ups beyond invites.
 
-## ADR-0050 — span-01 as a challenger to Jev, behind Cloudflare Flagship flags (2026-09-30)
+## ADR-0050 — span-01 as a challenger to Jev, behind a Cloudflare Flagship flag registry (2026-09-30)
 
 Respan's `respan/span-01` runs on the same OpenRouter Decisions API as Jev, at $0.02/M input tokens against Jev's
-$0.042/M. It is added as a challenger behind the Flagship string flag `decisions-model` (`jev` | `span-01`). The
-flag defaults to `jev`, and at that value every call runs exactly as before. Runbook: `docs/CHALLENGER.md`.
+$0.042/M. It is added as a challenger behind the Flagship string flag `decisions-model` (`jev` | `span-01`). At
+`jev`, the default, every call runs exactly as before. Runbook: `docs/CHALLENGER.md`.
 
 - **Swappable in the Gateway.** `Gateway.decide` asks a `DecisionRouter` (`decisionChallenger`,
-  `packages/core/src/challenger.ts`) which model to use, so no call site changes. It reroutes only requests for the
-  incumbent `typesafe/jev-1.13`, and only for served predictions (`CHALLENGER_PURPOSES`; widened or narrowed with
-  `decisions-model-purposes`). Gates, trait reads and identity stay on Jev, whose probabilities their thresholds
-  were tuned on (ADR-0015, ADR-0042). A predictor that names its own model (a shadow, backfill or eval) is never
-  rerouted, because the model is part of its stored ID.
+  `packages/core/src/challenger.ts`) which model to use, so no call site changes.
+  - It reroutes only requests for the incumbent `typesafe/jev-1.13`, and only for served predictions
+    (`CHALLENGER_PURPOSES`).
+  - Gates, trait reads and identity stay on Jev, whose probabilities their thresholds were tuned on (ADR-0015,
+    ADR-0042).
+  - A predictor that names its own model (a shadow, backfill or eval) is never rerouted, because the model is part
+    of its stored ID.
+- **span-01 is not a drop-in; an adapter makes it one.** Live calls showed limits the model page doesn't state:
+  - span-01 takes only a string state and only yes/no (`noul`) questions, and answers anything else with HTTP 400.
+  - `planDecision` (`packages/core/src/decision-models.ts`) sends such a model the state as JSON text, and each
+    choice option or score level as its own yes/no question. It normalizes the answers into a distribution
+    (one-vs-rest) and hands back answers keyed and typed as asked.
+  - The trace records the request actually sent (invariant 5), and Jev's requests pass through untouched.
+  - One-vs-rest is an approximation and roughly doubles the input tokens, so the benchmark reports quality by
+    question type and cost per request.
 - **Fallback, logged.** The span-01 call uses the same adapter, timeout and retries as Jev. If it fails (an error, a
-  timeout, or any question unanswered or mistyped), the same request goes to Jev. Each attempt is its own
-  `model_calls` row (invariant 5), and a budget refusal is not retried.
+  timeout, or a question unanswered or mistyped), the same request goes to Jev. Each attempt is its own
+  `model_calls` row, and a budget refusal is not retried.
 - **Versioning (invariant 4).** A rerouted prediction keeps its config's predictor ID. Its `modelSnapshot` names the
-  model that answered, so reports split on it. The flag is for the trial and rollout. To make span-01 permanent,
-  ship a new config with `jev:respan/span-01-20260925@…` as primary, so predictor IDs and config hashes say so.
-- **Pinned.** `SPAN_MODEL = respan/span-01-20260925` is the dated snapshot. A `decisions-model` variant maps to a
-  model in code (`DECISION_MODELS`), so changing what `span-01` means is a reviewed change. A raw model ID is also
-  accepted, for trials.
-- **Flagship over env vars.** Flagship toggles at runtime without a redeploy, rolls out by percentage on a stable
-  key (the mimic ID, so each person keeps one model), and rolls back in seconds; env vars need a Doppler change and a
-  CD run for each of those. It was chosen because the setup is a binding plus a find-or-create in the deploy script
-  we already run. The costs are that it is in public beta and its pricing is unannounced.
-- **Fails safe.** Core sees only a `FlagReader`; `packages/db/src/flags.ts` wraps the binding. A missing flag, an
-  unbound `FLAGS`, or a thrown read all return the code default. Values are coerced, so a dashboard string flag and a
-  boolean one read alike.
-  - Deploy (`scripts/deploy/flags.mjs`) finds the app (`mimic` for prod, created in the dashboard; `mimic-<env>`
-    otherwise) and creates only missing flags, seeded from the current settings. It never overwrites a flag.
-  - Without Flagship permission, the deploy warns and drops the binding, so CD keeps working.
-- **Migrated to flags.** These tunables now read Flagship first, over their vars: `budget-usd`,
-  `budget-session-share`, `search-provider`, `enrich-provider` and `embeddings-provider` (`flaggedEnv`).
-  - A flag overrides only when it differs from the var and passes the deploy's checks (an allowed value, a key or
-    binding that is deployed, a budget in range). Otherwise the var stands, and the reason is logged once.
-  - Deploy now also pushes every provider key set in Doppler, so a provider flag can switch without a redeploy.
-  - The vars stay as the seed and fallback.
-- **Left as env vars.** Secrets (`*_API_KEY`, `SESSION_SECRET`, `INVITE_CODES`, `ADMIN_EMAILS`) and infrastructure:
+  model that answered, so reports split on it.
+  - The flag is for the trial and rollout.
+  - To make span-01 permanent, ship a config with `jev:respan/span-01-20260925@…` as primary, so predictor IDs and
+    config hashes say so.
+  - `SPAN_MODEL` pins the dated snapshot. A `decisions-model` variant maps to a model in code (`DECISION_MODELS`).
+- **Flagship over env vars.** Flagship toggles at runtime without a redeploy, rolls out by percentage on a stable key
+  (the mimic ID, so each person keeps one model), and rolls back in seconds. Env vars need a Doppler change and a CD
+  run for each of those.
+  - It was chosen because its setup is one binding with a pinned app ID. It is in public beta, with pricing
+    unannounced.
+- **One registry, checked.** `FLAG_SPECS` (`packages/core/src/flags.ts`) defines each flag once: key, type, code
+  default, the var it overrides, and a parser for the values it accepts. Runtime reads and the checks all use it.
+  - **Runtime.** Core sees a `FlagReader`; `packages/db/src/flags.ts` wraps the binding. Every read has a default
+    that equals the behaviour before the flag.
+  - **`pnpm flags:check`** holds the live app to the registry. It fails on a missing flag, on any variation, default
+    or rule serving a value the code can't use, and on a flag that doesn't evaluate through Flagship's evaluate API.
+    It warns about flags nothing reads, and about flags that override their setting.
+  - **Where it runs:** in the Flags workflow on every PR, every push and daily, and in deploy preflight.
+  - **After deploy**, `/api/health` evaluates every flag through the Worker's own binding, and the smoke test fails
+    on an error.
+  - **Token.** The check needs only Flagship App · Read and Evaluate. The app ID is pinned in `wrangler.jsonc`, so
+    the deploy needs no Flagship permission to find it. Preview binds no app.
+- **Migrated to flags:** `budget-usd`, `search-provider`, `enrich-provider` and `embeddings-provider`, which read
+  Flagship over their vars (`flaggedEnv`).
+  - A flag overrides only when its value parses, differs from the var, and names a provider whose key or binding is
+    deployed. Otherwise the var stands, and the reason is logged once.
+  - Deploy pushes every provider key set in Doppler, so a provider flag can actually switch.
+  - The vars stay as the fallback.
+- **Left as env vars:** secrets, `BUDGET_SESSION_SHARE` (no flag was made for it), and infrastructure:
   `VECTOR_BACKEND` (which store holds the vectors; flipping it at runtime would split the data), `DEV_MODE` and
-  `EGRESS_RELAY`. The dashboard's `vector-backend` flag is not read.
-- **Benchmark.** `pnpm eval -- benchmark --data <file>` runs the production primary and the same predictor on
-  span-01 over the same sealed instances. It reports log loss, accuracy, Brier, ECE, p50/p95 latency per request,
-  cost per request and error rate side by side (Markdown, CSV, JSON), and applies `DECISION_RULE`.
-  - Enable span-01 only if the paired log-loss interval is below 0, with accuracy no more than 1 point lower,
-    errors no more than 1 point higher, and latency and cost within 1.5×, on at least 200 predictions from 5 people.
-- **Not yet measured.** On 2026-09-30 the OpenRouter account's allowed providers excluded Respan, so every span-01
-  call returned 404. The success fixture (`span-decisions.json`) is built from the documented shape; re-record it
-  once Respan is allowed.
+  `EGRESS_RELAY`. The dashboard's `vector-backend` flag is not read, and the check warns about it.
+- **Benchmark.** `pnpm eval -- benchmark` (and the Benchmark workflow, after merge) runs the production primary and
+  the same predictor on span-01 over the same sealed instances.
+  - It reports quality overall and by question type, p50/p95 latency per request, cost per request and error rate,
+    as Markdown, CSV and JSON.
+  - It applies `DECISION_RULE`: switch only if the paired log-loss interval is below 0, with accuracy no more than
+    1 point lower, errors no more than 1 point higher, and latency and cost within 1.5×, on at least 200 predictions
+    from at least 5 people.

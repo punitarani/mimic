@@ -2,6 +2,7 @@ export * from './belief';
 export * from './challenger';
 export * from './components';
 export * from './config';
+export * from './decision-models';
 export * from './distribution';
 export * from './engine';
 export * from './fidelity';
