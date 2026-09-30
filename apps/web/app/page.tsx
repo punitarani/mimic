@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { TopBar } from '@/components/brand';
+import { buttonClass } from '@/components/button-styles';
 import { INVITE_PARAM, inviteFromQuery, newMimicHref } from '@/lib/invite';
 import { currentParticipant, deps } from '@/lib/server';
 
@@ -23,10 +24,7 @@ export default async function Home({
           Answer a few quick questions, and Mimic learns to predict how you decide.
         </h1>
         <div className="mt-8">
-          <Link
-            href={newMimicHref(invite)}
-            className="inline-flex h-12 items-center rounded-[10px] bg-graphite px-6 text-base font-medium text-fog hover:bg-graphite-soft"
-          >
+          <Link href={newMimicHref(invite)} className={buttonClass('primary', 'lg')}>
             Build your mimic
           </Link>
         </div>
