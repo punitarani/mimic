@@ -1,0 +1,6462 @@
+{
+  "thresholds": {
+    "concrete": {
+      "failIf": "below",
+      "p": 0.4
+    },
+    "sensitive": {
+      "failIf": "above",
+      "p": 0.3
+    },
+    "demeaning": {
+      "failIf": "above",
+      "p": 0.5
+    },
+    "leading": {
+      "failIf": "above",
+      "p": 0.4
+    },
+    "ambiguous": {
+      "failIf": "above",
+      "p": 0.9
+    },
+    "quick": {
+      "failIf": "below",
+      "p": 0.6
+    }
+  },
+  "sets": {
+    "gates.v3 (first wording)": [
+      {
+        "prompt": "At a new restaurant, the menu is full of dishes you've never heard of. What do you order?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.03,
+          "leading": 0.31,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "You need a new sofa. It's full price today, or half price in the January sale six weeks away.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.11,
+          "leading": 0.53,
+          "quick": 0.87,
+          "concrete": 0.97,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "At a family dinner, talk turns to a plan you've made that might not work out. How do you talk about it?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.05,
+          "leading": 0.3,
+          "quick": 0.91,
+          "concrete": 0.96,
+          "demeaning": 0.12
+        }
+      },
+      {
+        "prompt": "You've lived in the same Lisbon neighbourhood for ten years. A friend says you'd love a year abroad.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.74,
+          "sensitive": 0.05,
+          "leading": 0.45,
+          "quick": 0.89,
+          "concrete": 0.93,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "Your closest friend is being criticised in the group chat, and you quietly think the criticism is partly fair. Do you say so in the chat?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.04,
+          "leading": 0.42,
+          "quick": 0.85,
+          "concrete": 0.96,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "A close friend asks how you're really doing after a hard month. What comes out?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.25,
+          "leading": 0.45,
+          "quick": 0.9,
+          "concrete": 0.96,
+          "demeaning": 0.21
+        }
+      },
+      {
+        "prompt": "Your sibling tells you something and asks you not to tell your parents, though you think they should know.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.86,
+          "sensitive": 0.22,
+          "leading": 0.43,
+          "quick": 0.85,
+          "concrete": 0.97,
+          "demeaning": 0.25
+        }
+      },
+      {
+        "prompt": "Your partner asks what's wrong. You've had a bad day, but nothing serious happened.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.24,
+          "leading": 0.39,
+          "quick": 0.93,
+          "concrete": 0.96,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "It's 3pm on a busy shift and a patient's relative demands you chase a test result that won't be ready until tomorrow.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.76,
+          "sensitive": 0.85,
+          "leading": 0.53,
+          "quick": 0.81,
+          "concrete": 0.97,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "The ward is trialling a new way of handing over patients, replacing the routine you've used for years.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.57,
+          "leading": 0.5,
+          "quick": 0.82,
+          "concrete": 0.96,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "You fly out on a four-day trip tomorrow morning. By bedtime, your bag is:",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.65,
+          "sensitive": 0.03,
+          "leading": 0.55,
+          "quick": 0.92,
+          "concrete": 0.95,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "You're up €80 at a card game with friends. Someone deals one more round — lose it or double it.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.27,
+          "leading": 0.48,
+          "quick": 0.9,
+          "concrete": 0.97,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "You're giving a short toast at a friend's birthday dinner. In the hour before, you:",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.69,
+          "sensitive": 0.06,
+          "leading": 0.39,
+          "quick": 0.9,
+          "concrete": 0.96,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "A close friend is laid off after ten years of hard work. Your first thought:",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.14,
+          "leading": 0.36,
+          "quick": 0.92,
+          "concrete": 0.84,
+          "demeaning": 0.31
+        }
+      },
+      {
+        "prompt": "The building rule bans bikes in the lift. You live on the fourth floor.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.05,
+          "leading": 0.65,
+          "quick": 0.84,
+          "concrete": 0.96,
+          "demeaning": 0.43
+        }
+      },
+      {
+        "prompt": "Your neighbourhood is picking someone to run the annual street festival. You:",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.74,
+          "sensitive": 0.05,
+          "leading": 0.2,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "You pay a €150 deposit for a weekend away. A roster change means you can't go and it's non-refundable.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.21,
+          "leading": 0.68,
+          "quick": 0.87,
+          "concrete": 0.97,
+          "demeaning": 0.32
+        }
+      },
+      {
+        "prompt": "The car insurance renewal email lands in your inbox. What happens to it?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.36,
+          "leading": 0.38,
+          "quick": 0.62,
+          "concrete": 0.95,
+          "demeaning": 0.27
+        }
+      },
+      {
+        "prompt": "Protocol says get a doctor's approval first, but a patient needs a step now and you're sure it's right.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.93,
+          "leading": 0.75,
+          "quick": 0.64,
+          "concrete": 0.96,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "Your unit needs someone to lead a new quality-improvement project.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.14,
+          "leading": 0.38,
+          "quick": 0.9,
+          "concrete": 0.92,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "At a friend's birthday party...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.87,
+          "sensitive": 0.03,
+          "leading": 0.47,
+          "quick": 0.91,
+          "concrete": 0.96,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "On a weekend trip, the plan is vague...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.03,
+          "leading": 0.29,
+          "quick": 0.92,
+          "concrete": 0.78,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "At a fair, a €5 spin could win €100...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.36,
+          "leading": 0.67,
+          "quick": 0.92,
+          "concrete": 0.96,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "Your building proposes a strict new rule on quiet hours...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.09,
+          "leading": 0.51,
+          "quick": 0.9,
+          "concrete": 0.92,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "The city wants to limit cars in your area to cut pollution...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.83,
+          "leading": 0.55,
+          "quick": 0.9,
+          "concrete": 0.69,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "In a national election, you usually vote for...",
+        "source": "gen.v3",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.04,
+          "leading": 0.15,
+          "quick": 0.77,
+          "concrete": 0.83,
+          "demeaning": 0.31
+        }
+      },
+      {
+        "prompt": "Your partner cancels date night last minute for the third time...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.05,
+          "leading": 0.65,
+          "quick": 0.88,
+          "concrete": 0.96,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "At a family dinner, someone teases you...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.88,
+          "sensitive": 0.04,
+          "leading": 0.33,
+          "quick": 0.92,
+          "concrete": 0.96,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "A complex patient case comes in during your shift...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.88,
+          "sensitive": 0.8,
+          "leading": 0.44,
+          "quick": 0.64,
+          "concrete": 0.93,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "At shift handover, you describe a patient's condition...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.83,
+          "leading": 0.51,
+          "quick": 0.7,
+          "concrete": 0.93,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "At a family lunch, your sister picks a restaurant you really dislike. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.38,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "You need new walking shoes. What does the buying look like?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.13,
+          "leading": 0.19,
+          "quick": 0.83,
+          "concrete": 0.96,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "A friend lends you a documentary about a complicated science topic. What happens?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.04,
+          "leading": 0.47,
+          "quick": 0.9,
+          "concrete": 0.96,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "A collection tin goes round your building for a family whose flat was damaged by fire. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.18,
+          "leading": 0.81,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.4
+        }
+      },
+      {
+        "prompt": "The market cashier hands you €10 too much change. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.54,
+          "sensitive": 0.14,
+          "leading": 0.62,
+          "quick": 0.95,
+          "concrete": 0.98,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "A parish council election is coming up in your area. What do you do about it?",
+        "source": "gen.v3",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.04,
+          "leading": 0.6,
+          "quick": 0.9,
+          "concrete": 0.96,
+          "demeaning": 0.25
+        }
+      },
+      {
+        "prompt": "A stranger at the bus stop asks to borrow your phone to make a call. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.03,
+          "leading": 0.43,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "A close friend makes a joke at your expense in front of others. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.03,
+          "leading": 0.36,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "Your shift starts with tasks for eight patients. How do you begin?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.6,
+          "leading": 0.47,
+          "quick": 0.75,
+          "concrete": 0.96,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "Near the end of a shift you still have patient notes to write. How do you handle them?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.32,
+          "leading": 0.65,
+          "quick": 0.83,
+          "concrete": 0.97,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "Your morning train is cancelled and you'll be late. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.08,
+          "leading": 0.45,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "You need a new kettle. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.05,
+          "leading": 0.3,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "You try a new recipe and it turns out badly. What do you do next?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.03,
+          "leading": 0.45,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "You see a stranger drop their groceries on the street. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.03,
+          "leading": 0.62,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.27
+        }
+      },
+      {
+        "prompt": "At a self-checkout, the machine undercharges you by €5. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.65,
+          "sensitive": 0.12,
+          "leading": 0.46,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.25
+        }
+      },
+      {
+        "prompt": "A friend invites you to a religious ceremony. What do you do?",
+        "source": "gen.v3",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.05,
+          "leading": 0.26,
+          "quick": 0.92,
+          "concrete": 0.95,
+          "demeaning": 0.28
+        }
+      },
+      {
+        "prompt": "Your weekend is completely free. How do you spend it?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.03,
+          "leading": 0.2,
+          "quick": 0.94,
+          "concrete": 0.88,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "After a long week, you have a free evening. What recharges you most?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.06,
+          "leading": 0.18,
+          "quick": 0.93,
+          "concrete": 0.91,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "You start a shift with several tasks. How do you approach it?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.42,
+          "quick": 0.93,
+          "concrete": 0.94,
+          "demeaning": 0.09
+        }
+      },
+      {
+        "prompt": "You're reviewing a patient's chart before handover. What do you focus on?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.83,
+          "leading": 0.45,
+          "quick": 0.69,
+          "concrete": 0.96,
+          "demeaning": 0.08
+        }
+      },
+      {
+        "prompt": "On holiday in a new city, a local offers a last-minute paragliding trip. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.11,
+          "leading": 0.38,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "A neighbor sends you a rude message. What is your first move?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.04,
+          "leading": 0.49,
+          "quick": 0.95,
+          "concrete": 0.98,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "You're saving for a trip, but a flash sale for shoes you love appears. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.29,
+          "leading": 0.34,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "Playing a board game with friends, you notice you could secretly cheat to win. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.71,
+          "sensitive": 0.03,
+          "leading": 0.64,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.25
+        }
+      },
+      {
+        "prompt": "You planned a picnic and it rained. What's your first thought?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.03,
+          "leading": 0.23,
+          "quick": 0.95,
+          "concrete": 0.96,
+          "demeaning": 0.12
+        }
+      },
+      {
+        "prompt": "A new neighbor asks to borrow your expensive drill. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.05,
+          "leading": 0.36,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "A friend repeatedly cancels plans at the last minute. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.34,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.2
+        }
+      },
+      {
+        "prompt": "You have a work project due in two weeks. When do you start?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.02,
+          "leading": 0.64,
+          "quick": 0.92,
+          "concrete": 0.96,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "Your team is assigned a complex task. How do you prefer to work?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.02,
+          "leading": 0.18,
+          "quick": 0.92,
+          "concrete": 0.73,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "A free evening opens up with nothing planned. Do you rewatch a favourite show, or start something completely new to you?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.03,
+          "leading": 0.21,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "At a restaurant you love, the server suggests a dish you've never heard of. Do you order it or stick with your usual?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.03,
+          "leading": 0.3,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.12
+        }
+      },
+      {
+        "prompt": "A friend wants to switch your weekend plan to something you like less. Do you go along, or suggest keeping the original plan?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.28,
+          "quick": 0.9,
+          "concrete": 0.97,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "A colleague asks you to swap shifts at short notice, which disrupts your week. Do you agree anyway or decline?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.04,
+          "leading": 0.43,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "You're offered a visible lead role on a unit project, with longer hours. Take it for the recognition, or stay focused on patient care?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.43,
+          "leading": 0.74,
+          "quick": 0.78,
+          "concrete": 0.96,
+          "demeaning": 0.32
+        }
+      },
+      {
+        "prompt": "At a community event you helped organise, you're asked to be named and thanked publicly. Accept the credit or wave it off?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.41,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "Your hospital is forming a new rapid-response team with no track record yet. Volunteer for it, or stay on your current ward?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.47,
+          "leading": 0.39,
+          "quick": 0.77,
+          "concrete": 0.95,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "A doctor gives you vague instructions about a patient's care. Act on your own judgement, or ask for specifics before doing anything?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.91,
+          "leading": 0.56,
+          "quick": 0.9,
+          "concrete": 0.94,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "You arrive at a party where you know almost nobody and no one explains the plan. Settle in and see, or find someone to ask what's going on?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.02,
+          "leading": 0.35,
+          "quick": 0.89,
+          "concrete": 0.97,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "A new neighbour offers to keep your spare key while you travel. Hand it over, or politely decline?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.03,
+          "leading": 0.35,
+          "quick": 0.9,
+          "concrete": 0.98,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "You find a wallet with €200 and an ID on the street. Returning it costs you an hour. What do you do?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.12,
+          "leading": 0.53,
+          "quick": 0.91,
+          "concrete": 0.98,
+          "demeaning": 0.35
+        }
+      },
+      {
+        "prompt": "After a long shift, colleagues invite you to a loud group dinner. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.21,
+          "leading": 0.37,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.2
+        }
+      },
+      {
+        "prompt": "Your usual weekend café is closed. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.04,
+          "leading": 0.25,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "A friend offers a coin flip: heads you win €60, tails you lose €40. Do you take it?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.74,
+          "sensitive": 0.07,
+          "leading": 0.32,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.09
+        }
+      },
+      {
+        "prompt": "You need a new phone. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.05,
+          "leading": 0.51,
+          "quick": 0.9,
+          "concrete": 0.96,
+          "demeaning": 0.25
+        }
+      },
+      {
+        "prompt": "Friends choose a restaurant you dislike. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.46,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "In a staff meeting, you disagree with a proposed schedule change. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.03,
+          "leading": 0.29,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "Your unit adopts a new electronic charting system. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.72,
+          "sensitive": 0.31,
+          "leading": 0.73,
+          "quick": 0.89,
+          "concrete": 0.95,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "A patient's family needs help with paperwork that isn't your job. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.26,
+          "leading": 0.59,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "The team agrees on a care approach you think is wrong. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.79,
+          "leading": 0.45,
+          "quick": 0.8,
+          "concrete": 0.94,
+          "demeaning": 0.28
+        }
+      },
+      {
+        "prompt": "How well does this describe you? \"I enjoy trying new things.\"",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.03,
+          "leading": 0.21,
+          "quick": 0.95,
+          "concrete": 0.03,
+          "demeaning": 0.05
+        }
+      },
+      {
+        "prompt": "How well does this describe you? \"I keep my promises.\"",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.69,
+          "sensitive": 0.03,
+          "leading": 0.42,
+          "quick": 0.93,
+          "concrete": 0.04,
+          "demeaning": 0.08
+        }
+      },
+      {
+        "prompt": "How much do you agree: \"Rules are made to be broken.\"",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.08,
+          "leading": 0.3,
+          "quick": 0.94,
+          "concrete": 0.03,
+          "demeaning": 0.07
+        }
+      },
+      {
+        "prompt": "How often do you plan ahead?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.04,
+          "leading": 0.16,
+          "quick": 0.94,
+          "concrete": 0.06,
+          "demeaning": 0.08
+        }
+      },
+      {
+        "prompt": "Do you consider yourself a risk-taker?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.05,
+          "leading": 0.22,
+          "quick": 0.93,
+          "concrete": 0.04,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "Rate your patience.",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.09,
+          "leading": 0.18,
+          "quick": 0.93,
+          "concrete": 0.03,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "Which matters more to you in life?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.87,
+          "sensitive": 0.1,
+          "leading": 0.2,
+          "quick": 0.87,
+          "concrete": 0.05,
+          "demeaning": 0.35
+        }
+      },
+      {
+        "prompt": "Are you more of a thinker or a feeler?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.04,
+          "leading": 0.2,
+          "quick": 0.89,
+          "concrete": 0.04,
+          "demeaning": 0.38
+        }
+      },
+      {
+        "prompt": "How important is loyalty to you?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.87,
+          "sensitive": 0.05,
+          "leading": 0.25,
+          "quick": 0.94,
+          "concrete": 0.03,
+          "demeaning": 0.09
+        }
+      },
+      {
+        "prompt": "What best describes your approach to money?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.42,
+          "leading": 0.22,
+          "quick": 0.92,
+          "concrete": 0.07,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "In general, do people get what they deserve?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.87,
+          "sensitive": 0.14,
+          "leading": 0.3,
+          "quick": 0.86,
+          "concrete": 0.03,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "How would you describe your attitude to authority?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.13,
+          "leading": 0.21,
+          "quick": 0.93,
+          "concrete": 0.05,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "How religious are you?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.07,
+          "leading": 0.15,
+          "quick": 0.93,
+          "concrete": 0.03,
+          "demeaning": 0.31
+        }
+      },
+      {
+        "prompt": "Where would you place yourself politically?",
+        "source": "handwritten",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.04,
+          "leading": 0.13,
+          "quick": 0.87,
+          "concrete": 0.04,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "How often do you compare yourself with other people?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.11,
+          "leading": 0.19,
+          "quick": 0.92,
+          "concrete": 0.07,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "Do you like change?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.03,
+          "leading": 0.19,
+          "quick": 0.94,
+          "concrete": 0.05,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "How do you feel about rules?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.04,
+          "leading": 0.16,
+          "quick": 0.95,
+          "concrete": 0.06,
+          "demeaning": 0.2
+        }
+      },
+      {
+        "prompt": "Can you admit that religious faith is a weakness?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.15,
+          "leading": 0.91,
+          "quick": 0.82,
+          "concrete": 0.07,
+          "demeaning": 0.86
+        }
+      },
+      {
+        "prompt": "How often do you struggle to control your drinking?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.04,
+          "leading": 0.43,
+          "quick": 0.9,
+          "concrete": 0.05,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "Why do you think people on the left are so naive?",
+        "source": "handwritten",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.92,
+          "quick": 0.79,
+          "concrete": 0.04,
+          "demeaning": 0.95
+        }
+      },
+      {
+        "prompt": "Are you ashamed of how your body looks at the beach?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.68,
+          "sensitive": 0.2,
+          "leading": 0.73,
+          "quick": 0.88,
+          "concrete": 0.37,
+          "demeaning": 0.81
+        }
+      },
+      {
+        "prompt": "Would you hide your sexual history from a new partner?",
+        "source": "handwritten",
+        "tagged": ["sexuality"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.88,
+          "leading": 0.5,
+          "quick": 0.87,
+          "concrete": 0.88,
+          "demeaning": 0.54
+        }
+      },
+      {
+        "prompt": "Do you prefer a normal marriage between a man and a woman, or something else?",
+        "source": "handwritten",
+        "tagged": ["sexuality"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.78,
+          "leading": 0.75,
+          "quick": 0.87,
+          "concrete": 0.39,
+          "demeaning": 0.69
+        }
+      },
+      {
+        "prompt": "How much debt do you have?",
+        "source": "handwritten",
+        "tagged": ["money"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.04,
+          "leading": 0.75,
+          "quick": 0.8,
+          "concrete": 0.08,
+          "demeaning": 0.7
+        }
+      },
+      {
+        "prompt": "Who is more moral, religious people or atheists?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.26,
+          "leading": 0.37,
+          "quick": 0.61,
+          "concrete": 0.03,
+          "demeaning": 0.82
+        }
+      },
+      {
+        "prompt": "Since you are overweight, which diet would you try first?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.03,
+          "leading": 0.44,
+          "quick": 0.84,
+          "concrete": 0.89,
+          "demeaning": 0.85
+        }
+      },
+      {
+        "prompt": "What made you stop believing in God?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.06,
+          "leading": 0.48,
+          "quick": 0.44,
+          "concrete": 0.08,
+          "demeaning": 0.69
+        }
+      },
+      {
+        "prompt": "In a close national election, which kind of party would you most likely vote for?",
+        "source": "handwritten",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.04,
+          "leading": 0.21,
+          "quick": 0.82,
+          "concrete": 0.86,
+          "demeaning": 0.28
+        }
+      },
+      {
+        "prompt": "A friend shares a petition on a local issue you agree with. What do you do?",
+        "source": "handwritten",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.78,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "Facing a big decision, like moving to a new city, what part does religious faith play?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.06,
+          "leading": 0.22,
+          "quick": 0.85,
+          "concrete": 0.57,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "Before becoming intimate with someone new, how well do you want to know them?",
+        "source": "handwritten",
+        "tagged": ["sexuality"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.12,
+          "leading": 0.34,
+          "quick": 0.91,
+          "concrete": 0.71,
+          "demeaning": 0.32
+        }
+      },
+      {
+        "prompt": "If a partner suggested opening up your relationship, what would you do?",
+        "source": "handwritten",
+        "tagged": ["sexuality"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.12,
+          "leading": 0.25,
+          "quick": 0.88,
+          "concrete": 0.93,
+          "demeaning": 0.31
+        }
+      },
+      {
+        "prompt": "You notice a new ache that has lasted a week but is not getting worse. What do you do?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.36,
+          "quick": 0.86,
+          "concrete": 0.97,
+          "demeaning": 0.2
+        }
+      },
+      {
+        "prompt": "At a relaxed dinner with friends, what do you usually drink?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.04,
+          "leading": 0.21,
+          "quick": 0.92,
+          "concrete": 0.93,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "An unexpected $1,000 bill arrives. How would you cover it?",
+        "source": "handwritten",
+        "tagged": ["money"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.02,
+          "leading": 0.24,
+          "quick": 0.92,
+          "concrete": 0.94,
+          "demeaning": 0.28
+        }
+      },
+      {
+        "prompt": "You want a new laptop. You can pay in 12 interest-free instalments or save for four months. What do you do?",
+        "source": "handwritten",
+        "tagged": ["money"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.02,
+          "leading": 0.41,
+          "quick": 0.82,
+          "concrete": 0.97,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "Would you pray before making a big decision?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.96,
+          "leading": 0.24,
+          "quick": 0.92,
+          "concrete": 0.72,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "Did you vote in the last national election?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.62,
+          "sensitive": 0.97,
+          "leading": 0.18,
+          "quick": 0.83,
+          "concrete": 0.46,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "How many sexual partners have you had in the past year?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.99,
+          "leading": 0.19,
+          "quick": 0.84,
+          "concrete": 0.09,
+          "demeaning": 0.58
+        }
+      },
+      {
+        "prompt": "Do you take any medication every day?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.64,
+          "sensitive": 0.96,
+          "leading": 0.13,
+          "quick": 0.93,
+          "concrete": 0.2,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "What is your monthly take-home pay?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.68,
+          "sensitive": 0.93,
+          "leading": 0.13,
+          "quick": 0.72,
+          "concrete": 0.07,
+          "demeaning": 0.43
+        }
+      },
+      {
+        "prompt": "Which party do you trust most to run the economy?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.98,
+          "leading": 0.2,
+          "quick": 0.83,
+          "concrete": 0.16,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "A friend invites you to church on Sunday. Do you go?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.97,
+          "leading": 0.23,
+          "quick": 0.91,
+          "concrete": 0.95,
+          "demeaning": 0.27
+        }
+      },
+      {
+        "prompt": "Your doctor suggests a strict diet after a check-up. What do you do?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.6,
+          "sensitive": 0.96,
+          "leading": 0.68,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.34
+        }
+      },
+      {
+        "prompt": "You are dating someone new and they want to sleep together on the second date. What do you do?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.96,
+          "leading": 0.33,
+          "quick": 0.88,
+          "concrete": 0.98,
+          "demeaning": 0.49
+        }
+      },
+      {
+        "prompt": "You have $5,000 of credit card debt. Which do you pay off first?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.8,
+          "leading": 0.32,
+          "quick": 0.83,
+          "concrete": 0.96,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "Wouldn't you agree that planning ahead is the smart thing to do?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.56,
+          "sensitive": 0.04,
+          "leading": 0.93,
+          "quick": 0.95,
+          "concrete": 0.07,
+          "demeaning": 0.36
+        }
+      },
+      {
+        "prompt": "Most sensible people save something every month. Do you?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.63,
+          "sensitive": 0.63,
+          "leading": 0.9,
+          "quick": 0.93,
+          "concrete": 0.22,
+          "demeaning": 0.71
+        }
+      },
+      {
+        "prompt": "Would you rather be right or be kind, and does your answer differ at work and at home?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": false,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.87,
+          "sensitive": 0.04,
+          "leading": 0.62,
+          "quick": 0.88,
+          "concrete": 0.23,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "Estimate how many hours you spent on hobbies last year and compare it with the year before. Which grew?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": false,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.65,
+          "sensitive": 0.04,
+          "leading": 0.23,
+          "quick": 0.36,
+          "concrete": 0.23,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "Is it better to save or invest?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.91,
+          "sensitive": 0.66,
+          "leading": 0.21,
+          "quick": 0.44,
+          "concrete": 0.21,
+          "demeaning": 0.32
+        }
+      },
+      {
+        "prompt": "Think about the ten biggest decisions of your life. How many did you make on gut feeling?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": false,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.06,
+          "leading": 0.25,
+          "quick": 0.56,
+          "concrete": 0.06,
+          "demeaning": 0.12
+        }
+      },
+      {
+        "prompt": "A friend asks you to help them move on Saturday, which you had planned to rest. Surely you would help a friend?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.2,
+          "leading": 0.91,
+          "quick": 0.92,
+          "concrete": 0.96,
+          "demeaning": 0.63
+        }
+      },
+      {
+        "prompt": "Do you usually go with the flow?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.04,
+          "leading": 0.22,
+          "quick": 0.93,
+          "concrete": 0.1,
+          "demeaning": 0.19
+        }
+      }
+    ],
+    "gates.v3": [
+      {
+        "prompt": "At a new restaurant, the menu is full of dishes you've never heard of. What do you order?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.03,
+          "leading": 0.17,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "You need a new sofa. It's full price today, or half price in the January sale six weeks away.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.04,
+          "leading": 0.21,
+          "quick": 0.87,
+          "concrete": 0.96,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "At a family dinner, talk turns to a plan you've made that might not work out. How do you talk about it?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.04,
+          "leading": 0.18,
+          "quick": 0.92,
+          "concrete": 0.96,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "You've lived in the same Lisbon neighbourhood for ten years. A friend says you'd love a year abroad.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.03,
+          "leading": 0.62,
+          "quick": 0.89,
+          "concrete": 0.92,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "Your closest friend is being criticised in the group chat, and you quietly think the criticism is partly fair. Do you say so in the chat?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.03,
+          "leading": 0.24,
+          "quick": 0.85,
+          "concrete": 0.96,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "A close friend asks how you're really doing after a hard month. What comes out?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.37,
+          "leading": 0.18,
+          "quick": 0.9,
+          "concrete": 0.95,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "Your sibling tells you something and asks you not to tell your parents, though you think they should know.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.86,
+          "sensitive": 0.04,
+          "leading": 0.39,
+          "quick": 0.86,
+          "concrete": 0.97,
+          "demeaning": 0.27
+        }
+      },
+      {
+        "prompt": "Your partner asks what's wrong. You've had a bad day, but nothing serious happened.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.21,
+          "leading": 0.18,
+          "quick": 0.93,
+          "concrete": 0.96,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "It's 3pm on a busy shift and a patient's relative demands you chase a test result that won't be ready until tomorrow.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.74,
+          "sensitive": 0.02,
+          "leading": 0.19,
+          "quick": 0.81,
+          "concrete": 0.97,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "The ward is trialling a new way of handing over patients, replacing the routine you've used for years.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.02,
+          "leading": 0.21,
+          "quick": 0.81,
+          "concrete": 0.96,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "You fly out on a four-day trip tomorrow morning. By bedtime, your bag is:",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.63,
+          "sensitive": 0.03,
+          "leading": 0.14,
+          "quick": 0.92,
+          "concrete": 0.95,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "You're up €80 at a card game with friends. Someone deals one more round — lose it or double it.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.07,
+          "leading": 0.25,
+          "quick": 0.9,
+          "concrete": 0.97,
+          "demeaning": 0.21
+        }
+      },
+      {
+        "prompt": "You're giving a short toast at a friend's birthday dinner. In the hour before, you:",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.67,
+          "sensitive": 0.04,
+          "leading": 0.13,
+          "quick": 0.9,
+          "concrete": 0.96,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "A close friend is laid off after ten years of hard work. Your first thought:",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.04,
+          "leading": 0.17,
+          "quick": 0.92,
+          "concrete": 0.84,
+          "demeaning": 0.31
+        }
+      },
+      {
+        "prompt": "The building rule bans bikes in the lift. You live on the fourth floor.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.04,
+          "leading": 0.2,
+          "quick": 0.82,
+          "concrete": 0.96,
+          "demeaning": 0.42
+        }
+      },
+      {
+        "prompt": "Your neighbourhood is picking someone to run the annual street festival. You:",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.03,
+          "leading": 0.08,
+          "quick": 0.93,
+          "concrete": 0.96,
+          "demeaning": 0.12
+        }
+      },
+      {
+        "prompt": "You pay a €150 deposit for a weekend away. A roster change means you can't go and it's non-refundable.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.05,
+          "leading": 0.28,
+          "quick": 0.87,
+          "concrete": 0.97,
+          "demeaning": 0.32
+        }
+      },
+      {
+        "prompt": "The car insurance renewal email lands in your inbox. What happens to it?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.14,
+          "leading": 0.11,
+          "quick": 0.6,
+          "concrete": 0.94,
+          "demeaning": 0.32
+        }
+      },
+      {
+        "prompt": "Protocol says get a doctor's approval first, but a patient needs a step now and you're sure it's right.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.01,
+          "leading": 0.65,
+          "quick": 0.65,
+          "concrete": 0.95,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "Your unit needs someone to lead a new quality-improvement project.",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.14,
+          "quick": 0.89,
+          "concrete": 0.92,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "At a friend's birthday party...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.88,
+          "sensitive": 0.03,
+          "leading": 0.11,
+          "quick": 0.91,
+          "concrete": 0.96,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "On a weekend trip, the plan is vague...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.26,
+          "quick": 0.93,
+          "concrete": 0.79,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "At a fair, a €5 spin could win €100...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.06,
+          "leading": 0.34,
+          "quick": 0.91,
+          "concrete": 0.95,
+          "demeaning": 0.27
+        }
+      },
+      {
+        "prompt": "Your building proposes a strict new rule on quiet hours...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.04,
+          "leading": 0.25,
+          "quick": 0.9,
+          "concrete": 0.93,
+          "demeaning": 0.25
+        }
+      },
+      {
+        "prompt": "The city wants to limit cars in your area to cut pollution...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.32,
+          "leading": 0.39,
+          "quick": 0.91,
+          "concrete": 0.7,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "In a national election, you usually vote for...",
+        "source": "gen.v3",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.09,
+          "quick": 0.78,
+          "concrete": 0.83,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "Your partner cancels date night last minute for the third time...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.03,
+          "leading": 0.33,
+          "quick": 0.88,
+          "concrete": 0.97,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "At a family dinner, someone teases you...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.88,
+          "sensitive": 0.03,
+          "leading": 0.09,
+          "quick": 0.93,
+          "concrete": 0.96,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "A complex patient case comes in during your shift...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.89,
+          "sensitive": 0.02,
+          "leading": 0.11,
+          "quick": 0.6,
+          "concrete": 0.93,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "At shift handover, you describe a patient's condition...",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.02,
+          "leading": 0.14,
+          "quick": 0.73,
+          "concrete": 0.92,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "At a family lunch, your sister picks a restaurant you really dislike. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.16,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "You need new walking shoes. What does the buying look like?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.05,
+          "leading": 0.11,
+          "quick": 0.83,
+          "concrete": 0.96,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "A friend lends you a documentary about a complicated science topic. What happens?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.02,
+          "leading": 0.14,
+          "quick": 0.9,
+          "concrete": 0.96,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "A collection tin goes round your building for a family whose flat was damaged by fire. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.05,
+          "leading": 0.16,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.4
+        }
+      },
+      {
+        "prompt": "The market cashier hands you €10 too much change. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.57,
+          "sensitive": 0.04,
+          "leading": 0.17,
+          "quick": 0.95,
+          "concrete": 0.98,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "A parish council election is coming up in your area. What do you do about it?",
+        "source": "gen.v3",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.02,
+          "leading": 0.13,
+          "quick": 0.89,
+          "concrete": 0.97,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "A stranger at the bus stop asks to borrow your phone to make a call. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.71,
+          "sensitive": 0.02,
+          "leading": 0.1,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.21
+        }
+      },
+      {
+        "prompt": "A close friend makes a joke at your expense in front of others. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.02,
+          "leading": 0.1,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "Your shift starts with tasks for eight patients. How do you begin?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.02,
+          "leading": 0.12,
+          "quick": 0.77,
+          "concrete": 0.97,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "Near the end of a shift you still have patient notes to write. How do you handle them?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.02,
+          "leading": 0.17,
+          "quick": 0.84,
+          "concrete": 0.96,
+          "demeaning": 0.31
+        }
+      },
+      {
+        "prompt": "Your morning train is cancelled and you'll be late. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.05,
+          "leading": 0.12,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "You need a new kettle. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.02,
+          "leading": 0.1,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "You try a new recipe and it turns out badly. What do you do next?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.02,
+          "leading": 0.1,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "You see a stranger drop their groceries on the street. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.02,
+          "leading": 0.11,
+          "quick": 0.95,
+          "concrete": 0.98,
+          "demeaning": 0.27
+        }
+      },
+      {
+        "prompt": "At a self-checkout, the machine undercharges you by €5. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.64,
+          "sensitive": 0.04,
+          "leading": 0.11,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "A friend invites you to a religious ceremony. What do you do?",
+        "source": "gen.v3",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.86,
+          "sensitive": 0.06,
+          "leading": 0.12,
+          "quick": 0.91,
+          "concrete": 0.95,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "Your weekend is completely free. How do you spend it?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.03,
+          "leading": 0.11,
+          "quick": 0.94,
+          "concrete": 0.89,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "After a long week, you have a free evening. What recharges you most?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.11,
+          "leading": 0.09,
+          "quick": 0.93,
+          "concrete": 0.91,
+          "demeaning": 0.2
+        }
+      },
+      {
+        "prompt": "You start a shift with several tasks. How do you approach it?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.02,
+          "leading": 0.09,
+          "quick": 0.93,
+          "concrete": 0.93,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "You're reviewing a patient's chart before handover. What do you focus on?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.02,
+          "leading": 0.13,
+          "quick": 0.7,
+          "concrete": 0.96,
+          "demeaning": 0.08
+        }
+      },
+      {
+        "prompt": "On holiday in a new city, a local offers a last-minute paragliding trip. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.04,
+          "leading": 0.19,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "A neighbor sends you a rude message. What is your first move?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.03,
+          "leading": 0.15,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "You're saving for a trip, but a flash sale for shoes you love appears. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.26,
+          "leading": 0.13,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "Playing a board game with friends, you notice you could secretly cheat to win. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.68,
+          "sensitive": 0.03,
+          "leading": 0.18,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "You planned a picnic and it rained. What's your first thought?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.02,
+          "leading": 0.1,
+          "quick": 0.96,
+          "concrete": 0.96,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "A new neighbor asks to borrow your expensive drill. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.13,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "A friend repeatedly cancels plans at the last minute. What do you do?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.1,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.21
+        }
+      },
+      {
+        "prompt": "You have a work project due in two weeks. When do you start?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.02,
+          "leading": 0.12,
+          "quick": 0.92,
+          "concrete": 0.96,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "Your team is assigned a complex task. How do you prefer to work?",
+        "source": "gen.v3",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.02,
+          "leading": 0.09,
+          "quick": 0.92,
+          "concrete": 0.72,
+          "demeaning": 0.09
+        }
+      },
+      {
+        "prompt": "A free evening opens up with nothing planned. Do you rewatch a favourite show, or start something completely new to you?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.02,
+          "leading": 0.11,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "At a restaurant you love, the server suggests a dish you've never heard of. Do you order it or stick with your usual?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.03,
+          "leading": 0.27,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.12
+        }
+      },
+      {
+        "prompt": "A friend wants to switch your weekend plan to something you like less. Do you go along, or suggest keeping the original plan?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.16,
+          "quick": 0.9,
+          "concrete": 0.97,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "A colleague asks you to swap shifts at short notice, which disrupts your week. Do you agree anyway or decline?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.22,
+          "quick": 0.92,
+          "concrete": 0.98,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "You're offered a visible lead role on a unit project, with longer hours. Take it for the recognition, or stay focused on patient care?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.04,
+          "leading": 0.5,
+          "quick": 0.77,
+          "concrete": 0.96,
+          "demeaning": 0.32
+        }
+      },
+      {
+        "prompt": "At a community event you helped organise, you're asked to be named and thanked publicly. Accept the credit or wave it off?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.02,
+          "leading": 0.15,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "Your hospital is forming a new rapid-response team with no track record yet. Volunteer for it, or stay on your current ward?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.03,
+          "leading": 0.26,
+          "quick": 0.78,
+          "concrete": 0.95,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "A doctor gives you vague instructions about a patient's care. Act on your own judgement, or ask for specifics before doing anything?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.02,
+          "leading": 0.17,
+          "quick": 0.9,
+          "concrete": 0.95,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "You arrive at a party where you know almost nobody and no one explains the plan. Settle in and see, or find someone to ask what's going on?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.02,
+          "leading": 0.22,
+          "quick": 0.9,
+          "concrete": 0.97,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "A new neighbour offers to keep your spare key while you travel. Hand it over, or politely decline?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.02,
+          "leading": 0.18,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "You find a wallet with €200 and an ID on the street. Returning it costs you an hour. What do you do?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.71,
+          "sensitive": 0.04,
+          "leading": 0.19,
+          "quick": 0.91,
+          "concrete": 0.98,
+          "demeaning": 0.37
+        }
+      },
+      {
+        "prompt": "After a long shift, colleagues invite you to a loud group dinner. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.09,
+          "leading": 0.16,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.21
+        }
+      },
+      {
+        "prompt": "Your usual weekend café is closed. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.03,
+          "leading": 0.09,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "A friend offers a coin flip: heads you win €60, tails you lose €40. Do you take it?",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.72,
+          "sensitive": 0.03,
+          "leading": 0.1,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.09
+        }
+      },
+      {
+        "prompt": "You need a new phone. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.04,
+          "leading": 0.15,
+          "quick": 0.91,
+          "concrete": 0.96,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "Friends choose a restaurant you dislike. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.14,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "In a staff meeting, you disagree with a proposed schedule change. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.02,
+          "leading": 0.12,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "Your unit adopts a new electronic charting system. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.71,
+          "sensitive": 0.03,
+          "leading": 0.15,
+          "quick": 0.89,
+          "concrete": 0.95,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "A patient's family needs help with paperwork that isn't your job. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.02,
+          "leading": 0.19,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "The team agrees on a care approach you think is wrong. You...",
+        "source": "gen.v2",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.03,
+          "leading": 0.24,
+          "quick": 0.8,
+          "concrete": 0.94,
+          "demeaning": 0.28
+        }
+      },
+      {
+        "prompt": "How well does this describe you? \"I enjoy trying new things.\"",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.03,
+          "leading": 0.13,
+          "quick": 0.94,
+          "concrete": 0.04,
+          "demeaning": 0.05
+        }
+      },
+      {
+        "prompt": "How well does this describe you? \"I keep my promises.\"",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.71,
+          "sensitive": 0.03,
+          "leading": 0.17,
+          "quick": 0.94,
+          "concrete": 0.03,
+          "demeaning": 0.08
+        }
+      },
+      {
+        "prompt": "How much do you agree: \"Rules are made to be broken.\"",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.04,
+          "leading": 0.39,
+          "quick": 0.94,
+          "concrete": 0.04,
+          "demeaning": 0.08
+        }
+      },
+      {
+        "prompt": "How often do you plan ahead?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.03,
+          "leading": 0.07,
+          "quick": 0.93,
+          "concrete": 0.06,
+          "demeaning": 0.07
+        }
+      },
+      {
+        "prompt": "Do you consider yourself a risk-taker?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.05,
+          "leading": 0.12,
+          "quick": 0.93,
+          "concrete": 0.04,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "Rate your patience.",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.09,
+          "leading": 0.09,
+          "quick": 0.93,
+          "concrete": 0.03,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "Which matters more to you in life?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.87,
+          "sensitive": 0.05,
+          "leading": 0.07,
+          "quick": 0.89,
+          "concrete": 0.05,
+          "demeaning": 0.35
+        }
+      },
+      {
+        "prompt": "Are you more of a thinker or a feeler?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.04,
+          "leading": 0.09,
+          "quick": 0.89,
+          "concrete": 0.04,
+          "demeaning": 0.4
+        }
+      },
+      {
+        "prompt": "How important is loyalty to you?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.86,
+          "sensitive": 0.04,
+          "leading": 0.1,
+          "quick": 0.93,
+          "concrete": 0.03,
+          "demeaning": 0.09
+        }
+      },
+      {
+        "prompt": "What best describes your approach to money?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.3,
+          "leading": 0.07,
+          "quick": 0.92,
+          "concrete": 0.08,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "In general, do people get what they deserve?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.86,
+          "sensitive": 0.03,
+          "leading": 0.17,
+          "quick": 0.87,
+          "concrete": 0.03,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "How would you describe your attitude to authority?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.04,
+          "leading": 0.1,
+          "quick": 0.94,
+          "concrete": 0.06,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "How religious are you?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.03,
+          "leading": 0.07,
+          "quick": 0.92,
+          "concrete": 0.03,
+          "demeaning": 0.33
+        }
+      },
+      {
+        "prompt": "Where would you place yourself politically?",
+        "source": "handwritten",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.02,
+          "leading": 0.06,
+          "quick": 0.87,
+          "concrete": 0.04,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "How often do you compare yourself with other people?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.05,
+          "leading": 0.08,
+          "quick": 0.92,
+          "concrete": 0.06,
+          "demeaning": 0.11
+        }
+      },
+      {
+        "prompt": "Do you like change?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.03,
+          "leading": 0.1,
+          "quick": 0.94,
+          "concrete": 0.05,
+          "demeaning": 0.21
+        }
+      },
+      {
+        "prompt": "How do you feel about rules?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.03,
+          "leading": 0.08,
+          "quick": 0.95,
+          "concrete": 0.06,
+          "demeaning": 0.21
+        }
+      },
+      {
+        "prompt": "Can you admit that religious faith is a weakness?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.07,
+          "leading": 0.87,
+          "quick": 0.82,
+          "concrete": 0.06,
+          "demeaning": 0.86
+        }
+      },
+      {
+        "prompt": "How often do you struggle to control your drinking?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.03,
+          "leading": 0.28,
+          "quick": 0.91,
+          "concrete": 0.06,
+          "demeaning": 0.25
+        }
+      },
+      {
+        "prompt": "Why do you think people on the left are so naive?",
+        "source": "handwritten",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.02,
+          "leading": 0.9,
+          "quick": 0.81,
+          "concrete": 0.04,
+          "demeaning": 0.95
+        }
+      },
+      {
+        "prompt": "Are you ashamed of how your body looks at the beach?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.69,
+          "sensitive": 0.04,
+          "leading": 0.47,
+          "quick": 0.89,
+          "concrete": 0.39,
+          "demeaning": 0.81
+        }
+      },
+      {
+        "prompt": "Would you hide your sexual history from a new partner?",
+        "source": "handwritten",
+        "tagged": ["sexuality"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.43,
+          "leading": 0.19,
+          "quick": 0.87,
+          "concrete": 0.89,
+          "demeaning": 0.51
+        }
+      },
+      {
+        "prompt": "Do you prefer a normal marriage between a man and a woman, or something else?",
+        "source": "handwritten",
+        "tagged": ["sexuality"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.21,
+          "leading": 0.5,
+          "quick": 0.88,
+          "concrete": 0.35,
+          "demeaning": 0.67
+        }
+      },
+      {
+        "prompt": "How much debt do you have?",
+        "source": "handwritten",
+        "tagged": ["money"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.56,
+          "quick": 0.81,
+          "concrete": 0.08,
+          "demeaning": 0.74
+        }
+      },
+      {
+        "prompt": "Who is more moral, religious people or atheists?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.02,
+          "leading": 0.19,
+          "quick": 0.67,
+          "concrete": 0.03,
+          "demeaning": 0.83
+        }
+      },
+      {
+        "prompt": "Since you are overweight, which diet would you try first?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.03,
+          "leading": 0.55,
+          "quick": 0.84,
+          "concrete": 0.9,
+          "demeaning": 0.85
+        }
+      },
+      {
+        "prompt": "What made you stop believing in God?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": true
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.03,
+          "leading": 0.55,
+          "quick": 0.47,
+          "concrete": 0.07,
+          "demeaning": 0.71
+        }
+      },
+      {
+        "prompt": "In a close national election, which kind of party would you most likely vote for?",
+        "source": "handwritten",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.03,
+          "leading": 0.13,
+          "quick": 0.81,
+          "concrete": 0.86,
+          "demeaning": 0.28
+        }
+      },
+      {
+        "prompt": "A friend shares a petition on a local issue you agree with. What do you do?",
+        "source": "handwritten",
+        "tagged": ["politics"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.02,
+          "leading": 0.23,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "Facing a big decision, like moving to a new city, what part does religious faith play?",
+        "source": "handwritten",
+        "tagged": ["religion"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.06,
+          "leading": 0.12,
+          "quick": 0.85,
+          "concrete": 0.6,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "Before becoming intimate with someone new, how well do you want to know them?",
+        "source": "handwritten",
+        "tagged": ["sexuality"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.85,
+          "sensitive": 0.04,
+          "leading": 0.13,
+          "quick": 0.91,
+          "concrete": 0.7,
+          "demeaning": 0.33
+        }
+      },
+      {
+        "prompt": "If a partner suggested opening up your relationship, what would you do?",
+        "source": "handwritten",
+        "tagged": ["sexuality"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.05,
+          "leading": 0.11,
+          "quick": 0.88,
+          "concrete": 0.93,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "You notice a new ache that has lasted a week but is not getting worse. What do you do?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.02,
+          "leading": 0.16,
+          "quick": 0.87,
+          "concrete": 0.97,
+          "demeaning": 0.2
+        }
+      },
+      {
+        "prompt": "At a relaxed dinner with friends, what do you usually drink?",
+        "source": "handwritten",
+        "tagged": ["health"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.03,
+          "leading": 0.14,
+          "quick": 0.92,
+          "concrete": 0.93,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "An unexpected $1,000 bill arrives. How would you cover it?",
+        "source": "handwritten",
+        "tagged": ["money"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.02,
+          "leading": 0.13,
+          "quick": 0.92,
+          "concrete": 0.94,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "You want a new laptop. You can pay in 12 interest-free instalments or save for four months. What do you do?",
+        "source": "handwritten",
+        "tagged": ["money"],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.02,
+          "leading": 0.16,
+          "quick": 0.84,
+          "concrete": 0.97,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "Would you pray before making a big decision?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.74,
+          "sensitive": 0.93,
+          "leading": 0.14,
+          "quick": 0.91,
+          "concrete": 0.72,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "Did you vote in the last national election?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.61,
+          "sensitive": 0.94,
+          "leading": 0.12,
+          "quick": 0.83,
+          "concrete": 0.47,
+          "demeaning": 0.28
+        }
+      },
+      {
+        "prompt": "How many sexual partners have you had in the past year?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.76,
+          "sensitive": 0.98,
+          "leading": 0.06,
+          "quick": 0.83,
+          "concrete": 0.09,
+          "demeaning": 0.58
+        }
+      },
+      {
+        "prompt": "Do you take any medication every day?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.64,
+          "sensitive": 0.96,
+          "leading": 0.07,
+          "quick": 0.93,
+          "concrete": 0.16,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "What is your monthly take-home pay?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.69,
+          "sensitive": 0.98,
+          "leading": 0.05,
+          "quick": 0.77,
+          "concrete": 0.08,
+          "demeaning": 0.41
+        }
+      },
+      {
+        "prompt": "Which party do you trust most to run the economy?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.74,
+          "sensitive": 0.82,
+          "leading": 0.11,
+          "quick": 0.83,
+          "concrete": 0.18,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "A friend invites you to church on Sunday. Do you go?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.93,
+          "leading": 0.12,
+          "quick": 0.9,
+          "concrete": 0.96,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "Your doctor suggests a strict diet after a check-up. What do you do?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.6,
+          "sensitive": 0.75,
+          "leading": 0.21,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.33
+        }
+      },
+      {
+        "prompt": "You are dating someone new and they want to sleep together on the second date. What do you do?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.78,
+          "leading": 0.12,
+          "quick": 0.88,
+          "concrete": 0.98,
+          "demeaning": 0.52
+        }
+      },
+      {
+        "prompt": "You have $5,000 of credit card debt. Which do you pay off first?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": true,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.59,
+          "leading": 0.09,
+          "quick": 0.83,
+          "concrete": 0.96,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "Wouldn't you agree that planning ahead is the smart thing to do?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.56,
+          "sensitive": 0.02,
+          "leading": 0.96,
+          "quick": 0.95,
+          "concrete": 0.07,
+          "demeaning": 0.37
+        }
+      },
+      {
+        "prompt": "Most sensible people save something every month. Do you?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.65,
+          "sensitive": 0.94,
+          "leading": 0.83,
+          "quick": 0.93,
+          "concrete": 0.23,
+          "demeaning": 0.74
+        }
+      },
+      {
+        "prompt": "Would you rather be right or be kind, and does your answer differ at work and at home?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": false,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.88,
+          "sensitive": 0.03,
+          "leading": 0.19,
+          "quick": 0.88,
+          "concrete": 0.24,
+          "demeaning": 0.29
+        }
+      },
+      {
+        "prompt": "Estimate how many hours you spent on hobbies last year and compare it with the year before. Which grew?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": false,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.67,
+          "sensitive": 0.04,
+          "leading": 0.17,
+          "quick": 0.35,
+          "concrete": 0.23,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "Is it better to save or invest?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.91,
+          "sensitive": 0.08,
+          "leading": 0.11,
+          "quick": 0.47,
+          "concrete": 0.2,
+          "demeaning": 0.35
+        }
+      },
+      {
+        "prompt": "Think about the ten biggest decisions of your life. How many did you make on gut feeling?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": false,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.04,
+          "leading": 0.13,
+          "quick": 0.61,
+          "concrete": 0.05,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "A friend asks you to help them move on Saturday, which you had planned to rest. Surely you would help a friend?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.1,
+          "leading": 0.83,
+          "quick": 0.91,
+          "concrete": 0.96,
+          "demeaning": 0.66
+        }
+      },
+      {
+        "prompt": "Do you usually go with the flow?",
+        "source": "handwritten",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.03,
+          "leading": 0.13,
+          "quick": 0.93,
+          "concrete": 0.08,
+          "demeaning": 0.2
+        }
+      }
+    ],
+    "gates.v3.heldout": [
+      {
+        "prompt": "At a new cafe, do you order your usual drink or try their signature specialty?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.61,
+          "sensitive": 0.03,
+          "leading": 0.15,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "You burn dinner while guests are arriving in 10 minutes. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": true,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.66,
+          "sensitive": 0.02,
+          "leading": 0.19,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "You're assembling furniture with vague instructions. How do you proceed?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.02,
+          "leading": 0.12,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "Your neighbour wants to repaint their door a bright colour that clashes with the street's look. What do you think?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.02,
+          "leading": 0.76,
+          "quick": 0.9,
+          "concrete": 0.95,
+          "demeaning": 0.35
+        }
+      },
+      {
+        "prompt": "Your family always does Sunday lunch at 1pm. A relative suggests moving it to 3pm. How do you react?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.63,
+          "sensitive": 0.03,
+          "leading": 0.16,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "You're in a queue and someone cuts in. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.02,
+          "leading": 0.12,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.35
+        }
+      },
+      {
+        "prompt": "You get a promotion at work. How do you tell your friends?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.08,
+          "leading": 0.11,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.31
+        }
+      },
+      {
+        "prompt": "You try a new sport and are the worst in the group. What's your next step?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.76,
+          "sensitive": 0.04,
+          "leading": 0.2,
+          "quick": 0.93,
+          "concrete": 0.97,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "Your manager gives you a project in an unfamiliar area. What's your first thought?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.02,
+          "leading": 0.21,
+          "quick": 0.93,
+          "concrete": 0.89,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "Your firm considers a new flexible schedule that breaks the old 9-5. What's your stance?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.75,
+          "sensitive": 0.05,
+          "leading": 0.25,
+          "quick": 0.91,
+          "concrete": 0.78,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "It's Sunday evening at home. How do you handle the week ahead?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.72,
+          "sensitive": 0.03,
+          "leading": 0.09,
+          "quick": 0.94,
+          "concrete": 0.96,
+          "demeaning": 0.15
+        }
+      },
+      {
+        "prompt": "It's 11pm and you're mid-episode, with the alarm set for 6:30.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.35,
+          "leading": 0.44,
+          "quick": 0.87,
+          "concrete": 0.97,
+          "demeaning": 0.3
+        }
+      },
+      {
+        "prompt": "A friend books a trip and the cheap fare is non-refundable and non-changeable. Do you take that fare?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": true,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.04,
+          "leading": 0.19,
+          "quick": 0.83,
+          "concrete": 0.96,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "You need new headphones. What actually happens?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.03,
+          "leading": 0.13,
+          "quick": 0.89,
+          "concrete": 0.95,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "A neighbour asks for help carrying boxes on your only free Saturday afternoon.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.79,
+          "sensitive": 0.03,
+          "leading": 0.24,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.23
+        }
+      },
+      {
+        "prompt": "A friend asks you to sponsor their 10 km charity run for €20. Do you sponsor them?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.07,
+          "leading": 0.13,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.17
+        }
+      },
+      {
+        "prompt": "A one-year move to another city appears: better pay, cheaper rent, but no guarantee it lasts. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.86,
+          "sensitive": 0.14,
+          "leading": 0.29,
+          "quick": 0.8,
+          "concrete": 0.96,
+          "demeaning": 0.2
+        }
+      },
+      {
+        "prompt": "A friend calls at 6pm: dinner in an hour?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.78,
+          "sensitive": 0.03,
+          "leading": 0.14,
+          "quick": 0.91,
+          "concrete": 0.97,
+          "demeaning": 0.2
+        }
+      },
+      {
+        "prompt": "Two ways to reconcile a client's accounts, both correct: one is quicker, one is cleaner and takes an extra hour. Which do you use?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.02,
+          "leading": 0.26,
+          "quick": 0.7,
+          "concrete": 0.93,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "A client wants modest but steady growth. Do you steer them towards the option with bigger possible swings and bigger possible gains?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.34,
+          "sensitive": 0.03,
+          "leading": 0.28,
+          "quick": 0.89,
+          "concrete": 0.87,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "After a long week, friends invite you to a busy bar on Friday night. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.04,
+          "leading": 0.16,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "You want a pair of trainers. They cost €90 today; a sale in three weeks brings them to €60.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.77,
+          "sensitive": 0.04,
+          "leading": 0.13,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.14
+        }
+      },
+      {
+        "prompt": "Your phone breaks and you need a replacement this week. How do you choose the new one?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.81,
+          "sensitive": 0.03,
+          "leading": 0.1,
+          "quick": 0.9,
+          "concrete": 0.98,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "Your family has held the same summer gathering, same place, same food, for fifteen years. A cousin suggests skipping it for a trip abroad instead.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.03,
+          "leading": 0.14,
+          "quick": 0.82,
+          "concrete": 0.97,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "Walking to a dinner reservation, you see a cyclist knocked off their bike just ahead of you.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.71,
+          "sensitive": 0.02,
+          "leading": 0.33,
+          "quick": 0.9,
+          "concrete": 0.98,
+          "demeaning": 0.19
+        }
+      },
+      {
+        "prompt": "Your partner's elderly parent needs daily help for a month. It would mean giving up most weekends and your evening gym sessions.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.25,
+          "leading": 0.21,
+          "quick": 0.65,
+          "concrete": 0.97,
+          "demeaning": 0.33
+        }
+      },
+      {
+        "prompt": "After a big Sunday lunch with twelve relatives, you have the rest of the day free.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.84,
+          "sensitive": 0.05,
+          "leading": 0.12,
+          "quick": 0.83,
+          "concrete": 0.97,
+          "demeaning": 0.25
+        }
+      },
+      {
+        "prompt": "What does a weekday morning at home usually look like for you?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": false,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.76,
+          "sensitive": 0.04,
+          "leading": 0.09,
+          "quick": 0.93,
+          "concrete": 0.7,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "A client's receipts don't quite match their bank statement, and the filing deadline is Friday.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.02,
+          "leading": 0.16,
+          "quick": 0.55,
+          "concrete": 0.97,
+          "demeaning": 0.1
+        }
+      },
+      {
+        "prompt": "Four client accounts to close, two weeks until the month-end deadline, and no one to delegate to.",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.02,
+          "leading": 0.16,
+          "quick": 0.82,
+          "concrete": 0.95,
+          "demeaning": 0.07
+        }
+      },
+      {
+        "prompt": "A friend is late for dinner again. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.83,
+          "sensitive": 0.02,
+          "leading": 0.2,
+          "quick": 0.93,
+          "concrete": 0.98,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "You bought a €80 concert ticket but can't go. Someone offers €40. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.8,
+          "sensitive": 0.04,
+          "leading": 0.14,
+          "quick": 0.92,
+          "concrete": 0.98,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "A friend shares a news article with a surprising claim. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.73,
+          "sensitive": 0.03,
+          "leading": 0.11,
+          "quick": 0.94,
+          "concrete": 0.97,
+          "demeaning": 0.13
+        }
+      },
+      {
+        "prompt": "At a reunion, people ask what you've been up to. What do you highlight?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.87,
+          "sensitive": 0.04,
+          "leading": 0.09,
+          "quick": 0.92,
+          "concrete": 0.96,
+          "demeaning": 0.22
+        }
+      },
+      {
+        "prompt": "You find a wallet with €50 and an ID on the street. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.5,
+          "sensitive": 0.03,
+          "leading": 0.1,
+          "quick": 0.95,
+          "concrete": 0.98,
+          "demeaning": 0.26
+        }
+      },
+      {
+        "prompt": "You're playing a board game with friends and notice you made an illegal move that gave you an advantage. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.53,
+          "sensitive": 0.02,
+          "leading": 0.17,
+          "quick": 0.94,
+          "concrete": 0.98,
+          "demeaning": 0.16
+        }
+      },
+      {
+        "prompt": "A neighbor lends you their ladder for a week. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.68,
+          "sensitive": 0.02,
+          "leading": 0.12,
+          "quick": 0.95,
+          "concrete": 0.98,
+          "demeaning": 0.18
+        }
+      },
+      {
+        "prompt": "A friend cancels plans at the last minute for the third time. What do you do?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.82,
+          "sensitive": 0.03,
+          "leading": 0.14,
+          "quick": 0.92,
+          "concrete": 0.97,
+          "demeaning": 0.24
+        }
+      },
+      {
+        "prompt": "You're an accountant preparing for month-end close. How do you approach it?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.45,
+          "sensitive": 0.02,
+          "leading": 0.14,
+          "quick": 0.83,
+          "concrete": 0.96,
+          "demeaning": 0.08
+        }
+      },
+      {
+        "prompt": "You're reviewing a financial statement for errors. What do you focus on?",
+        "source": "gen.v3 (held out, accountant)",
+        "tagged": [],
+        "labels": {
+          "ambiguous": false,
+          "sensitive": false,
+          "leading": false,
+          "quick": true,
+          "concrete": true,
+          "demeaning": false
+        },
+        "p": {
+          "ambiguous": 0.74,
+          "sensitive": 0.02,
+          "leading": 0.16,
+          "quick": 0.72,
+          "concrete": 0.94,
+          "demeaning": 0.05
+        }
+      }
+    ]
+  }
+}

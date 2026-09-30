@@ -5,6 +5,7 @@ import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
 import { type Job, jobFromKey, jobKey, type QueuedJob } from '../jobs';
 import {
+  evenCategoryQuota,
   generateCandidates,
   generateHypotheses,
   generateOccupationFacets,
@@ -551,6 +552,11 @@ export async function runShadow(
 
 export const DEDUPE_SIMILARITY = 0.9;
 
+/** hyp.v2 (ADR-0042) for configs on ontology v2 and later, which have sensitive facets; hyp.v1 before. */
+export function hypPromptVersion(cfg: PipelineConfig): 'hyp.v1' | 'hyp.v2' {
+  return cfg.ontologyVersion === 'v1' ? 'hyp.v1' : 'hyp.v2';
+}
+
 export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: string): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
@@ -568,7 +574,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   let quota: Record<Domain, number>;
   let targetDetails: ReturnType<typeof targetFacets> | undefined;
   let avoid: string[] | undefined;
-  if (cfg.generator.promptVersion === 'gen.v2') {
+  if (cfg.generator.promptVersion === 'gen.v2' || cfg.generator.promptVersion === 'gen.v3') {
     // Belief-driven targets (docs/SELECTION.md §5): the facets with the highest need, each with why and the
     // person's current reading; the domain quota tilts toward the domains the mimic is weakest in.
     const belief = beliefFromLoaded(loaded, facets, cfg, await loadBeliefSources(deps, m), { pooled: pool });
@@ -594,6 +600,9 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
       .map((f) => f.id);
     quota = splitQuota(mix, n);
   }
+  // Without "Work and money", no workplace scenes either (ADR-0042): the professional share moves to casual.
+  const professionalAllowed = m.scope.categories.includes('work');
+  if (!professionalAllowed) quota = { ...quota, casual: quota.casual + quota.professional, professional: 0 };
 
   const state = buildState(
     loaded.data,
@@ -624,10 +633,21 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
     recentPrompts: recent,
     n,
     blocked: loaded.scope.blocked,
+    professionalAllowed,
+    ...(cfg.generator.promptVersion === 'gen.v3'
+      ? {
+          categoryQuota: evenCategoryQuota(facets, n),
+          sensitiveAllowed: facets.filter((f) => f.sensitive).map((f) => f.id),
+        }
+      : {}),
   });
   if (!gen.drafts.length) return;
 
-  const gates = await runQualityGates(deps.gateway, ctxFor(m, 'pool.gate', key), jevModel(deps), gen.drafts);
+  const gatesVersion = cfg.generator.gates ?? GATES_VERSION;
+  const gates = await runQualityGates(deps.gateway, ctxFor(m, 'pool.gate', key), jevModel(deps), gen.drafts, {
+    version: gatesVersion,
+    facets,
+  });
   const passed = gen.drafts.map((d, i) => ({ d, g: gates[i]! })).filter((x) => x.g.passed);
   if (!passed.length) return;
 
@@ -679,7 +699,12 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
       promptVersion: cfg.generator.promptVersion,
     },
     status: 'pooled',
-    quality: { gates: g.p, gatesVersion: GATES_VERSION, rationale: d.rationale ?? null },
+    quality: {
+      gates: g.p,
+      gatesVersion,
+      rationale: d.rationale ?? null,
+      ...(g.sensitiveAsked ? { sensitiveAsked: g.sensitiveAsked } : {}),
+    },
     createdAt: now + i,
     servedAt: null,
     stateAt: null,
@@ -893,6 +918,7 @@ export async function runReflection(
   const earlier = learnable.filter((e) => e.seq <= lastReflected).slice(-20);
   const delta = await reflect(deps.gateway, ctxFor(m, 'reflect', key), {
     model: cfg.reflector.model,
+    promptVersion: cfg.reflector.promptVersion,
     facets,
     existing: existing.map((i) => ({ id: i.id, text: i.text, evidenceSeqs: i.evidenceSeqs })),
     newEvidence,
@@ -1004,6 +1030,7 @@ export async function runHypotheses(
     state,
     lowFacets,
     k,
+    promptVersion: hypPromptVersion(cfg),
   });
   if (!hypotheses.length) return;
   const body = JSON.stringify({ seqUpTo, hypotheses });

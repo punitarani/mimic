@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { type EvalRunRecord, type PipelineConfig, VOI_SELECTOR } from '@mimic/core';
 import { schema } from '@mimic/db';
 import { sql } from 'drizzle-orm';
+import { NAMED_CONFIGS, registerNamedConfig } from './configs';
 import { datasetHash, exportData } from './export';
-import { calibrateGates } from './gates';
+import { calibrateGates, sampleDrafts } from './gates';
 import { openLocalEngine } from './local';
 import { diagnoseCmd, evaluateCmd, optimizeCmd } from './optimize/commands';
 import { replay, reproduceOnline } from './replay';
@@ -23,11 +24,14 @@ Commands
             --db <path>            SQLite path (default data/session.sqlite)
             --blobs <dir>          directory standing in for R2 (default data/blobs)
             --turns <n>            number of questions (default 30)
+            --config <name>        default | v3 | m10-candidate (default: default)
             --live                 use real providers (costs money); default is offline fakes
             --simulate <persona>   LLM-simulated user for unscripted questions (smoke tests only; never report
                                    metrics from simulated users)
-  gates     Calibrate the Jev quality-gate thresholds on a hand-labeled set (live Jev calls, < $0.01)
-            --labeled <file.json>  default packages/eval/data/gates.labeled.v1.json
+  drafts    Sample raw generator drafts, before any gate, for hand labelling (live LLM calls, about $0.01)
+            [--config m10-candidate] [--batches 6] [--per-batch 10] [--occupation Nurse] [--out <file.json>]
+  gates     Calibrate the Jev quality-gate thresholds on a hand-labelled set (live Jev calls, < $0.05)
+            [--labeled packages/eval/labeled/gates.v3.json] [--version gates.v3] [--out <file.json>]
   export    D1 → SQLite (same schema); consented mimics only; names, locations, links, URLs dropped, IDs replaced
             --env local|preview|prod   --out <file.sqlite>   [--keep-identity]  (internal reproduction check only)
   replay    Offline replay (PLAN §12.3)
@@ -57,19 +61,62 @@ Every eval command records its run in the data file's eval_runs table and writes
 async function gates(argv: string[]) {
   const { values } = parseArgs({
     args: argv,
-    options: { labeled: { type: 'string', default: 'packages/eval/data/gates.labeled.v1.json' } },
+    options: {
+      labeled: { type: 'string', default: 'packages/eval/labeled/gates.v3.json' },
+      version: { type: 'string', default: 'gates.v3' },
+      out: { type: 'string' },
+    },
   });
   const engine = await openLocalEngine({ db: ':memory:', providers: 'live' });
-  const rows = await calibrateGates(engine.deps.gateway, resolve(values.labeled));
+  const { gates: rows, rows: items } = await calibrateGates(
+    engine.deps.gateway,
+    resolve(values.labeled),
+    values.version,
+  );
   console.table(
     rows.map((r) => ({
       gate: r.gate,
       auc: r.auc.toFixed(3),
-      threshold: r.threshold,
+      'best threshold': r.threshold,
       'balanced acc': r.balancedAccuracy.toFixed(3),
+      current: r.current ?? '',
+      'balanced acc (current)': r.currentBalancedAccuracy?.toFixed(3) ?? '',
       'bad / ok': `${r.positives} / ${r.negatives}`,
     })),
   );
+  if (values.out) {
+    writeFileSync(
+      resolve(values.out),
+      `${JSON.stringify({ version: values.version, gates: rows, items }, null, 2)}\n`,
+    );
+    console.log(`wrote ${values.out}`);
+  }
+  engine.close();
+}
+
+async function drafts(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      config: { type: 'string', default: 'm10-candidate' },
+      batches: { type: 'string', default: '6' },
+      'per-batch': { type: 'string', default: '10' },
+      occupation: { type: 'string', default: 'Nurse' },
+      out: { type: 'string' },
+    },
+  });
+  const named = NAMED_CONFIGS[values.config];
+  if (!named) throw new Error(`Unknown config "${values.config}"`);
+  const engine = await openLocalEngine({ db: ':memory:', providers: 'live' });
+  const rows = await sampleDrafts(engine.deps.gateway, named.config, {
+    batches: Number(values.batches),
+    perBatch: Number(values['per-batch']),
+    occupation: values.occupation,
+  });
+  const body = `${JSON.stringify({ config: values.config, drafts: rows }, null, 2)}\n`;
+  if (values.out) writeFileSync(resolve(values.out), body);
+  else process.stdout.write(body);
+  console.error(`${rows.length} drafts from ${named.config.generator.promptVersion}`);
   engine.close();
 }
 
@@ -83,6 +130,7 @@ async function session(argv: string[]) {
       turns: { type: 'string', default: '30' },
       live: { type: 'boolean', default: false },
       simulate: { type: 'string' },
+      config: { type: 'string', default: 'default' },
     },
   });
   if (!values.script) throw new Error('--script is required');
@@ -96,8 +144,11 @@ async function session(argv: string[]) {
     providers: values.live ? 'live' : 'offline',
   });
   console.log(`providers: ${values.live ? 'live' : 'offline fakes (zero spend; outputs are arbitrary)'}`);
+  const configHash = await registerNamedConfig(engine.deps, values.config);
+  console.log(`config: ${values.config} (${configHash.slice(0, 12)})`);
   const { mimicId, turns } = await runSession(engine, script, {
     turns: Number(values.turns),
+    configHash,
     ...(values.simulate ? { simulatePersona: values.simulate } : {}),
     onTurn: (t) => {
       const guess = t.reveal
@@ -300,6 +351,8 @@ async function main() {
       return session(rest);
     case 'gates':
       return gates(rest);
+    case 'drafts':
+      return drafts(rest);
     case 'export':
       return exportCmd(rest);
     case 'replay':

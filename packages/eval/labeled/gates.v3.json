@@ -1,0 +1,2353 @@
+{
+  "id": "gates.v3",
+  "description": "Hand-labelled quality-gate set for gates.v3 (ADR-0042). Labels were assigned by the implementer from the definitions below; they are judgements, not ground truth. A label is true when the item has the property: ambiguous (more than one reasonable reading), sensitive (touches the person's own health, sexuality, religion, politics or detailed finances, other than the areas in `tagged`; caring for patients at work does not count), leading (the wording favours an answer), quick (anyone can answer in about ten seconds), concrete (one specific situation, with actions or concrete choices as options), demeaning (presumes, judges, stereotypes or shames, or leaves out answers some people would give). Sources: raw gen.v3 and gen.v2 drafts sampled live with `pnpm eval -- drafts` before any gate, reserve.v2 items, and handwritten items for the rare classes.",
+  "items": [
+    {
+      "prompt": "At a new restaurant, the menu is full of dishes you've never heard of. What do you order?",
+      "type": "choice",
+      "options": [
+        "The dish I always get",
+        "The safest familiar-sounding option",
+        "Whatever the waiter recommends",
+        "The strangest dish on the menu"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You need a new sofa. It's full price today, or half price in the January sale six weeks away.",
+      "type": "score",
+      "options": [
+        "Buy it today at full price",
+        "Buy today but check if a discount is coming",
+        "Wait a week, then decide",
+        "Wait for the January sale",
+        "Wait for the sale and keep comparing until then"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a family dinner, talk turns to a plan you've made that might not work out. How do you talk about it?",
+      "type": "score",
+      "options": [
+        "I say it probably won't happen",
+        "I mention the risks first",
+        "I stay neutral about how it'll go",
+        "I say I think it'll work out",
+        "I talk as if it's already happening"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You've lived in the same Lisbon neighbourhood for ten years. A friend says you'd love a year abroad.",
+      "type": "choice",
+      "options": [
+        "No chance, I'm staying put",
+        "I'd go for a long visit, not move",
+        "I'd consider a year abroad",
+        "I'd start looking at flats abroad this week"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your closest friend is being criticised in the group chat, and you quietly think the criticism is partly fair. Do you say so in the chat?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A close friend asks how you're really doing after a hard month. What comes out?",
+      "type": "choice",
+      "options": [
+        "\"Fine, busy\" and I change the subject",
+        "A short honest answer, no detail",
+        "I tell them the main things that happened",
+        "The whole story, tears and all"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your sibling tells you something and asks you not to tell your parents, though you think they should know.",
+      "type": "choice",
+      "options": [
+        "I keep it, it's their call",
+        "I keep it but push them to tell",
+        "I hint to my parents something's up",
+        "I tell my parents what I know"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your partner asks what's wrong. You've had a bad day, but nothing serious happened.",
+      "type": "score",
+      "options": [
+        "\"Nothing\" and I keep it to myself",
+        "A brief \"just tired\" answer",
+        "I say it was a rough day, no details",
+        "I tell them what happened",
+        "I tell them everything and how it made me feel"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "It's 3pm on a busy shift and a patient's relative demands you chase a test result that won't be ready until tomorrow.",
+      "type": "choice",
+      "options": [
+        "Explain it can't be done today and move on",
+        "Say I'll check near the end of my shift",
+        "Ring the lab now to see",
+        "Push the lab for a result tonight"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "The ward is trialling a new way of handing over patients, replacing the routine you've used for years.",
+      "type": "choice",
+      "options": [
+        "I'll keep to the old routine where I can",
+        "I'll try it but keep my own notes as backup",
+        "I'll follow the new way, with a few grumbles",
+        "I'll try it and suggest tweaks at the next meeting"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You fly out on a four-day trip tomorrow morning. By bedtime, your bag is:",
+      "type": "choice",
+      "options": [
+        "Packed, list ticked, clothes laid out",
+        "Mostly packed, a few things in the morning",
+        "Not packed yet — you'll do it at dawn",
+        "Not packed, and you haven't checked the flight time"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're up €80 at a card game with friends. Someone deals one more round — lose it or double it.",
+      "type": "choice",
+      "options": [
+        "Cash out and keep the €80",
+        "Play one last round, then stop",
+        "Keep playing while it's fun",
+        "Play until you double or lose it all"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're giving a short toast at a friend's birthday dinner. In the hour before, you:",
+      "type": "choice",
+      "options": [
+        "Run through every way it could go wrong",
+        "Check your notes once and relax",
+        "Barely think about it at all",
+        "Only feel nervous once you stand up"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A close friend is laid off after ten years of hard work. Your first thought:",
+      "type": "choice",
+      "options": [
+        "That's how it goes — effort and reward don't line up",
+        "They'll bounce back; good work gets noticed",
+        "Someone must have had it in for them",
+        "They probably missed something they could have seen"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "The building rule bans bikes in the lift. You live on the fourth floor.",
+      "type": "choice",
+      "options": [
+        "You always take the stairs",
+        "You take the lift when nobody's around",
+        "You take the lift and mention it if asked",
+        "You take the lift, rule or not"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your neighbourhood is picking someone to run the annual street festival. You:",
+      "type": "choice",
+      "options": [
+        "Put your name forward to run it",
+        "Offer to run one part of it",
+        "Help wherever you're needed",
+        "Hope someone else takes it on"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You pay a €150 deposit for a weekend away. A roster change means you can't go and it's non-refundable.",
+      "type": "choice",
+      "options": [
+        "Go anyway for one night so it isn't wasted",
+        "Stay home and it nags at you for days",
+        "Stay home, annoyed for an hour",
+        "Give the booking to a friend and forget it"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "The car insurance renewal email lands in your inbox. What happens to it?",
+      "type": "choice",
+      "options": [
+        "Renewed the same day",
+        "A reminder set for the week before it expires",
+        "Dealt with the day before it lapses",
+        "Only noticed after it lapses"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Protocol says get a doctor's approval first, but a patient needs a step now and you're sure it's right.",
+      "type": "choice",
+      "options": [
+        "Wait for the doctor, as protocol says",
+        "Do it and tell the doctor right away",
+        "Do it and flag it at handover",
+        "Ask a senior nurse to decide"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your unit needs someone to lead a new quality-improvement project.",
+      "type": "choice",
+      "options": [
+        "You volunteer to lead it",
+        "You say yes if you're asked",
+        "You'd rather join the team than lead",
+        "You stay out of it"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a friend's birthday party...",
+      "type": "score",
+      "options": [
+        "Leave after an hour without saying goodbye",
+        "Stay near one or two people you know",
+        "Mingle and chat with a few groups",
+        "Work the room and meet new people",
+        "Stay till the end and help lead the dancing"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "On a weekend trip, the plan is vague...",
+      "type": "score",
+      "options": [
+        "Need a fixed itinerary before leaving",
+        "Prefer a rough plan with set times",
+        "Go along with a loose idea",
+        "Enjoy deciding things as you go",
+        "Love having no plan at all"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a fair, a €5 spin could win €100...",
+      "type": "score",
+      "options": [
+        "Walk past without playing",
+        "Play once for fun",
+        "Play a few times",
+        "Keep playing to chase the win",
+        "Spend €50 trying to win big"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your building proposes a strict new rule on quiet hours...",
+      "type": "score",
+      "options": [
+        "Ignore it if it's inconvenient",
+        "Follow it only when watched",
+        "Go along with it mostly",
+        "Support it and follow it",
+        "Push for even stricter rules"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "The city wants to limit cars in your area to cut pollution...",
+      "type": "score",
+      "options": [
+        "Strongly support the limits",
+        "Accept them",
+        "Not mind either way",
+        "Dislike the restriction",
+        "Strongly oppose any limit"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "In a national election, you usually vote for...",
+      "type": "choice",
+      "options": [
+        "Left or progressive parties",
+        "Centre-left parties",
+        "Centre parties",
+        "Centre-right parties",
+        "Right or conservative parties"
+      ],
+      "tagged": ["politics"],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your partner cancels date night last minute for the third time...",
+      "type": "score",
+      "options": [
+        "Say nothing and let it go",
+        "Drop a hint later",
+        "Bring it up gently",
+        "Tell them directly it bothers you",
+        "Address it head-on right then"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a family dinner, someone teases you...",
+      "type": "score",
+      "options": [
+        "Don't find it funny",
+        "Smile politely",
+        "Laugh along",
+        "Tease them back",
+        "Turn it into a running joke"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A complex patient case comes in during your shift...",
+      "type": "choice",
+      "options": [
+        "Handle it alone",
+        "Ask one colleague for input",
+        "Call a quick huddle with the team",
+        "Lead a full team discussion"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At shift handover, you describe a patient's condition...",
+      "type": "score",
+      "options": [
+        "In one big-picture sentence",
+        "With the main points only",
+        "With standard details",
+        "With most details and numbers",
+        "With every detail and lab value"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a family lunch, your sister picks a restaurant you really dislike. What do you do?",
+      "type": "choice",
+      "options": [
+        "Go along happily and order what you can",
+        "Go along but mention you'd have chosen elsewhere",
+        "Suggest a different place you both like",
+        "Say you'd rather sit this lunch out"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You need new walking shoes. What does the buying look like?",
+      "type": "choice",
+      "options": [
+        "First pair that fits well, bought on the spot",
+        "Check one or two other shops, then decide",
+        "Compare several shops and read reviews first",
+        "Days of research to be sure it's the best pair"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend lends you a documentary about a complicated science topic. What happens?",
+      "type": "choice",
+      "options": [
+        "You skip it and watch something easy instead",
+        "You watch it, letting the confusing parts pass",
+        "You watch it and pause to look things up",
+        "You watch it twice and read more about it after"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A collection tin goes round your building for a family whose flat was damaged by fire. What do you do?",
+      "type": "score",
+      "options": [
+        "Walk past without giving",
+        "Drop in the spare coins in your pocket",
+        "Give a set amount you decide on the spot",
+        "Give money and offer to help them move back in",
+        "Give money and give up your weekend to help"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "The market cashier hands you €10 too much change. What do you do?",
+      "type": "choice",
+      "options": [
+        "Keep it and say nothing",
+        "Keep it but feel uneasy afterwards",
+        "Point it out and hand the €10 back",
+        "Point it out even if it means rejoining the queue"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A parish council election is coming up in your area. What do you do about it?",
+      "type": "choice",
+      "options": [
+        "Nothing — you don't vote or follow it",
+        "You vote, having skimmed the basics",
+        "You read the candidates' plans before voting",
+        "You talk to neighbours and go to a local meeting"
+      ],
+      "tagged": ["politics"],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A stranger at the bus stop asks to borrow your phone to make a call. What do you do?",
+      "type": "choice",
+      "options": [
+        "Say no and look away",
+        "Offer to dial and hold the phone yourself",
+        "Hand it over but stand right next to them",
+        "Hand it over and step back to give them space"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A close friend makes a joke at your expense in front of others. What do you do?",
+      "type": "score",
+      "options": [
+        "Laugh along and say nothing",
+        "Say nothing, then raise it days later",
+        "Mention it quietly to them the same day",
+        "Tell them plainly, there and then, that it bothered you",
+        "Call it out in front of everyone"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your shift starts with tasks for eight patients. How do you begin?",
+      "type": "choice",
+      "options": [
+        "Take whatever seems most urgent right then",
+        "Follow the ward's usual order of tasks",
+        "Write your own order and adjust as the shift goes",
+        "Map the whole shift out before you see anyone"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Near the end of a shift you still have patient notes to write. How do you handle them?",
+      "type": "choice",
+      "options": [
+        "Short notes, done fast, out on time",
+        "Standard notes, leaving the fine detail out",
+        "Detailed notes, staying late to finish them",
+        "Full detail every time, even if it means overtime daily"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your morning train is cancelled and you'll be late. What do you do?",
+      "type": "score",
+      "options": [
+        "I get visibly upset and can't focus",
+        "I feel stressed but carry on",
+        "I take a breath and replan",
+        "I stay calm and text the person",
+        "I shrug it off and enjoy the extra time"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You need a new kettle. What do you do?",
+      "type": "choice",
+      "options": [
+        "Grab the first decent one",
+        "Compare a few in the shop",
+        "Read reviews online for an hour",
+        "Make a spreadsheet of features and prices"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You try a new recipe and it turns out badly. What do you do next?",
+      "type": "choice",
+      "options": [
+        "Decide cooking isn't for you",
+        "Try the same recipe again",
+        "Look up what went wrong and adjust",
+        "Sign up for a cooking class"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You see a stranger drop their groceries on the street. What do you do?",
+      "type": "choice",
+      "options": [
+        "Keep walking",
+        "Help only if they ask",
+        "Stop and help pick up",
+        "Help and carry bags to their car"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a self-checkout, the machine undercharges you by €5. What do you do?",
+      "type": "choice",
+      "options": [
+        "Pay and leave without saying anything",
+        "Tell a staff member about the error",
+        "Pay and leave a note for the manager",
+        "Insist on paying the correct amount"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend invites you to a religious ceremony. What do you do?",
+      "type": "choice",
+      "options": [
+        "Decline, I'm not religious",
+        "Attend out of curiosity",
+        "Attend and take part",
+        "Attend regularly as part of my faith"
+      ],
+      "tagged": ["religion"],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your weekend is completely free. How do you spend it?",
+      "type": "choice",
+      "options": [
+        "Wake up and decide spontaneously",
+        "Have a loose idea",
+        "Follow my usual routine",
+        "Plan each hour in advance"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "After a long week, you have a free evening. What recharges you most?",
+      "type": "choice",
+      "options": ["Staying home alone", "One close friend", "A small group", "A big party"],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You start a shift with several tasks. How do you approach it?",
+      "type": "choice",
+      "options": [
+        "Jump in and handle what comes",
+        "Make a mental list",
+        "Write a checklist and order tasks",
+        "Plan every step and stick to it"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're reviewing a patient's chart before handover. What do you focus on?",
+      "type": "choice",
+      "options": [
+        "The big picture and main issues",
+        "Key details",
+        "Every entry carefully",
+        "Double-check everything against protocol"
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "On holiday in a new city, a local offers a last-minute paragliding trip. What do you do?",
+      "type": "choice",
+      "options": [
+        "Decline, too risky.",
+        "Watch others first, then decide.",
+        "Go if the equipment looks well maintained.",
+        "Sign up immediately, it's an adventure."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A neighbor sends you a rude message. What is your first move?",
+      "type": "choice",
+      "options": [
+        "Reply right away with a sharp tone.",
+        "Vent to a friend, then reply later.",
+        "Take a breath and rewrite a calm reply.",
+        "Ignore it and move on."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're saving for a trip, but a flash sale for shoes you love appears. What do you do?",
+      "type": "choice",
+      "options": [
+        "Buy them immediately.",
+        "Add to cart, think overnight.",
+        "Skip the sale and stick to saving.",
+        "Buy a cheaper alternative."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Playing a board game with friends, you notice you could secretly cheat to win. What do you do?",
+      "type": "choice",
+      "options": [
+        "Cheat, it's just a game.",
+        "Cheat only if others are cheating.",
+        "Play fair but mention the temptation.",
+        "Play fair, winning isn't worth it."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You planned a picnic and it rained. What's your first thought?",
+      "type": "choice",
+      "options": [
+        "Just bad luck.",
+        "I should have checked the forecast.",
+        "I can move it indoors.",
+        "I'll plan better next time."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A new neighbor asks to borrow your expensive drill. What do you do?",
+      "type": "choice",
+      "options": [
+        "Say no, I don't lend tools.",
+        "Lend it but ask for it back soon.",
+        "Lend it, trusting they'll return it.",
+        "Lend it and say keep it as long as you need."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend repeatedly cancels plans at the last minute. What do you do?",
+      "type": "choice",
+      "options": [
+        "Say nothing, hope it improves.",
+        "Make a joke about it.",
+        "Tell them directly it bothers you.",
+        "Stop making plans with them."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You have a work project due in two weeks. When do you start?",
+      "type": "choice",
+      "options": [
+        "The day before.",
+        "A few days before.",
+        "A week before, with a rough plan.",
+        "Immediately, with a detailed schedule."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your team is assigned a complex task. How do you prefer to work?",
+      "type": "choice",
+      "options": [
+        "Alone, then share results.",
+        "Mostly alone, with occasional check-ins.",
+        "Split tasks and coordinate often.",
+        "Work closely together most of the time."
+      ],
+      "tagged": [],
+      "source": "gen.v3",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A free evening opens up with nothing planned. Do you rewatch a favourite show, or start something completely new to you?",
+      "type": "choice",
+      "options": ["Rewatch the favourite", "Try something new", "Mix — new thing, familiar snack"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a restaurant you love, the server suggests a dish you've never heard of. Do you order it or stick with your usual?",
+      "type": "choice",
+      "options": ["Order the usual", "Order the suggestion", "Order both and share"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend wants to switch your weekend plan to something you like less. Do you go along, or suggest keeping the original plan?",
+      "type": "choice",
+      "options": ["Go along with their plan", "Suggest keeping mine", "Propose a compromise"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A colleague asks you to swap shifts at short notice, which disrupts your week. Do you agree anyway or decline?",
+      "type": "choice",
+      "options": ["Agree, it's a swap", "Decline politely", "Agree only if they owe one back"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're offered a visible lead role on a unit project, with longer hours. Take it for the recognition, or stay focused on patient care?",
+      "type": "choice",
+      "options": ["Take the lead role", "Stay with patient care", "Ask for a smaller part"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a community event you helped organise, you're asked to be named and thanked publicly. Accept the credit or wave it off?",
+      "type": "choice",
+      "options": ["Accept the credit", "Wave it off", "Share it with the group"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your hospital is forming a new rapid-response team with no track record yet. Volunteer for it, or stay on your current ward?",
+      "type": "choice",
+      "options": ["Volunteer for the new team", "Stay on the ward", "Ask to observe first"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A doctor gives you vague instructions about a patient's care. Act on your own judgement, or ask for specifics before doing anything?",
+      "type": "choice",
+      "options": ["Ask for specifics first", "Act on my judgement", "Start the obvious part, then ask"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You arrive at a party where you know almost nobody and no one explains the plan. Settle in and see, or find someone to ask what's going on?",
+      "type": "choice",
+      "options": ["Find out what's going on", "Settle in and see", "Watch quietly for a while"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A new neighbour offers to keep your spare key while you travel. Hand it over, or politely decline?",
+      "type": "choice",
+      "options": ["Hand over the key", "Politely decline", "Leave it with someone I know better"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You find a wallet with €200 and an ID on the street. Returning it costs you an hour. What do you do?",
+      "type": "choice",
+      "options": [
+        "Keep the cash and drop the wallet",
+        "Return everything intact",
+        "Hand it to a nearby shop"
+      ],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "After a long shift, colleagues invite you to a loud group dinner. You...",
+      "type": "choice",
+      "options": ["Join and stay late", "Join for a short while", "Politely decline and go home"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your usual weekend café is closed. You...",
+      "type": "choice",
+      "options": [
+        "Try a new place you've never been",
+        "Walk to another familiar café",
+        "Skip coffee and go home"
+      ],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend offers a coin flip: heads you win €60, tails you lose €40. Do you take it?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You need a new phone. You...",
+      "type": "choice",
+      "options": [
+        "Buy the first good one you see",
+        "Spend hours comparing every model",
+        "Read a few reviews and decide"
+      ],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Friends choose a restaurant you dislike. You...",
+      "type": "choice",
+      "options": ["Say you'd prefer somewhere else", "Go along without complaint", "Go but sulk"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "In a staff meeting, you disagree with a proposed schedule change. You...",
+      "type": "choice",
+      "options": ["Raise your concern on the spot", "Speak to the manager privately", "Stay quiet"],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your unit adopts a new electronic charting system. You...",
+      "type": "choice",
+      "options": [
+        "Volunteer to test it first",
+        "Learn it when required",
+        "Keep using the old system as long as possible"
+      ],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A patient's family needs help with paperwork that isn't your job. You...",
+      "type": "choice",
+      "options": [
+        "Help them sort it out yourself",
+        "Point them to the right office",
+        "Tell them it's not your role"
+      ],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "The team agrees on a care approach you think is wrong. You...",
+      "type": "choice",
+      "options": [
+        "Voice your disagreement openly",
+        "Follow the team's decision",
+        "Follow but note your objection"
+      ],
+      "tagged": [],
+      "source": "gen.v2",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How well does this describe you? \"I enjoy trying new things.\"",
+      "type": "score",
+      "options": [
+        "Very inaccurate",
+        "Moderately inaccurate",
+        "Neither accurate nor inaccurate",
+        "Moderately accurate",
+        "Very accurate"
+      ],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How well does this describe you? \"I keep my promises.\"",
+      "type": "score",
+      "options": [
+        "Very inaccurate",
+        "Moderately inaccurate",
+        "Neither accurate nor inaccurate",
+        "Moderately accurate",
+        "Very accurate"
+      ],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How much do you agree: \"Rules are made to be broken.\"",
+      "type": "score",
+      "options": ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How often do you plan ahead?",
+      "type": "score",
+      "options": ["Never", "Rarely", "Sometimes", "Often", "Always"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Do you consider yourself a risk-taker?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Rate your patience.",
+      "type": "score",
+      "options": ["Very impatient", "Impatient", "Average", "Patient", "Very patient"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Which matters more to you in life?",
+      "type": "choice",
+      "options": ["Security", "Freedom"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Are you more of a thinker or a feeler?",
+      "type": "choice",
+      "options": ["Thinker", "Feeler"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How important is loyalty to you?",
+      "type": "score",
+      "options": ["Not at all", "Slightly", "Moderately", "Very", "Extremely"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "What best describes your approach to money?",
+      "type": "choice",
+      "options": ["Saver", "Spender", "Balanced"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "In general, do people get what they deserve?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How would you describe your attitude to authority?",
+      "type": "choice",
+      "options": ["Respectful", "Sceptical", "It depends on the person"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": true,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How religious are you?",
+      "type": "score",
+      "options": ["Not at all", "Slightly", "Moderately", "Quite", "Very"],
+      "tagged": ["religion"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Where would you place yourself politically?",
+      "type": "score",
+      "options": ["Left", "Centre-left", "Centre", "Centre-right", "Right"],
+      "tagged": ["politics"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How often do you compare yourself with other people?",
+      "type": "score",
+      "options": ["Never", "Rarely", "Sometimes", "Often", "Always"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Do you like change?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": true,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How do you feel about rules?",
+      "type": "choice",
+      "options": ["I like them", "I tolerate them", "I dislike them"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": true,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Can you admit that religious faith is a weakness?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": ["religion"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": false,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "How often do you struggle to control your drinking?",
+      "type": "score",
+      "options": ["Never", "Rarely", "Sometimes", "Often", "Always"],
+      "tagged": ["health"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": false,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "Why do you think people on the left are so naive?",
+      "type": "choice",
+      "options": ["They mean well", "They ignore reality", "They are easily fooled"],
+      "tagged": ["politics"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": false,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "Are you ashamed of how your body looks at the beach?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": ["health"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": true,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "Would you hide your sexual history from a new partner?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": ["sexuality"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": true,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "Do you prefer a normal marriage between a man and a woman, or something else?",
+      "type": "choice",
+      "options": ["A normal marriage", "Something else"],
+      "tagged": ["sexuality"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": false,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "How much debt do you have?",
+      "type": "choice",
+      "options": ["None", "Some", "Too much, I am irresponsible with money"],
+      "tagged": ["money"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "Who is more moral, religious people or atheists?",
+      "type": "choice",
+      "options": ["Religious people", "Atheists"],
+      "tagged": ["religion"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": false,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "Since you are overweight, which diet would you try first?",
+      "type": "choice",
+      "options": ["Low carb", "Calorie counting", "Intermittent fasting"],
+      "tagged": ["health"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": true,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "What made you stop believing in God?",
+      "type": "choice",
+      "options": ["Science", "Bad experiences", "I just drifted away"],
+      "tagged": ["religion"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": false,
+        "demeaning": true
+      }
+    },
+    {
+      "prompt": "In a close national election, which kind of party would you most likely vote for?",
+      "type": "score",
+      "options": [
+        "Clearly left of centre",
+        "Centre-left",
+        "Centre",
+        "Centre-right",
+        "Clearly right of centre"
+      ],
+      "tagged": ["politics"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend shares a petition on a local issue you agree with. What do you do?",
+      "type": "choice",
+      "options": ["Nothing", "Sign it", "Sign and share it", "Sign, share and go to the public meeting"],
+      "tagged": ["politics"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Facing a big decision, like moving to a new city, what part does religious faith play?",
+      "type": "choice",
+      "options": ["None, I am not religious", "A small part", "An important part", "It guides the decision"],
+      "tagged": ["religion"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Before becoming intimate with someone new, how well do you want to know them?",
+      "type": "choice",
+      "options": [
+        "Very well, in a committed relationship",
+        "Well, after several dates",
+        "A little, after a date or two",
+        "Mutual attraction is enough"
+      ],
+      "tagged": ["sexuality"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "If a partner suggested opening up your relationship, what would you do?",
+      "type": "choice",
+      "options": ["Say no, I want us to be exclusive", "Talk it through before deciding", "Be open to it"],
+      "tagged": ["sexuality"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You notice a new ache that has lasted a week but is not getting worse. What do you do?",
+      "type": "choice",
+      "options": ["Wait and see", "Look it up online", "Book a doctor's appointment"],
+      "tagged": ["health"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a relaxed dinner with friends, what do you usually drink?",
+      "type": "choice",
+      "options": ["No alcohol", "One drink", "Two or three", "More than three"],
+      "tagged": ["health"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "An unexpected $1,000 bill arrives. How would you cover it?",
+      "type": "choice",
+      "options": [
+        "From savings, easily",
+        "From savings, but it would hurt",
+        "Borrow or use credit",
+        "It would be very hard to cover"
+      ],
+      "tagged": ["money"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You want a new laptop. You can pay in 12 interest-free instalments or save for four months. What do you do?",
+      "type": "choice",
+      "options": ["Instalments, and get it now", "Save, and buy it outright"],
+      "tagged": ["money"],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Would you pray before making a big decision?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Did you vote in the last national election?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "How many sexual partners have you had in the past year?",
+      "type": "choice",
+      "options": ["None", "One", "Two or three", "More than three"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Do you take any medication every day?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "What is your monthly take-home pay?",
+      "type": "choice",
+      "options": ["Under 1,500", "1,500 to 3,000", "3,000 to 5,000", "Over 5,000"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Which party do you trust most to run the economy?",
+      "type": "choice",
+      "options": ["The main left party", "The main right party", "A smaller party", "None of them"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend invites you to church on Sunday. Do you go?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your doctor suggests a strict diet after a check-up. What do you do?",
+      "type": "choice",
+      "options": ["Follow it exactly", "Follow it loosely", "Ignore it"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You are dating someone new and they want to sleep together on the second date. What do you do?",
+      "type": "choice",
+      "options": ["Agree", "Wait longer", "End it"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You have $5,000 of credit card debt. Which do you pay off first?",
+      "type": "choice",
+      "options": ["The highest interest card", "The smallest balance", "Whatever is due first"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": true,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Wouldn't you agree that planning ahead is the smart thing to do?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Most sensible people save something every month. Do you?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Would you rather be right or be kind, and does your answer differ at work and at home?",
+      "type": "choice",
+      "options": ["Right", "Kind"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": true,
+        "sensitive": false,
+        "leading": false,
+        "quick": false,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Estimate how many hours you spent on hobbies last year and compare it with the year before. Which grew?",
+      "type": "choice",
+      "options": ["Last year", "The year before", "About the same"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": false,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Is it better to save or invest?",
+      "type": "choice",
+      "options": ["Save", "Invest"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": true,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Think about the ten biggest decisions of your life. How many did you make on gut feeling?",
+      "type": "score",
+      "options": ["None", "One to three", "Four to six", "Seven to nine", "All ten"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": false,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend asks you to help them move on Saturday, which you had planned to rest. Surely you would help a friend?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Do you usually go with the flow?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "handwritten",
+      "labels": {
+        "ambiguous": true,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    }
+  ]
+}

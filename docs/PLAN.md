@@ -326,7 +326,9 @@ export const PipelineConfig = z.object({
     promptVersion: z.string(),
     batchSize: z.number().int(),
     domainMix: z.object({ core: z.number(), casual: z.number(), professional: z.number() }),
+    gates: z.string().optional(),                                      // gate set; 'gates.v2' when absent (ADR-0042)
   }),
+  reserve: z.object({ setId: z.string() }).optional(),                 // 'reserve.v1' when absent (ADR-0042)
   selector: z.discriminatedUnion('type', [
     z.object({ type: z.literal('random') }),
     z.object({ type: z.literal('coverage') }),
@@ -605,6 +607,20 @@ The anchors serve three purposes: a cross-person comparable eval set, a psychome
    - Could anyone answer it in about 10 seconds?
 
    A candidate fails a gate when the bad outcome is likely: p(yes) > 0.6 for the first three, or p(yes) < 0.4 for the last. Drop failures, and tune these thresholds on a small labeled set.
+
+   **gates.v3** (`generator.gates`, ADR-0042) adds two gates and changes two:
+   - **Concrete:** does it put the person in one specific, everyday situation and ask what they would do? Fails
+     below 0.4. Self-ratings and abstract opinions fail it.
+   - **Demeaning:** does it presume, judge, stereotype or shame, or leave out answers some people would give?
+     Fails above 0.5.
+   - **Sensitive** asks only about the areas the draft is not tagged with, and about the answerer's own life
+     (caring for patients at work does not count). A consented, correctly tagged sensitive draft is checked
+     against the other areas; an untagged draft against all five. Fails above 0.3.
+   - **Leading** judges the wording, not whether one option is more admirable. Fails above 0.4.
+
+   Thresholds were chosen on `packages/eval/labeled/gates.v3.json` and checked on `gates.v3.heldout.json`
+   (`pnpm eval -- gates`; report in `docs/reports/m10-gates.md`). `quality_json` records `gatesVersion` and, for
+   gates.v3, `sensitiveAsked`.
 3. **Dedupe.** Drop any candidate with cosine similarity > 0.9 to an asked or pooled question.
 4. **Insert** survivors as `pooled`. Keep the pool between 6 and 15 questions.
 
@@ -616,6 +632,11 @@ The anchors serve three purposes: a cross-person comparable eval set, a psychome
 - No "it depends" option.
 - Ground professional scenarios in the person's stated occupation.
 - Never mention the model or the person's name.
+
+`gen.v3` (ADR-0042) makes these rules strict: one specific situation per question, options that are actions,
+self-rating forms forbidden by name, everyday scenes for everything outside "Work and money", a quota per selected
+category, and sensitive facets only when consented, asked plainly with options covering the range. Without "Work and
+money" in scope, workplace scenes are rejected in code and the professional quota is zero, for every generator.
 
 ### 9.5 Selection
 
@@ -1036,7 +1057,7 @@ Reasoning tokens can dominate shadow-predictor cost, so cap `max_tokens` and use
 - [ ] A two-arm experiment runs, and `/lab` shows per-arm fidelity-vs-questions curves.
 
 
-### M9–M13 Categories, consent and question quality (ADRs 0040–0044)
+### M9–M13 Categories, consent and question quality (ADR-0040 and ADRs 0042–0045)
 
 Built on the value-of-information selector (ADR-0027). Each milestone ships with its ADR, `pnpm check` green, and the
 rubric below self-scored with evidence in its PR description; the next starts only when every row the milestone can
@@ -1044,11 +1065,11 @@ exercise scores at least 4 of 5.
 
 - **M9** Categories, the consent model, scope storage and scoped facets (`docs/CATEGORIES.md`, ADR-0040).
 - **M10** Ontology v2 with psychological depth and opt-in sensitive facets, `reserve.v2`, `gen.v3` (concrete
-  situations), `gates.v3` recalibrated on a checked-in labelled set (ADR-0041).
+  situations), `gates.v3` recalibrated on a checked-in labelled set (ADR-0042).
 - **M11** Intake and session UI for categories and consent, the full enforcement sweep, leakage tests and the
-  special-category export scrub (ADR-0042).
-- **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v6` (ADR-0043).
-- **M13** Offline v5 vs v6 rubric report and a two-arm experiment on real people (ADR-0044).
+  special-category export scrub (ADR-0043).
+- **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v7` (ADR-0044).
+- **M13** Offline v6 vs v7 rubric report and a two-arm experiment on real people (ADR-0045).
 
 **Rubric (each row scored 1–5 with evidence):**
 
@@ -1229,6 +1250,10 @@ Each gate request uses one candidate as its state, `{ "question": { prompt, type
 ---
 
 ## Appendix C — Ontology v1 facets (`docs/ontology/v1.json`)
+
+Ontology v2 (ADR-0042) keeps every v1 facet below word for word, regroups them into ten groups that each sit in one
+category, and adds 34 facets, 11 of them sensitive. Its table and the research anchor of every facet are generated
+into `docs/ontology/v2.json` and `docs/ontology/v2.sources.md`.
 
 Each facet has an ID, a group, a low pole, a high pole, and 5 ordered labels for trait reads (write these from the poles, as in B.2). Occupation-specific facets are added per mimic (§9.8).
 

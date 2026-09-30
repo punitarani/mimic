@@ -36,12 +36,16 @@ export const PipelineConfig = z.object({
   version: z.literal(1),
   ontologyVersion: z.string(),
   anchors: z.object({ setId: z.string(), count: z.number().int() }),
+  /** Static items served when the generated pool is empty (ADR-0042); reserve.v1 when absent. */
+  reserve: z.object({ setId: z.string() }).optional(),
   generator: z.object({
     model: z.string(),
     reasoningEffort: z.enum(['none', 'low', 'medium']),
     promptVersion: z.string(),
     batchSize: z.number().int(),
     domainMix: z.object({ core: z.number(), casual: z.number(), professional: z.number() }),
+    /** Quality-gate set (ADR-0042); gates.v2 when absent. Optional and undefaulted, so older hashes are unchanged. */
+    gates: z.string().optional(),
   }),
   selector: z.discriminatedUnion('type', [
     z.object({ type: z.literal('random') }),
