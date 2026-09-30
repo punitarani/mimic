@@ -1,8 +1,8 @@
 'use client';
 import {
   type ButtonHTMLAttributes,
+  type ComponentProps,
   forwardRef,
-  type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
@@ -42,7 +42,7 @@ export const Button = forwardRef<
   );
 });
 
-export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function Card({ className, ...props }: ComponentProps<'div'>) {
   return (
     <div
       className={cn(

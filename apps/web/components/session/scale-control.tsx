@@ -1,5 +1,6 @@
 'use client';
 import type { KeyboardEvent, Ref } from 'react';
+import { expectedPoint } from '@/lib/session-view';
 import { cn } from '../ui';
 
 export interface ScaleControlProps {
@@ -14,12 +15,6 @@ export interface ScaleControlProps {
   onKeyDown?: (e: KeyboardEvent<HTMLButtonElement>) => void;
   refFor?: (i: number) => Ref<HTMLButtonElement>;
   tabIndexFor?: (i: number) => number;
-}
-
-/** Expected position (1–5) of a distribution over the ordered keys. */
-export function expectedPoint(keys: string[], dist: Record<string, number>): number {
-  const tot = keys.reduce((a, k) => a + (dist[k] ?? 0), 0) || 1;
-  return keys.reduce((a, k, i) => a + (dist[k] ?? 0) * (i + 1), 0) / tot;
 }
 
 /** Five-point scale (design: ScaleControl): joined segments; after the reveal, the mimic's bars and expected tick. */

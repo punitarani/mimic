@@ -1,4 +1,4 @@
-import type { UiSnapshot } from '@mimic/core';
+import type { Distribution, PublicQuestion, UiSnapshot } from '@mimic/core';
 import { hostLabel } from '@mimic/core/links';
 import type { IdentityView } from './api';
 
@@ -8,6 +8,44 @@ export type Facet = UiSnapshot['facets'][number];
 export type Certainty = 'high' | 'medium' | 'low' | 'none';
 
 export const pct = (x: number) => Math.round(x * 100);
+
+/** Expected position (1–5) of a distribution over the ordered keys. */
+export function expectedPoint(keys: string[], dist: Record<string, number>): number {
+  const tot = keys.reduce((a, k) => a + (dist[k] ?? 0), 0) || 1;
+  return keys.reduce((a, k, i) => a + (dist[k] ?? 0) * (i + 1), 0) / tot;
+}
+
+export interface Verdict {
+  tone: 'moss' | 'slate' | 'rust';
+  /** One word for compact places: Matched, Close or Missed. */
+  word: 'Matched' | 'Close' | 'Missed';
+  text: string;
+}
+
+/**
+ * How the person's answer compares with the mimic's guess: matched, close (a scale within one step of the expected
+ * point) or missed. Shared by the session reveal and the mimic page.
+ */
+export function verdictOf(
+  q: Pick<PublicQuestion, 'type' | 'options'>,
+  guess: { optionKey: string; label: string; p: number; dist: Distribution },
+  picked: string,
+): Verdict {
+  const p = pct(guess.p);
+  const match = guess.optionKey === picked;
+  if (q.type === 'score') {
+    const keys = q.options.map((o) => o.key);
+    const exp = Math.round(expectedPoint(keys, guess.dist));
+    const mine = keys.indexOf(picked) + 1;
+    if (match)
+      return { tone: 'moss', word: 'Matched', text: `Matched. Your mimic guessed ${mine} too (${p}%).` };
+    if (Math.abs(mine - exp) <= 1)
+      return { tone: 'slate', word: 'Close', text: `Close. Your mimic expected about ${exp}.` };
+    return { tone: 'rust', word: 'Missed', text: `Missed. Your mimic expected about ${exp}.` };
+  }
+  if (match) return { tone: 'moss', word: 'Matched', text: `Matched. Your mimic guessed this too (${p}%).` };
+  return { tone: 'rust', word: 'Missed', text: `Missed. Your mimic guessed “${guess.label}” (${p}%).` };
+}
 
 export function sentence(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;

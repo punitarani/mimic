@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./ontology": "./src/ontology/index.ts",
+    "./limits": "./src/limits.ts",
     "./links": "./src/links.ts"
   },
   "scripts": {

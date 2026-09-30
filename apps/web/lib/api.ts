@@ -1,7 +1,9 @@
 import type {
   AnswerResult,
   ExperimentRecord,
+  FeedbackResult,
   NextResult,
+  PlaygroundHistory,
   PlaygroundPrediction,
   PublicQuestion,
   UiSnapshot,
@@ -94,6 +96,14 @@ export interface Draft {
   options: PublicQuestion['options'];
 }
 
+/** A question the person answers themselves, for the mimic to learn from (ADR-0032). */
+export interface FeedbackRequest {
+  question: Draft;
+  answer: string;
+  why?: string;
+  idempotencyKey: string;
+}
+
 export const api = {
   createMimic: (b: IntakeRequest) => call<{ mimicId: string; identity: boolean }>('POST', '/api/mimics', b),
   listMimics: () =>
@@ -121,6 +131,9 @@ export const api = {
     call<{ draft: Draft }>('POST', `/api/mimics/${id}/ask`, { scenario }),
   predict: (id: string, question: Draft & { rationale: boolean }) =>
     call<PlaygroundPrediction>('POST', `/api/mimics/${id}/ask`, { question }),
+  teach: (id: string, feedback: FeedbackRequest) =>
+    call<FeedbackResult>('POST', `/api/mimics/${id}/ask`, { feedback }),
+  playground: (id: string) => call<PlaygroundHistory>('GET', `/api/mimics/${id}/ask`),
   stop: (id: string) => call<{ snapshotVersion: number | null }>('POST', `/api/mimics/${id}/stop`),
   remove: (id: string) => call<{ deleted: true }>('DELETE', `/api/mimics/${id}`),
   // Lab (admin only)

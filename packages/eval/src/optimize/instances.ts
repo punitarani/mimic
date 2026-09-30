@@ -2,6 +2,8 @@ import {
   buildState,
   type Distribution,
   type EngineDeps,
+  isPredictedKind,
+  isScoredKind,
   loadConfig,
   loadMimicData,
   loadMimicDataAt,
@@ -103,18 +105,19 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
     }
     const heldout = loaded.questions.some((q) => q.itemKey?.startsWith(HELDOUT_PREFIX));
     if (heldout) {
-      const items = loaded.data.evidence
-        .filter((e) => e.kind === 'anchor' || e.kind === 'adaptive')
-        .sort((a, b) => a.seq - b.seq);
+      const items = loaded.data.evidence.filter((e) => isScoredKind(e.kind)).sort((a, b) => a.seq - b.seq);
       const qById = new Map(loaded.questions.map((q) => [q.id, q]));
       const isHeld = (id: string) => qById.get(id)?.itemKey?.startsWith(HELDOUT_PREFIX) ?? false;
       const train = items.filter((e) => !isHeld(e.questionId)).slice(0, opts.k);
       if (train.length < opts.k) continue;
       const trainSeqs = new Set(train.map((e) => e.seq));
       const beforeSeq = train.at(-1)!.seq + 1;
-      // Derived data as it stood when question `beforeSeq` was served, sealed below it (ADR-0017), as in replay:
-      // traits and insights computed from later answers (held-out targets included) must not reach the state.
-      const next = loaded.questions.find((q) => q.seq === beforeSeq);
+      // Derived data as it stood when the next predicted question was served, sealed below it (ADR-0017), as in
+      // replay: traits and insights computed from later answers (held-out targets included) must not reach the
+      // state. Feedback takes seqs without a serve, so it never sets the as-of time (ADR-0032).
+      const next = loaded.questions
+        .filter((q) => q.seq !== null && q.seq >= beforeSeq && isPredictedKind(q.kind))
+        .sort((a, b) => a.seq! - b.seq!)[0];
       const asOf = await loadMimicDataAt(
         deps,
         m,
@@ -122,7 +125,13 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
         beforeSeq,
       );
       const state = buildState(
-        { ...asOf.data, evidence: asOf.data.evidence.filter((e) => trainSeqs.has(e.seq)) },
+        {
+          ...asOf.data,
+          // Feedback given before the checkpoint stays in, as it did online (ADR-0032).
+          evidence: asOf.data.evidence.filter(
+            (e) => trainSeqs.has(e.seq) || (e.kind === 'feedback' && e.seq < beforeSeq),
+          ),
+        },
         stateOptions(cfg, beforeSeq),
       );
       let targets = items.filter((e) => isHeld(e.questionId));
@@ -172,7 +181,7 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
       byQ.set(p.questionId, list);
     }
     const served = loaded.questions
-      .filter((q) => (q.kind === 'anchor' || q.kind === 'adaptive') && q.seq !== null && answers.has(q.id))
+      .filter((q) => isScoredKind(q.kind) && q.seq !== null && answers.has(q.id))
       .sort((a, b) => a.seq! - b.seq!);
     for (const q of served) {
       const a = answers.get(q.id)!;

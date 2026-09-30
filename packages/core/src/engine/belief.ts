@@ -2,7 +2,7 @@ import { type BeliefAnswer, type BeliefState, buildBelief } from '../belief';
 import type { PipelineConfig } from '../config';
 import { repeatAgreement } from '../scoring';
 import type { AnswerRecord, InsightRecord, MimicRecord, QuestionRecord, ScoredPredictionRow } from '../store';
-import type { Facet } from '../types';
+import { type Facet, isScoredKind } from '../types';
 import type { LoadedMimic } from './data';
 import type { EngineDeps } from './deps';
 
@@ -34,7 +34,7 @@ export function beliefAnswers(
   const out: BeliefAnswer[] = [];
   for (const a of answers) {
     const q = qById.get(a.questionId);
-    if (!q || (q.kind !== 'anchor' && q.kind !== 'adaptive') || a.seq >= beforeSeq) continue;
+    if (!q || !isScoredKind(q.kind) || a.seq >= beforeSeq) continue;
     out.push({
       seq: a.seq,
       kind: q.kind,
@@ -66,7 +66,7 @@ export function beliefFromLoaded(
   const answers = beliefAnswers(loaded.answers, qById, accByQ, beforeSeq);
   const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
   const served = loaded.questions
-    .filter((q) => q.status === 'served' && (q.kind === 'anchor' || q.kind === 'adaptive'))
+    .filter((q) => q.status === 'served' && isScoredKind(q.kind))
     .map((q) => ({ type: q.type, domain: q.domain, facetIds: q.facetIds }));
   const repeats: Array<{ facetIds: string[]; agreement: number }> = [];
   for (const q of loaded.questions) {

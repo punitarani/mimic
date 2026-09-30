@@ -6,7 +6,10 @@ import {
   type EvalRunRecord,
   expectedIndex,
   fidelityInput,
+  isPredictedKind,
+  isScoredKind,
   itemAcrossPeople,
+  learnsFrom,
   loadConfig,
   loadMimicData,
   loadMimicDataAt,
@@ -103,9 +106,7 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
     const loaded = await loadMimicData(deps, m);
     const qById = new Map(loaded.questions.map((q) => [q.id, q]));
     const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
-    const items = loaded.data.evidence
-      .filter((e) => e.kind === 'anchor' || e.kind === 'adaptive')
-      .sort((a, b) => a.seq - b.seq);
+    const items = loaded.data.evidence.filter((e) => isScoredKind(e.kind)).sort((a, b) => a.seq - b.seq);
     const isHeldout = (qid: string) => qById.get(qid)?.itemKey?.startsWith(HELDOUT_PREFIX) ?? false;
     const train = spec.targets === 'heldout' ? items.filter((e) => !isHeldout(e.questionId)) : items;
     const heldout = items.filter((e) => isHeldout(e.questionId));
@@ -124,12 +125,21 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
       if (!targets.length) continue;
       const beforeSeq = train[k - 1]!.seq + 1;
       const trainSeqs = new Set(train.slice(0, k).map((e) => e.seq));
-      // Derived data as it stood when question `beforeSeq` was served (all of it if there is none), sealed below it.
-      const next = loaded.questions.find((q) => q.seq === beforeSeq);
+      // Derived data as it stood when the next predicted question was served (all of it if there is none), sealed
+      // below `beforeSeq`. Feedback takes seqs without a serve, so it never sets the as-of time (ADR-0032).
+      const next = loaded.questions
+        .filter((q) => q.seq !== null && q.seq >= beforeSeq && isPredictedKind(q.kind))
+        .sort((a, b) => a.seq! - b.seq!)[0];
       const at = next?.stateAt ?? next?.servedAt ?? Number.MAX_SAFE_INTEGER;
       const asOf = await loadMimicDataAt(deps, m, at, beforeSeq);
-      // Only the first k training items count as evidence; held-out items never enter a state.
-      const data = { ...asOf.data, evidence: asOf.data.evidence.filter((e) => trainSeqs.has(e.seq)) };
+      // The first k training items are the checkpoint's evidence; held-out items never enter a state. Feedback the
+      // person gave before it stays in, as it did online: the traits and insights as of `at` already learned from it.
+      const data = {
+        ...asOf.data,
+        evidence: asOf.data.evidence.filter(
+          (e) => trainSeqs.has(e.seq) || (e.kind === 'feedback' && e.seq < beforeSeq),
+        ),
+      };
       const state = buildState(data, stateOptions(cfg, beforeSeq, { strategy: spec.strategy }));
       const qs = targets.map((e) => qById.get(e.questionId)!);
       const preds = await predictAll(predictor, state, qs);
@@ -286,9 +296,7 @@ export async function reproduceOnline(
       // Questions served before stateAt existed fall back to servedAt (approximate, ADR-0017).
       const loaded = await loadMimicDataAt(deps, m, q.stateAt ?? q.servedAt, q.seq);
       const state = buildState(loaded.data, stateOptions(cfg, q.seq, { forQuestions: [q] }));
-      const eligible = loaded.data.evidence.filter(
-        (e) => e.seq < q.seq! && (e.kind === 'anchor' || e.kind === 'adaptive'),
-      ).length;
+      const eligible = loaded.data.evidence.filter((e) => e.seq < q.seq! && learnsFrom(e.kind)).length;
       const overBudget = cfg.stateBuilder.strategy !== 'structured' && state.evidence.length < eligible;
       n++;
       if (q.stateAt === null) legacy++;

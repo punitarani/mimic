@@ -1,5 +1,5 @@
 import type { FidelityState } from './fidelity';
-import type { Distribution, Facet, Insight, Question, TraitEstimate } from './types';
+import type { Distribution, Facet, Insight, QKind, Question, TraitEstimate } from './types';
 
 export type MimicStatus = 'intake' | 'identity' | 'learning' | 'paused' | 'archived';
 /** ADR-0007: sub-state of identity resolution, so the UI can show progress. */
@@ -298,7 +298,7 @@ export interface Store {
   // questions
   insertQuestions(recs: QuestionRecord[]): Promise<void>;
   getQuestion(id: string): Promise<QuestionRecord | null>;
-  listQuestions(mimicId: string, status?: QuestionStatus[]): Promise<QuestionRecord[]>;
+  listQuestions(mimicId: string, status?: QuestionStatus[], kinds?: QKind[]): Promise<QuestionRecord[]>;
   updateQuestionStatus(id: string, status: QuestionStatus): Promise<void>;
   /**
    * Atomically marks a question served at `seq` and persists its sealed predictions (PLAN §3.2). Returns false
@@ -323,8 +323,22 @@ export interface Store {
   getAnswerByIdempotencyKey(key: string): Promise<AnswerRecord | null>;
   getAnswerForQuestion(questionId: string): Promise<AnswerRecord | null>;
   listAnswers(mimicId: string): Promise<AnswerRecord[]>;
-  /** Atomically stores the answer, marks the question answered and writes the scores. */
-  recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<void>;
+  /**
+   * Atomically stores the answer, marks the question answered and writes the scores. Returns false, writing
+   * nothing, if the answer's seq or idempotency key is already taken (the question moved, or a duplicate raced).
+   */
+  recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<boolean>;
+  /**
+   * Atomically inserts a question the person wrote and answered themselves (`kind = feedback`, ADR-0032) at
+   * `answer.seq`, with its answer, and advances the mimic's `seqMax`. With `move`, the served session question at
+   * that seq first moves to `move.toSeq`, so it is answered after the feedback. Returns false, writing nothing, if a
+   * seq was already taken, the moved question was answered meanwhile, or the idempotency key was used.
+   */
+  recordFeedback(args: {
+    question: QuestionRecord;
+    answer: AnswerRecord;
+    move?: { questionId: string; toSeq: number };
+  }): Promise<boolean>;
   insertScores(recs: ScoreRecord[]): Promise<void>;
   listScoredPredictions(mimicId: string, roles: PredictionRole[]): Promise<ScoredPredictionRow[]>;
   // derived state
