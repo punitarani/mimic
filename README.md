@@ -1,8 +1,6 @@
 # Mimic
 
-**Learns how you decide from about 30 quick questions, and scores every guess before you answer.**
-
-[![CI](https://github.com/punitarani/mimic/actions/workflows/ci.yml/badge.svg)](https://github.com/punitarani/mimic/actions/workflows/ci.yml)
+**Learns how you decide from as few as 30 questions, and scores every guess before you answer.**
 
 ![A session at answer 14: the mimic guessed "With one teammate" (71%), the person picked "With the whole team". The left panel shows fidelity, lift over the profile-only guess and what changed.](docs/assets/session.png)
 
