@@ -11,7 +11,12 @@ import {
   type SoulView,
   writeSoulDraft,
 } from '../soul';
-import type { SoulCurationRecord as CurationRecord, MimicRecord, SoulDraftRecord } from '../store';
+import {
+  type SoulCurationRecord as CurationRecord,
+  type MimicRecord,
+  type SoulDraftRecord,
+  StaleEvidenceError,
+} from '../store';
 import type { Facet } from '../types';
 import { mimicDocParts } from './artifact';
 import { loadMimicData } from './data';
@@ -26,7 +31,7 @@ import {
 } from './deps';
 
 /**
- * SOUL.md (ADR-0036). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
+ * SOUL.md (ADR-0037). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
  * snapshot (so it can't race the `snapshot.write` job or freeze derived data mid-learning), and a fact the person
  * removes leaves the file at once.
  */
@@ -137,7 +142,14 @@ export async function draftSoul(deps: EngineDeps, mimicId: string): Promise<Soul
     draft,
     createdAt: deps.clock(),
   };
-  await deps.store.insertSoulDraft(rec);
+  // Drafted from the answers read above: refused if one of them was undone meanwhile (ADR-0036).
+  try {
+    await deps.store.guarded(m.id, m.evidenceEpoch).insertSoulDraft(rec);
+  } catch (e) {
+    if (e instanceof StaleEvidenceError)
+      throw new EngineError('conflict', 'Your answers changed while this was written. Try again.');
+    throw e;
+  }
   return view(deps, m, { loaded, draft: rec });
 }
 

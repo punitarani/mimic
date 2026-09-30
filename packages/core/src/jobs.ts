@@ -12,9 +12,27 @@ export const Job = z.discriminatedUnion('type', [
     questionId: z.string(),
     predictorId: z.string(),
   }),
-  z.object({ type: z.literal('learn.answer'), mimicId: z.string(), seq: z.number().int() }),
-  z.object({ type: z.literal('hypotheses.refresh'), mimicId: z.string(), seqUpTo: z.number().int() }),
-  z.object({ type: z.literal('snapshot.write'), mimicId: z.string(), seqUpTo: z.number().int() }),
+  /** `answerId` ties the job to one answer, so a re-answer after a rewind learns again (ADR-0036). */
+  z.object({
+    type: z.literal('learn.answer'),
+    mimicId: z.string(),
+    seq: z.number().int(),
+    answerId: z.string().optional(),
+  }),
+  /** `epoch` (ADR-0036) keys a refresh or snapshot to the evidence it follows, so one queued before an undo never
+   * stands in for the re-answer's. Absent on jobs queued before it. */
+  z.object({
+    type: z.literal('hypotheses.refresh'),
+    mimicId: z.string(),
+    seqUpTo: z.number().int(),
+    epoch: z.number().int().optional(),
+  }),
+  z.object({
+    type: z.literal('snapshot.write'),
+    mimicId: z.string(),
+    seqUpTo: z.number().int(),
+    epoch: z.number().int().optional(),
+  }),
   /** Backfill (ADR-0024): fans out one `backfill.mimic` per mimic. `runId` makes each run its own job. */
   z.object({
     type: z.literal('backfill.predictor'),
@@ -48,11 +66,10 @@ export function jobKey(job: Job): string {
     case 'predict.shadow':
       return `predict.shadow:${job.mimicId}:${job.questionId}:${job.predictorId}`;
     case 'learn.answer':
-      return `learn.answer:${job.mimicId}:${job.seq}`;
+      return `learn.answer:${job.mimicId}:${job.seq}${job.answerId ? `:${job.answerId}` : ''}`;
     case 'hypotheses.refresh':
-      return `hypotheses.refresh:${job.mimicId}:${job.seqUpTo}`;
     case 'snapshot.write':
-      return `snapshot.write:${job.mimicId}:${job.seqUpTo}`;
+      return `${job.type}:${job.mimicId}:${job.seqUpTo}${job.epoch !== undefined ? `:${job.epoch}` : ''}`;
     // Predictor IDs contain ':', so they come last.
     case 'backfill.predictor':
       return `backfill.predictor:${job.runId}:${job.consentedOnly ? 1 : 0}:${job.predictorId}`;
@@ -81,15 +98,22 @@ export function jobFromKey(key: string): Job | null {
       job = { type, mimicId: parts[0], candidateId: parts[1] };
       break;
     case 'pool.refill':
-    case 'learn.answer':
       job = { type, mimicId: parts[0], seq: Number(parts[1]) };
+      break;
+    case 'learn.answer':
+      job = { type, mimicId: parts[0], seq: Number(parts[1]), ...(parts[2] ? { answerId: parts[2] } : {}) };
       break;
     case 'predict.shadow':
       job = { type, mimicId: parts[0], questionId: parts[1], predictorId: parts.slice(2).join(':') };
       break;
     case 'hypotheses.refresh':
     case 'snapshot.write':
-      job = { type, mimicId: parts[0], seqUpTo: Number(parts[1]) };
+      job = {
+        type,
+        mimicId: parts[0],
+        seqUpTo: Number(parts[1]),
+        ...(parts[2] !== undefined ? { epoch: Number(parts[2]) } : {}),
+      };
       break;
     case 'backfill.predictor':
       job = { type, runId: parts[0], consentedOnly: parts[1] === '1', predictorId: parts.slice(2).join(':') };

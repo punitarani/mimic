@@ -83,6 +83,7 @@ const MIMIC_TABLES = [
   'questions',
   'predictions',
   'answers',
+  'answer_rewinds',
   'scores',
   'trait_estimates',
   'trait_history',
@@ -144,7 +145,7 @@ export async function scrubExport(
     await client.execute({ sql: 'delete from mimics where id = ?', args: [id] });
   }
   await client.execute('delete from jobs');
-  // SOUL.md curation is the person's own writing and choices, not research data (ADR-0036). Drafts are free text
+  // SOUL.md curation is the person's own writing and choices, not research data (ADR-0037). Drafts are free text
   // written from location and sourced facts, so they go too whenever identity is scrubbed (below).
   await client.execute('delete from soul_curations');
   await client.execute('delete from vectors');
@@ -168,6 +169,7 @@ export async function scrubExport(
       update model_calls set r2_trace_key = '', job_key = null;
       update snapshots set r2_key = '';
       update answers set idempotency_key = 'k_' || id;
+      update answer_rewinds set idempotency_key = 'k_' || answer_id;
     `);
     const mimics = (await client.execute('select id, participant_id from mimics')).rows;
     for (const r of mimics) {

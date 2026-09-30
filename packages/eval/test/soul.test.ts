@@ -47,7 +47,7 @@ async function mimic() {
   );
 }
 
-describe('SOUL.md (ADR-0036)', () => {
+describe('SOUL.md (ADR-0037)', () => {
   it('drafts, curates and exports a SOUL.md from live data', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await mimic();

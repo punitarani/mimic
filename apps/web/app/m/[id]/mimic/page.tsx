@@ -34,15 +34,15 @@ export default function MimicPage() {
           )}
         </section>
         <Playground id={id} snap={snap.data} />
-        <Persona id={id} />
+        <Soul id={id} />
         <Manage id={id} />
       </main>
     </div>
   );
 }
 
-/** SOUL.md (ADR-0036): a portable portrait for any agent, curated on its own page. */
-function Persona({ id }: { id: string }) {
+/** SOUL.md (ADR-0037): a portable portrait for any agent, curated on its own page. */
+function Soul({ id }: { id: string }) {
   return (
     <section aria-labelledby="persona-h" className="space-y-3">
       <h2 id="persona-h" className="text-lg font-medium">

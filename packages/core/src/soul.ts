@@ -8,7 +8,7 @@ import { PROMPTS } from './prompts';
 import type { Facet } from './types';
 
 /**
- * SOUL.md (ADR-0036): a model of a real person that any agent can read to predict and represent how they think and
+ * SOUL.md (ADR-0037): a model of a real person that any agent can read to predict and represent how they think and
  * decide. It is a view of the mimic's current evidence and derived data, plus an optional LLM-written draft
  * (`soul.v1`) and the person's curation. Evidence stays the source of truth (PLAN §3.3): drafts are derived and
  * versioned, and curation only filters, rewords and adds the person's own rules and words. Nothing here feeds back

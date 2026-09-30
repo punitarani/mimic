@@ -33,6 +33,8 @@ export const mimics = sqliteTable(
     consentResearch: bool('consent_research').notNull(),
     split: text('split', { enum: ['dev', 'test'] }).notNull(),
     seqMax: integer('seq_max').notNull().default(0),
+    /** Bumped by every undo; guarded writes check it in the same batch (ADR-0036). */
+    evidenceEpoch: integer('evidence_epoch').notNull().default(0),
     snapshotVersion: integer('snapshot_version').notNull().default(0),
     spendUsd: real('spend_usd').notNull().default(0),
     createdAt: integer('created_at').notNull(),
@@ -76,6 +78,8 @@ export const facts = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** Last change of user_state (ADR-0017). */
     userStateAt: integer('user_state_at'),
+    /** For reflection facts: the seqUpTo of the reflection that wrote it (ADR-0036). */
+    seqUpTo: integer('seq_up_to'),
   },
   (t) => [index('facts_mimic_idx').on(t.mimicId)],
 );
@@ -165,6 +169,31 @@ export const answers = sqliteTable(
   ],
 );
 
+/** ADR-0036: answers the person undid to re-answer. One row per retracted answer (answer_id is unique). */
+export const answerRewinds = sqliteTable(
+  'answer_rewinds',
+  {
+    id: text('id').primaryKey(),
+    mimicId: text('mimic_id').notNull(),
+    questionId: text('question_id').notNull(),
+    seq: integer('seq').notNull(),
+    answerId: text('answer_id').notNull(),
+    value: text('value').notNull(),
+    why: text('why'),
+    latencyMs: integer('latency_ms').notNull(),
+    revealedPrediction: bool('revealed_prediction').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    answeredAt: integer('answered_at').notNull(),
+    rewoundAt: integer('rewound_at').notNull(),
+  },
+  (t) => [
+    index('answer_rewinds_mimic_idx').on(t.mimicId, t.seq),
+    // Makes a second, concurrent undo of the same answer fail as a whole (ADR-0036).
+    uniqueIndex('answer_rewinds_answer_idx').on(t.answerId),
+    index('answer_rewinds_idempotency_idx').on(t.idempotencyKey),
+  ],
+);
+
 export const scores = sqliteTable(
   'scores',
   {
@@ -221,6 +250,8 @@ export const insights = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** When the status left `active` (ADR-0017: lets replay rebuild the state as it was at serve time). */
     statusChangedAt: integer('status_changed_at'),
+    /** seqUpTo of the reflection that superseded it, so undoing that answer restores it (ADR-0036). */
+    supersededSeq: integer('superseded_seq'),
   },
   (t) => [index('insights_mimic_idx').on(t.mimicId)],
 );
@@ -360,7 +391,7 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
-/** ADR-0036: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds SOUL.md. */
+/** ADR-0037: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds SOUL.md. */
 export const soulDrafts = sqliteTable(
   'soul_drafts',
   {
@@ -377,7 +408,7 @@ export const soulDrafts = sqliteTable(
   (t) => [index('soul_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
 );
 
-/** ADR-0036: the person's choices for SOUL.md (sections, hidden items, edits, their own words). */
+/** ADR-0037: the person's choices for SOUL.md (sections, hidden items, edits, their own words). */
 export const soulCurations = sqliteTable('soul_curations', {
   mimicId: text('mimic_id').primaryKey(),
   json: text('json').notNull(),
@@ -425,6 +456,7 @@ export const MIMIC_TABLES = [
   questions,
   predictions,
   answers,
+  answerRewinds,
   scores,
   traitEstimates,
   traitHistory,

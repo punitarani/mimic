@@ -1,5 +1,11 @@
 import type { PipelineConfig } from '../config';
-import { type BuildOptions, buildState, type EvidenceItem, type MimicData } from '../state-builder';
+import {
+  type BuildOptions,
+  buildState,
+  type EvidenceItem,
+  type MimicData,
+  toStateEvidence,
+} from '../state-builder';
 import type {
   AnswerRecord,
   FactRecord,
@@ -145,6 +151,11 @@ export function stateOptions(
     ...(cfg.stateBuilder.latencyHints ? { latencyHints: true } : {}),
     ...extra,
   };
+}
+
+/** The text a Q&A is embedded from (plus the "why"). */
+export function qaText(item: EvidenceItem): string {
+  return `${item.prompt} → ${toStateEvidence(item).answer}${item.why ? ` (why: ${item.why})` : ''}`;
 }
 
 export const vectorId = {

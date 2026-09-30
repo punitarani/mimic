@@ -21,7 +21,7 @@ type SaveState = 'saved' | 'saving' | 'error';
 const SAVE_DELAY_MS = 600;
 const RECORD_PREVIEW = 8;
 
-/** SOUL.md (ADR-0036): choose what goes in, reword what was inferred, add your own words, then download. */
+/** SOUL.md (ADR-0037): choose what goes in, reword what was inferred, add your own words, then download. */
 export default function SoulPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
@@ -250,7 +250,7 @@ function DraftCard({
     try {
       qc.setQueryData(['soul', id], await api.draftSoul(id));
     } catch (e) {
-      onError(e instanceof Error ? e.message : 'Could not write the persona.');
+      onError(e instanceof Error ? e.message : 'Could not write the SOUL.md.');
     } finally {
       setBusy(false);
     }
