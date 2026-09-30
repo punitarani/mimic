@@ -116,10 +116,12 @@ Stored on the mimic (`mimics.categories_json`, `consents_json`, `research_consen
 ## 4. Research exports and special-category data
 
 - Research exports (`pnpm eval -- export`) keep only research-consented mimics, as before (PLAN §3.8).
-- For each special-category area a person has not consented to research use of, the export drops: questions
-  touching that area's facets with their answers, predictions and scores; trait estimates and history for those
-  facets; insights naming those facets or citing those answers; reflection facts citing those answers; knowledge
-  graph facet nodes and edges for those facets (ADR-0043).
+- For each special-category area a person has not consented to research use of, and for every category they
+  deselected, the export drops: questions touching that area's facets with their answers, rewinds, predictions and
+  scores; trait estimates and history for those facets; insights naming those facets, citing those answers or
+  stating an attribute in that area; reflection facts citing those answers and any fact stating an attribute in
+  that area; knowledge graph facet nodes and the edges sourced from dropped rows; occupation facets outside scope.
+  Sentences revealing that area are removed from the answers' "why" text (ADR-0043).
 - Money in detail follows plain research consent.
 - Aggregate item statistics (`item_stats`) count rows touching a special-category facet only from people who
   consented to research use of that area.
@@ -139,17 +141,20 @@ The facet list every stage uses comes from one place, `facetsFor`, which is scop
 | Anchors | Seeded at intake only if every facet they touch is allowed | M9 |
 | Serving | Anchors, repeat sources, the adaptive pool and the reserve bank are filtered by scope | M9 |
 | Generator | Targets and the ontology block come from scoped facets; a draft tagging a blocked facet is rejected | M9 |
-| Trait reader | Scoped facets only; psychometric anchor scoring only for allowed facets; sensitive traits only with direct evidence | M9 / M11 |
-| Reflector | Scoped facet list; insights and facts touching a blocked facet or a hidden answer dropped; sensitive tags need a direct question | M9 / M11 |
-| Hypotheses and belief | Scoped facets; hidden answers never count | M9 |
+| Trait reader | Scoped facets only; psychometric anchor scoring only for allowed facets; a sensitive facet is read only after a direct question about it | M9 / M11 |
+| Reflector | Scoped facet list; insights and facts touching a blocked facet or a hidden answer dropped; a sensitive tag, or a statement about a special-category area, needs a cited direct answer (`guardInsight`, `reflectionFactAllowed`) | M9 / M11 |
+| Hypotheses and belief | Scoped facets; hidden answers never count; a sentence guessing a special-category area is removed until a direct answer exists (`guardHypothesisText`) | M9 / M11 |
 | Occupation facets | Generated only with "Work and money" selected | M9 |
 | Gates | gates.v3: `sensitive` asks about every area the draft is not tagged with; `demeaning` and `concrete` on every draft | M10 |
 | Workplace scenes | None without "Work and money": professional quota zero, professional drafts and reserve items rejected | M10 |
-| Web search and enrichment | Special-category facts dropped before they are stored | M11 |
-| Views and `mimic.json` | Scoped facets, insights, facts and graph nodes only | M9 / M11 |
+| Web search and enrichment | Special-category facts dropped before they are stored, graphed or indexed; revealing sentences stripped from candidate summaries before ranking; the enrichment schema asks for none | M11 |
+| Views, `mimic.json` and SOUL.md | Scoped facets, insights, facts, evidence and graph (`scopedKg`) only; basics count only seeded anchors | M9 / M11 |
 | Item statistics | Special-category rows only with research consent for the area | M11 |
 | Research export | Special-category rows scrubbed without research consent for the area | M11 |
-| Scope changes | `setScope` discards out-of-scope pooled and waiting questions; `PATCH /api/mimics/:id/scope` | M9 / M11 |
+| Scope changes | `setScope` discards out-of-scope pooled and waiting questions and refills the pool; `PATCH /api/mimics/:id/scope`; "Topics and consent" in the session menu | M9 / M11 |
+| Replay | States served before a narrowing are reported as `rescoped`, every other state is hash-checked | M11 |
 
-The leakage tests (`packages/eval/test/scope.test.ts`) prove that no served question, trait read, insight, fact,
-graph node, view or export touches a deselected or non-consented category.
+The leakage tests prove that no served question, trait read, insight, fact, graph node, view or export touches a
+deselected or non-consented category (`packages/eval/test/scope.test.ts`), and that a sensitive facet is learned only
+from a direct, consented question, never from the web, and leaves research exports without research consent
+(`packages/eval/test/leakage.test.ts`, `packages/core/test/guards.test.ts`).

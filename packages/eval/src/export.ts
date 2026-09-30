@@ -13,6 +13,7 @@ import {
   SPECIAL_AREAS,
   type SpecialArea,
   specialAreaOfFact,
+  specialAreasOfText,
   stripSpecialAreas,
 } from '@mimic/core';
 import { openLocalDb } from '@mimic/db/local';
@@ -34,6 +35,8 @@ export interface ExportResult {
   path: string;
   mimics: number;
   dropped: number;
+  /** Rows withheld by scope and research consent; null for an internal `--keep-identity` export. */
+  withheld: Withheld | null;
   datasetHash: string;
 }
 
@@ -129,12 +132,12 @@ export async function exportData(opts: ExportOptions): Promise<ExportResult> {
     if (inserts.trim()) await client.executeMultiple(inserts);
   }
 
-  const { dropped } = await scrubExport(client, { keepIdentity: opts.keepIdentity ?? false });
+  const { dropped, withheld } = await scrubExport(client, { keepIdentity: opts.keepIdentity ?? false });
   const mimics = Number((await client.execute('select count(*) as n from mimics')).rows[0]!.n);
   await client.execute('vacuum');
   const hash = await datasetHash(client);
   close();
-  return { path: out, mimics, dropped, datasetHash: hash };
+  return { path: out, mimics, dropped, withheld, datasetHash: hash };
 }
 
 /**
@@ -144,7 +147,7 @@ export async function exportData(opts: ExportOptions): Promise<ExportResult> {
 export async function scrubExport(
   client: Client,
   opts: { keepIdentity: boolean },
-): Promise<{ dropped: number }> {
+): Promise<{ dropped: number; withheld: Withheld | null }> {
   // Consent gates research use (PLAN §3.8).
   const nonConsented = (await client.execute('select id from mimics where consent_research = 0')).rows.map(
     (r) => String(r.id),
@@ -163,7 +166,7 @@ export async function scrubExport(
 
   // Special categories (ADR-0043) before the identity scrub, which blanks the references this reads. An internal
   // `--keep-identity` export keeps them, because reproducing online predictions needs every sealed state's evidence.
-  if (!opts.keepIdentity) await scrubSpecialCategories(client);
+  const withheld = opts.keepIdentity ? null : await scrubSpecialCategories(client);
 
   if (!opts.keepIdentity) {
     const salt = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
@@ -215,7 +218,7 @@ export async function scrubExport(
       });
     }
   }
-  return { dropped: nonConsented.length };
+  return { dropped: nonConsented.length, withheld };
 }
 
 const inList = (n: number) => Array.from({ length: n }, () => '?').join(',');
@@ -227,6 +230,14 @@ const json = <T>(v: unknown, fallback: T): T => {
   }
 };
 
+/** Rows withheld from a research export by scope and research consent (ADR-0043). */
+export interface Withheld {
+  questions: number;
+  traits: number;
+  insights: number;
+  facts: number;
+}
+
 /**
  * Per person (ADR-0043): questions touching a facet outside their current scope, or a special-category facet without
  * research consent for its area, go with their answers, undo records, predictions and scores; so do trait estimates
@@ -234,9 +245,7 @@ const json = <T>(v: unknown, fallback: T): T => {
  * answers, graph facet nodes and their edges, and web facts the lexicon flags in an area without research consent.
  * Sentences in the answers' own "why" text revealing such an area are removed. Money follows plain research consent.
  */
-export async function scrubSpecialCategories(
-  client: Client,
-): Promise<{ questions: number; traits: number; insights: number; facts: number }> {
+export async function scrubSpecialCategories(client: Client): Promise<Withheld> {
   const out = { questions: 0, traits: 0, insights: 0, facts: 0 };
   const ontology = allOntologyFacets();
   const people = (
@@ -300,13 +309,14 @@ export async function scrubSpecialCategories(
     const cites = (seqs: number[]) => seqs.some((s) => dropSeqs.has(s));
     const insights = (
       await client.execute({
-        sql: 'select id, facet_ids_json, evidence_seqs_json from insights where mimic_id = ?',
+        sql: 'select id, text, facet_ids_json, evidence_seqs_json from insights where mimic_id = ?',
         args: [id],
       })
     ).rows.filter(
       (i) =>
         json<string[]>(i.facet_ids_json, []).some((f) => blocked.has(f)) ||
-        cites(json<number[]>(i.evidence_seqs_json, [])),
+        cites(json<number[]>(i.evidence_seqs_json, [])) ||
+        specialAreasOfText(String(i.text)).some((a) => !keepAreas.has(a)),
     );
     const facts = (
       await client.execute({

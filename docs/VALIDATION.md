@@ -372,3 +372,37 @@ accuracy.
   `docs/reports/m10-concreteness.md`: 46 of 48 served adaptive questions concrete by hand (96%), 13 of 48 in
   workplace scenes, and no sensitive facet reached by question 30 even with consent (the sweep is M12's).
   Scripted, so not a result about people.
+
+## M11: scope enforcement, direct evidence only, and the consent UI (ADR-0043)
+
+Nothing below comes from real people, and nothing is a measure of prediction accuracy.
+
+- **Offline fakes (tests, deterministic).** The fakes break the rules on purpose: the reflector tags religion and
+  states "Sounds deeply religious" from any answers, adds a "Sunday mass" fact, the hypothesis writer guesses church
+  attendance, and the generator appends rogue drafts.
+  - `packages/eval/test/leakage.test.ts` (10 tests, four cohorts under `cfg.m10.candidate`): without consent no
+    sensitive facet is asked, read, reflected, stored or graphed, and none reaches the generator, trait reader or
+    reflector prompts; web facts naming a special-category area are never stored; with consent sensitive questions
+    are asked, a sensitive trait is read only after a direct question, the reflector's sensitive tags, statements and
+    facts survive only with a direct citation, and a religious guess in a hypothesis survives only after a direct
+    religion answer; after health is withdrawn nothing more is asked about it, no later sealed state holds it, and
+    online reproduction passes with the earlier states reported as `rescoped`; a `--keep-identity` export keeps
+    everything, a research export scrubs special categories the person didn't consent to research use of and keeps
+    money and everything for the person who did.
+  - `packages/core/test/guards.test.ts` (5 tests): the guards' keep and drop paths, and item statistics counting a
+    special-category facet only with research consent for it.
+  - `packages/eval/test/scope.test.ts`, `packages/core/test/scope.test.ts` (M9, still green),
+    `apps/web/lib/scope-form.test.ts` (4 tests: the form reducer matches `normalizeScope`), and an adapters contract
+    test that the enrichment schema requests no special-category field.
+- **Browser (Playwright against `pnpm dev` with fixture providers).** `scripts/browser/scope.mjs`, 1440×900 and
+  390×844, light and dark: every category on and every area off by default; keyboard only (Tab reaches each
+  category, Space toggles, a disabled area is skipped and says why); research-use boxes only with research consent,
+  one per consented special area; the model panel names the category turned off; the dialog takes focus, Escape
+  closes it and returns focus to the More button; a narrowing warns before saving and the session confirms.
+  Screenshots: `docs/screenshots/m11-intake-scope.png`, `m11-intake-scope-mobile.png`, `m11-menu-topics.png`,
+  `m11-scope-sheet.png`, `m11-scope-sheet-dark.png`.
+- **End to end on local dev (fixture providers, a scripted answerer through the HTTP API).** 12 answers, "Relationships,
+  sexuality and life" turned off through `PATCH /api/mimics/:id/scope` (1 waiting question discarded), 12 more
+  answers. `export --env local --keep-identity` then `replay --mode online`: 23 primaries, 11 checkable, 12
+  `rescoped`, state-hash match 1.000, pass. A research export of the same data withheld 7 questions and 33 trait
+  rows. Scripted, so a check of the machinery, not a result.

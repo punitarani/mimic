@@ -8,7 +8,7 @@ import {
   SPECIAL_AREAS,
 } from '@mimic/core/scope';
 import { setCategory, setConsent, setResearch } from '@/lib/scope-form';
-import { Checkbox } from './ui';
+import { Checkbox, cn } from './ui';
 
 /**
  * "What to ask about" (ADR-0040, ADR-0043): the four categories, each sensitive area nested under its category with
@@ -52,7 +52,7 @@ export function ScopeTopics({
             {info.areas.length > 0 && (
               <div className="ml-[30px] space-y-3 border-l border-line pl-4">
                 {!on && (
-                  <p id={lockId} className="text-[13px] text-muted">
+                  <p id={lockId} className="pl-[30px] text-[13px] text-muted">
                     Turn on {info.name.toLowerCase()} to choose these.
                   </p>
                 )}
@@ -68,7 +68,7 @@ export function ScopeTopics({
                     hint={AREA_INFO[a].why}
                   />
                 ))}
-                <p className="text-[13px] text-muted">{SELF_ONLY_NOTE}</p>
+                <p className="pl-[30px] text-[13px] text-muted">{SELF_ONLY_NOTE}</p>
               </div>
             )}
           </div>
@@ -91,15 +91,17 @@ export function ScopeResearch({
   value,
   onChange,
   idPrefix = 'scope',
+  className,
 }: {
   value: MimicScope;
   onChange: (next: MimicScope) => void;
   idPrefix?: string;
+  className?: string;
 }) {
   const areas = SPECIAL_AREAS.filter((a) => value.consents[a]);
   if (!areas.length && !value.consents.money) return null;
   return (
-    <fieldset className="space-y-3">
+    <fieldset className={cn('space-y-3', className)}>
       <legend className="text-[15px] font-medium text-graphite">Research use of sensitive answers</legend>
       <p className="-mt-1 text-[13px] text-muted">
         Answers on these topics are left out of research unless you include them here.

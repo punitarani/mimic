@@ -166,6 +166,8 @@ export function SessionMenu({
               role="menuitem"
               onClick={() => {
                 setOpen(false);
+                // The dialog returns focus to whatever had it on open: the menu button, not this vanishing item.
+                button.current?.focus();
                 onTopics();
               }}
               className={cn(ITEM, 'text-graphite hover:bg-g8')}

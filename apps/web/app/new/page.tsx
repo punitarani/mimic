@@ -185,7 +185,9 @@ function IntakeForm({ invite }: { invite: string | null }) {
           label="Use my answers, without my name or location, for research"
           hint="Only answers from people who check this are used to compare methods."
         />
-        {research && <ScopeResearch value={scope} onChange={setScope} />}
+        {research && (
+          <ScopeResearch value={scope} onChange={setScope} className="ml-[30px] border-l border-line pl-4" />
+        )}
       </div>
       <ErrorText>{error}</ErrorText>
       <Button
