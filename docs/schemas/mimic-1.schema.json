@@ -35,10 +35,17 @@
           "type": "string"
         },
         "occupation": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
-      "required": ["displayName", "location", "occupation"],
+      "required": [
+        "displayName",
+        "location",
+        "occupation"
+      ],
       "additionalProperties": false
     },
     "facts": {
@@ -54,16 +61,30 @@
           },
           "source": {
             "type": "string",
-            "enum": ["intake", "search", "answer", "reflection"]
+            "enum": [
+              "intake",
+              "search",
+              "answer",
+              "reflection"
+            ]
           },
           "url": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "confidence": {
             "type": "number"
           }
         },
-        "required": ["predicate", "object", "source", "url", "confidence"],
+        "required": [
+          "predicate",
+          "object",
+          "source",
+          "url",
+          "confidence"
+        ],
         "additionalProperties": false
       }
     },
@@ -79,11 +100,20 @@
           },
           "kind": {
             "type": "string",
-            "enum": ["anchor", "adaptive", "repeat", "playground"]
+            "enum": [
+              "anchor",
+              "adaptive",
+              "repeat",
+              "playground"
+            ]
           },
           "type": {
             "type": "string",
-            "enum": ["choice", "noul", "score"]
+            "enum": [
+              "choice",
+              "noul",
+              "score"
+            ]
           },
           "prompt": {
             "type": "string"
@@ -104,10 +134,22 @@
             "type": "string"
           },
           "why": {
-            "type": ["string", "null"]
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
-        "required": ["seq", "kind", "type", "prompt", "options", "optionKeys", "answer", "why"],
+        "required": [
+          "seq",
+          "kind",
+          "type",
+          "prompt",
+          "options",
+          "optionKeys",
+          "answer",
+          "why"
+        ],
         "additionalProperties": false
       }
     },
@@ -121,7 +163,10 @@
           },
           "method": {
             "type": "string",
-            "enum": ["jev", "psychometric"]
+            "enum": [
+              "jev",
+              "psychometric"
+            ]
           },
           "mean": {
             "type": "number"
@@ -144,7 +189,14 @@
             "maximum": 9007199254740991
           }
         },
-        "required": ["facet", "method", "mean", "dist", "confidence", "n"],
+        "required": [
+          "facet",
+          "method",
+          "mean",
+          "dist",
+          "confidence",
+          "n"
+        ],
         "additionalProperties": false
       }
     },
@@ -171,7 +223,11 @@
             }
           }
         },
-        "required": ["text", "facets", "evidence"],
+        "required": [
+          "text",
+          "facets",
+          "evidence"
+        ],
         "additionalProperties": false
       }
     },
@@ -193,7 +249,11 @@
                 "type": "string"
               }
             },
-            "required": ["id", "type", "label"],
+            "required": [
+              "id",
+              "type",
+              "label"
+            ],
             "additionalProperties": false
           }
         },
@@ -215,12 +275,20 @@
                 "type": "number"
               }
             },
-            "required": ["src", "dst", "predicate", "weight"],
+            "required": [
+              "src",
+              "dst",
+              "predicate",
+              "weight"
+            ],
             "additionalProperties": false
           }
         }
       },
-      "required": ["nodes", "edges"],
+      "required": [
+        "nodes",
+        "edges"
+      ],
       "additionalProperties": false
     },
     "fidelity": {
@@ -249,7 +317,10 @@
               "type": "number"
             },
             "accBaseline": {
-              "type": ["number", "null"]
+              "type": [
+                "number",
+                "null"
+              ]
             },
             "selfConsistency": {
               "type": "number"
@@ -260,7 +331,14 @@
               "maximum": 9007199254740991
             }
           },
-          "required": ["fidelity", "ci", "acc", "accBaseline", "selfConsistency", "n"],
+          "required": [
+            "fidelity",
+            "ci",
+            "acc",
+            "accBaseline",
+            "selfConsistency",
+            "n"
+          ],
           "additionalProperties": false
         },
         {
@@ -279,14 +357,23 @@
           "type": "object",
           "properties": {
             "primary": {
-              "type": ["string", "null"]
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
-          "required": ["primary"],
+          "required": [
+            "primary"
+          ],
           "additionalProperties": false
         }
       },
-      "required": ["configHash", "config", "models"],
+      "required": [
+        "configHash",
+        "config",
+        "models"
+      ],
       "additionalProperties": false
     }
   },

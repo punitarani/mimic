@@ -14,7 +14,8 @@
       "!**/.open-next",
       "!**/cloudflare-env.d.ts",
       "!**/worker-configuration.d.ts",
-      "!docs/ontology/*.json"
+      "!docs/ontology/*.json",
+      "!docs/schemas/*.json"
     ]
   },
   "formatter": {

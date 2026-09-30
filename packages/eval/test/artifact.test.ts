@@ -94,7 +94,7 @@ describe('mimic artifact (M6)', () => {
     // Sanity: the mimic is everywhere before deletion.
     expect((await mentions()).length).toBeGreaterThan(50);
     expect([...blobs.data.keys()].some((k) => k.includes(m.id))).toBe(true);
-    await kv.put('hyp:' + m.id, '{"seqUpTo":1,"hypotheses":[]}');
+    await kv.put(`hyp:${m.id}`, '{"seqUpTo":1,"hypotheses":[]}');
     expect(await kv.get(searchCacheKey((await engine.deps.store.getMimic(m.id))!))).not.toBeNull();
     const traceKeys = (await engine.deps.store.listModelCalls({ mimicId: m.id, limit: 100_000 })).map(
       (c) => c.r2TraceKey,

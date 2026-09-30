@@ -13,6 +13,7 @@ pnpm i
 pnpm dev                    # migrations + egress relay + worker (wrangler dev) + web (next dev); local D1/R2/KV/Queues
 pnpm typecheck              # tsc --noEmit across the workspace
 pnpm lint                   # biome
+pnpm check                  # lint + typecheck + test (use this before every commit)
 pnpm test                   # vitest; no live provider calls
 pnpm test:live              # live smoke tests; requires keys (or the dev proxy) and LIVE=1
 pnpm db:generate            # drizzle-kit generate
@@ -79,6 +80,6 @@ Check the provider's current docs, since these APIs are new and change: OpenRout
 
 ## Definition of done (every milestone)
 
-- [ ] `pnpm typecheck && pnpm lint && pnpm test` pass.
+- [ ] `pnpm check` (lint, typecheck and test) passes.
 - [ ] Every acceptance criterion in the milestone is checked off in the PR description.
 - [ ] New config fields, tables or prompts are documented in PLAN.md or DECISIONS.md.

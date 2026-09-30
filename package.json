@@ -19,7 +19,8 @@
     "db:migrate:prod": "pnpm --filter @mimic/worker exec wrangler d1 migrations apply DB --remote --env prod",
     "deploy:preview": "pnpm db:migrate:preview && pnpm --filter @mimic/worker deploy:preview && pnpm --filter @mimic/web deploy:preview",
     "deploy:prod": "pnpm db:migrate:prod && pnpm --filter @mimic/worker deploy:prod && pnpm --filter @mimic/web deploy:prod",
-    "eval": "NODE_USE_ENV_PROXY=1 tsx packages/eval/src/cli.ts"
+    "eval": "NODE_USE_ENV_PROXY=1 tsx packages/eval/src/cli.ts",
+    "check": "pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
