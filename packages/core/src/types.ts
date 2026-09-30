@@ -227,6 +227,11 @@ export interface PersonCandidate {
   location?: string;
   url: string;
   summary: string;
+  /**
+   * Structured facts the search result already carried (an Exa person entity), without source URLs: the candidate's
+   * URL is their source. When present, confirming this candidate needs no enrichment call (ADR-0034).
+   */
+  facts?: EnrichedFact[];
 }
 
 export interface PeopleSearchResult {
@@ -257,15 +262,40 @@ export interface EnrichmentResult {
   raw: unknown;
 }
 
+/** One provider call's outcome, for logging (PLAN §3.5). */
+export interface ProviderCallOutcome {
+  costUsd: number;
+  latencyMs: number;
+  raw: unknown;
+}
+
+/**
+ * Runs and logs one provider call: the gateway gives each enricher a runner so an enrichment that makes several
+ * calls (Exa `/contents`, then a schema summary) logs one `model_calls` row per call, each under its own model.
+ */
+export type ProviderCallRunner = <T extends ProviderCallOutcome>(
+  model: string,
+  request: unknown,
+  call: () => Promise<T>,
+) => Promise<T>;
+
 export interface Enricher {
   readonly provider: string;
-  enrich(subject: {
-    name: string;
-    location: string;
-    url: string;
-    occupation?: string;
-    employer?: string;
-  }): Promise<EnrichmentResult>;
+  /**
+   * True when the facts a search candidate carries (`PersonCandidate.facts`) are what this enricher would return,
+   * so confirming such a candidate skips the enrichment call.
+   */
+  readonly usesSearchFacts?: boolean;
+  enrich(
+    subject: {
+      name: string;
+      location: string;
+      url: string;
+      occupation?: string;
+      employer?: string;
+    },
+    run: ProviderCallRunner,
+  ): Promise<EnrichmentResult>;
 }
 
 export interface EmbedResult {

@@ -40,7 +40,7 @@ export interface UiSnapshot {
     spendUsd: number;
     /**
      * The whole cap: asking, teaching and Persona.md work until spend reaches it. The session stops earlier, at its
-     * share, and says so through `/next` (ADR-0034).
+     * share, and says so through `/next` (ADR-0035).
      */
     budgetUsd: number;
     snapshotVersion: number;

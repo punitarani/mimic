@@ -36,7 +36,7 @@ export interface EngineDeps {
   defer?: (task: () => Promise<void>) => void;
   /** Receives phase timings (ms), e.g. for Server-Timing headers. */
   timing?: (phase: string, ms: number) => void;
-  /** Deploy-time spend limits (ADR-0034); unset fields fall back to the config's budget and an 80% session share. */
+  /** Deploy-time spend limits (ADR-0035); unset fields fall back to the config's budget and an 80% session share. */
   spend?: SpendLimits;
 }
 

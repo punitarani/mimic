@@ -225,7 +225,7 @@ describe('feedback robustness (ADR-0032)', () => {
     expect(doc.evidence.find((e) => e.kind === 'feedback')?.seq).toBe(fb.question.seq);
   });
 
-  it("keeps the budget's last 20% for the mimic page once the session has spent its share (ADR-0034)", async () => {
+  it("keeps the budget's last 20% for the mimic page once the session has spent its share (ADR-0035)", async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await session(2);
     const { store } = engine.deps;

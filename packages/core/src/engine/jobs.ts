@@ -45,7 +45,7 @@ export const MAX_JOB_ATTEMPTS = 5;
  * so the queue retries with backoff; after MAX_JOB_ATTEMPTS the queue's dead-letter queue takes over.
  *
  * A job refused by the budget guard is 'skipped', not retried (a retry would be refused the same way), and is never
- * marked done, so the same job runs again if it is enqueued after the cap is raised (ADR-0034). Its row is written
+ * marked done, so the same job runs again if it is enqueued after the cap is raised (ADR-0035). Its row is written
  * with the attempts used up, so the stale-job requeue leaves it alone.
  */
 export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skipped'> {
@@ -129,7 +129,7 @@ export async function enqueueMissingShadows(
 ): Promise<number> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  // Shadows stop with the session's share (ADR-0034); enqueueing them past it would only queue refusals.
+  // Shadows stop with the session's share (ADR-0035); enqueueing them past it would only queue refusals.
   if (sessionSpent(deps, m, cfg)) return 0;
   return enqueueMissingPredictions(deps, mimicId, servedBefore, cfg.predictor.shadows);
 }
@@ -517,7 +517,7 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
       { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
     );
 
-  // Learning runs to the whole cap, so answers taught on the mimic page after the session still count (ADR-0034).
+  // Learning runs to the whole cap, so answers taught on the mimic page after the session still count (ADR-0035).
   // Over it every model call is refused, and the job would retry until dropped. The answer is kept as evidence and
   // goes into the snapshot; only the reads that need a model are skipped.
   if (budgetSpent(deps, m, cfg)) return snapshot();

@@ -162,7 +162,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
 export const DEFAULT_CONFIG_LABEL = 'cfg.default.v4';
 
 /**
- * Runtime spend limits (ADR-0034). Deploy settings, not pipeline config: they change what a mimic may spend, never
+ * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never
  * what a prediction sees, so changing them keeps every config hash.
  */
 export interface SpendLimits {
@@ -176,7 +176,7 @@ export interface SpendLimits {
 export const DEFAULT_BUDGET_USD = 1;
 export const DEFAULT_SESSION_SHARE = 0.8;
 /**
- * The budget every `cfg.default.*` config carries, from before ADR-0034. A config with it is on the standard budget,
+ * The budget every `cfg.default.*` config carries, from before ADR-0035. A config with it is on the standard budget,
  * which the deploy sets; a config that names any other budget (an experiment arm, say) keeps its own.
  */
 export const STANDARD_CONFIG_BUDGET_USD = 0.5;

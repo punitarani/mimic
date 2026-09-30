@@ -207,7 +207,7 @@ export class StoreCallLog implements CallLog {
 
 /**
  * Budget guard backed by `mimics.spend_usd` and the caps from the mimic's config and the deploy's spend limits
- * (`spendCaps`, ADR-0034): the whole cap, and the session's share the gateway holds session work to.
+ * (`spendCaps`, ADR-0035): the whole cap, and the session's share the gateway holds session work to.
  */
 export class StoreBudget implements BudgetLedger {
   private readonly caps = new Map<string, SpendCaps>();

@@ -148,7 +148,7 @@ describe('budget guard', () => {
   });
 });
 
-describe('spend caps (ADR-0034)', () => {
+describe('spend caps (ADR-0035)', () => {
   it('gives the standard budget $1 and keeps 20% of it for the mimic page by default', () => {
     const caps = spendCaps(DEFAULT_CONFIG);
     expect(caps.totalUsd).toBe(DEFAULT_BUDGET_USD);
@@ -187,7 +187,7 @@ describe('spend caps (ADR-0034)', () => {
   });
 });
 
-describe('spend scopes (ADR-0034)', () => {
+describe('spend scopes (ADR-0035)', () => {
   class CapBudget implements BudgetLedger {
     constructor(public spend: number) {}
     async get() {
@@ -219,5 +219,39 @@ describe('spend scopes (ADR-0034)', () => {
     expect(used.size).toBeGreaterThan(10);
     expect([...used].filter((p) => !(p in SPEND_SCOPES))).toEqual([]);
     expect(spendScope('not.listed')).toBe('session');
+  });
+});
+
+describe('enrichment logging (PLAN §3.5, ADR-0034)', () => {
+  it('logs each provider call an enricher makes as its own row, failures included', async () => {
+    const log = new MemLog();
+    let n = 0;
+    const g = new Gateway({
+      decisions: decisions(),
+      llm,
+      log,
+      enricher: {
+        provider: 'exa',
+        async enrich(_subject, run) {
+          const page = await run('exa:contents', { urls: ['u'] }, async () => ({
+            costUsd: 0.001,
+            latencyMs: 3,
+            raw: {},
+          }));
+          await run('exa:summary', { urls: ['u'] }, async () => {
+            throw new Error('summary did not match the schema');
+          }).catch(() => null);
+          return { facts: [], costUsd: page.costUsd, latencyMs: 5, raw: {} };
+        },
+      },
+      clock: () => 1_790_000_000_000,
+      newId: () => `id${++n}`,
+    });
+    await g.enrich({ purpose: 'identity.enrich', mimicId: 'M' }, { name: 'A', location: 'B', url: 'u' });
+    expect(log.rows.map((r) => [r.provider, r.model, r.ok, r.costUsd])).toEqual([
+      ['exa', 'exa:contents', true, 0.001],
+      ['exa', 'exa:summary', false, 0],
+    ]);
+    expect(log.rows[1]!.error).toContain('schema');
   });
 });

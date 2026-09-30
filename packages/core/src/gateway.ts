@@ -11,6 +11,7 @@ import type {
   LlmClient,
   PeopleSearch,
   PeopleSearchResult,
+  ProviderCallRunner,
   Usage,
 } from './types';
 
@@ -58,13 +59,13 @@ export interface CallLog {
 
 /** Per-mimic spend ledger backing the budget guard (PLAN §11 Limits). */
 export interface BudgetLedger {
-  /** `budgetUsd` is the whole cap; `sessionUsd`, when set, is the session's share of it (ADR-0034). */
+  /** `budgetUsd` is the whole cap; `sessionUsd`, when set, is the session's share of it (ADR-0035). */
   get(mimicId: string): Promise<{ spendUsd: number; budgetUsd: number; sessionUsd?: number } | null>;
   add(mimicId: string, usd: number): Promise<void>;
 }
 
 /**
- * Which cap a call is held to (ADR-0034):
+ * Which cap a call is held to (ADR-0035):
  * - `session`: background session and research work, held to the session's share so it never draws on the reserve.
  * - `serve`: the calls that serve a session question. `/next` admits a serve only under the session's share, and the
  *   guard then holds its calls to the whole cap, so a serve that starts under the share is never cut off halfway.
@@ -288,17 +289,20 @@ export class Gateway {
     );
   }
 
+  /** True when confirming a search candidate that carries facts needs no enrichment call (ADR-0034). */
+  get enrichmentUsesSearchFacts(): boolean {
+    return this.deps.enricher?.usesSearchFacts === true;
+  }
+
+  /** Each provider call the enricher makes is logged as its own `model_calls` row (PLAN §3.5). */
   async enrich(ctx: CallContext, subject: Parameters<Enricher['enrich']>[0]): Promise<EnrichmentResult> {
     const en = this.deps.enricher;
     if (!en) throw new Error('No enricher configured');
-    return withModelCall(
-      this.deps,
-      { ...ctx, provider: en.provider, model: `${en.provider}:task` },
-      subject,
-      async () => {
-        const r = await en.enrich(subject);
+    const run: ProviderCallRunner = (model, request, call) =>
+      withModelCall(this.deps, { ...ctx, provider: en.provider, model }, request, async () => {
+        const r = await call();
         return { ...r, usage: { inputTokens: 0, outputTokens: 0, costUsd: r.costUsd }, modelSnapshot: null };
-      },
-    );
+      });
+    return en.enrich(subject, run);
   }
 }

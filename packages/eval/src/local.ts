@@ -43,7 +43,7 @@ export interface LocalOptions {
   clock?: () => number;
   /** Deterministic IDs (mimic IDs seed anchor order and selection), for reproducible offline tests. */
   seed?: string;
-  /** Spend limits (ADR-0034); defaults to `BUDGET_*` from the environment for live runs, and none offline. */
+  /** Spend limits (ADR-0035); defaults to `BUDGET_*` from the environment for live runs, and none offline. */
   spend?: SpendLimits;
 }
 

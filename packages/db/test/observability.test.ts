@@ -63,7 +63,7 @@ describe('model call logging and budget guard on the real schema', () => {
     const trace = JSON.parse((await blobs.get(calls[0]!.r2TraceKey))!);
     expect(trace.response.authorization).toBe('[redacted]');
     expect((await store.getMimic('m1'))!.spendUsd).toBeCloseTo(0.9);
-    // $0.90 ≥ $0.80, the session's share of the standard $1 cap, which an unlisted purpose is held to (ADR-0034)
+    // $0.90 ≥ $0.80, the session's share of the standard $1 cap, which an unlisted purpose is held to (ADR-0035)
     await expect(g.decide({ purpose: 'test', mimicId: 'm1' }, req)).rejects.toBeInstanceOf(
       BudgetExceededError,
     );
@@ -71,7 +71,7 @@ describe('model call logging and budget guard on the real schema', () => {
     close();
   });
 
-  it('reports the standard caps, or BUDGET_USD and BUDGET_SESSION_SHARE when set (ADR-0034)', async () => {
+  it('reports the standard caps, or BUDGET_USD and BUDGET_SESSION_SHARE when set (ADR-0035)', async () => {
     const { store, close } = await openLocalDb(':memory:');
     const hash = configHash(DEFAULT_CONFIG);
     await store.putConfig({ hash, json: JSON.stringify(DEFAULT_CONFIG), label: 'default', createdAt: 1 });

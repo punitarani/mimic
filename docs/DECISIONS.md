@@ -759,7 +759,78 @@ beliefs, opinions and biases, and above all how the person thinks and decides. P
 - **Synchronous.** Drafting is a route handler call like the playground's, not a queue job: the person is waiting
   on the page for it, and it is one LLM call.
 
-## ADR-0034 — Spend caps: a session share and a reserve for the mimic page (2026-09-30)
+## ADR-0034 — Identity search and enrichment: cheaper, and on their own queue (2026-09-30)
+
+The goal was the cheapest, fastest identity step that is still reasonably accurate. Each option was measured live on
+the two ADR-0029 test people. The prices are Exa's and Parallel's published ones.
+
+**Changed**
+
+- **Search results carry their facts, so confirming costs nothing.**
+  - Exa people search returns each profile's structured person entity: the current role and employers, past
+    employers, schools and location. `exaCandidate` maps it to facts on the candidate.
+  - The search stores them in one R2 blob (`search/{mimicId}/facts/{at}.json`, the candidate's `r2_key`).
+  - Confirming such a candidate writes those facts, sourced to its URL, and goes straight to `review`: no
+    enrichment call, no job, no wait.
+- **Enrichment otherwise uses Exa, not Parallel** (`ENRICH_PROVIDER=exa`; `parallel` stays selectable).
+  - Exa `/contents` returns the same entity for $0.001 in 0.2–0.6 s. A Parallel `base` task costs $0.010 and takes
+    tens of seconds.
+  - A readable page with no entity (a personal site) gets one more call: an Exa schema summary with Parallel's
+    output schema ($0.001, 2.5–4.7 s). It is validated with zod, at confidence 0.6.
+  - No second call when Exa couldn't read the page, or for a LinkedIn page without an entity. A summary of a
+    LinkedIn profile listed things like "100Bs tokens" as skills.
+  - Each call is logged as its own `model_calls` row (`exa:contents`, `exa:summary`). The gateway hands the
+    enricher a per-call runner (`ProviderCallRunner`).
+- **Entity facts, precisely.**
+  - A role is current only when it has a start date and no end. Undated roles are past employers.
+  - Schools are named alone, so "Pomona College" is one organization in the KG whatever the degree.
+- **Two search queries, not three.** Given a role, the name-only query never found anyone the other two missed,
+  and each query costs $0.007. It now runs only as a fallback: when the role queries find nobody with the person's
+  full name (a role or school that isn't on their profile). Without a role, the queries are `{name}, {location}`
+  and the name alone.
+- **The person's link short-circuits search.**
+  - When the link resolves to a profile with their full name ($0.001), searching as well would only add
+    namesakes, so it is skipped.
+  - The lookup gets a 1.5-second head start; if it is slower, or matches only part of the name, search runs
+    alongside it.
+- **Identity jobs have their own queue** (`IDENTITY_JOBS` → `mimic-identity`, same DLQ).
+  - Cloudflare Queues adds consumers only after a batch finishes. On the shared queue, a 2-second search sat behind
+    a `pool.refill` batch for 1 to 4 minutes, and so did enrichment.
+  - Producers send `identity.search` and `identity.enrich` there by type alone.
+  - The consumer, whose `ENRICH_PROVIDER` is the one that counts, forwards minutes-long Parallel enrichment to the
+    shared queue.
+  - Identity calls to Exa are bounded (search 10 s, page 8 s, one retry; summary 15 s, none), so one bad page
+    can't hold the lane for long.
+  - `/__jobs` enqueues through the same routing, and backfill publishes to the `JOBS` binding by name.
+  - Deploy finds or creates the queue by name, like the others.
+
+**Kept, after measuring**
+
+- **Exa `auto` search.** Every search type costs the same, $7 per 1k.
+  - `fast` (0.38 s median) and `instant` (0.29 s) found the true profile in 7 of 9 queries; `auto` (1.65 s) found
+    it in 9.
+  - The two misses were the hardest intake (a short school name that is also a city).
+- **One Jev request per candidate.** One batched request with every candidate in a single state was about 0.4 s
+  faster and $0.0001 cheaper per search. But it pushed the true profile from #1 to #2 in one case.
+
+**Result.** Per person, with the listed prices:
+
+| Path | Search | Rank (Jev) | Enrich | Total | Before |
+| --- | --- | --- | --- | --- | --- |
+| No link, profile from search | $0.014 (2 queries) | ~$0.0003 | $0 (carried) | ~$0.014 | ~$0.031 |
+| Link that resolves | $0.001 (lookup) | ~$0.00003 | $0 (carried) | ~$0.001 | ~$0.032 |
+| No full-name match (fallback query) | $0.021 | ~$0.0003 | $0 | ~$0.021 | ~$0.031 |
+| Profile without an entity (personal site) | as above | | $0.001–0.002 | | |
+
+On the local stack, with a 35-second `pool.refill` batch running on the main queue:
+
+- search took 1.9 s;
+- search with a link, 0.65 s;
+- enrichment through Exa, 0.94 s. A candidate's carried facts need none.
+
+A deploy-time `ENRICH_PROVIDER` set in Doppler overrides the new default (ADR-0022). Remove it, or set it to `exa`.
+
+## ADR-0035 — Spend caps: a session share and a reserve for the mimic page (2026-09-30)
 
 The budget guard stopped everything at `session.budgetUsd` ($0.50). A session that spent all of it left nothing for
 the mimic page, so a person who finished the session could no longer ask their mimic a question or draft Persona.md,

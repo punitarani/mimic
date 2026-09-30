@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 
 type Check = (value: string) => string | null;
 
-describe('spend settings (ADR-0034)', () => {
+describe('spend settings (ADR-0035)', () => {
   it('lets deploy preflight accept exactly the values the Workers read', async () => {
     const url = pathToFileURL(join(__dirname, '../../../scripts/deploy/settings.mjs')).href;
     const { SETTINGS } = (await import(url)) as {
