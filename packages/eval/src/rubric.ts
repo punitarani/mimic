@@ -8,9 +8,13 @@ import {
   isScoredKind,
   loadConfig,
   type MimicRecord,
+  type Population,
+  populationOf,
   type QuestionRecord,
   ulid,
 } from '@mimic/core';
+
+export { NOT_REAL_PREFIXES, POPULATIONS, type Population, populationOf } from '@mimic/core';
 
 /**
  * `mimic-eval rubric` (ADR-0044): what the question loop served, person by person, against the M9–M13 rubric rows a
@@ -28,21 +32,6 @@ import {
 export const CONCRETE_MIN = 0.4;
 export const SHARE_BOUNDS = { min: 0.15, max: 0.4 } as const;
 export const BY = { shares: 30, groups: 20, sensitive: 30, early: 5 } as const;
-
-export const POPULATIONS = ['real', 'scripted', 'twin2k'] as const;
-export type Population = (typeof POPULATIONS)[number];
-
-/**
- * Participant-ID prefixes that mark people who are not real users. Exports keep the prefix when they pseudonymise the
- * ID (`scrubExport`), so a scripted session in an exported file is never reported as a real person.
- */
-export const NOT_REAL_PREFIXES = ['script:', 'twin2k:'] as const;
-
-export function populationOf(participantId: string): Population {
-  if (participantId.startsWith('script:')) return 'scripted';
-  if (participantId.startsWith('twin2k:')) return 'twin2k';
-  return 'real';
-}
 
 export interface RubricPerson {
   mimicId: string;

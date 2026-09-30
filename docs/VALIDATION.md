@@ -467,3 +467,27 @@ Nothing below comes from real people, and nothing is a measure of prediction acc
   `packages/core/test/scope.test.ts`, form reducers in `apps/web/lib/scope-form.test.ts`. The live runs above
   confirmed every area by script, so the confirmation changes none of their questions.
 - **Not measured:** efficiency on real people (R6). It is the E3b arm's job (ADR-0045).
+
+## M13: E3b, M12's selection against v4's (ADR-0045)
+
+Nothing below comes from real people.
+
+- **Offline fakes (tests, deterministic).**
+  - `packages/eval/test/e3b.test.ts`:
+    - the preset registers both configs and saves one draft, idempotently, and never starts it;
+    - a scripted cohort runs every persona in both arms under its arm config;
+    - v8's selections carry the balance terms and the control's carry none;
+    - neither arm asks anything sensitive before answer 7;
+    - `/lab` leaves scripted people out unless asked;
+    - `arms` reads the cohort with intervals and labels it;
+    - `rubric --arm` splits it.
+  - `packages/eval/test/arms.test.ts`: seeded bootstrap intervals, "significant" and "not significant", fidelity at 20
+    and questions to sustain from a series.
+  - The control config's hash is pinned in `packages/core/test/math.test.ts`.
+- **Offline cohort** (8 personas × 2 arms × 32 turns): `docs/reports/m13-e3b.md`. The control kept 0 of 5 people
+  within 15–40% per category and reached 32 of 44 consented sensitive facets; v8 kept 5 of 5 and reached 44 of 44.
+  Scripted, so a check of the machinery, not a result.
+- **Browser:** `scripts/browser/lab-preset.mjs` against `pnpm dev` (the preset sets E3b up as a draft; `/lab` says
+  it counts real people only).
+- **Not measured:** efficiency on real people (R6). The arm is ready as a draft in `/lab`, and starting it is the
+  owner's decision (sample size in ADR-0045).

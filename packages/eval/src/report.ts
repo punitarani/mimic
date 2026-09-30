@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
+import { type ArmsReport, renderArms } from './arms';
 import { type RubricGroup, renderRubric } from './rubric';
 import { remoteFlags, WORKER_DIR } from './wrangler';
 
@@ -84,6 +85,8 @@ export function renderReport(run: EvalRunRecord): string {
     lines.push(...renderOptimize(m));
   } else if (spec.kind === 'rubric') {
     lines.push(...renderRubric((m.groups as RubricGroup[]) ?? []));
+  } else if (spec.kind === 'arms') {
+    if (m.report) lines.push(...renderArms(m.report as ArmsReport));
   } else if (spec.kind === 'select') {
     lines.push(
       '## Pool-restricted selection (biased; iteration only)',

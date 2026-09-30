@@ -286,6 +286,23 @@ export const DEFAULT_CONFIG: PipelineConfig = {
 export const DEFAULT_CONFIG_LABEL = 'cfg.default.v8';
 
 /**
+ * The E3b control (ADR-0045): cfg.default.v8 with the selection it had before M12. Everything else is v8's (the
+ * calibrated primary, ontology v2, reserve.v2, gen.v3, gates.v3, reflect.v2, the everyday-first mix), so the two arms
+ * differ only by ADR-0044's balance: no category or group terms, cap, floor or group deadline, and so v4-style
+ * generator targets and no reserve top-up for groups; the sensitive sweep and its deadline are switched off (they start
+ * at question 1000). The trust ramp stays on in both arms: holding sensitive questions back is about respect, not
+ * efficiency, and is not what E3b tests.
+ */
+export const E3B_CONTROL_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG,
+  selector: {
+    ...VOI_SELECTOR,
+    trustRamp: { minAnswered: 6, sweepFrom: 1000, sweepBonus: 0, sweepBy: 1000 },
+  },
+};
+export const E3B_CONTROL_LABEL = 'cfg.e3b.control';
+
+/**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never
  * what a prediction sees, so changing them keeps every config hash.
  */

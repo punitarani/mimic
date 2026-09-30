@@ -70,8 +70,12 @@ export async function createMimic(
   deps: EngineDeps,
   input: IntakeInput,
   participantId: string,
-  /** Internal callers only (the eval session runner): a registered config to use instead of the default or an arm. */
-  opts: { configHash?: string } = {},
+  /**
+   * Internal callers only (the eval session runner): a registered config to use instead of the default or an arm, or
+   * the arm of the active experiment to join instead of the hash allocation (scripted cohorts, so every persona runs
+   * in every arm; ADR-0045).
+   */
+  opts: { configHash?: string; arm?: string } = {},
 ): Promise<MimicRecord> {
   const now = deps.clock();
   const id = deps.newId();
@@ -83,8 +87,13 @@ export async function createMimic(
   const active = opts.configHash
     ? undefined
     : (await deps.store.listExperiments()).find((e) => e.status === 'active' && e.arms.length > 0);
+  if (opts.arm !== undefined && !active) throw new EngineError('conflict', 'No active experiment to join');
   if (active) {
-    const chosen = allocateArm(id, active.id, active.arms);
+    const chosen =
+      opts.arm === undefined
+        ? allocateArm(id, active.id, active.arms)
+        : active.arms.find((a) => a.arm === opts.arm);
+    if (!chosen) throw new EngineError('not_found', `No arm "${opts.arm}" in the active experiment`);
     cfgHash = chosen.configHash;
     experimentId = active.id;
     arm = chosen.arm;

@@ -12,6 +12,8 @@ import {
   DEFAULT_CONFIG_V5,
   DEFAULT_CONFIG_V6,
   DEFAULT_CONFIG_V7,
+  E3B_CONTROL_CONFIG,
+  E3B_CONTROL_LABEL,
   entropy,
   expectedCalibrationError,
   gateFailures,
@@ -178,6 +180,16 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v3');
     expect(configHash(DEFAULT_CONFIG)).toBe(
       '08956a2222de74c94bb21e6ace0a7a2c69e4d441a41e0cbe4be5a26d638ac44f',
+    );
+    // The E3b control (ADR-0045): v8 with v4's selection plus the trust ramp; the sweep and its deadline are off.
+    expect(E3B_CONTROL_LABEL).toBe('cfg.e3b.control');
+    expect({ ...E3B_CONTROL_CONFIG, selector: DEFAULT_CONFIG.selector }).toEqual(DEFAULT_CONFIG);
+    expect(E3B_CONTROL_CONFIG.selector).toEqual({
+      ...DEFAULT_CONFIG_V7.selector,
+      trustRamp: { minAnswered: 6, sweepFrom: 1000, sweepBonus: 0, sweepBy: 1000 },
+    });
+    expect(configHash(E3B_CONTROL_CONFIG)).toBe(
+      '834484a36b3fac1ada698299a19ede3a0ec2eff308b24627e1495f8e3dd25dd9',
     );
     // v7 (ADR-0048): v6 with the calibrated primary and without the reasoning-off Qwen control; nothing else changes.
     expect(DEFAULT_CONFIG_V7.predictor).toEqual({

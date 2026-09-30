@@ -14,6 +14,7 @@ export * from './learning';
 export * from './links';
 export * from './metrics';
 export * from './ontology';
+export * from './participants';
 export * from './population';
 export * from './predictors';
 export * from './prompts';

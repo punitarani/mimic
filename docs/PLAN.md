@@ -941,6 +941,9 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
 - **E2 State ablation** (replay). `raw` vs. `structured` vs. `summary` vs. `full`.
 - **E3 Selector** (arms). `random` vs. `entropy`, then `bald`. The primary metric is questions needed to reach fidelity ≥ 0.75, or fidelity at 20 questions.
 - **E4 Reflection** (replay). Off vs. each LLM. Watch correlation and dispersion to catch stereotyping.
+- **E3b Category balance** (arms, ADR-0045). `cfg.default.v8` vs. `cfg.e3b.control` (v8 without M12's balance and
+  sweep), 1:1. Primary metric: fidelity at 20; then questions to sustain 0.75, and R2/R4/R7 per arm. About 64 real
+  people per arm; read with `pnpm eval -- arms` (95% bootstrap intervals). Set up from the preset in `/lab`.
 - **E5 Generator LLM** (arms). Luna vs. DeepSeek vs. GLM, with the same selector.
 
 ---
@@ -1074,8 +1077,9 @@ exercise scores at least 4 of 5.
   special-category export scrub (ADR-0043).
 - **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v8` (ADR-0044; v7 went to the
   calibrated primary, ADR-0048).
-- **M13** Offline rubric report of v8 against the M10 candidate (pinned to v6; calibration doesn't change which
-  questions are asked, ADR-0048) and a two-arm experiment on real people (ADR-0045).
+- **M13** E3b, ready to start: v8 against `cfg.e3b.control` (v8 with v4's selection, so the arms share the
+  calibrated primary), a `/lab` preset that saves it as a draft, a real-people-only lab, and `pnpm eval -- arms` with
+  bootstrap intervals; a scripted cohort by arm (`pnpm eval -- cohort`) checks the machinery (ADR-0045).
 
 **Rubric (each row scored 1–5 with evidence):**
 

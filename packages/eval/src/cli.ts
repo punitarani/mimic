@@ -11,6 +11,8 @@ import {
 } from '@mimic/core';
 import { schema } from '@mimic/db';
 import { sql } from 'drizzle-orm';
+import { armsRun } from './arms';
+import { runCohort } from './cohort';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
 import { datasetHash, exportData } from './export';
 import { calibrateGates, sampleDrafts } from './gates';
@@ -53,6 +55,12 @@ Commands
   rubric    What the question loop served, by population and config: concreteness, category shares, groups,
             sensitive coverage and ordering (ADR-0044; no model calls)
             --data <file.sqlite> [--arm] [--population real,scripted,twin2k]
+  arms      An experiment's arms on the E3 metrics, with 95% bootstrap intervals and each arm against the control
+            (ADR-0045): fidelity at 20, questions to sustain fidelity 0.75. Real people only unless --population all
+            --data <file.sqlite> [--experiment <id>] [--population real|all] [--seed arms]
+  cohort    A scripted cohort through an experiment preset, every persona in every arm (ADR-0045; tests the machinery,
+            never a result). Sets the preset up and starts it in this database only
+            --preset e3b [--people 8] [--turns 32] [--db data/cohort.sqlite] [--blobs data/blobs] [--live]
   import    import twin2k500 --path <twin2k500.jsonl> --out <file.sqlite> [--limit N]
   report    --data <file.sqlite> --run <id> [--to local|preview|prod]   writes report.{json,md}; --to publishes to /lab
   evaluate  Score prediction prompts on sealed instances (docs/OPTIMIZATION.md §5)
@@ -334,6 +342,73 @@ async function rubricCmd(argv: string[]) {
   engine.close();
 }
 
+async function armsCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      experiment: { type: 'string' },
+      population: { type: 'string', default: 'real' },
+      seed: { type: 'string' },
+      name: { type: 'string' },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  if (values.population !== 'real' && values.population !== 'all')
+    throw new Error('--population is real or all');
+  const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
+  const { run, people } = await armsRun(
+    engine.deps,
+    {
+      name: values.name ?? 'arms',
+      population: values.population,
+      ...(values.experiment ? { experimentId: values.experiment } : {}),
+      ...(values.seed ? { seed: values.seed } : {}),
+    },
+    await datasetHash(engine.client),
+  );
+  if (values.population === 'all' && people.some((p) => p.population !== 'real'))
+    console.warn('⚠ Includes scripted or imported people: a check of the machinery, not a result.');
+  const files = writeReport(run);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}`);
+  engine.close();
+}
+
+async function cohortCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      preset: { type: 'string', default: 'e3b' },
+      people: { type: 'string', default: '8' },
+      turns: { type: 'string', default: '32' },
+      db: { type: 'string', default: 'data/cohort.sqlite' },
+      blobs: { type: 'string', default: 'data/blobs' },
+      live: { type: 'boolean', default: false },
+    },
+  });
+  const engine = await openLocalEngine({
+    db: resolve(values.db),
+    blobsDir: resolve(values.blobs),
+    providers: values.live ? 'live' : 'offline',
+  });
+  console.warn(
+    '⚠ Scripted answers: this checks which arm asks what and when. Its fidelity is never a result.',
+  );
+  console.log(`providers: ${values.live ? 'live' : 'offline fakes (zero spend; outputs are arbitrary)'}`);
+  const { experimentId, mimics } = await runCohort(engine, {
+    preset: values.preset,
+    people: Number(values.people),
+    turns: Number(values.turns),
+    onSession: (x) => console.log(`${x.arm.padEnd(8)} ${x.persona.padEnd(24)} ${x.mimicId}`),
+  });
+  console.log(`\nexperiment ${experimentId}: ${mimics.length} sessions written to ${values.db}`);
+  console.log(
+    `next: pnpm eval -- rubric --data ${values.db} --arm; pnpm eval -- arms --data ${values.db} --population all`,
+  );
+  engine.close();
+}
+
 async function exportCmd(argv: string[]) {
   const { values } = parseArgs({
     args: argv,
@@ -411,6 +486,10 @@ async function main() {
       return session(rest);
     case 'rubric':
       return rubricCmd(rest);
+    case 'arms':
+      return armsCmd(rest);
+    case 'cohort':
+      return cohortCmd(rest);
     case 'gates':
       return gates(rest);
     case 'drafts':
