@@ -6,6 +6,7 @@ import {
   computeFidelity,
   configHash,
   DEFAULT_CONFIG,
+  DEFAULT_CONFIG_V3,
   entropy,
   expectedCalibrationError,
   gateFailures,
@@ -157,17 +158,24 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v3 (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v4 and its predecessors (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(
-      '076c57200e027d35b7a23582003c1161501b635469800fd1189c369d97160993',
+      '9783a40b1abf03d36281002a627336edfec98930f993cb62f542a206916460c3',
     );
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
-    // Older defaults differ only in their shadows, and mimics created under them still resolve to their rows.
+    expect(DEFAULT_CONFIG.selector.type).toBe('voi');
+    expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v2');
+    expect(DEFAULT_CONFIG.stateBuilder.latencyHints).toBe(true);
+    // v3 (ADR-0025) must keep its hash even though the schema gained optional fields (ADR-0026).
+    expect(configHash(DEFAULT_CONFIG_V3)).toBe(
+      '076c57200e027d35b7a23582003c1161501b635469800fd1189c369d97160993',
+    );
+    // Older defaults differ from v3 only in their shadows, and mimics created under them still resolve to their rows.
     const withShadows = (shadows: string[]): PipelineConfig => ({
-      ...DEFAULT_CONFIG,
-      predictor: { ...DEFAULT_CONFIG.predictor, shadows },
+      ...DEFAULT_CONFIG_V3,
+      predictor: { ...DEFAULT_CONFIG_V3.predictor, shadows },
     });
-    const v1 = DEFAULT_CONFIG.predictor.shadows.slice(0, 3);
+    const v1 = DEFAULT_CONFIG_V3.predictor.shadows.slice(0, 3);
     expect(configHash(withShadows(v1))).toBe(
       '913b29e8d48a8ba54702cb7878cc1e9079e379a0c784e5a213328a015b10843e',
     );

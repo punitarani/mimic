@@ -28,6 +28,8 @@ export const Job = z.discriminatedUnion('type', [
     mimicId: z.string(),
     predictorId: z.string(),
   }),
+  /** Recomputes cross-person item statistics (ADR-0026); `bucket` (an hour) makes each run its own job. */
+  z.object({ type: z.literal('stats.refresh'), bucket: z.string() }),
 ]);
 export type Job = z.infer<typeof Job>;
 
@@ -55,6 +57,8 @@ export function jobKey(job: Job): string {
       return `backfill.predictor:${job.runId}:${job.consentedOnly ? 1 : 0}:${job.predictorId}`;
     case 'backfill.mimic':
       return `backfill.mimic:${job.runId}:${job.mimicId}:${job.predictorId}`;
+    case 'stats.refresh':
+      return `stats.refresh:${job.bucket}`;
   }
 }
 
@@ -88,6 +92,9 @@ export function jobFromKey(key: string): Job | null {
       break;
     case 'backfill.mimic':
       job = { type, runId: parts[0], mimicId: parts[1], predictorId: parts.slice(2).join(':') };
+      break;
+    case 'stats.refresh':
+      job = { type, bucket: parts.join(':') };
       break;
   }
   const r = Job.safeParse(job);

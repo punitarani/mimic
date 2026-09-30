@@ -1,3 +1,4 @@
+import { domainQuota, targetFacets } from '../belief';
 import { parsePredictorId } from '../config';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
@@ -12,13 +13,15 @@ import {
   runQualityGates,
 } from '../learning';
 import { getAnchorSet } from '../ontology';
+import { computeItemStats, type ScoredItemRow } from '../population';
 import { makePredictor } from '../predictors';
 import { scorePrediction } from '../scoring';
-import { facetCoverage } from '../selectors';
+import { facetCoverage, usesHypotheses } from '../selectors';
 import { buildState, cosine, toStateEvidence } from '../state-builder';
 import type { FactRecord, InsightRecord, KgEdgeRecord, KgNodeRecord, QuestionRecord } from '../store';
 import type { Domain, PersonState } from '../types';
 import { writeSnapshot } from './artifact';
+import { beliefFromLoaded, loadBeliefSources } from './belief';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
@@ -118,7 +121,10 @@ export async function enqueueMissingPredictions(
     deps.store.listQuestions(mimicId),
     deps.store.listPredictions({ mimicId }),
   ]);
-  const have = new Set(predictions.map((p) => `${p.questionId}|${p.predictorId}`));
+  // Hypothesis rows carry the primary's predictor id but are exploration artifacts, not predictions of the question.
+  const have = new Set(
+    predictions.filter((p) => p.role !== 'hypothesis').map((p) => `${p.questionId}|${p.predictorId}`),
+  );
   // A shadow reads the primary's sealed state; without a primary there is nothing to predict from.
   const sealed = new Set(predictions.filter((p) => p.role === 'primary').map((p) => p.questionId));
   let n = 0;
@@ -200,7 +206,58 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
     case 'backfill.mimic':
       await runBackfillMimic(deps, job);
       return;
+    case 'stats.refresh':
+      await runStatsRefresh(deps);
+      return;
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// stats.refresh (ADR-0026): cross-person item statistics over research-consented, dev-split mimics.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Recomputes `item_stats` from scratch (so a deleted mimic drops out at the next run). Aggregate only: no row names
+ * a person, and the result ranks pooled candidates without ever entering a prompt or a state (PLAN §3.8).
+ */
+export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
+  const mimics = (await deps.store.listMimics({ consentResearch: true })).filter((m) => m.split === 'dev');
+  const rows: ScoredItemRow[] = [];
+  for (const m of mimics) {
+    const [scored, questions, answers] = await Promise.all([
+      deps.store.listScoredPredictions(m.id, ['primary', 'baseline']),
+      deps.store.listQuestions(m.id),
+      deps.store.listAnswers(m.id),
+    ]);
+    const qById = new Map(questions.map((q) => [q.id, q]));
+    const answerByQ = new Map(answers.map((a) => [a.questionId, a]));
+    const baselineByQ = new Map(
+      scored.filter((r) => r.prediction.role === 'baseline').map((r) => [r.question.id, r.score.itemAcc]),
+    );
+    for (const r of scored) {
+      if (r.prediction.role !== 'primary' || r.prediction.fallback) continue;
+      if (r.question.kind !== 'anchor' && r.question.kind !== 'adaptive') continue;
+      const q = qById.get(r.question.id);
+      const a = answerByQ.get(r.question.id);
+      if (!q || !a) continue;
+      rows.push({
+        mimicId: m.id,
+        itemKey: q.itemKey ?? null,
+        facetIds: q.facetIds,
+        domain: q.domain,
+        type: q.type,
+        answer: a.value,
+        nOptions: q.options.length,
+        primaryItemAcc: r.score.itemAcc,
+        primaryLogLoss: r.score.logLoss,
+        baselineItemAcc: baselineByQ.get(q.id) ?? null,
+        latencyMs: a.latencyMs,
+      });
+    }
+  }
+  const stats = computeItemStats(rows, deps.clock());
+  if (stats.length) await deps.store.putItemStats(stats);
+  return stats.length;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -279,29 +336,44 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   if (pool.length >= MIN_POOL) return;
   if (m.spendUsd >= cfg.session.budgetUsd) return;
   const facets = await facetsFor(deps, m, cfg);
-  const counts = facetCounts(loaded.questions);
-  for (const q of pool) for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
-  const traitConf = new Map(
-    loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t.confidence]),
-  );
-  const targets = [...facets]
-    .sort(
-      (a, b) =>
-        facetCoverage(counts, a.id) - facetCoverage(counts, b.id) ||
-        (traitConf.get(a.id) ?? 0) - (traitConf.get(b.id) ?? 0) ||
-        a.id.localeCompare(b.id),
-    )
-    .slice(0, 5)
-    .map((f) => f.id);
   const n = Math.min(cfg.generator.batchSize, MAX_POOL - pool.length + 4);
   const mix = cfg.generator.domainMix;
-  const total = mix.core + mix.casual + mix.professional || 1;
-  const quota: Record<Domain, number> = {
-    core: Math.round((n * mix.core) / total),
-    casual: Math.round((n * mix.casual) / total),
-    professional: 0,
-  };
-  quota.professional = Math.max(0, n - quota.core - quota.casual);
+  let targets: string[];
+  let quota: Record<Domain, number>;
+  let targetDetails: ReturnType<typeof targetFacets> | undefined;
+  let avoid: string[] | undefined;
+  if (cfg.generator.promptVersion === 'gen.v2') {
+    // Belief-driven targets (docs/SELECTION.md §5): the facets with the highest need, each with why and the
+    // person's current reading; the domain quota tilts toward the domains the mimic is weakest in.
+    const belief = beliefFromLoaded(loaded, facets, cfg, await loadBeliefSources(deps, m), { pooled: pool });
+    const cap = cfg.selector.type === 'voi' ? cfg.selector.exposureCap : 1;
+    targetDetails = targetFacets(belief, facets, 5, cap);
+    targets = targetDetails.map((t) => t.id);
+    avoid = facets.filter((f) => (belief.facets[f.id]?.exposure ?? 0) > cap).map((f) => f.id);
+    quota = domainQuota(belief, mix, n);
+  } else {
+    const counts = facetCounts(loaded.questions);
+    for (const q of pool) for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
+    const traitConf = new Map(
+      loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t.confidence]),
+    );
+    targets = [...facets]
+      .sort(
+        (a, b) =>
+          facetCoverage(counts, a.id) - facetCoverage(counts, b.id) ||
+          (traitConf.get(a.id) ?? 0) - (traitConf.get(b.id) ?? 0) ||
+          a.id.localeCompare(b.id),
+      )
+      .slice(0, 5)
+      .map((f) => f.id);
+    const total = mix.core + mix.casual + mix.professional || 1;
+    quota = {
+      core: Math.round((n * mix.core) / total),
+      casual: Math.round((n * mix.casual) / total),
+      professional: 0,
+    };
+    quota.professional = Math.max(0, n - quota.core - quota.casual);
+  }
 
   const state = buildState(
     loaded.data,
@@ -321,8 +393,11 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   const gen = await generateCandidates(deps.gateway, ctx, {
     model: cfg.generator.model,
     reasoningEffort: cfg.generator.reasoningEffort,
+    promptVersion: cfg.generator.promptVersion,
     facets,
     targets,
+    ...(targetDetails ? { targetDetails } : {}),
+    ...(avoid ? { avoid } : {}),
     quota,
     identity: state.identity,
     traitSummary,
@@ -490,7 +565,7 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
   // 3) Reflection every N answers, with the citation guard.
   if (cfg.reflector.model && cfg.reflector.everyN > 0 && nAnswered % cfg.reflector.everyN === 0) {
     await runReflection(deps, m.id, seq, key);
-    if (cfg.selector.type === 'bald')
+    if (usesHypotheses(cfg.selector))
       await deps.jobs.enqueue({ type: 'hypotheses.refresh', mimicId: m.id, seqUpTo: seq });
   }
 
@@ -627,7 +702,9 @@ export async function runHypotheses(
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  if (cfg.selector.type !== 'bald') return;
+  const sel = cfg.selector;
+  const k = sel.type === 'bald' || sel.type === 'voi' ? sel.k : 0;
+  if (k < 2) return;
   const cur = await deps.kv.get(`hyp:${m.id}`);
   if (cur) {
     try {
@@ -648,7 +725,7 @@ export async function runHypotheses(
     model: cfg.reflector.model ?? cfg.generator.model,
     state,
     lowFacets,
-    k: cfg.selector.k,
+    k,
   });
   if (hypotheses.length) await deps.kv.put(`hyp:${m.id}`, JSON.stringify({ seqUpTo, hypotheses }));
 }

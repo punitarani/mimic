@@ -359,3 +359,50 @@ Configs are immutable, so mimics created under v2 keep MiMo Pro and its predicti
 new shadows reach questions served earlier through `pnpm backfill`, which now takes several predictors: repeated
 `--predictor` flags, or a comma-separated list, which is also what the Actions workflow takes. Every model is checked
 before anything is enqueued, and each predictor gets its own job.
+
+## ADR-0026 — Value-of-information selection, belief-driven generation and cross-person item statistics (2026-09-30)
+
+The adaptive loop asked what the predictor was unsure about. That over-selects noisy questions, ignores what the
+person's own answers contradict, ignores where the mimic is actually wrong, and learns nothing from other people.
+`docs/SELECTION.md` sets out the replacement and the research behind it (adaptive testing, expected information
+gain, BALD, the digital-twin mega-study, response-time evidence, survey satisficing, hierarchical priors). This
+ADR records the decisions.
+
+- **Belief state** (`packages/core/src/belief.ts`): per facet, uncertainty (trait-read entropy and confidence),
+  conflict (Jev vs psychometric reads, superseded insights, repeat flips, torn answers), weakness (the sealed
+  primary's recent error on the facet, shrunk toward the person's overall error), coverage and exposure; per
+  domain, share and weakness; per person, median latency, speeding and straightlining. Pure and deterministic;
+  never in a prompt or a state.
+- **`voi` selector** (`selector.type = 'voi'`): `info + λ·gap + β·conflict + γ·weakness + π·(pop − ½) − μ·redundancy
+  − ν·burden`, with exposure control (a facet may take at most 35% of the adaptive questions once 4 are answered).
+  `info` is posterior-weighted hypothesis mutual information when K ≥ 2 hypotheses exist, else predictive entropy.
+  The chosen question's sealed primary is still the plain-state prediction from the batched call. The winning
+  score's components go to `questions.selection_json`.
+- **Persona posterior.** The chosen question's per-hypothesis predictions are stored as `role = hypothesis` rows
+  tagged `{set seqUpTo}:{index}` (`predictions.hypothesis`), with their states in R2 like every other prediction
+  (ADR-0010). They are never scored. On each serve the weights are recomputed from those rows and the answers
+  given since the set was written (uniform prior, likelihoods floored at 1e-4). `hypotheses.refresh` now runs
+  for `voi` as well as `bald`. Backfill and the missing-shadow repair ignore hypothesis rows.
+- **`gen.v2`**: targets are the five facets with the highest need, each with why (unexplored, uncertain,
+  conflicted, weak) and the person's current reading, so the generator pitches trade-offs at that reading (the
+  adaptive-testing rule that an item is most informative where its difficulty matches the estimate). Facets over
+  the exposure cap are listed to avoid; the domain quota is tilted toward the weakest domains. Pooled candidates
+  count toward coverage so a refill does not pile onto facets the pool already has.
+- **Latency hints** (`stateBuilder.latencyHints`, builder `full.v2`): evidence carries `pace: quick | slow` for
+  answers under half or over twice the person's median latency over the sealed evidence. Deterministic from
+  exported data (`answers.latency_ms`), so replay still reproduces states. Optional and undefaulted in the schema,
+  so configs written before it keep their hashes (v3 is pinned in a test next to v4).
+- **Item statistics** (`item_stats`, migration 0003, `stats.refresh` from the cron hourly): aggregate rows per
+  `item_key` and per `facet | domain | type` archetype over research-consented dev-split mimics; recomputed from
+  scratch so a deleted mimic drops out at the next run. `pop(q)` is `½·answer entropy + ½·baseline error` for
+  items, or the mean over the question's facets' archetypes of `½·surprise + ½·baseline error`, shrunk toward ½
+  with a prior of 20 answers and null below 5 people. It ranks candidates only, never enters a prompt or a state
+  (PLAN §3.8), and its weight π is bounded. The test split never feeds it.
+- **Guardrails against getting worse with use**: every term is bounded; coverage, uncertainty and conflict decay
+  on their own; the exposure cap stops a noisy facet from monopolising a session; weakness is prequential; burden
+  grows with session length; population statistics are a shrunk, bounded prior that cannot override the person's
+  own terms and are reported as a separate ablation (`pnpm eval -- select --selector entropy,voi` and
+  `--no-population`).
+- **Default config `cfg.default.v4`** = v3 + `voi`, `gen.v2` and latency hints. Mimics created under v1–v3 keep
+  their configs. Not done: one-step lookahead EIG on the pool (exact but |pool| × |options| Jev calls), a shared
+  bank of generated questions (needs a leakage check), Twin-2K-500 item statistics as a cold-start prior.

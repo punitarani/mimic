@@ -103,6 +103,8 @@ export const questions = sqliteTable(
     servedAt: integer('served_at'),
     /** As-of time of the derived data (traits, insights, facts) in this question's sealed states (ADR-0017). */
     stateAt: integer('state_at'),
+    /** The selector's diagnostics for the winning score (ADR-0026). */
+    selectionJson: text('selection_json'),
   },
   (t) => [
     index('questions_mimic_idx').on(t.mimicId),
@@ -131,6 +133,8 @@ export const predictions = sqliteTable(
     ok: bool('ok').notNull(),
     error: text('error'),
     fallback: bool('fallback').notNull().default(false),
+    /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0026). */
+    hypothesis: text('hypothesis'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
@@ -369,6 +373,24 @@ export const vectors = sqliteTable(
   },
   (t) => [index('vectors_mimic_idx').on(t.mimicId, t.kind)],
 );
+
+/**
+ * ADR-0026: cross-person item statistics, aggregate only (no mimic_id, no free text), over research-consented
+ * dev-split mimics. Used to rank pooled candidates; never in a prompt or a state.
+ */
+export const itemStats = sqliteTable('item_stats', {
+  key: text('key').primaryKey(),
+  kind: text('kind', { enum: ['item', 'archetype'] }).notNull(),
+  nPeople: integer('n_people').notNull(),
+  nAnswers: integer('n_answers').notNull(),
+  answerEntropy: real('answer_entropy'),
+  baselineError: real('baseline_error').notNull(),
+  primaryError: real('primary_error').notNull(),
+  surprise: real('surprise').notNull(),
+  lift: real('lift'),
+  meanLatencyMs: real('mean_latency_ms').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
 
 /** Tables scoped to one mimic, all removed by a hard delete. */
 export const MIMIC_TABLES = [

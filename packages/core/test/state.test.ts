@@ -187,6 +187,33 @@ describe('state builder (PLAN §9.9)', () => {
       options: ['Option A for 1', 'Option B for 1'],
     });
   });
+
+  it('marks decisive and torn answers with latency hints, from the median over the sealed evidence', () => {
+    const m = mimic(12);
+    for (const e of m.evidence) e.latencyMs = 3000;
+    m.evidence[1]!.latencyMs = 500; // quick
+    m.evidence[2]!.latencyMs = 9000; // slow
+    m.evidence[11]!.latencyMs = 100; // seq 12: quick, but only when sealed in
+    const s = buildState(m, opts({ latencyHints: true, beforeSeq: 12 }));
+    expect(s.meta.builder).toBe('full.v2');
+    expect(s.evidence[0]!.pace).toBeUndefined();
+    expect(s.evidence[1]!.pace).toBe('quick');
+    expect(s.evidence[2]!.pace).toBe('slow');
+    expect(s.evidence.map((e) => e.seq)).not.toContain(12);
+    const plain = buildState(m, opts({ beforeSeq: 12 }));
+    expect(plain.meta.builder).toBe('full.v1');
+    expect(plain.evidence.every((e) => e.pace === undefined)).toBe(true);
+    expect(plain.meta.stateHash).not.toBe(s.meta.stateHash);
+    // The hints are deterministic and need at least three timed answers.
+    expect(buildState(m, opts({ latencyHints: true, beforeSeq: 12 })).meta.stateHash).toBe(s.meta.stateHash);
+    const few = mimic(2);
+    few.evidence[0]!.latencyMs = 100;
+    few.evidence[1]!.latencyMs = 9000;
+    expect(buildState(few, opts({ latencyHints: true })).evidence.every((e) => e.pace === undefined)).toBe(
+      true,
+    );
+    expect(buildState(m, opts({ latencyHints: true, contextOnly: true })).meta.builder).toBe('context.v1');
+  });
 });
 
 describe('repeat schedule (PLAN §9.5)', () => {

@@ -48,6 +48,7 @@ function assemble(
       options: q.options,
       answer: a.value,
       facetIds: q.facetIds,
+      latencyMs: a.latencyMs,
     };
     if (a.why) item.why = a.why;
     evidence.push(item);
@@ -139,6 +140,7 @@ export function stateOptions(
     strategy: cfg.stateBuilder.strategy,
     retrievalK: cfg.stateBuilder.retrievalK,
     recentN: cfg.stateBuilder.recentN,
+    ...(cfg.stateBuilder.latencyHints ? { latencyHints: true } : {}),
     ...extra,
   };
 }

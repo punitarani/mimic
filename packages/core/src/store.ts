@@ -46,6 +46,8 @@ export interface QuestionRecord extends Question {
   servedAt: number | null;
   /** As-of time of the derived data in this question's sealed states; replay rebuilds them from it (ADR-0017). */
   stateAt: number | null;
+  /** The selector's diagnostics for the winning score, written when served (ADR-0026). */
+  selection?: Record<string, unknown> | null;
 }
 
 export interface PredictionRecord {
@@ -67,6 +69,8 @@ export interface PredictionRecord {
   error: string | null;
   /** True when the primary came from the LLM fallback because Jev errored (PLAN §16). */
   fallback: boolean;
+  /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (docs/SELECTION.md §6). */
+  hypothesis?: string | null;
   createdAt: number;
 }
 
@@ -285,6 +289,7 @@ export interface Store {
     servedAt: number;
     stateAt: number | null;
     predictions: PredictionRecord[];
+    selection?: Record<string, unknown> | null;
   }): Promise<boolean>;
   // predictions & answers
   insertPredictions(recs: PredictionRecord[]): Promise<void>;
@@ -321,6 +326,9 @@ export interface Store {
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
+  // cross-person item statistics (aggregate only; ADR-0026)
+  putItemStats(recs: import('./population').ItemStatRecord[]): Promise<void>;
+  listItemStats(): Promise<import('./population').ItemStatRecord[]>;
   // jobs ledger
   getJob(key: string): Promise<JobRecord | null>;
   putJob(rec: JobRecord): Promise<void>;

@@ -7,6 +7,7 @@ import {
   type FactRecord,
   type FidelityRecord,
   type InsightRecord,
+  type ItemStatRecord,
   type JobRecord,
   type KgEdgeRecord,
   type KgNodeRecord,
@@ -109,6 +110,7 @@ const toQuestion = (r: QRow): QuestionRecord => {
   };
   if (r.repeatOf) q.repeatOf = r.repeatOf;
   if (r.itemKey) q.itemKey = r.itemKey;
+  if (r.selectionJson) q.selection = parse(Obj, r.selectionJson, null as Record<string, unknown> | null);
   return q;
 };
 
@@ -132,6 +134,7 @@ const fromQuestion = (q: QuestionRecord): typeof s.questions.$inferInsert => ({
   createdAt: q.createdAt,
   servedAt: q.servedAt,
   stateAt: q.stateAt,
+  selectionJson: q.selection ? JSON.stringify(q.selection) : null,
 });
 
 const toPrediction = (r: PRow): PredictionRecord => ({
@@ -152,11 +155,15 @@ const toPrediction = (r: PRow): PredictionRecord => ({
   ok: r.ok,
   error: r.error,
   fallback: r.fallback,
+  hypothesis: r.hypothesis,
   createdAt: r.createdAt,
 });
 
+/** 20 columns per row (D1's 100-parameter limit bounds the batch size below). */
+const PREDICTION_COLS = 20;
 const fromPrediction = (p: PredictionRecord): typeof s.predictions.$inferInsert => ({
   ...p,
+  hypothesis: p.hypothesis ?? null,
   distJson: JSON.stringify(p.dist),
 });
 
@@ -353,18 +360,25 @@ export class DrizzleStore implements Store {
     servedAt: number;
     stateAt: number | null;
     predictions: PredictionRecord[];
+    selection?: Record<string, unknown> | null;
   }) {
     const stmts: BatchItem<'sqlite'>[] = [
       this.db
         .update(s.questions)
-        .set({ seq: args.seq, status: 'served', servedAt: args.servedAt, stateAt: args.stateAt })
+        .set({
+          seq: args.seq,
+          status: 'served',
+          servedAt: args.servedAt,
+          stateAt: args.stateAt,
+          selectionJson: args.selection ? JSON.stringify(args.selection) : null,
+        })
         .where(and(eq(s.questions.id, args.questionId), eq(s.questions.status, 'pooled'))),
       this.db
         .update(s.mimics)
         .set({ seqMax: sql`max(${s.mimics.seqMax}, ${args.seq})`, updatedAt: args.servedAt })
         .where(eq(s.mimics.id, args.mimicId)),
     ];
-    for (const part of chunk(args.predictions.map(fromPrediction), 19)) {
+    for (const part of chunk(args.predictions.map(fromPrediction), PREDICTION_COLS)) {
       stmts.push(this.db.insert(s.predictions).values(part));
     }
     try {
@@ -632,6 +646,33 @@ export class DrizzleStore implements Store {
       createdAt: r.createdAt,
     }));
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
+  }
+
+  // cross-person item statistics (ADR-0026)
+  async putItemStats(recs: ItemStatRecord[]) {
+    for (const part of chunk(recs, 11)) {
+      await this.db
+        .insert(s.itemStats)
+        .values(part)
+        .onConflictDoUpdate({
+          target: s.itemStats.key,
+          set: {
+            kind: sql`excluded.kind`,
+            nPeople: sql`excluded.n_people`,
+            nAnswers: sql`excluded.n_answers`,
+            answerEntropy: sql`excluded.answer_entropy`,
+            baselineError: sql`excluded.baseline_error`,
+            primaryError: sql`excluded.primary_error`,
+            surprise: sql`excluded.surprise`,
+            lift: sql`excluded.lift`,
+            meanLatencyMs: sql`excluded.mean_latency_ms`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        });
+    }
+  }
+  async listItemStats(): Promise<ItemStatRecord[]> {
+    return this.db.select().from(s.itemStats).orderBy(asc(s.itemStats.key)).all();
   }
 
   // jobs
