@@ -184,10 +184,8 @@ export async function evaluateCmd(argv: string[]) {
   if (!values.data) throw new Error('--data is required');
   const stored = values.from === 'stored';
   // The stored report compares dev (fit) with test (check), so it reads every split unless told otherwise.
-  const loaded = await loadData(
-    values.data,
-    loadOptsOf({ ...values, split: stored && !argv.includes('--split') ? 'all' : values.split }),
-  );
+  const split = stored && !argv.includes('--split') ? 'all' : values.split;
+  const loaded = await loadData(values.data, loadOptsOf({ ...values, split }));
   console.log(
     `${loaded.instances.length} instances from ${new Set(loaded.instances.map((i) => i.mimicId)).size} people`,
   );
@@ -206,7 +204,7 @@ export async function evaluateCmd(argv: string[]) {
         kind: 'evaluate',
         mode: 'stored',
         data: loaded.files.length,
-        split: values.split,
+        split,
         seed: values.seed,
       },
       datasetHash: loaded.datasetHash,
@@ -429,7 +427,13 @@ export async function optimizeCmd(argv: string[]) {
   const run: EvalRunRecord = {
     id: ulid(),
     name: spec.name,
-    spec: { kind: 'optimize', ...spec, seed: { ...spec.seed }, data: loaded.files.length },
+    spec: {
+      kind: 'optimize',
+      ...spec,
+      seed: spec.rngSeed,
+      seedCandidate: spec.seed,
+      data: loaded.files.length,
+    },
     datasetHash: loaded.datasetHash,
     status: 'done',
     metrics: {
