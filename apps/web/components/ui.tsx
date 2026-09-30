@@ -22,24 +22,25 @@ const VARIANTS: Record<Variant, string> = {
   danger: 'bg-rust text-fog hover:brightness-95 disabled:opacity-60',
 };
 
+type Size = 'sm' | 'md' | 'lg';
+
+/** Button classes, for links that should look like a button (downloads, navigation). */
+export function buttonClass(variant: Variant = 'primary', size: Size = 'md', className?: string): string {
+  return cn(
+    'inline-flex items-center justify-center gap-2 rounded-[10px] font-medium transition-colors disabled:cursor-not-allowed',
+    size === 'sm' && 'h-8 px-3 text-sm',
+    size === 'md' && 'h-10 px-4 text-[15px]',
+    size === 'lg' && 'h-12 px-6 text-base',
+    VARIANTS[variant],
+    className,
+  );
+}
+
 export const Button = forwardRef<
   HTMLButtonElement,
-  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' | 'lg' }
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size }
 >(function Button({ variant = 'primary', size = 'md', className, ...props }, ref) {
-  return (
-    <button
-      ref={ref}
-      className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-[10px] font-medium transition-colors disabled:cursor-not-allowed',
-        size === 'sm' && 'h-8 px-3 text-sm',
-        size === 'md' && 'h-10 px-4 text-[15px]',
-        size === 'lg' && 'h-12 px-6 text-base',
-        VARIANTS[variant],
-        className,
-      )}
-      {...props}
-    />
-  );
+  return <button ref={ref} className={buttonClass(variant, size, className)} {...props} />;
 });
 
 export function Card({ className, ...props }: ComponentProps<'div'>) {

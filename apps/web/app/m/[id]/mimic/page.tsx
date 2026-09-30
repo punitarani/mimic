@@ -6,7 +6,8 @@ import { useState } from 'react';
 import { TopBar } from '@/components/brand';
 import { FidelityHeadline, KgMap } from '@/components/model-panel';
 import { Playground } from '@/components/playground';
-import { Button, ErrorText, Spinner } from '@/components/ui';
+import { CodeIcon, DocIcon, TrashIcon } from '@/components/session/icons';
+import { Button, buttonClass, ErrorText, Spinner } from '@/components/ui';
 import { api } from '@/lib/api';
 
 export default function MimicPage() {
@@ -71,22 +72,17 @@ function Manage({ id }: { id: string }) {
         Your data
       </h2>
       <div className="flex flex-wrap gap-3">
-        <a
-          href={`/api/mimics/${id}/export`}
-          className="inline-flex h-10 items-center rounded-[10px] border border-line bg-raised px-4 text-[15px] font-medium hover:border-line-strong"
-          download
-        >
-          Download mimic.json
-        </a>
-        <a
-          href={`/api/mimics/${id}/persona.md`}
-          className="inline-flex h-10 items-center rounded-[10px] border border-line bg-raised px-4 text-[15px] font-medium hover:border-line-strong"
-          download
-        >
+        <a href={`/api/mimics/${id}/persona.md`} className={buttonClass('primary')} download>
+          <DocIcon width={18} height={18} />
           Download Persona.md
         </a>
+        <a href={`/api/mimics/${id}/export`} className={buttonClass('secondary')} download>
+          <CodeIcon width={18} height={18} />
+          Download mimic.json
+        </a>
         {!confirming ? (
-          <Button variant="secondary" onClick={() => setConfirming(true)}>
+          <Button variant="danger" onClick={() => setConfirming(true)}>
+            <TrashIcon width={18} height={18} />
             Delete this mimic
           </Button>
         ) : (
