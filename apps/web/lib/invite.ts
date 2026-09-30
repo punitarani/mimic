@@ -1,5 +1,5 @@
 /**
- * Invite links. `/new?invite=CODE` fills the invite code in and locks the field; `/?invite=CODE` carries the code
+ * Invite links. `/new?invite=CODE` fills the invite code in and hides the field; `/?invite=CODE` carries the code
  * through the landing page's button (PLAN §11, ADR-0026). The code is only ever checked server-side.
  */
 

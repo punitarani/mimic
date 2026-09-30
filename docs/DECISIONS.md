@@ -1313,3 +1313,13 @@ The pooling fits also put almost no weight on the primary against any LLM shadow
 
 Calibrated Jev costs nothing. Backfilling the five `predict.v2` shadows over the 232 questions served so far costs
 about $0.53.
+
+## ADR-0042 — Invite links hide the code field (2026-09-30)
+
+ADR-0026 showed a code from an invite link in a disabled field with a hint. Nothing there is for the person to read
+or do, so the field now isn't rendered while the code is locked.
+
+- **Hidden, not disabled.** The code from `?invite=` is still sent with the form and still checked only by
+  `POST /api/mimics`. A failed submit (403, 400 or 429) shows the field, filled with the linked code, and focuses it.
+- **Prerendered HTML is unchanged.** The Suspense fallback (ADR-0023) still renders the field, since the static page
+  can't see the query string; hydration removes it for invite links.

@@ -32,7 +32,7 @@ export default function NewMimic() {
   );
 }
 
-/** `/new?invite=CODE` fills the invite code in. A different link gets a fresh form. */
+/** `/new?invite=CODE` fills the invite code in and hides its field. A different link gets a fresh form. */
 function IntakeFromLink() {
   const invite = inviteFromQuery(useSearchParams().get(INVITE_PARAM));
   return <IntakeForm key={invite ?? ''} invite={invite} />;
@@ -48,7 +48,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
     employer: '',
     link: '',
   });
-  // A code from the link stays locked until a submit fails; then the person can type another.
+  // A code from the link stays hidden until a submit fails; then the field appears so the person can type another.
   const [inviteLocked, setInviteLocked] = useState(invite !== null);
   const [rejections, setRejections] = useState(0);
   const inviteRef = useRef<HTMLInputElement>(null);
@@ -60,7 +60,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
   const setValue = (k: keyof typeof f) => (v: string) => setF((prev) => ({ ...prev, [k]: v }));
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setValue(k)(e.target.value);
 
-  // After each failed submit of a linked code, put the cursor where the fix goes (once the field is enabled).
+  // After each failed submit of a linked code, put the cursor where the fix goes (once the field is shown).
   useEffect(() => {
     if (rejections > 0 && invite !== null) inviteRef.current?.focus();
   }, [rejections, invite]);
@@ -96,22 +96,18 @@ function IntakeForm({ invite }: { invite: string | null }) {
 
   return (
     <form onSubmit={submit} className="mt-8 space-y-5" noValidate>
-      <Field
-        label="Invite code"
-        htmlFor="invite"
-        required
-        hint={inviteLocked ? 'Filled in from your invite link.' : undefined}
-      >
-        <Input
-          ref={inviteRef}
-          id="invite"
-          value={f.inviteCode}
-          onChange={set('inviteCode')}
-          disabled={inviteLocked}
-          required
-          autoComplete="off"
-        />
-      </Field>
+      {inviteLocked ? null : (
+        <Field label="Invite code" htmlFor="invite" required>
+          <Input
+            ref={inviteRef}
+            id="invite"
+            value={f.inviteCode}
+            onChange={set('inviteCode')}
+            required
+            autoComplete="off"
+          />
+        </Field>
+      )}
       <Field label="Name" htmlFor="name" required>
         <Input id="name" value={f.name} onChange={set('name')} required autoComplete="name" />
       </Field>
