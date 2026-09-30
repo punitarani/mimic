@@ -6,12 +6,14 @@ import {
   hashJson,
   jobKey,
   loadHypotheses,
+  ONTOLOGY_V1,
   type PersonState,
   type PublicQuestion,
   rewindLastAnswer,
   runHypotheses,
   runJob,
   serveNext,
+  setScope,
   submitAnswer,
   submitFeedback,
   uiSnapshot,
@@ -720,6 +722,21 @@ describe('undo the latest answer (ADR-0036)', () => {
     await store.insertSoulDraft(draft(3));
     await rewindLastAnswer(engine.deps, id, { questionId: q3.id });
     expect((await store.latestSoulDraft(id))?.seqUpTo).toBe(2);
+  }, 30_000);
+
+  it('refuses to undo an answer about a topic turned off since (ADR-0040)', async () => {
+    const id = await start();
+    const q = await serve(id);
+    await answer(id, q);
+    const stored = (await engine.deps.store.listQuestions(id)).find((x) => x.id === q.id)!;
+    const category = ONTOLOGY_V1.find((f) => f.id === stored.facetIds[0])!.category;
+    const m = (await engine.deps.store.getMimic(id))!;
+    await setScope(engine.deps, id, {
+      ...m.scope,
+      categories: m.scope.categories.filter((c) => c !== category),
+    });
+    await expectConflict(rewindLastAnswer(engine.deps, id, { questionId: q.id }), /turned this topic off/);
+    expect(await engine.deps.store.listAnswerRewinds(id)).toEqual([]);
   }, 30_000);
 
   it('hard delete removes rewinds too', async () => {

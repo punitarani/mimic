@@ -276,3 +276,30 @@ only; scripted answers say nothing about real people. The whole live smoke cost 
     production environment;
   - its Twin-2K-500 step, since Hugging Face is blocked in this environment. That step is best-effort, and the run
     continues without it.
+
+## M9: categories, consent and scoped facets (ADR-0040)
+
+Offline fakes only (deterministic; the generator tags whatever it is told to target), so nothing below is a research
+result. It validates the machinery. Scripted people now carry a `script:` participant id.
+
+- Unit tests (`packages/core/test/scope.test.ts`, 9 tests): the allowance truth table (category, sensitive area,
+  consent), normalisation (canonical order, consents dropped with their category, research consents only with the
+  area's consent and research consent overall), `scopeShrank`, the scope view on mixed-facet, pooled, unknown-facet
+  and sensitive questions, hidden insights and reflection facts, `validateDraft` rejecting blocked tags, every v1
+  facet categorised, and the special-category fact lexicon (hits: church choir, Sunday mass, a party campaign,
+  diabetes advocacy, a cancer survivor headline, an LGBTQ+ network; misses: trail running, Temple University, an
+  employer in mental health, an oncology nurse title, "democratic decision-making").
+- Integration (`packages/eval/test/scope.test.ts`, 2 people × 20 turns with only psychology and values, 1 person × 22
+  turns with every category):
+  - seven anchors seeded instead of ten, in the same per-person order;
+  - no served question, trait history row, insight, knowledge-graph facet node, snapshot facet or occupation facet
+    touches "Relationships, sexuality and life" or "Work and money";
+  - no generator call lists a blocked facet in its ontology block or targets, and no trait read asks about one
+    (read from the model-call traces);
+  - narrowing the scope mid-session discards the out-of-scope pool, stamps `scope_at`, hides the answered work
+    anchor from the loaded view while keeping its rows, and nothing from the withdrawn category is served in the next
+    ten questions; widening back stamps nothing.
+- Every existing suite passes unchanged under the default scope (core, db, eval, worker, web), including the offline
+  online-reproduction test (`eval.test.ts`), so default-scope state hashes are unchanged. Config hashes v1–v4 are
+  unchanged (no config change in M9).
+- Not measured: anything about real people; the UI (M11); sensitive facets (they arrive with ontology v2 in M10).

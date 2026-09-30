@@ -1,4 +1,5 @@
 import type { FidelityState } from './fidelity';
+import type { MimicScope } from './scope';
 import type { SoulCuration, SoulDraft } from './soul';
 import type {
   Distribution,
@@ -40,6 +41,10 @@ export interface MimicRecord {
   consentApp: boolean;
   consentSearch: boolean;
   consentResearch: boolean;
+  /** Categories selected and sensitive areas consented (ADR-0040). Enforced in code wherever facets are used. */
+  scope: MimicScope;
+  /** When the scope last shrank; states served before it are rebuilt without what it hid (ADR-0040). */
+  scopeAt: number | null;
   split: 'dev' | 'test';
   seqMax: number;
   /**

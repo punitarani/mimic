@@ -13,7 +13,8 @@
         "Balanced",
         "Leans toward novelty and ideas",
         "Strongly seeks novelty and ideas"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "conscientiousness",
@@ -27,7 +28,8 @@
         "Balanced",
         "Leans organized",
         "Very organized and disciplined"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "extraversion",
@@ -41,7 +43,8 @@
         "Balanced",
         "Leans outgoing",
         "Very outgoing"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "agreeableness",
@@ -55,7 +58,8 @@
         "Balanced",
         "Leans accommodating",
         "Very accommodating"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "emotional_stability",
@@ -69,7 +73,8 @@
         "Balanced",
         "Leans even-keeled",
         "Very even-keeled"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "openness_to_change",
@@ -83,7 +88,8 @@
         "Balanced",
         "Leans toward independence and stimulation",
         "Strongly values independence and stimulation"
-      ]
+      ],
+      "category": "values"
     },
     {
       "id": "self_enhancement",
@@ -97,7 +103,8 @@
         "Balanced",
         "Leans toward achievement and status",
         "Strongly driven by achievement and status"
-      ]
+      ],
+      "category": "values"
     },
     {
       "id": "conservation",
@@ -111,7 +118,8 @@
         "Balanced",
         "Leans toward order and security",
         "Strongly values order and security"
-      ]
+      ],
+      "category": "values"
     },
     {
       "id": "self_transcendence",
@@ -125,7 +133,8 @@
         "Balanced",
         "Leans toward others' welfare",
         "Strongly focused on others' welfare"
-      ]
+      ],
+      "category": "values"
     },
     {
       "id": "risk_tolerance",
@@ -139,7 +148,8 @@
         "Balanced",
         "Leans toward risk",
         "Strongly seeks risk"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "patience",
@@ -153,7 +163,8 @@
         "Balanced",
         "Leans toward waiting for more",
         "Strongly prefers waiting for more later"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "loss_aversion",
@@ -167,7 +178,8 @@
         "Losses weigh somewhat more",
         "Losses weigh clearly more",
         "Losses loom much larger than gains"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "ambiguity_tolerance",
@@ -181,7 +193,8 @@
         "Balanced",
         "Leans comfortable with unknowns",
         "Very comfortable with unknowns"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "maximizing",
@@ -195,7 +208,8 @@
         "Balanced",
         "Leans toward finding the best",
         "Must always find the best"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "deliberation",
@@ -209,7 +223,8 @@
         "Balanced",
         "Leans toward thinking it through",
         "Always thinks it through"
-      ]
+      ],
+      "category": "psychology"
     },
     {
       "id": "trust",
@@ -223,7 +238,8 @@
         "Balanced",
         "Leans trusting",
         "Trusts by default"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "reciprocity",
@@ -237,7 +253,8 @@
         "Balanced",
         "Leans fair and reciprocal",
         "Strongly fair and reciprocal"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "conformity",
@@ -251,7 +268,8 @@
         "Balanced",
         "Leans toward the group",
         "Strongly follows the group"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "conflict_directness",
@@ -265,7 +283,8 @@
         "Balanced",
         "Leans toward addressing it",
         "Addresses conflict head-on"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "autonomy",
@@ -279,7 +298,8 @@
         "Balanced",
         "Leans toward ownership",
         "Strongly prefers full ownership"
-      ]
+      ],
+      "category": "work"
     },
     {
       "id": "planning",
@@ -293,7 +313,8 @@
         "Balanced",
         "Leans toward planning",
         "Always plans ahead"
-      ]
+      ],
+      "category": "work"
     },
     {
       "id": "detail_orientation",
@@ -307,7 +328,8 @@
         "Balanced",
         "Leans detail-oriented",
         "Strongly detail-oriented"
-      ]
+      ],
+      "category": "work"
     },
     {
       "id": "collaboration",
@@ -321,7 +343,8 @@
         "Balanced",
         "Leans toward working with others",
         "Strongly prefers working with others"
-      ]
+      ],
+      "category": "work"
     },
     {
       "id": "leadership_drive",
@@ -335,7 +358,8 @@
         "Balanced",
         "Leans toward leading",
         "Strongly prefers to lead"
-      ]
+      ],
+      "category": "work"
     },
     {
       "id": "speed_vs_quality",
@@ -349,7 +373,8 @@
         "Balanced",
         "Leans toward shipping fast",
         "Always ships fast"
-      ]
+      ],
+      "category": "work"
     },
     {
       "id": "routine",
@@ -363,7 +388,8 @@
         "Balanced",
         "Leans toward routines",
         "Very structured routines"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "social_energy",
@@ -377,7 +403,8 @@
         "Balanced",
         "Leans toward recharging with people",
         "Strongly recharges with people"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "spending_style",
@@ -391,7 +418,8 @@
         "Balanced",
         "Leans indulgent",
         "Very indulgent"
-      ]
+      ],
+      "category": "work"
     },
     {
       "id": "taste_novelty",
@@ -405,7 +433,8 @@
         "Balanced",
         "Leans toward new things",
         "Always tries new things"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "directness",
@@ -419,7 +448,8 @@
         "Balanced",
         "Leans blunt",
         "Very blunt"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "formality",
@@ -433,7 +463,8 @@
         "Balanced",
         "Leans formal",
         "Very formal"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "verbosity",
@@ -447,7 +478,8 @@
         "Balanced",
         "Leans detailed",
         "Very detailed"
-      ]
+      ],
+      "category": "life"
     },
     {
       "id": "humor",
@@ -461,7 +493,8 @@
         "Balanced",
         "Leans playful",
         "Very playful"
-      ]
+      ],
+      "category": "life"
     }
   ]
 }

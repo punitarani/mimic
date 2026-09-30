@@ -32,6 +32,12 @@ export const mimics = sqliteTable(
     consentApp: bool('consent_app').notNull(),
     consentSearch: bool('consent_search').notNull(),
     consentResearch: bool('consent_research').notNull(),
+    /** ADR-0040: selected categories, sensitive-area consents and special-category research consents (JSON). */
+    categoriesJson: text('categories_json').notNull().default('["psychology","values","life","work"]'),
+    consentsJson: text('consents_json').notNull().default('{}'),
+    researchConsentsJson: text('research_consents_json').notNull().default('{}'),
+    /** When the scope last shrank (ADR-0040). */
+    scopeAt: integer('scope_at'),
     split: text('split', { enum: ['dev', 'test'] }).notNull(),
     seqMax: integer('seq_max').notNull().default(0),
     /** Bumped by every undo; guarded writes check it in the same batch (ADR-0036). */

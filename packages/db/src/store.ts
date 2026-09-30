@@ -4,6 +4,7 @@ import {
   type CandidateRecord,
   type CandidateStatus,
   type ConfigRecord,
+  DEFAULT_SCOPE,
   type DerivedRollback,
   type EvalRunRecord,
   type ExperimentRecord,
@@ -17,6 +18,7 @@ import {
   type KgNodeRecord,
   type MimicFacetRecord,
   type MimicRecord,
+  MimicScope,
   type ModelCallRecord,
   Option,
   type PredictionRecord,
@@ -96,11 +98,24 @@ type TRow = typeof s.traitEstimates.$inferSelect;
 
 /** A MimicRecord patch as column values (`links` is stored as JSON). */
 function mimicPatch(patch: Partial<Omit<MimicRecord, 'id'>>): Partial<typeof s.mimics.$inferInsert> {
-  const { links, ...rest } = patch;
+  const { links, scope, ...rest } = patch;
   const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
   if (links) set.linksJson = JSON.stringify(links);
+  if (scope) Object.assign(set, scopeColumns(scope));
   return set;
 }
+
+function scopeColumns(scope: MimicScope) {
+  return {
+    categoriesJson: JSON.stringify(scope.categories),
+    consentsJson: JSON.stringify(scope.consents),
+    researchConsentsJson: JSON.stringify(scope.researchConsents),
+  };
+}
+
+const ScopeCategories = MimicScope.shape.categories;
+const ScopeConsents = MimicScope.shape.consents.unwrap();
+const ScopeResearch = MimicScope.shape.researchConsents.unwrap();
 
 const toMimic = (r: MRow): MimicRecord => ({
   id: r.id,
@@ -118,6 +133,12 @@ const toMimic = (r: MRow): MimicRecord => ({
   consentApp: r.consentApp,
   consentSearch: r.consentSearch,
   consentResearch: r.consentResearch,
+  scope: {
+    categories: parse(ScopeCategories, r.categoriesJson, [...DEFAULT_SCOPE.categories]),
+    consents: parse(ScopeConsents, r.consentsJson, {}),
+    researchConsents: parse(ScopeResearch, r.researchConsentsJson, {}),
+  },
+  scopeAt: r.scopeAt,
   split: r.split,
   seqMax: r.seqMax,
   evidenceEpoch: r.evidenceEpoch,
@@ -365,8 +386,10 @@ export class DrizzleStore implements Store {
 
   // mimics
   async insertMimic(m: MimicRecord) {
-    const { links, ...rest } = m;
-    await this.db.insert(s.mimics).values({ ...rest, linksJson: JSON.stringify(links) });
+    const { links, scope, ...rest } = m;
+    await this.db
+      .insert(s.mimics)
+      .values({ ...rest, linksJson: JSON.stringify(links), ...scopeColumns(scope) });
   }
   async getMimic(id: string) {
     const r = await this.db.select().from(s.mimics).where(eq(s.mimics.id, id)).get();

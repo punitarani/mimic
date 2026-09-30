@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import {
+  DEFAULT_SCOPE,
   type EngineDeps,
   ensureDefaultConfig,
   type MimicRecord,
@@ -188,6 +189,8 @@ export async function importTwin(
       consentApp: true,
       consentSearch: false,
       consentResearch: true,
+      scope: DEFAULT_SCOPE,
+      scopeAt: null,
       split: splitFor(id),
       seqMax: 0,
       evidenceEpoch: 0,

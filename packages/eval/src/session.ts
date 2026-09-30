@@ -1,7 +1,10 @@
 import {
+  Category,
   createMimic,
+  DEFAULT_SCOPE,
   type FidelityResult,
   LLM,
+  MimicScope,
   type PublicQuestion,
   parseJsonLoose,
   type Reveal,
@@ -23,6 +26,12 @@ export const SessionScript = z.object({
     employer: z.string().optional(),
   }),
   consentResearch: z.boolean().default(false),
+  /** Categories to ask about (ADR-0040); every category when absent. */
+  categories: z.array(Category).min(1).optional(),
+  /** Sensitive areas consented, e.g. { politics: true } (ADR-0040). */
+  consents: z.record(z.string(), z.boolean()).default({}),
+  /** Special-category areas consented for research use. */
+  researchConsents: z.record(z.string(), z.boolean()).default({}),
   seed: z.string().default('script'),
   /** Fallback for questions the script doesn't cover. `consistent` answers the same prompt the same way. */
   policy: z.enum(['consistent', 'first', 'last']).default('consistent'),
@@ -115,10 +124,37 @@ export async function runSession(
   const { deps } = engine;
   const m = await createMimic(
     deps,
-    { ...script.intake, attestSelf: true, consentSearch: false, consentResearch: script.consentResearch },
-    opts.participantId ?? ulid(),
+    {
+      ...script.intake,
+      attestSelf: true,
+      consentSearch: false,
+      consentResearch: script.consentResearch,
+      scope: MimicScope.parse({
+        categories: script.categories ?? DEFAULT_SCOPE.categories,
+        consents: script.consents,
+        researchConsents: script.researchConsents,
+      }),
+    },
+    // Scripted people are marked so reports can keep them apart from real ones (R10).
+    opts.participantId ?? `script:${ulid()}`,
   );
   await engine.drain();
+  const { turns } = await continueSession(engine, m.id, script, opts);
+  return { mimicId: m.id, turns };
+}
+
+/**
+ * Answers up to `opts.turns` more questions for an existing mimic with the same script (for example after a scope
+ * change), running queued jobs inline between turns, then writes one snapshot.
+ */
+export async function continueSession(
+  engine: LocalEngine,
+  mimicId: string,
+  script: SessionScript,
+  opts: Omit<SessionOptions, 'participantId'>,
+): Promise<{ turns: TurnLog[] }> {
+  const { deps } = engine;
+  const m = { id: mimicId };
   const turns: TurnLog[] = [];
   let waits = 0;
   while (turns.length < opts.turns) {
@@ -163,5 +199,5 @@ export async function runSession(
     opts.onTurn?.(t);
   }
   await writeSnapshot(deps, m.id);
-  return { mimicId: m.id, turns };
+  return { turns };
 }
