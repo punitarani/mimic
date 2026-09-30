@@ -364,8 +364,14 @@ export class VoiSelector implements Selector {
     const b = ctx.belief;
     const flags = ctx.pool.map(() => true);
     if (!b) return flags;
+    // The ramp first: exposure, the cap and the floor choose among the candidates it allows, so none of them can
+    // narrow the pool to held-back candidates only and leave nothing eligible.
+    const ramp = this.cfg.trustRamp;
+    const allowed = ctx.pool.map((q) => !ramp || rampOpen(b, ramp) || !touchesSensitive(b, q));
     const over = ctx.pool.map((q) => q.facetIds.some((f) => overExposed(b, f, this.cfg.exposureCap)));
-    let ok = over.every(Boolean) ? flags : over.map((o) => !o);
+    let ok = allowed;
+    const fresh = ok.map((o, i) => o && !over[i]);
+    if (fresh.some(Boolean)) ok = fresh;
     const cap = this.cfg.balance?.cap;
     if (cap !== undefined && b.person.nAdaptive >= EXPOSURE_MIN_ADAPTIVE) {
       const catsOf = (q: Question) => [
@@ -389,8 +395,6 @@ export class VoiSelector implements Selector {
         if (lifts.some(Boolean)) ok = lifts;
       }
     }
-    const ramp = this.cfg.trustRamp;
-    const allowed = ctx.pool.map((q) => !ramp || rampOpen(b, ramp) || !touchesSensitive(b, q));
     // Coverage deadlines take precedence over exposure, the cap and the floor, never over the ramp.
     const seq = ctx.seq ?? b.person.nAnswered + 1;
     const pressing: Array<(q: Question) => boolean> = [];
@@ -412,7 +416,7 @@ export class VoiSelector implements Selector {
         return both.some(Boolean) ? both : due;
       }
     }
-    return ok.map((o, i) => o && allowed[i]!);
+    return ok;
   }
 
   async select(ctx: SelectContext): Promise<Selection> {

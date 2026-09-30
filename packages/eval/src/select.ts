@@ -41,7 +41,10 @@ export interface SelectSpec {
    * accuracy and accuracy at a budget can be compared per selector on the same people.
    */
   series?: boolean;
-  /** Simulate a person who selected only these categories: facets, anchors and pool are restricted to them. */
+  /**
+   * Simulate a person who selected only these of their categories: facets, anchors and pool are restricted to them.
+   * Intersected with each person's own selection, so a category they turned off is never turned back on.
+   */
   categories?: Category[];
 }
 
@@ -88,7 +91,14 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
   const maxBudget = Math.max(...spec.budgets);
 
   for (const m0 of mimics) {
-    const m = spec.categories ? { ...m0, scope: { ...m0.scope, categories: spec.categories } } : m0;
+    // Narrows the person's own categories, never widens them: a category they turned off stays off, so the answers
+    // their scope hides never reach a state or a model (ADR-0040).
+    const m = spec.categories
+      ? {
+          ...m0,
+          scope: { ...m0.scope, categories: m0.scope.categories.filter((c) => spec.categories!.includes(c)) },
+        }
+      : m0;
     const cfg = await loadConfig(deps, m.configHash);
     const facets = await facetsFor(deps, m, cfg);
     const allowed = new Set(facets.map((f) => f.id));
@@ -163,7 +173,9 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
           remaining = remaining.filter((e) => e !== picked);
           if (spec.series) {
             const a = await accuracyOnRest([...anchors, ...chosen], remaining);
-            trace.push(a ?? Number.NaN);
+            // No scored prediction is no evidence of fidelity: it counts as below the target, never as sustained
+            // (`questionsToSustain` only looks for values under it, and NaN is never under anything).
+            trace.push(a ?? 0);
             const key = keyOf(label, chosen.length);
             if (a !== null) series.set(key, [...(series.get(key) ?? []), a]);
             if (spec.budgets.includes(chosen.length) && a !== null)

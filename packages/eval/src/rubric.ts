@@ -1,6 +1,7 @@
 import {
   CATEGORIES,
   type Category,
+  categoryShares,
   type EngineDeps,
   type EvalRunRecord,
   facetsFor,
@@ -28,7 +29,8 @@ export const CONCRETE_MIN = 0.4;
 export const SHARE_BOUNDS = { min: 0.15, max: 0.4 } as const;
 export const BY = { shares: 30, groups: 20, sensitive: 30, early: 5 } as const;
 
-export type Population = 'real' | 'scripted' | 'twin2k';
+export const POPULATIONS = ['real', 'scripted', 'twin2k'] as const;
+export type Population = (typeof POPULATIONS)[number];
 
 export function populationOf(participantId: string): Population {
   if (participantId.startsWith('script:')) return 'scripted';
@@ -77,16 +79,13 @@ export async function rubricPerson(deps: EngineDeps, m: MimicRecord): Promise<Ru
     .map((q) => (q.quality?.gates as Record<string, number> | undefined)?.concrete)
     .filter((p): p is number => typeof p === 'number');
 
-  const catCount = new Map<Category, number>();
-  let total = 0;
-  for (const q of upTo(BY.shares)) {
-    const cats = [...new Set(q.facetIds.map((f) => byId.get(f)?.category).filter((c): c is Category => !!c))];
-    if (!cats.length) continue;
-    total += 1;
-    for (const c of cats) catCount.set(c, (catCount.get(c) ?? 0) + 1 / cats.length);
-  }
-  const inScope = CATEGORIES.filter((c) => facets.some((f) => f.category === c));
-  const shares = Object.fromEntries(inScope.map((c) => [c, total ? (catCount.get(c) ?? 0) / total : 0]));
+  // The belief state's own shares (ADR-0044), so the rubric reads balance exactly as the selector does.
+  const byCategory = categoryShares(
+    facets,
+    upTo(BY.shares).map((q) => q.facetIds),
+  );
+  const inScope = CATEGORIES.filter((c) => byCategory[c]);
+  const shares = Object.fromEntries(inScope.map((c) => [c, byCategory[c]!.share]));
   const allFour = inScope.length === CATEGORIES.length;
 
   const groups = [...new Set(facets.map((f) => f.group))];
@@ -190,7 +189,8 @@ export async function rubricRun(
   spec: { name: string; byArm?: boolean; population?: Population[] },
   datasetHash: string,
 ): Promise<{ run: EvalRunRecord; people: RubricPerson[]; groups: RubricGroup[] }> {
-  const mimics = await deps.store.listMimics({});
+  // Consent gates research use (PLAN §3.8), as in `select`; exports hold only consented people anyway.
+  const mimics = await deps.store.listMimics({ consentResearch: true });
   const people: RubricPerson[] = [];
   for (const m of mimics) {
     const p = await rubricPerson(deps, m);

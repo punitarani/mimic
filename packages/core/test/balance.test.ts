@@ -294,6 +294,23 @@ describe('the balanced, ramped voi selector (ADR-0044)', () => {
     expect(v7.eligible(ctx([sensitive, q('ok', ['care_harm'])], open))).toEqual([true, true]);
   });
 
+  it('the cap and the floor choose among what the ramp allows, never narrowing to held-back candidates only', async () => {
+    // One anchor and four adaptive answers, all psychology: the cap and the floor are on, the ramp is still closed.
+    const b = belief([
+      answer(1, ['openness'], { kind: 'anchor' }),
+      ...psychology(4).map((a) => ({ ...a, seq: a.seq + 1 })),
+    ]);
+    expect(b.person.nAdaptive).toBe(4);
+    expect(rampOpen(b, RAMP)).toBe(false);
+    const v7 = new VoiSelector(VOI_SELECTOR_V7);
+    // The only candidate outside psychology is sensitive: held back, so the psychology one stays eligible.
+    const pool = [q('pol', ['political_leaning']), q('psych', ['self_control'])];
+    expect(v7.eligible(ctx(pool, b))).toEqual([false, true]);
+    const sel = await v7.select(ctx(pool, b));
+    expect(sel.question.id).toBe('psych');
+    expect(sel.diagnostics.failed).toBeUndefined();
+  });
+
   it('from sweepFrom, prefers a consented sensitive facet not yet asked about', async () => {
     const b = belief(psychology(RAMP.sweepFrom));
     const v7 = new VoiSelector({ ...VOI_SELECTOR_V7, balance: undefined, piPopulation: 0, nuBurden: 0 });

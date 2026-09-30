@@ -18,7 +18,7 @@ import { openLocalEngine } from './local';
 import { diagnoseCmd, evaluateCmd, optimizeCmd } from './optimize/commands';
 import { replay, reproduceOnline } from './replay';
 import { publishReport, renderReport, writeReport } from './report';
-import { type Population, rubricRun } from './rubric';
+import { POPULATIONS, type Population, rubricRun } from './rubric';
 import { simulateSelection } from './select';
 import { runSession, SessionScript } from './session';
 import { importTwin } from './twin';
@@ -312,9 +312,12 @@ async function rubricCmd(argv: string[]) {
   });
   if (!values.data) throw new Error('--data is required');
   const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
-  const population = values.population
-    ? (values.population.split(',').map((p) => p.trim()) as Population[])
-    : undefined;
+  const population = values.population?.split(',').map((p) => {
+    const x = p.trim();
+    if (!(POPULATIONS as readonly string[]).includes(x))
+      throw new Error(`unknown population ${x} (${POPULATIONS.join(', ')})`);
+    return x as Population;
+  });
   const { run } = await rubricRun(
     engine.deps,
     {

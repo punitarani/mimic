@@ -5,7 +5,7 @@ import type { PipelineConfig } from '../config';
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
-import { getReserveSet, reserveSetId } from '../ontology';
+import { getReserveSet, type ItemTemplate, reserveSetId } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
 import { LlmPredictor, makePredictor, promptVersionOf } from '../predictors';
 import { pickRepeat } from '../repeats';
@@ -276,7 +276,18 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
   // 3) Adaptive pool (reserve bank when the generated pool is empty). Before the trust ramp opens, nothing touching
   // a sensitive facet is offered at all (ADR-0044).
   const ramp = rampAllows(cfg, loaded);
-  let pool = questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled' && inScope(q) && ramp(q));
+  // A reserve item is asked once: two serves racing through the top-up below can each pool a copy of it.
+  const askedKeys = new Set(
+    questions.filter((q) => q.status === 'served' || q.status === 'answered').map((q) => q.itemKey),
+  );
+  let pool = questions.filter(
+    (q) =>
+      q.kind === 'adaptive' &&
+      q.status === 'pooled' &&
+      inScope(q) &&
+      ramp(q) &&
+      !(q.itemKey && askedKeys.has(q.itemKey)),
+  );
   if (pool.length < MIN_POOL) {
     await deferred(deps, () => deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq }));
   }
@@ -375,22 +386,15 @@ async function coverageTopUp(
     }
   }
 
-  const added: QuestionRecord[] = [];
+  // One pass over the reserve in its usual order, one item per need, and a single insert.
+  const ordered = reserveItems(m, cfg, loaded.questions, loaded.scope.blocked, ramp);
+  const picked: ItemTemplate[] = [];
   for (const want of wants) {
-    if (added.length >= TOP_UP_MAX) break;
-    added.push(
-      ...(await addReserve(
-        deps,
-        m,
-        cfg,
-        [...loaded.questions, ...added],
-        loaded.scope.blocked,
-        (q) => ramp(q) && want(q),
-        1,
-      )),
-    );
+    if (picked.length >= TOP_UP_MAX) break;
+    const item = ordered.find((r) => want(r) && !picked.includes(r));
+    if (item) picked.push(item);
   }
-  return added;
+  return insertReserve(deps, m, cfg, picked);
 }
 
 /**
@@ -405,31 +409,49 @@ async function addReserve(
   questions: QuestionRecord[],
   blocked: ReadonlySet<string>,
   allow: (q: { facetIds: string[] }) => boolean = () => true,
-  limit = RESERVE_BATCH,
 ): Promise<QuestionRecord[]> {
+  return insertReserve(deps, m, cfg, reserveItems(m, cfg, questions, blocked, allow).slice(0, RESERVE_BATCH));
+}
+
+/** The reserve items not yet used that the scope and `allow` admit, in the order `addReserve` offers them. */
+function reserveItems(
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  questions: QuestionRecord[],
+  blocked: ReadonlySet<string>,
+  allow: (q: { facetIds: string[] }) => boolean,
+): ItemTemplate[] {
   const setId = reserveSetId(cfg);
   const used = new Set(questions.map((q) => q.itemKey).filter(Boolean));
-  const now = deps.clock();
   // Without "Work and money", no workplace scenes either (ADR-0042).
   const professional = m.scope.categories.includes('work');
-  let items = getReserveSet(setId).filter(
+  const items = getReserveSet(setId).filter(
     (r) =>
       !used.has(r.itemKey) &&
       questionAllowed(r, blocked) &&
       allow(r) &&
       (professional || r.domain !== 'professional'),
   );
-  if (setId !== 'reserve.v1') {
-    const asked = new Map<string, number>();
-    for (const q of questions)
-      if (q.seq !== null) for (const f of q.facetIds) asked.set(f, (asked.get(f) ?? 0) + 1);
-    const load = (r: { facetIds: string[] }) => Math.max(...r.facetIds.map((f) => asked.get(f) ?? 0));
-    items = items
-      .map((r, i) => ({ r, i, l: load(r) }))
-      .sort((a, b) => a.l - b.l || a.i - b.i)
-      .map((x) => x.r);
-  }
-  const recs: QuestionRecord[] = items.slice(0, limit).map((item, i) => ({
+  if (setId === 'reserve.v1') return items;
+  const asked = new Map<string, number>();
+  for (const q of questions)
+    if (q.seq !== null) for (const f of q.facetIds) asked.set(f, (asked.get(f) ?? 0) + 1);
+  const load = (r: { facetIds: string[] }) => Math.max(...r.facetIds.map((f) => asked.get(f) ?? 0));
+  return items
+    .map((r, i) => ({ r, i, l: load(r) }))
+    .sort((a, b) => a.l - b.l || a.i - b.i)
+    .map((x) => x.r);
+}
+
+async function insertReserve(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  items: ItemTemplate[],
+): Promise<QuestionRecord[]> {
+  const setId = reserveSetId(cfg);
+  const now = deps.clock();
+  const recs: QuestionRecord[] = items.map((item, i) => ({
     id: deps.newId(),
     mimicId: m.id,
     seq: null,
