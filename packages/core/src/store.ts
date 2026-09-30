@@ -1,5 +1,6 @@
 import type { FidelityState } from './fidelity';
 import type { PersonaCuration, PersonaDraft } from './persona';
+import type { MimicScope } from './scope';
 import type { Distribution, Facet, Insight, QKind, Question, TraitEstimate } from './types';
 
 export type MimicStatus = 'intake' | 'identity' | 'learning' | 'paused' | 'archived';
@@ -32,6 +33,10 @@ export interface MimicRecord {
   consentApp: boolean;
   consentSearch: boolean;
   consentResearch: boolean;
+  /** Categories selected and sensitive areas consented (ADR-0036). Enforced in code wherever facets are used. */
+  scope: MimicScope;
+  /** When the scope last shrank; states served before it are rebuilt without what it hid (ADR-0036). */
+  scopeAt: number | null;
   split: 'dev' | 'test';
   seqMax: number;
   snapshotVersion: number;

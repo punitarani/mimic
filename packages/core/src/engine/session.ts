@@ -8,6 +8,7 @@ import { RESERVE_V1 } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
 import { LlmPredictor, makePredictor, promptVersionOf } from '../predictors';
 import { pickRepeat } from '../repeats';
+import { questionAllowed } from '../scope';
 import { repeatAgreement, scorePrediction } from '../scoring';
 import {
   hypothesisPosterior,
@@ -146,16 +147,20 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
   const seq = maxSeq(questions) + 1;
   const rng = seededRng(`select:${m.id}:${seq}`);
 
+  // Nothing the person's scope hides is ever served (ADR-0036): out-of-scope anchors, repeat sources and pooled
+  // questions are skipped here even if a scope change raced the discard in setScope.
+  const inScope = (q: QuestionRecord) => !loaded.scope.hiddenQuestionIds.has(q.id);
+
   // 1) Anchors first, in the per-person order fixed at intake.
   const anchor = questions
-    .filter((q) => q.kind === 'anchor' && q.status === 'pooled')
+    .filter((q) => q.kind === 'anchor' && q.status === 'pooled' && inScope(q))
     .sort((a, b) => a.createdAt - b.createdAt)[0];
   if (anchor)
     return serveWithPredictions(deps, m, cfg, loaded, stateAt, seq, anchor, [anchor], progress, rng);
 
   // 2) Repeat probes, scheduled outside the selector; no predictions (PLAN §9.5).
   const served = questions
-    .filter((q) => q.seq !== null && isSessionKind(q.kind))
+    .filter((q) => q.seq !== null && isSessionKind(q.kind) && inScope(q))
     .map((q) => ({
       questionId: q.id,
       seq: q.seq!,
@@ -191,12 +196,12 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
   }
 
   // 3) Adaptive pool (reserve bank when the generated pool is empty).
-  let pool = questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled');
+  let pool = questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled' && inScope(q));
   if (pool.length < MIN_POOL) {
     await deferred(deps, () => deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq }));
   }
   if (pool.length === 0) {
-    pool = await addReserve(deps, m, questions);
+    pool = await addReserve(deps, m, questions, loaded.scope.blocked);
     if (pool.length === 0) return { status: 'waiting', progress };
   }
   return serveWithPredictions(deps, m, cfg, loaded, stateAt, seq, null, pool, progress, rng);
@@ -218,10 +223,11 @@ async function addReserve(
   deps: EngineDeps,
   m: MimicRecord,
   questions: QuestionRecord[],
+  blocked: ReadonlySet<string>,
 ): Promise<QuestionRecord[]> {
   const used = new Set(questions.map((q) => q.itemKey).filter(Boolean));
   const now = deps.clock();
-  const recs: QuestionRecord[] = RESERVE_V1.filter((r) => !used.has(r.itemKey))
+  const recs: QuestionRecord[] = RESERVE_V1.filter((r) => !used.has(r.itemKey) && questionAllowed(r, blocked))
     .slice(0, RESERVE_BATCH)
     .map((item, i) => ({
       id: deps.newId(),

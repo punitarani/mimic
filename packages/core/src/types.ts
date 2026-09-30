@@ -30,6 +30,31 @@ export function isPredictedKind(kind: QKind): boolean {
 export const Domain = z.enum(['core', 'casual', 'professional']);
 export type Domain = z.infer<typeof Domain>;
 
+/**
+ * The four person-facing categories a mimic can be asked about (docs/CATEGORIES.md, ADR-0036). Every facet belongs to
+ * exactly one; a person can deselect any of them, and a deselected category is never asked about or learned.
+ */
+export const Category = z.enum(['psychology', 'values', 'life', 'work']);
+export type Category = z.infer<typeof Category>;
+export const CATEGORIES: readonly Category[] = Category.options;
+
+/** Sensitive areas: opt-in, each under its own consent (ADR-0036). */
+export const SensitiveArea = z.enum(['politics', 'religion', 'sexuality', 'health', 'money']);
+export type SensitiveArea = z.infer<typeof SensitiveArea>;
+export const SENSITIVE_AREAS: readonly SensitiveArea[] = SensitiveArea.options;
+
+/**
+ * Special-category areas (political opinion, religion, sexual orientation and sex life, health): excluded from research
+ * exports unless the person separately consents to research on them, and never taken from web search. `money` is
+ * sensitive but not special-category, so plain research consent covers it.
+ */
+export const SpecialArea = z.enum(['politics', 'religion', 'sexuality', 'health']);
+export type SpecialArea = z.infer<typeof SpecialArea>;
+export const SPECIAL_AREAS: readonly SpecialArea[] = SpecialArea.options;
+export function isSpecialArea(a: SensitiveArea): a is SpecialArea {
+  return (SPECIAL_AREAS as readonly string[]).includes(a);
+}
+
 export const Option = z.object({
   key: z.string().min(1).max(32),
   label: z.string().min(1).max(200),
@@ -79,6 +104,12 @@ export interface Facet {
   high: string;
   /** 5 ordered labels for trait reads, low → high. */
   labels: [string, string, string, string, string];
+  /** The person-facing category the facet belongs to (ADR-0036). */
+  category: Category;
+  /** Set on opt-in facets: asked and learned only with the person's consent for this area (ADR-0036). */
+  sensitive?: SensitiveArea;
+  /** The research instrument or finding the facet is anchored in (ontology v2; docs/ontology/v2.sources.md). */
+  source?: string;
   /** Present for per-mimic occupation facets. */
   occupation?: boolean;
 }

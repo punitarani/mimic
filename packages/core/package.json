@@ -8,7 +8,8 @@
     "./ontology": "./src/ontology/index.ts",
     "./labels": "./src/labels.ts",
     "./limits": "./src/limits.ts",
-    "./links": "./src/links.ts"
+    "./links": "./src/links.ts",
+    "./scope": "./src/scope.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -158,7 +158,8 @@ export async function enqueueMissingPredictions(
   let n = 0;
   for (const q of questions) {
     if (q.seq === null || q.servedAt === null || q.servedAt >= servedBefore) continue;
-    if (!isScoredKind(q.kind)) continue;
+    // A question discarded after it was served (its category was withdrawn, ADR-0036) needs no more predictions.
+    if (!isScoredKind(q.kind) || q.status === 'discarded') continue;
     if (!sealed.has(q.id)) continue;
     for (const predictorId of predictorIds) {
       if (have.has(`${q.id}|${predictorId}`)) continue;
@@ -354,7 +355,9 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
   const loaded = await loadMimicData(deps, m);
-  const pool = loaded.questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled');
+  const pool = loaded.questions.filter(
+    (q) => q.kind === 'adaptive' && q.status === 'pooled' && !loaded.scope.hiddenQuestionIds.has(q.id),
+  );
   if (pool.length >= MIN_POOL) return;
   // Candidates only feed the session, so refills stop with it and never draw on the page's reserve.
   requireSessionBudget(deps, m, cfg);
@@ -420,6 +423,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
     traitSummary,
     recentPrompts: recent,
     n,
+    blocked: loaded.scope.blocked,
   });
   if (!gen.drafts.length) return;
 
@@ -596,9 +600,13 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
       await deps.jobs.enqueue({ type: 'hypotheses.refresh', mimicId: m.id, seqUpTo: seq });
   }
 
-  // 4) Occupation facets, on the first learn after identity is settled.
+  // 4) Occupation facets, on the first learn after identity is settled. They belong to "Work and money", so a person
+  // who deselected it gets none; existing ones are looked up unscoped so a hidden set isn't generated again.
   const settled = m.identityState === 'done' || m.identityState === 'skipped';
-  if (settled && m.occupation && cfg.generator.model && !facets.some((f) => f.occupation)) {
+  const wantsOccupation = m.scope.categories.includes('work');
+  const hasOccupation =
+    wantsOccupation && (await facetsFor(deps, m, cfg, { scoped: false })).some((f) => f.occupation);
+  if (settled && wantsOccupation && m.occupation && cfg.generator.model && !hasOccupation) {
     try {
       const occ = await generateOccupationFacets(deps.gateway, ctxFor(m, 'facets.occupation', key), {
         model: cfg.generator.model,

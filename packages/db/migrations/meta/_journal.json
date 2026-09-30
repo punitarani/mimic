@@ -36,6 +36,13 @@
       "when": 1790768653276,
       "tag": "0004_persona",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790789240210,
+      "tag": "0005_scope",
+      "breakpoints": true
     }
   ]
 }

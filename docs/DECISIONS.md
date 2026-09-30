@@ -863,3 +863,46 @@ the two things they finish the session to do.
   a JSON number; an invalid one keeps its default and is logged once.
 - **UI.** `budgetUsd` in the snapshot is the whole cap. The session's end says what is left: the reserve for the
   mimic page, or, once everything is spent, that answers can still be taught there.
+
+## ADR-0036 — Categories and consent: sensitive domains become opt-in (2026-09-30)
+
+PLAN §1 excluded health, sexuality, religion, politics and detailed finances, enforced by five prompt rules and the
+`sensitive` Jev gate. The project owner now wants them, gathered as fully as each person permits, and wants people to
+steer what they are asked about. This ADR lifts the non-goal and records the contract; `docs/CATEGORIES.md` is the
+full policy.
+
+- **Four categories.** Every facet has a `category`: Personality and psychology, Values beliefs and politics,
+  Relationships sexuality and life, Work and money. All are selected by default and each can be deselected at intake
+  or later; at least one stays. Question domains stay a separate axis (the kind of scenario, not what is measured).
+  In v1, `spending_style` is "Work and money" although its group is Everyday, so a facet keeps one category across
+  ontology versions; occupation facets are always "Work and money".
+- **Five opt-in areas,** each a separate consent under its category: politics, religion, sexuality, health, money.
+  A facet with `sensitive` set is reachable only with its area consented. Each consent carries a one-line reason and
+  "Your answers stay yours: they are only used to build your mimic."
+- **Special-category data** (politics, religion, sexuality, health) leaves research exports unless the person also
+  consents to research use of that area; money follows plain research consent. None of it is ever taken from web
+  search or enrichment: those fields are never requested, and a lexicon drops any fact that reveals one before it is
+  stored. Hard delete covers it like everything else.
+- **Direct questions only.** A sensitive facet is populated only by answers to questions that ask about it directly;
+  nothing is inferred from other answers or from facts. The reflector is told so and code enforces it (ADR-0038).
+- **Stored as a `MimicScope`** in `mimics.categories_json`, `consents_json`, `research_consents_json` (NOT NULL with
+  constant defaults, so existing rows read as every category and no sensitive consent, which is what they were asked)
+  and `scope_at` (migration 0005). `normalizeScope` keeps categories in canonical order, only `true` flags, drops
+  consents of deselected categories (reselecting asks again) and research consents without the area's consent or
+  research consent overall.
+- **Enforced in code, from one place.** `facetsFor` returns scoped facets by default; `{ scoped: false }` is only for
+  code that must know what is blocked. The loaders build a `ScopeView` and leave out answers to questions touching a
+  blocked facet, blocked trait estimates, insights naming a blocked facet or citing a hidden answer, and reflection
+  facts citing a hidden answer, so no state, belief, snapshot or view sees them. With the default scope nothing is
+  blocked and every state hash is unchanged. Anchors are seeded only inside the scope (a person without "Relationships,
+  sexuality and life" gets eight), and serving filters anchors, repeat sources, the pool and the reserve bank. The
+  generator sees only scoped facets, and `validateDraft` rejects a draft tagging a blocked facet instead of dropping
+  the tag. Occupation facets are generated only with "Work and money" selected.
+- **Changing it later** (`setScope`). Narrowing stamps `scope_at` and discards every pooled or served-but-unanswered
+  question now out of reach; what was learned in that area is hidden from then on (rows stay until hard delete).
+  Widening changes no stored data. Hidden data is not time-travelled back into rebuilt states (privacy over replay,
+  as for removed facts in ADR-0017); replay reports states served before `scope_at` as `rescoped`.
+- **Scripted people are marked.** `runSession` gives scripted mimics a `script:` participant id (Twin imports already
+  use `twin2k:`), so reports can keep real people apart (rubric R10).
+- **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0040); PLAN §14 lists them
+  and the rubric each is scored on.

@@ -19,6 +19,7 @@ export * from './population';
 export * from './predictors';
 export * from './prompts';
 export * from './repeats';
+export * from './scope';
 export * from './scoring';
 export * from './selectors';
 export * from './state-builder';

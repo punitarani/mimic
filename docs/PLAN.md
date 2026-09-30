@@ -45,7 +45,9 @@ It has two research axes:
 - **Free-text-only answers.** Every question is typed. A free-text "why" is optional context and is never scored.
 - **OpenAI Decisions API.** Only the `DecisionProvider` interface ships now, so the API can slot in later.
 - **Fine-tuning or per-person weights.** Deferred to P2 (§16).
-- **Sensitive domains.** Health, sexuality, religion, politics and detailed finances are excluded by default.
+- **Sensitive domains without consent.** Health, sexuality, religion, politics and detailed finances are never asked
+  about unless the person opts in to that area. Each is a separate consent under one of four categories the person
+  selects at intake, and only direct, consented questions ever populate them (ADR-0036, `docs/CATEGORIES.md`).
 - **Voice or multiple languages.**
 
 ---
@@ -372,7 +374,9 @@ IDs are ULIDs, so they sort by time. Timestamps are integer milliseconds. JSON c
 participants        id, email?, is_admin, created_at
 mimics              id, participant_id, display_name, location, occupation?, employer?, links_json,
                     status(intake|identity|learning|paused|archived), config_hash, experiment_id?, arm?,
-                    consent_app, consent_search, consent_research, split(dev|test),
+                    consent_app, consent_search, consent_research,
+                    categories_json, consents_json, research_consents_json, scope_at?   (ADR-0036),
+                    split(dev|test),
                     seq_max, snapshot_version, spend_usd, created_at, updated_at
 identity_candidates id, mimic_id, provider, rank, name, headline, location, url, summary,
                     jev_same_person_p, r2_key, status(proposed|confirmed|rejected), created_at
@@ -515,6 +519,17 @@ Optional consents, each a separate checkbox:
 - "Search the public web for information about me." If unchecked, skip §9.2 entirely.
 - "Use my answers, without my name or location, for research." This gates inclusion in evals.
 
+What to ask about (ADR-0036, `docs/CATEGORIES.md`):
+
+- Four categories, all selected by default, each deselectable: Personality and psychology; Values, beliefs and
+  politics; Relationships, sexuality and life; Work and money. A deselected category is never asked about or learned.
+- Five sensitive areas, each an opt-in consent under its category with a one-line reason and "Your answers stay
+  yours: they are only used to build your mimic": political views, religion and worldview, sexuality and intimate
+  relationships, health and body, money in detail.
+- With research consent on, a separate opt-in per special-category area (politics, religion, sexuality, health)
+  allows its answers in research exports.
+- All of it can be changed later from the session menu.
+
 ### 9.2 Identity resolution and enrichment
 
 1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0029): `{name}, {occupation} at {employer}, {location}` and the same without the location, plus the name alone only if those find nobody with the full name; or `{name}, {location}` and the name alone when there is no role (ADR-0034). If the person gave a link, read it with Exa `/contents` first; when it resolves to a profile with their full name, skip the search. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
@@ -522,6 +537,8 @@ Optional consents, each a separate checkbox:
 3. **Confirm.** The UI asks "Is one of these you?" and shows the top 3–5 candidates with name, headline, location and source; namesakes Jev scores low are behind "Show more". The person picks one or chooses "None of these". Never auto-confirm. If they aren't listed, they can search again with a link to their profile.
 4. **Enrich.** A candidate from Exa search carries its person entity's facts (current role and employer, employer history, schools, location), so confirming it writes them, sourced to the profile, with no call. Otherwise `identity.enrich` runs on confirmation: Exa `/contents` reads the confirmed profile, and a page without an entity (a personal site) gets an Exa schema summary with the same fields a Parallel Task would return, including skills, public projects and writing, and interests. `ENRICH_PROVIDER=parallel` switches to a Parallel Task (ADR-0034).
 5. **Review.** The person sees every fact with its source and can remove any of them. Removed facts never enter any state.
+   Special-category facts (politics, religion, sexuality, health) are never requested and are dropped before they
+   are stored, whatever the person consented to (ADR-0036).
 6. **Use.** Active facts become `identity` in `PersonState`. Together with intake, they are everything the baseline predictor sees.
 
 If search is declined or finds nothing, continue with intake only.
@@ -988,14 +1005,46 @@ Reasoning tokens can dominate shadow-predictor cost, so cap `max_tokens` and use
 
 - [ ] A two-arm experiment runs, and `/lab` shows per-arm fidelity-vs-questions curves.
 
+
+### M9–M13 Categories, consent and question quality (ADRs 0036–0040)
+
+Built on the value-of-information selector (ADR-0027). Each milestone ships with its ADR, `pnpm check` green, and the
+rubric below self-scored with evidence in its PR description; the next starts only when every row the milestone can
+exercise scores at least 4 of 5.
+
+- **M9** Categories, the consent model, scope storage and scoped facets (`docs/CATEGORIES.md`, ADR-0036).
+- **M10** Ontology v2 with psychological depth and opt-in sensitive facets, `reserve.v2`, `gen.v3` (concrete
+  situations), `gates.v3` recalibrated on a checked-in labelled set (ADR-0037).
+- **M11** Intake and session UI for categories and consent, the full enforcement sweep, leakage tests and the
+  special-category export scrub (ADR-0038).
+- **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v5` (ADR-0039).
+- **M13** Offline v4 vs v5 rubric report and a two-arm experiment on real people (ADR-0040).
+
+**Rubric (each row scored 1–5 with evidence):**
+
+| # | Criterion | 5 looks like |
+| --- | --- | --- |
+| R1 | Concreteness: served adaptive questions describe a specific situation with a choice | ≥ 80% on a 30-question session, by a labelled sample of 50 generated questions and a `concrete` Jev gate calibrated on it |
+| R2 | Breadth over categories and facet groups | No category above 40% or below 15% with all four selected; every facet group touched by question 20 |
+| R3 | Psychological depth | ≥ 12 new facets across moral, emotional, motivational, relational and belief domains, each with poles, five labels, a research anchor and ≥ 2 reserve items |
+| R4 | Sensitive coverage with every consent | Each sensitive facet reached by question 30; the sensitive gate replaced by a consented check; a respectful gate rejects demeaning wording |
+| R5 | Consent and scope enforcement | Tests prove zero leakage across questions, traits, insights, facts and exports; the export scrub drops special-category evidence without research consent |
+| R6 | Efficiency | Questions to sustained fidelity 0.75 and fidelity at 20 not worse than v4's `voi`; three of four categories costs ≤ 10% more questions |
+| R7 | Ordering | Broad and cheap early, targeted later; no sensitive question in the first five; burden and trust ramp documented |
+| R8 | UX | Intake multi-select with plain descriptions, per-area consent, changeable from the session menu; keyboard accessible; browser-tested |
+| R9 | Reproducibility | Every new state field, prompt and gate replayable; `replay --mode online` passes on a new export |
+| R10 | Honest reporting | Real people kept apart from scripted or simulated users in every metric |
 ---
 
 ## 15. Privacy and safety
 
 - **Self-only by design.** The person attests they are modeling themselves, must confirm their own identity, and the UI offers no free search of arbitrary names.
 - **Transparent facts.** Every externally sourced fact shows its source and can be removed.
-- **Separate consents** for app use, web search and research use.
-- **Sensitive domains are excluded by default,** enforced by the generator prompt and the Jev gate.
+- **Separate consents** for app use, web search and research use, plus the categories to ask about and one opt-in
+  per sensitive area (ADR-0036).
+- **Sensitive domains are opt-in.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
+  inferred from other answers or web facts, and special-category answers leave research exports unless the person
+  separately consents to research on them.
 - **Playground output is labeled as generated.** There is no feature to message anyone "as" a person.
 - **Export and hard delete from day one.** Write a privacy note before inviting anyone outside a small cohort.
 

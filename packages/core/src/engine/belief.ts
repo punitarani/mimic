@@ -63,14 +63,16 @@ export function beliefFromLoaded(
   const beforeSeq = opts.beforeSeq ?? Number.MAX_SAFE_INTEGER;
   const qById = new Map(loaded.questions.map((q) => [q.id, q]));
   const accByQ = new Map(sources.scored.map((r) => [r.question.id, r.score.itemAcc]));
-  const answers = beliefAnswers(loaded.answers, qById, accByQ, beforeSeq);
+  // Answers the scope hides (a withdrawn category) never count toward any belief (ADR-0036).
+  const visible = loaded.answers.filter((a) => !loaded.scope.hiddenQuestionIds.has(a.questionId));
+  const answers = beliefAnswers(visible, qById, accByQ, beforeSeq);
   const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
   const served = loaded.questions
-    .filter((q) => q.status === 'served' && isScoredKind(q.kind))
+    .filter((q) => q.status === 'served' && isScoredKind(q.kind) && !loaded.scope.hiddenQuestionIds.has(q.id))
     .map((q) => ({ type: q.type, domain: q.domain, facetIds: q.facetIds }));
   const repeats: Array<{ facetIds: string[]; agreement: number }> = [];
   for (const q of loaded.questions) {
-    if (q.kind !== 'repeat' || !q.repeatOf) continue;
+    if (q.kind !== 'repeat' || !q.repeatOf || loaded.scope.hiddenQuestionIds.has(q.id)) continue;
     const src = qById.get(q.repeatOf) as QuestionRecord | undefined;
     const a1 = answerByQ.get(q.repeatOf);
     const a2 = answerByQ.get(q.id);
