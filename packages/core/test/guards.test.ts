@@ -13,7 +13,9 @@ import {
   runStatsRefresh,
   type ScoredItemSource,
   scopeView,
+  scorePrediction,
   stripSpecialAreas,
+  temperatureScale,
 } from '../src';
 
 const facets = [...allOntologyFacets().values()];
@@ -86,7 +88,18 @@ describe('direct evidence only (ADR-0043)', () => {
 });
 
 describe('item statistics and research consent (ADR-0043)', () => {
-  async function refresh(scope: MimicScope): Promise<ItemStatRecord[]> {
+  async function refresh(
+    scope: MimicScope,
+    primary: (
+      i: number,
+      j: number,
+    ) => Pick<ScoredItemSource, 'predictorId' | 'dist' | 'itemAcc' | 'logLoss'> = () => ({
+      predictorId: 'jev:typesafe/jev-1.13',
+      dist: { a: 0.5, b: 0.5 },
+      itemAcc: 0.5,
+      logLoss: 0.7,
+    }),
+  ): Promise<ItemStatRecord[]> {
     const people = Array.from({ length: 6 }, (_, i) => `m${i}`);
     const sources: ScoredItemSource[] = people.flatMap((mimicId, i) =>
       [['religiosity'], ['trust']].map((facetIds, j) => ({
@@ -94,8 +107,7 @@ describe('item statistics and research consent (ADR-0043)', () => {
         questionId: `${mimicId}-q${j}`,
         role: 'primary' as const,
         fallback: false,
-        itemAcc: 0.5,
-        logLoss: 0.7,
+        ...primary(i, j),
         question: {
           kind: 'adaptive' as const,
           type: 'choice' as const,
@@ -131,5 +143,29 @@ describe('item statistics and research consent (ADR-0043)', () => {
     expect(without.some((k) => k.includes('trust'))).toBe(true);
     const withResearch = keys(await refresh({ ...withReligion, researchConsents: { religion: true } }));
     expect(withResearch.some((k) => k.includes('religiosity'))).toBe(true);
+  });
+
+  it('reads a calibrated primary on its raw scale, so v7 people give the same statistics as v6 (ADR-0048)', async () => {
+    // Person i's raw Jev answer on question j, as a v6 primary stores it and as a v7 primary (T = 4) stores it.
+    const raw = (i: number, j: number) => {
+      const p = 0.55 + 0.07 * ((i + j) % 6);
+      return { a: p, b: 1 - p };
+    };
+    const answer = (i: number) => (i % 2 ? 'a' : 'b');
+    const stored = (predictorId: string, dist: Record<string, number>, i: number) => {
+      const s = scorePrediction('choice', dist, answer(i));
+      return { predictorId, dist, itemAcc: s.itemAcc, logLoss: s.logLoss };
+    };
+    const v6 = await refresh(withReligion, (i, j) => stored('jev:typesafe/jev-1.13', raw(i, j), i));
+    const v7 = await refresh(withReligion, (i, j) =>
+      stored('jev:typesafe/jev-1.13@jev-predict.v2', temperatureScale(raw(i, j), 4), i),
+    );
+    expect(v7.length).toBeGreaterThan(0);
+    expect(v7.map((r) => r.key)).toEqual(v6.map((r) => r.key));
+    for (const [k, r7] of v7.entries()) {
+      const r6 = v6[k]!;
+      expect(r7.surprise).toBeCloseTo(r6.surprise, 9);
+      expect(r7.primaryError).toBeCloseTo(r6.primaryError, 9);
+    }
   });
 });

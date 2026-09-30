@@ -304,12 +304,12 @@ export function fill(template: string, vars: Record<string, string>): string {
   );
 }
 
-/** Problems with a component's text: missing or unknown placeholders, empty text, too many words. */
 /** Words as the component word limits count them. */
 export function wordCount(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/** Problems with a component's text: missing or unknown placeholders, empty text, too many words. */
 export function componentProblems(id: ComponentId, text: string): string[] {
   const spec = COMPONENT_SPECS[id];
   const found = placeholdersOf(text);

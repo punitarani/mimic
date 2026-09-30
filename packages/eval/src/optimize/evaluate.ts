@@ -2,6 +2,7 @@ import {
   argmax,
   COMPONENT_IDS,
   type ComponentId,
+  calibrationTemperatureOf,
   componentReadBy,
   DEFAULT_PROMPT_VERSION,
   type Distribution,
@@ -448,12 +449,15 @@ export function storedRecords(instances: EvalInstance[]): EvalRecord[] {
   const derived = new Map<string, Array<{ predictorId: string; t: number }>>();
   for (const inst of instances)
     for (const p of inst.stored) {
-      const r = toRecord(inst, `${p.predictorId}|${p.role}`, p.predictorId, {
+      // A primary the LLM fallback served (Jev failed) is reported apart from the configured primary and from any
+      // shadow of the same model.
+      const role = p.role === 'primary' && p.fallback ? 'fallback' : p.role;
+      const r = toRecord(inst, `${p.predictorId}|${role}`, p.predictorId, {
         ...p,
         error: p.ok ? undefined : 'failed',
       });
       out.push(r);
-      if (p.role !== 'primary') continue;
+      if (role !== 'primary') continue;
       if (!derived.has(p.predictorId)) derived.set(p.predictorId, derivedCalibrations(p.predictorId));
       for (const d of derived.get(p.predictorId)!)
         out.push(
@@ -718,22 +722,32 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
   const temps = Array.from({ length: 46 }, (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000);
   const unit = Array.from({ length: 21 }, (_, i) => i / 20);
   const byPredictor = new Map<string, Pair[]>();
-  const primary = new Map<string, Distribution>();
+  // Primaries by predictor: each config's own scale (a v7 primary is calibrated, a v6 one is not). A primary the LLM
+  // fallback served (Jev failed) is not the configured primary's prediction and is left out.
+  const primaries = new Map<string, Map<string, Distribution>>();
   for (const inst of instances)
     for (const p of inst.stored) {
-      if (!p.ok || (p.role !== 'primary' && p.role !== 'shadow')) continue;
+      if (!p.ok || (p.role !== 'primary' && p.role !== 'shadow') || (p.role === 'primary' && p.fallback))
+        continue;
       const k = p.role === 'primary' ? `${p.predictorId} (primary)` : p.predictorId;
       const list = byPredictor.get(k);
       if (list) list.push({ inst, dist: p.dist });
       else byPredictor.set(k, [{ inst, dist: p.dist }]);
-      if (p.role === 'primary') primary.set(inst.id, p.dist);
+      if (p.role === 'primary') {
+        const m = primaries.get(p.predictorId) ?? new Map<string, Distribution>();
+        m.set(inst.id, p.dist);
+        primaries.set(p.predictorId, m);
+      }
     }
   const split = (ps: Pair[]) =>
     [ps.filter((p) => p.inst.split === 'dev'), ps.filter((p) => p.inst.split === 'test')] as const;
   for (const [k, ps] of [...byPredictor.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     const [dev, test] = split(ps);
     if (dev.length < 10) continue;
-    rows.push(fitParam(k, 'temperature', temps, dev, test, (p, t) => temperatureScale(p.dist, t), 1));
+    // A calibrated predictor's fitted temperature is on top of its own (ADR-0048).
+    const own = calibrationTemperatureOf(k.replace(/ \(primary\)$/, ''));
+    const method = own === 1 ? 'temperature' : `temperature (on top of its own ${own})`;
+    rows.push(fitParam(k, method, temps, dev, test, (p, t) => temperatureScale(p.dist, t), 1));
     if (k.endsWith('(primary)')) {
       const withBase = ps.filter((p) => p.inst.baseline);
       const [d2, t2] = split(withBase);
@@ -742,15 +756,17 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
           fitParam(k, 'shrink to baseline', unit, d2, t2, (p, a) => shrink(p.dist, p.inst.baseline!, a), 0),
         );
     } else if (k.startsWith('llm:')) {
-      // Pools with LLM shadows only: a Jev shadow pooled with the Jev primary is a temperature fit by another name.
-      const paired = ps
-        .filter((p) => primary.has(p.inst.id))
-        .map((p) => ({ ...p, other: primary.get(p.inst.id)! }));
-      const [d3, t3] = split(paired);
-      if (d3.length >= 10)
+      // Pools with LLM shadows only (a Jev shadow pooled with the Jev primary is a temperature fit by another name),
+      // one fit per primary so a fit never mixes scales.
+      for (const [pid, primary] of [...primaries.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        const paired = ps
+          .filter((p) => primary.has(p.inst.id))
+          .map((p) => ({ ...p, other: primary.get(p.inst.id)! }));
+        const [d3, t3] = split(paired);
+        if (d3.length < 10) continue;
         rows.push(
           fitParam(
-            `${k} × primary`,
+            `${k} × ${pid} (primary)`,
             'log-linear pool (weight on primary)',
             unit,
             d3,
@@ -759,6 +775,7 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
             1,
           ),
         );
+      }
     }
   }
   return rows;
@@ -783,39 +800,40 @@ export interface PairedRow {
  * derived rows only: a baseline sees another state and a hypothesis row another person.
  */
 export function pairedComparisons(recs: EvalRecord[]): PairedRow[] {
-  const byId = new Map<string, EvalRecord[]>();
-  for (const r of recs) {
-    const role = r.candidate.split('|')[1];
-    if (role !== 'primary' && role !== 'shadow' && role !== 'derived') continue;
-    const list = byId.get(r.predictorId);
-    if (list) list.push(r);
-    else byId.set(r.predictorId, [r]);
-  }
-  // The incumbent spelling first, then by version, so each pair reads old → new.
-  const order = (id: string) => [id.includes('@') ? 1 : 0, id] as const;
-  const ids = [...byId.keys()].sort((a, b) => order(a)[0] - order(b)[0] || a.localeCompare(b));
+  const roles = new Set(['primary', 'shadow', 'derived']);
+  // One row per predictor and question (a fallback primary has its own role and never joins a group).
+  const byId = new Map(
+    [
+      ...groupBy(
+        recs.filter((r) => roles.has(r.candidate.split('|')[1]!)),
+        (r) => r.predictorId,
+      ),
+    ].map(([id, rs]) => [id, [...new Map(rs.map((r) => [r.instanceId, r])).values()]]),
+  );
+  // The incumbent spelling first, then by version in numeric order (v2 before v10), so each pair reads old → new.
+  const ids = [...byId.keys()].sort(
+    (a, b) =>
+      Number(a.includes('@')) - Number(b.includes('@')) || a.localeCompare(b, 'en', { numeric: true }),
+  );
   const rows: PairedRow[] = [];
   for (const [i, from] of ids.entries())
     for (const to of ids.slice(i + 1)) {
-      const model = parsePredictorId(from).model;
-      if (parsePredictorId(to).model !== model || parsePredictorId(to).kind !== parsePredictorId(from).kind)
-        continue;
-      const a = byId.get(from)!;
+      const [f, t] = [parsePredictorId(from), parsePredictorId(to)];
+      if (f.model !== t.model || f.kind !== t.kind) continue;
       const b = byId.get(to)!;
       const shared = new Set(b.map((r) => r.instanceId));
-      const both = a.filter((r) => shared.has(r.instanceId));
-      if (both.length < 10) continue;
-      const ids2 = new Set(both.map((r) => r.instanceId));
-      const b2 = b.filter((r) => ids2.has(r.instanceId));
+      const a = byId.get(from)!.filter((r) => shared.has(r.instanceId));
+      if (a.length < 10) continue;
+      const inA = new Set(a.map((r) => r.instanceId));
       rows.push({
-        model,
+        model: f.model,
         from,
         to,
-        n: both.length,
-        logLoss: pairedDelta(both, b2, 'logLoss', `${from}>${to}`),
-        itemAcc: pairedDelta(both, b2, 'itemAcc', `${from}>${to}:acc`),
-        failedFrom: both.filter((r) => !r.ok).length,
-        failedTo: b2.filter((r) => !r.ok).length,
+        n: a.length,
+        logLoss: pairedDelta(a, b, 'logLoss', `${from}>${to}`),
+        itemAcc: pairedDelta(a, b, 'itemAcc', `${from}>${to}:acc`),
+        failedFrom: a.filter((r) => !r.ok).length,
+        failedTo: b.filter((r) => inA.has(r.instanceId) && !r.ok).length,
       });
     }
   return rows;

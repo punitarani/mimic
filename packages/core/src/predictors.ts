@@ -2,7 +2,6 @@ import { z } from 'zod';
 import {
   DEFAULT_PROMPT_VERSION,
   fill,
-  PREDICT_PROMPTS,
   type PredictHarness,
   type PredictPrompt,
   promptHash,
@@ -10,7 +9,7 @@ import {
   resolvePredictPrompt,
 } from './components';
 import { parsePredictorId, predictorIdProblem } from './config';
-import { argmax, normalizeDist, optionKeys, temperatureScale } from './distribution';
+import { argmax, normalizeDist, optionKeys, temperatureScale, uncalibrate } from './distribution';
 import { type CallContext, type Gateway, isTimeoutError, isTransientError } from './gateway';
 import { answerToDistribution, confidenceOf, predictionQuestion } from './jev';
 import { PROMPTS } from './prompts';
@@ -18,6 +17,7 @@ import { renderStateText, stateForProvider } from './state-builder';
 import type {
   ChatMessage,
   DecisionQuestion,
+  Distribution,
   PersonState,
   PredictionErrorKind,
   PredictionResult,
@@ -225,11 +225,11 @@ export class LlmPredictor implements Predictor {
           errorKind: 'output',
         };
       }
-      return {
-        ...base,
-        dist: temperatureScale(normalizeDist(raw, keys), h.calibrationTemperature),
-        ok: true,
-      };
+      return calibratedResult(
+        { ...base, dist: normalizeDist(raw, keys), ok: true },
+        q,
+        h.calibrationTemperature,
+      );
     } catch (e) {
       return callFailed(e, e instanceof Error ? e.message : String(e), this.model);
     }
@@ -313,8 +313,8 @@ export function makePredictor(gateway: Gateway, id: string, ctx: CallContext): P
 
 /**
  * A successful prediction rescaled by a calibration temperature (harness `calibrationTemperature`): p ∝ p^(1/T), top
- * pick unchanged. The confidence follows on Jev's scale (`confidenceOf`): a yes/no answer's |p − ½|·2, else the top
- * probability. T = 1, or a failed prediction, is returned as it is.
+ * pick unchanged. A confidence, when the predictor reports one, follows on Jev's scale (`confidenceOf`): a yes/no
+ * answer's |p − ½|·2, else the top probability. T = 1, or a failed prediction, is returned as it is.
  */
 export function calibratedResult(
   r: PredictionResult,
@@ -323,24 +323,47 @@ export function calibratedResult(
 ): PredictionResult {
   if (t === 1 || !r.ok) return r;
   const dist = temperatureScale(r.dist, t);
+  // Only a predictor that reports a confidence (Jev) gets it recomputed; an LLM's stays absent.
+  if (r.confidence === undefined) return { ...r, dist };
   const top = dist[argmax(dist)]!;
   return { ...r, dist, confidence: q.type === 'noul' ? Math.abs(2 * top - 1) : top };
 }
 
+/** The calibration temperature a predictor ID applies (1 for an unregistered or unparsable ID). */
+export function calibrationTemperatureOf(predictorId: string): number {
+  try {
+    const spec = parsePredictorId(predictorId);
+    return resolvePredictPrompt(
+      spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind],
+      spec.kind,
+      spec.model,
+    ).harness.calibrationTemperature;
+  } catch {
+    return 1;
+  }
+}
+
 /**
- * The primary as selection sees it (ADR-0048). Calibration only rescales the stored prediction, so selection scores
- * candidates on the predictor's raw scale: the scale VOI's weights and the hypothesis posterior were tuned on, and
- * the same model call. Returns that raw predictor, its ID (the registered twin at calibration temperature 1 when
- * there is one, so rows it produces are labelled with what made them), and the rescale that turns its prediction for
- * the chosen question into the stored primary.
+ * A stored prediction on its predictor's raw scale, with calibration (harness `calibrationTemperature`) undone.
+ * Everything on the selection side reads stored predictions through this (ADR-0048): VOI's weakness term, the
+ * hypothesis posterior and the cross-person item statistics. So a calibrated primary changes what is stored and
+ * shown, never which question is asked.
+ */
+export function rawScale(predictorId: string, dist: Distribution): Distribution {
+  return uncalibrate(dist, calibrationTemperatureOf(predictorId));
+}
+
+/**
+ * The primary as selection sees it (ADR-0048): the same prompt at calibration temperature 1, so selection scores
+ * candidates on the raw scale that VOI's weights and the hypothesis posterior were tuned on. `calibrate` turns one of
+ * its predictions into exactly what the calibrated predictor returns, so the one call serves both, and every stored
+ * row stays labelled with the primary that made it.
  */
 export function selectionView(
   gateway: Gateway,
   id: string,
-  ctx: CallContext,
 ): {
-  predictor: Predictor;
-  id: string;
+  predictor: (ctx: CallContext) => Predictor;
   calibrate: (r: PredictionResult, q: Pick<Question, 'type'>) => PredictionResult;
 } {
   const spec = parsePredictorId(id);
@@ -350,22 +373,15 @@ export function selectionView(
     spec.model,
   );
   const t = prompt.harness.calibrationTemperature;
-  if (t === 1) return { predictor: makePredictor(gateway, id, ctx), id, calibrate: (r) => r };
+  if (t === 1) return { predictor: (ctx) => makePredictor(gateway, id, ctx), calibrate: (r) => r };
   const raw = { ...prompt, harness: { ...prompt.harness, calibrationTemperature: 1 } };
-  const same = (p: PredictPrompt) =>
-    JSON.stringify([p.components, p.harness]) === JSON.stringify([raw.components, raw.harness]);
-  const rawId = Object.values(PREDICT_PROMPTS)
-    .filter((v) => v.kind === spec.kind)
-    .map((v) => resolvePredictPrompt(v.id, spec.kind, spec.model))
-    .filter(same)
-    .map((p) => predictorIdOf(spec.kind, spec.model, p))
-    .find((pid) => !predictorIdProblem(pid));
-  const predictor = rawId
-    ? makePredictor(gateway, rawId, ctx)
-    : spec.kind === 'jev'
-      ? new JevPredictor(gateway, spec.model, ctx, raw)
-      : new LlmPredictor(gateway, spec.model, ctx, raw);
-  return { predictor, id: rawId ?? predictor.id, calibrate: (r, q) => calibratedResult(r, q, t) };
+  return {
+    predictor: (ctx) =>
+      spec.kind === 'jev'
+        ? new JevPredictor(gateway, spec.model, ctx, raw)
+        : new LlmPredictor(gateway, spec.model, ctx, raw),
+    calibrate: (r, q) => calibratedResult(r, q, t),
+  };
 }
 
 /** The prompt version stored with a prediction from this predictor (invariant 4). */

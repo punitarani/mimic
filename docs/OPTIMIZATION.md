@@ -380,7 +380,9 @@ The same reflective dataset, sent once to the reflection model with a "cluster a
 "rewrite" prompt, gives a failure analysis per predictor: which question types and facets it misses, whether it
 ignores the "why", whether score items collapse to the middle, whether it over-weights identity facts. Output is
 markdown under `data/evals/<run>/diagnose.md`, publishable with `report --to`. This is the deliverable for "run evals
-GEPA-style" and it is useful on day one with the stored predictions alone.
+GEPA-style" and it is useful on day one with the stored predictions alone. Without `--predictor` it reads every
+predictor that filled `--role` (for `primary`, each config version's primary, never an LLM fallback; ADR-0048);
+`--role shadow` needs `--predictor`.
 
 ---
 

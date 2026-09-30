@@ -1453,7 +1453,8 @@ exports. This ADR closes them in code, adds the consent UI, and proves both with
   `docs/screenshots/m11-*.png`). Offline cohorts use fakes and scripted answers: they test mechanisms, not people.
 
 Not done here: the trust ramp (no sensitive question in the first five) and a sweep that reaches every consented
-sensitive facet by question 30 are selection changes and come with `cfg.default.v7` (ADR-0044).
+sensitive facet by question 30 are selection changes and come with `cfg.default.v8` (ADR-0044; v7 is the calibrated
+primary, ADR-0048).
 
 ## ADR-0046 — "Your map" as a knowledge network (2026-09-30)
 
@@ -1582,24 +1583,32 @@ them, a top-1 difference under about 3 points, or a log-loss difference under ab
     mutual information between hypothesis predictions, which T = 4 shrinks about tenfold (0.53 → 0.05 for a clean
     two-way split). Selecting on calibrated predictions would quietly shift selection toward the coverage terms, whose
     weights were tuned on Jev's raw scale.
-  - *`selectionView` keeps selection on the raw scale.* Selection and the hypothesis explorer use the uncalibrated
-    twin, `jev:typesafe/jev-1.13`. The chosen question's prediction from that same call is rescaled into the stored
-    primary.
-  - *Hypothesis rows stay raw,* labelled with the twin, because the posterior reads their likelihoods.
-  - *The baseline uses the calibrated prompt too,* so lift compares like with like.
-  - *A test pins the invariance.* The same scripted person under v6 and v7 gets identical questions, and v7's stored
-    primary and baseline are v6's rescaled at T = 4. Selecting on the calibrated scale fails it.
-  - *One effect on selection remains.* The belief state's weakness term reads scored primaries' item accuracy, which
-    calibration moves only on score questions, and only slightly.
+  - *Stored rows are the calibrated predictor's own output.* The primary, the baseline and the hypothesis rows carry
+    `jev:typesafe/jev-1.13@jev-predict.v2` and its prompt version, so a row's ID always says which scale it is on,
+    and the baseline's lift compares like with like.
+  - *Selection runs on the raw scale.* `selectionView` gives the selector and the hypothesis explorer the same
+    templates at T = 1, one Jev call per candidate batch as before. The chosen question's prediction from that call
+    is rescaled into the stored primary, so there is no second call.
+  - *Everything selection reads from storage goes back to the raw scale.* `rawScale(predictorId, dist)` inverts the
+    predictor's registered temperature (`uncalibrate`, exact to the P_FLOOR clip). Three readers use it: the
+    hypothesis posterior's likelihoods (`loadHypothesisSet`), the belief state's weakness term (`rawItemAcc`), and
+    the cross-person `item_stats` (`runStatsRefresh`), so v6 and v7 people pool on one scale.
+  - *Tests pin the invariance.* The same scripted person under v6 and v7 gets identical questions and identical
+    selection diagnostics, under both the hypothesis regime and entropy-only selection (k = 0), and v7's stored
+    primary, baseline and hypothesis rows are v6's rescaled at T = 4. Calibrating what selection sees, the weakness
+    input or the posterior's likelihoods each fails it. A second test checks that `item_stats` from v7 rows equal
+    those from v6 rows.
   - *The reasoning-off Qwen control is retired,* since its question is answered. Qwen stays on `predict.v2` like the
     other four; dropping Qwen altogether is a research-scope call left open. Retiring the control saves about
     $0.0004 a question.
   - *T stays 4.*
-  - *Numbering.* M12's config becomes `cfg.default.v8` (ADR-0044). The M10 candidate still follows the default, now
-    v7, so M13 compares v7 with v8.
+  - *Numbering.* M12's config becomes `cfg.default.v8` (ADR-0044). The M10 candidate is pinned to v6, so a new
+    default changes neither its hash nor what it measures. M13 compares it with v8; since calibration doesn't change
+    which questions are asked, that comparison is unaffected by v7.
 - **The optimizer's verdict requires replication** (`judge`).
   - "Improved" needs the validation gain above the noise margin with its 90% CI above zero, plus a holdout paired
-    gain above zero with 90% confidence, and holdout item accuracy not lower with 90% confidence.
+    gain above zero with 90% confidence on at least 20 holdout questions (`MIN_HOLDOUT`), and holdout item accuracy
+    not lower with 90% confidence.
   - A validation gain without that is "Unconfirmed" and gets no suggested version.
   - The holdout section reports the paired accuracy change.
   - A test replays the first run's numbers, and they now come out "Unconfirmed".
@@ -1608,7 +1617,13 @@ them, a top-1 difference under about 3 points, or a log-loss difference under ab
   - A reply over the limit gets a repair turn saying how many words to cut.
 - **Paired comparisons in the stored report.** For every pair of predictors on the same model (prompt versions,
   calibration, reasoning settings), the report shows the change in log loss and item accuracy with 90% CIs on the
-  questions both answered.
+  questions both answered. Versions sort in numeric order (v2 before v10), and a predictor counts once per question.
+- **What the stored report treats as the primary.**
+  - A primary the LLM fallback served (Jev failed, PLAN §16) is reported under its own role, `fallback`. It is never
+    the configured primary's row, never derives a calibrated row, and never enters a pair or a calibration fit.
+  - Calibration fits are per primary ID, since a v7 primary is already calibrated and a v6 one is not. A temperature
+    fitted on a calibrated predictor is labelled as on top of its own, and log-linear pools are fitted per primary.
+  - `diagnose` without `--predictor` reads every primary (each config version's), and a shadow needs `--predictor`.
 - **Unchanged:** the key enum, the per-model caps, and the optimizer's budgets.
 
 **Spend.** The backfill cost about $0.85, the optimize run $1.03 and the probes about $0.03: roughly $1.9 of the $5,

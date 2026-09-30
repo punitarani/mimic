@@ -10,6 +10,7 @@ import {
   Gateway,
   INCUMBENT_COMPONENTS,
   ulid,
+  uncalibrate,
 } from '@mimic/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FAKE_REFLECTION_HINT, FakeLlm } from '../src/fakes';
@@ -33,6 +34,7 @@ import {
 } from '../src/optimize/evaluate';
 import {
   judge,
+  MIN_HOLDOUT,
   nextVersion,
   optimize,
   sampleParent,
@@ -172,21 +174,28 @@ describe('evaluate', () => {
   });
 
   it('derives calibrated Jev from the stored primary for free, and reports what calibration does to accuracy', () => {
-    // Mimics made before cfg.default.v7 store an uncalibrated primary.
-    const legacy = instances.map((i) => ({
-      ...i,
-      stored: i.stored.map((p) =>
-        p.role === 'primary' ? { ...p, predictorId: 'jev:typesafe/jev-1.13' } : p,
-      ),
-    }));
+    // Mimics made before cfg.default.v7 store an uncalibrated primary: this cohort's v7 rows on Jev's raw scale.
+    const raw = (p: EvalInstance['stored'][number]) =>
+      p.role === 'baseline' || p.role === 'primary'
+        ? { ...p, predictorId: 'jev:typesafe/jev-1.13', dist: p.ok ? uncalibrate(p.dist, 4) : p.dist }
+        : p;
+    const legacy = instances.map((i) => ({ ...i, stored: i.stored.map(raw) }));
     const recs = storedRecords(legacy);
     const primary = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13|primary');
     const derived = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13@jev-predict.v2|derived');
     expect(derived).toHaveLength(primary.length);
+    const v7 = new Map(
+      storedRecords(instances)
+        .filter((r) => r.candidate === `${DEFAULT_CONFIG.predictor.primary}|primary`)
+        .map((r) => [r.instanceId, r]),
+    );
     for (const d of derived) {
       const p = primary.find((x) => x.instanceId === d.instanceId)!;
       expect(d.costUsd).toBe(0);
-      if (p.ok) expect(d.dist).toEqual(temperatureScale(p.dist, 4));
+      if (!p.ok) continue;
+      expect(d.dist).toEqual(temperatureScale(p.dist, 4));
+      // Deriving from the raw primary gives back what a v7 primary stores (to the P_FLOOR clip).
+      expect(Math.abs(d.logLoss - v7.get(d.instanceId)!.logLoss)).toBeLessThan(1e-3);
     }
     // Only calibration-only variants of the primary's own templates are derived; LLM primaries have none.
     expect(derivedCalibrations('jev:typesafe/jev-1.13')).toEqual([
@@ -207,10 +216,11 @@ describe('evaluate', () => {
     );
     expect(pair.logLoss.ciLow).toBeLessThanOrEqual(pair.logLoss.mean);
     expect(pair.logLoss.ciHigh).toBeGreaterThanOrEqual(pair.logLoss.mean);
-    // Baselines see another state, so they are never paired.
-    expect(
-      pairedComparisons(recs).every((x) => !x.from.includes('baseline') && !x.to.includes('baseline')),
-    ).toBe(true);
+    // Baselines see another state, so they are never paired, though they carry the primary's predictor ID.
+    const baselines = recs.filter((r) => r.candidate.endsWith('|baseline'));
+    expect(baselines.length).toBeGreaterThan(0);
+    expect(baselines.every((r) => r.predictorId === 'jev:typesafe/jev-1.13')).toBe(true);
+    expect(pairedComparisons(recs.filter((r) => !baselines.includes(r)))).toEqual(pairedComparisons(recs));
     // Fits report test accuracy before and after, and pool only LLM shadows with the primary.
     const fits = calibrationFits(instances);
     for (const f of fits.filter((x) => x.nTest > 0)) {
@@ -219,6 +229,45 @@ describe('evaluate', () => {
     }
     for (const f of fits.filter((x) => x.method.startsWith('log-linear pool')))
       expect(f.predictor.startsWith('llm:')).toBe(true);
+  });
+
+  it('pairs versions of one model in numeric order, one row per question (ADR-0048)', () => {
+    const primary = storedRecords(instances).filter(
+      (r) => r.candidate === `${DEFAULT_CONFIG.predictor.primary}|primary`,
+    );
+    const as = (id: string, role = 'shadow') =>
+      primary.map((r) => ({ ...r, candidate: `${id}|${role}`, predictorId: id }));
+    const recs = ['llm:x/y@predict.v10', 'llm:x/y', 'llm:x/y@predict.v2', 'llm:z/w@predict.v2'].flatMap(
+      (id) => as(id),
+    );
+    const pairs = pairedComparisons(recs);
+    expect(pairs.map((p) => `${p.from} > ${p.to}`)).toEqual([
+      'llm:x/y > llm:x/y@predict.v2',
+      'llm:x/y > llm:x/y@predict.v10',
+      'llm:x/y@predict.v2 > llm:x/y@predict.v10',
+    ]);
+    // A predictor that appears twice for a question (a shadow and a derived row, say) counts once.
+    expect(pairedComparisons([...recs, ...as('llm:x/y', 'derived')]).map((p) => p.n)).toEqual(
+      pairs.map(() => primary.length),
+    );
+  });
+
+  it('keeps a primary the LLM fallback served out of the primary, its derived rows, pairs and fits', () => {
+    // Every question here fell over to the LLM: nothing in it is the configured primary's prediction.
+    const fallback = 'llm:deepseek/deepseek-v4.1-flash';
+    const failedOver = instances.map((i) => ({
+      ...i,
+      stored: i.stored.map((p) =>
+        p.role === 'primary' ? { ...p, predictorId: fallback, fallback: true } : p,
+      ),
+    }));
+    const recs = storedRecords(failedOver);
+    expect(recs.filter((r) => r.candidate === `${fallback}|fallback`)).toHaveLength(instances.length);
+    expect(recs.some((r) => r.candidate.endsWith('|primary') || r.candidate.endsWith('|derived'))).toBe(
+      false,
+    );
+    expect(pairedComparisons(recs).some((p) => p.from === fallback || p.to === fallback)).toBe(false);
+    expect(calibrationFits(failedOver).some((f) => f.predictor.includes('(primary)'))).toBe(false);
   });
 
   it('refuses a candidate whose reasoning budget leaves no room for the answer, or a model a variant does not list', () => {
@@ -429,12 +478,29 @@ describe('verdict (ADR-0048)', () => {
       judge({ ...base, val, holdout: { ...holdout, accuracyDelta: ci(0.01, -0.02, 0.04) } }).improved,
     ).toBe(true);
     const worse = judge({ ...base, val, holdout: { ...holdout, accuracyDelta: ci(-0.06, -0.1, -0.02) } });
-    expect(worse).toMatchObject({ improved: false, verdict: expect.stringMatching(/^Unconfirmed/) });
+    expect(worse).toMatchObject({
+      improved: false,
+      verdict: expect.stringMatching(
+        /^Unconfirmed: .*the holdout gain replicated.*but holdout item accuracy fell/,
+      ),
+    });
     expect(judge({ ...base, val, holdout: null }).verdict).toMatch(/no test-split people to confirm/);
     expect(judge({ ...base, val, holdout: { ...holdout, delta: ci(-0.02, -0.05, 0.01) } }).verdict).toMatch(
       /^Not shipped: it lost on the holdout/,
     );
     expect(judge({ ...base, val: ci(0.003, -0.01, 0.02, 55), holdout }).verdict).toMatch(/within noise/);
+  });
+
+  it(`needs at least ${MIN_HOLDOUT} holdout questions to confirm a gain`, () => {
+    const val = ci(0.05, 0.01, 0.1, 55);
+    const holdout = (n: number) => ({ seed: metrics, best: metrics, delta: ci(0.03, 0.005, 0.06, n) });
+    expect(judge({ ...base, val, holdout: holdout(MIN_HOLDOUT - 1) })).toMatchObject({
+      improved: false,
+      verdict: expect.stringMatching(
+        new RegExp(`^Unconfirmed: .*the holdout has only ${MIN_HOLDOUT - 1} questions`),
+      ),
+    });
+    expect(judge({ ...base, val, holdout: holdout(MIN_HOLDOUT) }).improved).toBe(true);
   });
 });
 

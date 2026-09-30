@@ -1072,7 +1072,8 @@ exercise scores at least 4 of 5.
   special-category export scrub (ADR-0043).
 - **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v8` (ADR-0044; v7 went to the
   calibrated primary, ADR-0048).
-- **M13** Offline v7 vs v8 rubric report and a two-arm experiment on real people (ADR-0045).
+- **M13** Offline rubric report of v8 against the M10 candidate (pinned to v6; calibration doesn't change which
+  questions are asked, ADR-0048) and a two-arm experiment on real people (ADR-0045).
 
 **Rubric (each row scored 1–5 with evidence):**
 

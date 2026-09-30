@@ -323,7 +323,7 @@ export async function evaluateCmd(argv: string[]) {
 }
 
 function roleOrder(key: string): number {
-  return { primary: 0, baseline: 1, shadow: 2 }[key.split('|')[1] ?? ''] ?? 3;
+  return { primary: 0, baseline: 1, shadow: 2, derived: 3, fallback: 4 }[key.split('|')[1] ?? ''] ?? 5;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -335,7 +335,9 @@ export async function diagnoseCmd(argv: string[]) {
     args: argv,
     options: {
       ...COMMON,
-      predictor: { type: 'string', default: 'jev:typesafe/jev-1.13' },
+      // Without --predictor, a role's rows from any predictor: the primaries of every config version (v7's is
+      // `jev:typesafe/jev-1.13@jev-predict.v2`, earlier ones unsuffixed), never an LLM fallback.
+      predictor: { type: 'string' },
       role: { type: 'string', default: 'primary' },
       cases: { type: 'string', default: '30' },
       people: { type: 'string', default: '3' },
@@ -345,13 +347,17 @@ export async function diagnoseCmd(argv: string[]) {
   if (!values.data) throw new Error('--data is required');
   const loaded = await loadData(values.data, loadOptsOf(values));
   const byId = new Map(loaded.instances.map((i) => [i.id, i]));
+  const role = values.role === 'primary' || values.role === 'baseline' ? values.role : 'shadow';
+  // Shadows are many predictors at once; a diagnosis describes one.
+  if (role === 'shadow' && !values.predictor) throw new Error('--role shadow needs --predictor');
   const recs = storedRecords(loaded.instances).filter(
-    (r) =>
-      r.candidate ===
-      `${values.predictor}|${values.role === 'primary' || values.role === 'baseline' ? values.role : 'shadow'}`,
+    (r) => r.candidate.endsWith(`|${role}`) && (!values.predictor || r.predictorId === values.predictor),
   );
   if (!recs.length)
-    throw new Error(`no stored ${values.role} predictions from ${values.predictor} in ${values.split}`);
+    throw new Error(
+      `no stored ${values.role} predictions${values.predictor ? ` from ${values.predictor}` : ''} in ${values.split}`,
+    );
+  const predictorsOf = (rs: EvalRecord[]) => [...new Set(rs.map((r) => r.predictorId))].sort().join(', ');
   // One call per person (invariant 8: no prompt mixes people), for the people with the most predictions, each on
   // mostly their costliest misses plus a sample of the rest, so the analysis also sees what works.
   const n = positive('cases', values.cases);
@@ -383,7 +389,7 @@ export async function diagnoseCmd(argv: string[]) {
       const { markdown, costUsd } = await diagnose(
         engine.deps.gateway,
         values['reflection-model'],
-        values.predictor,
+        predictorsOf(rs),
         byId,
         [...worst, ...rest],
       );
@@ -395,7 +401,7 @@ export async function diagnoseCmd(argv: string[]) {
   } finally {
     engine.close();
   }
-  const body = `# Diagnosis: ${values.predictor} (${values.role}, ${values.split})\n\n${recs.length} stored predictions from ${byPerson.size} people; ${people.length} analysed one person per call by ${values['reflection-model']} (prompt ${DIAGNOSE_PROMPT_VERSION}, $${total.toFixed(4)}).\n\n${sections.join('\n\n')}\n`;
+  const body = `# Diagnosis: ${predictorsOf(recs)} (${values.role}, ${values.split})\n\n${recs.length} stored predictions from ${byPerson.size} people; ${people.length} analysed one person per call by ${values['reflection-model']} (prompt ${DIAGNOSE_PROMPT_VERSION}, $${total.toFixed(4)}).\n\n${sections.join('\n\n')}\n`;
   writeFileSync(out, body);
   console.log(`${body}\n→ ${out} (local only: it describes people's answers)`);
 }

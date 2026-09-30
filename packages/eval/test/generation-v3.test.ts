@@ -1,4 +1,5 @@
 import {
+  DEFAULT_CONFIG_V6,
   type EngineDeps,
   ONTOLOGY_V2,
   type QuestionRecord,
@@ -63,6 +64,11 @@ beforeAll(async () => {
 afterAll(() => engine.close());
 
 describe('gen.v3 and gates.v3 (ADR-0042)', () => {
+  it('pins the candidate to cfg.default.v6, so a new default does not change what it measures (ADR-0048)', () => {
+    expect(M10_CANDIDATE_CONFIG.predictor).toEqual(DEFAULT_CONFIG_V6.predictor);
+    expect(M10_CANDIDATE_CONFIG.selector).toEqual(DEFAULT_CONFIG_V6.selector);
+  });
+
   it('gates every generated question with gates.v3 and records the areas it was checked against', async () => {
     for (const id of [consented, plain]) {
       const qs = generated(await engine.deps.store.listQuestions(id));

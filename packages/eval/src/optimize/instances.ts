@@ -22,6 +22,8 @@ import { HELDOUT_PREFIX } from '../replay';
 export interface StoredPrediction {
   predictorId: string;
   role: PredictionRole;
+  /** A primary served by the LLM fallback because Jev failed (PLAN §16): not the configured primary's prediction. */
+  fallback: boolean;
   dist: Distribution;
   ok: boolean;
   costUsd: number;
@@ -171,6 +173,7 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
       list.push({
         predictorId: p.predictorId,
         role: p.role,
+        fallback: p.fallback,
         dist: p.dist,
         ok: p.ok,
         costUsd: p.costUsd,

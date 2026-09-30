@@ -25,11 +25,13 @@ import { predictionQuestion } from '../src/jev';
 import {
   assertPredictorId,
   calibratedResult,
+  calibrationTemperatureOf,
   keyedByLabel,
   LlmPredictor,
   makePredictor,
   probsSchema,
   promptVersionOf,
+  rawScale,
   selectionView,
 } from '../src/predictors';
 import { PROMPTS } from '../src/prompts';
@@ -394,25 +396,36 @@ describe('per-model reasoning budgets and calibration (ADR-0041)', () => {
     expect(temperatureScale({ a: 0.6, b: 0.4 }, 1)).toEqual({ a: 0.6, b: 0.4 });
   });
 
-  it('selects on the raw scale and calibrates only the stored prediction (ADR-0048)', async () => {
+  it('selects on the raw scale, calibrates only the stored prediction, and undoes it exactly (ADR-0048)', async () => {
     const gw = chatGateway([], '');
-    const view = selectionView(gw, 'jev:typesafe/jev-1.13@jev-predict.v2', { purpose: 't' });
-    // The uncalibrated twin is the registered incumbent, so rows made on the raw scale are labelled with it.
-    expect(view.id).toBe('jev:typesafe/jev-1.13');
-    expect(view.predictor.id).toBe('jev:typesafe/jev-1.13');
-    const [raw] = await view.predictor.predict(state, [q('choice')]);
-    const [stored] = await makePredictor(gw, 'jev:typesafe/jev-1.13@jev-predict.v2', {
-      purpose: 't',
-    }).predict(state, [q('choice')]);
-    // One call serves both: the rescale of the raw prediction is exactly what the calibrated predictor stores.
+    const ctx = { purpose: 't' };
+    const view = selectionView(gw, 'jev:typesafe/jev-1.13@jev-predict.v2');
+    const [raw] = await view.predictor(ctx).predict(state, [q('choice')]);
+    const [incumbent] = await makePredictor(gw, 'jev:typesafe/jev-1.13', ctx).predict(state, [q('choice')]);
+    const [stored] = await makePredictor(gw, 'jev:typesafe/jev-1.13@jev-predict.v2', ctx).predict(state, [
+      q('choice'),
+    ]);
+    // Selection sees the raw scale; one call serves both, since the rescale is exactly what the calibrated predictor
+    // stores; and the selection side can read the stored row back on the raw scale.
+    expect(raw!.dist).toEqual(incumbent!.dist);
     expect(view.calibrate(raw!, q('choice'))).toEqual(stored);
-    // Uncalibrated primaries are unchanged, and a failure is never rescaled.
-    const plain = selectionView(gw, 'jev:typesafe/jev-1.13', { purpose: 't' });
-    expect(plain.id).toBe('jev:typesafe/jev-1.13');
+    const back = rawScale('jev:typesafe/jev-1.13@jev-predict.v2', stored!.dist);
+    for (const k of Object.keys(raw!.dist)) expect(back[k]).toBeCloseTo(raw!.dist[k]!, 9);
+    expect(calibrationTemperatureOf('jev:typesafe/jev-1.13@jev-predict.v2')).toBe(4);
+    expect(calibrationTemperatureOf('llm:deepseek/deepseek-v4.1-flash')).toBe(1);
+    expect(calibrationTemperatureOf('not an id')).toBe(1);
+    expect(rawScale('jev:typesafe/jev-1.13', raw!.dist)).toBe(raw!.dist);
+    // Uncalibrated primaries pass through, and a failure is never rescaled.
+    const plain = selectionView(gw, 'jev:typesafe/jev-1.13');
     expect(plain.calibrate(raw!, q('choice'))).toBe(raw);
-    const llm = selectionView(gw, 'llm:qwen/qwen3.8-flash@predict.v2', { purpose: 't' });
-    expect(llm.id).toBe('llm:qwen/qwen3.8-flash@predict.v2');
     const failedResult = { dist: {}, costUsd: 0, latencyMs: 0, modelSnapshot: 'm', ok: false, error: 'x' };
     expect(calibratedResult(failedResult, q('choice'), 4)).toBe(failedResult);
+    // An LLM reports no confidence, calibrated or not, so the rescale matches what the LLM predictor itself returns.
+    const llmPrompt = resolvePredictPrompt('predict.v1', 'llm');
+    const t2 = { ...llmPrompt, harness: { ...llmPrompt.harness, calibrationTemperature: 2 } };
+    const [llmRaw] = await new LlmPredictor(gw, 'x/y', ctx, llmPrompt).predict(state, [q('choice')]);
+    const [llmCal] = await new LlmPredictor(gw, 'x/y', ctx, t2).predict(state, [q('choice')]);
+    expect(llmCal!.confidence).toBeUndefined();
+    expect(calibratedResult(llmRaw!, q('choice'), 2)).toEqual({ ...llmCal!, latencyMs: llmRaw!.latencyMs });
   });
 });

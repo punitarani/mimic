@@ -16,7 +16,13 @@ import {
 } from '../learning';
 import { allOntologyFacets, getAnchorSet } from '../ontology';
 import { computeItemStats, type ScoredItemRow } from '../population';
-import { assertPredictorId, makePredictor, promptVersionOf } from '../predictors';
+import {
+  assertPredictorId,
+  calibrationTemperatureOf,
+  makePredictor,
+  promptVersionOf,
+  rawScale,
+} from '../predictors';
 import { guardHypothesisText, guardInsight, reflectionFactAllowed, researchAllowed } from '../scope';
 import { scorePrediction } from '../scoring';
 import { facetCoverage, usesHypotheses } from '../selectors';
@@ -29,6 +35,7 @@ import {
   type MimicRecord,
   type PredictionRecord,
   type QuestionRecord,
+  type ScoredItemSource,
   StaleEvidenceError,
 } from '../store';
 import { type Domain, isScoredKind, learnsFrom, type PersonState } from '../types';
@@ -432,8 +439,14 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
   // only from people who consented to research use of that area.
   const people = new Map((await deps.store.listMimics({ consentResearch: true })).map((m) => [m.id, m]));
   const facetById = allOntologyFacets();
+  // Item statistics feed selection (VOI's population term), so they read every primary and baseline on its raw
+  // scale: a calibrated primary's rows are re-scored with calibration undone (ADR-0048).
+  const rawScores = (r: ScoredItemSource) =>
+    calibrationTemperatureOf(r.predictorId) === 1
+      ? { itemAcc: r.itemAcc, logLoss: r.logLoss }
+      : scorePrediction(r.question.type, rawScale(r.predictorId, r.dist), r.answer.value);
   const baselineByQ = new Map(
-    sources.filter((r) => r.role === 'baseline').map((r) => [r.questionId, r.itemAcc]),
+    sources.filter((r) => r.role === 'baseline').map((r) => [r.questionId, rawScores(r).itemAcc]),
   );
   const rows: ScoredItemRow[] = [];
   for (const r of sources) {
@@ -441,6 +454,7 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
     if (!isScoredKind(r.question.kind)) continue;
     const who = people.get(r.mimicId);
     if (!who || !researchAllowed(who.scope, r.question.facetIds, facetById)) continue;
+    const raw = rawScores(r);
     rows.push({
       mimicId: r.mimicId,
       itemKey: r.question.itemKey ?? null,
@@ -449,8 +463,8 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
       type: r.question.type,
       answer: r.answer.value,
       nOptions: r.question.options.length,
-      primaryItemAcc: r.itemAcc,
-      primaryLogLoss: r.logLoss,
+      primaryItemAcc: raw.itemAcc,
+      primaryLogLoss: raw.logLoss,
       baselineItemAcc: baselineByQ.get(r.questionId) ?? null,
       latencyMs: r.answer.latencyMs,
     });
