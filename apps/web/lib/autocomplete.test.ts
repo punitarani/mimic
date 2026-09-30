@@ -154,7 +154,7 @@ describe('placeFinder (generated data)', () => {
       for (const s of find(q, 50)) expect(s.value.length).toBeLessThan(120);
   });
 
-  it('matches the attribution the form shows', () => {
+  it('matches the attribution /credits shows', () => {
     expect(data.sources).toEqual(sources.places);
   });
 });
@@ -180,7 +180,7 @@ describe('occupationFinder', () => {
     expect(Math.max(...data.titles.map(([t]) => t.length))).toBeLessThanOrEqual(120);
   });
 
-  it('matches the attribution the form shows', () => {
+  it('matches the attribution /credits shows', () => {
     expect(data.sources).toEqual(sources.occupations);
   });
 });

@@ -7,7 +7,6 @@ import { TopBar } from '@/components/brand';
 import { Button, Checkbox, ErrorText, Field, fieldLabelId, Input } from '@/components/ui';
 import { api } from '@/lib/api';
 import { loadOccupations, loadPlaces } from '@/lib/autocomplete';
-import sources from '@/lib/autocomplete-sources.json';
 import { INVITE_PARAM, inviteFromQuery } from '@/lib/invite';
 
 export default function NewMimic() {
@@ -185,7 +184,6 @@ function IntakeForm({ invite }: { invite: string | null }) {
       >
         {busy ? 'Creating…' : 'Continue'}
       </Button>
-      <p className="text-xs text-muted">{[...sources.places, ...sources.occupations].join(' ')}</p>
     </form>
   );
 }

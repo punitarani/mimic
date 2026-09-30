@@ -564,8 +564,8 @@ This departs from PLAN §9.1, which asked for "city and country". A country-only
 and a state or country is the fallback for people who don't want to give one.
 
 - **Data.** `apps/web/scripts/autocomplete/gen.mjs` (`pnpm --filter @mimic/web gen:autocomplete`) writes two static
-  files to `apps/web/public/autocomplete/`, plus `lib/autocomplete-sources.json`, which is the attribution the form
-  shows. All three are committed and deterministic. The script's directory is its own package, outside the
+  files to `apps/web/public/autocomplete/`, plus `lib/autocomplete-sources.json`, the attribution the licenses
+  require. `/credits` shows it, linked from the home page footer, so the form stays clean. All three are committed and deterministic. The script's directory is its own package, outside the
   workspace. It installs its ~80 MB of source data only when run, so CI and deploys never download it.
   - `places.v1.json` (~350 KB gzipped) holds 250 countries and 5,076 subdivisions from `@countrystatecity/countries`
     (dr5hn, ODbL). It also holds 24,686 cities from GeoNames via `all-the-cities` (CC BY 4.0): those with 15,000+

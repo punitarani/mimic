@@ -55,7 +55,10 @@ export default async function Home({
         )}
       </main>
       <footer className="mx-auto w-full max-w-3xl px-4 pb-8 text-[13px] text-muted sm:px-6">
-        You can only build a mimic of yourself. You can download or delete it at any time.
+        You can only build a mimic of yourself. You can download or delete it at any time.{' '}
+        <Link href="/credits" className="underline underline-offset-2 hover:text-graphite">
+          Credits
+        </Link>
       </footer>
     </div>
   );
