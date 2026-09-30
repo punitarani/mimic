@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  componentProblems,
+  DEFAULT_CONFIG,
   type DecisionAnswer,
   type DecisionProvider,
   type DecisionRequest,
@@ -21,6 +23,7 @@ import {
   feedbackFor,
   jevRequests,
   Meter,
+  pairedComparisons,
   pairedDelta,
   predictorFor,
   resolveCandidate,
@@ -28,9 +31,22 @@ import {
   temperatureScale,
   toRecord,
 } from '../src/optimize/evaluate';
-import { nextVersion, optimize, sampleParent, splitInstances, variantSnippet } from '../src/optimize/gepa';
+import {
+  judge,
+  nextVersion,
+  optimize,
+  sampleParent,
+  splitInstances,
+  variantSnippet,
+} from '../src/optimize/gepa';
 import { type EvalInstance, loadInstances } from '../src/optimize/instances';
-import { leakageProblems, leakCorpus, parseReflection, proposeComponent } from '../src/optimize/reflect';
+import {
+  leakageProblems,
+  leakCorpus,
+  parseReflection,
+  proposeComponent,
+  targetWords,
+} from '../src/optimize/reflect';
 import { compactMetrics, METRICS_ROW_LIMIT, renderReport } from '../src/report';
 import { runSession, SessionScript } from '../src/session';
 
@@ -141,7 +157,7 @@ describe('evaluation instances', () => {
 describe('evaluate', () => {
   it('scores stored predictions and fits calibration without model calls', () => {
     const recs = storedRecords(instances);
-    const primary = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13|primary');
+    const primary = recs.filter((r) => r.candidate === `${DEFAULT_CONFIG.predictor.primary}|primary`);
     expect(primary.length).toBe(instances.length);
     const b = breakdown(primary);
     expect(b.all.n).toBe(instances.length);
@@ -156,7 +172,14 @@ describe('evaluate', () => {
   });
 
   it('derives calibrated Jev from the stored primary for free, and reports what calibration does to accuracy', () => {
-    const recs = storedRecords(instances);
+    // Mimics made before cfg.default.v7 store an uncalibrated primary.
+    const legacy = instances.map((i) => ({
+      ...i,
+      stored: i.stored.map((p) =>
+        p.role === 'primary' ? { ...p, predictorId: 'jev:typesafe/jev-1.13' } : p,
+      ),
+    }));
+    const recs = storedRecords(legacy);
     const primary = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13|primary');
     const derived = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13@jev-predict.v2|derived');
     expect(derived).toHaveLength(primary.length);
@@ -170,6 +193,24 @@ describe('evaluate', () => {
       { predictorId: 'jev:typesafe/jev-1.13@jev-predict.v2', t: 4 },
     ]);
     expect(derivedCalibrations('llm:deepseek/deepseek-v4.1-flash')).toEqual([]);
+    // A primary that is already calibrated (cfg.default.v7) has nothing to derive.
+    expect(derivedCalibrations(DEFAULT_CONFIG.predictor.primary)).toEqual([]);
+    // Paired comparisons put the two on the same questions (ADR-0048).
+    const pair = pairedComparisons(recs).find(
+      (x) => x.from === 'jev:typesafe/jev-1.13' && x.to === 'jev:typesafe/jev-1.13@jev-predict.v2',
+    )!;
+    expect(pair.n).toBe(primary.length);
+    const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+    expect(pair.logLoss.mean).toBeCloseTo(
+      mean(derived.map((r) => r.logLoss)) - mean(primary.map((r) => r.logLoss)),
+      9,
+    );
+    expect(pair.logLoss.ciLow).toBeLessThanOrEqual(pair.logLoss.mean);
+    expect(pair.logLoss.ciHigh).toBeGreaterThanOrEqual(pair.logLoss.mean);
+    // Baselines see another state, so they are never paired.
+    expect(
+      pairedComparisons(recs).every((x) => !x.from.includes('baseline') && !x.to.includes('baseline')),
+    ).toBe(true);
     // Fits report test accuracy before and after, and pool only LLM shadows with the primary.
     const fits = calibrationFits(instances);
     for (const f of fits.filter((x) => x.nTest > 0)) {
@@ -358,6 +399,45 @@ describe('outages, batching and splits', () => {
   });
 });
 
+describe('verdict (ADR-0048)', () => {
+  const ci = (mean: number, ciLow: number, ciHigh: number, n = 80) => ({ n, mean, ciLow, ciHigh });
+  const metrics = { n: 80 } as never;
+  const base = { sameAsSeed: false, holdoutError: null, margin: 0.0047 };
+
+  it('calls the first prod run unconfirmed: its validation gain did not replicate on the holdout', () => {
+    // Run 01M3SV0K3TK4NVMQ1BPGN9VRZN: validation +0.0523 (0.0091 to 0.1021), holdout +0.0056 (−0.0117 to 0.0234),
+    // holdout item accuracy −3.8 points.
+    const r = judge({
+      ...base,
+      val: ci(0.0523, 0.0091, 0.1021, 55),
+      holdout: {
+        seed: metrics,
+        best: metrics,
+        delta: ci(0.0056, -0.0117, 0.0234),
+        accuracyDelta: ci(-0.038, -0.079, 0.001),
+      },
+    });
+    expect(r.improved).toBe(false);
+    expect(r.verdict).toMatch(/^Unconfirmed: .*did not replicate on the holdout.*item accuracy -3\.8 points/);
+  });
+
+  it('calls a replicated gain improved, and refuses one that costs accuracy or has no holdout', () => {
+    const val = ci(0.05, 0.01, 0.1, 55);
+    const holdout = { seed: metrics, best: metrics, delta: ci(0.03, 0.005, 0.06) };
+    expect(judge({ ...base, val, holdout }).improved).toBe(true);
+    expect(
+      judge({ ...base, val, holdout: { ...holdout, accuracyDelta: ci(0.01, -0.02, 0.04) } }).improved,
+    ).toBe(true);
+    const worse = judge({ ...base, val, holdout: { ...holdout, accuracyDelta: ci(-0.06, -0.1, -0.02) } });
+    expect(worse).toMatchObject({ improved: false, verdict: expect.stringMatching(/^Unconfirmed/) });
+    expect(judge({ ...base, val, holdout: null }).verdict).toMatch(/no test-split people to confirm/);
+    expect(judge({ ...base, val, holdout: { ...holdout, delta: ci(-0.02, -0.05, 0.01) } }).verdict).toMatch(
+      /^Not shipped: it lost on the holdout/,
+    );
+    expect(judge({ ...base, val: ci(0.003, -0.01, 0.02, 55), holdout }).verdict).toMatch(/within noise/);
+  });
+});
+
 describe('leakage lint', () => {
   const corpus = () => leakCorpus(instances);
   it('rejects copied question text and identity details, allows general strategy', () => {
@@ -404,6 +484,40 @@ describe('leakage lint', () => {
     expect(r).toMatchObject({ text: 'Short {prompt}', problems: [], calls: 2 });
     expect(r.costUsd).toBeCloseTo(0.02);
     expect(seen[1]).toContain("That text can't be used: too long");
+  });
+
+  it('aims below the word limit and names the cut when a reply runs over (optimize.reflect.v2)', async () => {
+    const long = `<component>{prompt} ${'word '.repeat(130).trim()}</component>`;
+    const replies = [long, '<component>Short {prompt}</component>'];
+    const seen: string[] = [];
+    const gw = new Gateway({
+      decisions: new HintDecisions(),
+      llm: {
+        provider: 'x',
+        chat: async (req) => {
+          seen.push(req.messages.at(-1)!.content);
+          return {
+            content: replies.shift()!,
+            modelSnapshot: 'r',
+            usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 },
+            latencyMs: 1,
+            raw: {},
+          };
+        },
+      },
+      log: { write: async () => {} },
+      clock: () => 0,
+      newId: ulid,
+    });
+    const c = resolveCandidate({ predictor: 'jev:typesafe/jev-1.13' });
+    const r = await proposeComponent(gw, 'm', c, 'jev.instructions', 'cases', (t) =>
+      componentProblems('jev.instructions', t),
+    );
+    expect(r.problems).toEqual([]);
+    expect(targetWords('jev.instructions')).toBe(102);
+    expect(seen[0]).toContain('WORD LIMIT: 120, hard. Aim for 102 or fewer');
+    // 131 words: cut at least 29 to reach the target, not just the 11 over the limit.
+    expect(seen[1]).toContain('It has 131 words: cut at least 29 (to about 102)');
   });
 
   it('parses the reflection reply', () => {

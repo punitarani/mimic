@@ -24,11 +24,13 @@ import { Gateway } from '../src/gateway';
 import { predictionQuestion } from '../src/jev';
 import {
   assertPredictorId,
+  calibratedResult,
   keyedByLabel,
   LlmPredictor,
   makePredictor,
   probsSchema,
   promptVersionOf,
+  selectionView,
 } from '../src/predictors';
 import { PROMPTS } from '../src/prompts';
 import { renderStateText } from '../src/state-builder';
@@ -390,5 +392,27 @@ describe('per-model reasoning budgets and calibration (ADR-0041)', () => {
     expect(rawNoul!.confidence).toBeCloseTo(Math.abs(rawNoul!.dist.yes! - 0.5) * 2);
     expect(calNoul!.confidence).toBeCloseTo(Math.abs(calNoul!.dist.yes! - 0.5) * 2);
     expect(temperatureScale({ a: 0.6, b: 0.4 }, 1)).toEqual({ a: 0.6, b: 0.4 });
+  });
+
+  it('selects on the raw scale and calibrates only the stored prediction (ADR-0048)', async () => {
+    const gw = chatGateway([], '');
+    const view = selectionView(gw, 'jev:typesafe/jev-1.13@jev-predict.v2', { purpose: 't' });
+    // The uncalibrated twin is the registered incumbent, so rows made on the raw scale are labelled with it.
+    expect(view.id).toBe('jev:typesafe/jev-1.13');
+    expect(view.predictor.id).toBe('jev:typesafe/jev-1.13');
+    const [raw] = await view.predictor.predict(state, [q('choice')]);
+    const [stored] = await makePredictor(gw, 'jev:typesafe/jev-1.13@jev-predict.v2', {
+      purpose: 't',
+    }).predict(state, [q('choice')]);
+    // One call serves both: the rescale of the raw prediction is exactly what the calibrated predictor stores.
+    expect(view.calibrate(raw!, q('choice'))).toEqual(stored);
+    // Uncalibrated primaries are unchanged, and a failure is never rescaled.
+    const plain = selectionView(gw, 'jev:typesafe/jev-1.13', { purpose: 't' });
+    expect(plain.id).toBe('jev:typesafe/jev-1.13');
+    expect(plain.calibrate(raw!, q('choice'))).toBe(raw);
+    const llm = selectionView(gw, 'llm:qwen/qwen3.8-flash@predict.v2', { purpose: 't' });
+    expect(llm.id).toBe('llm:qwen/qwen3.8-flash@predict.v2');
+    const failedResult = { dist: {}, costUsd: 0, latencyMs: 0, modelSnapshot: 'm', ok: false, error: 'x' };
+    expect(calibratedResult(failedResult, q('choice'), 4)).toBe(failedResult);
   });
 });

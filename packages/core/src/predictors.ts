@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   DEFAULT_PROMPT_VERSION,
   fill,
+  PREDICT_PROMPTS,
   type PredictHarness,
   type PredictPrompt,
   promptHash,
@@ -83,21 +84,16 @@ export class JevPredictor implements Predictor {
         if (!a)
           return failed(`missing answer for ${jevKey(q)}`, res.latencyMs, res.modelSnapshot, share, 'output');
         try {
-          const t = this.prompt.harness.calibrationTemperature;
-          const dist = temperatureScale(answerToDistribution(q, a), t);
           const out: PredictionResult = {
-            dist,
+            dist: answerToDistribution(q, a),
             costUsd: share,
             latencyMs: res.latencyMs,
             modelSnapshot: res.modelSnapshot,
             ok: true,
           };
-          // Jev's own confidence describes its raw answer; a calibrated prediction reports its top probability.
-          // Same scale as `confidenceOf`: a noul answer's |p − 0.5|·2, else the top probability.
-          const top = dist[argmax(dist)]!;
-          const c = t === 1 ? confidenceOf(a) : a.type === 'noul' ? Math.abs(2 * top - 1) : top;
+          const c = confidenceOf(a);
           if (c !== undefined) out.confidence = c;
-          return out;
+          return calibratedResult(out, q, this.prompt.harness.calibrationTemperature);
         } catch (e) {
           return failed(String(e), res.latencyMs, res.modelSnapshot, share, 'output');
         }
@@ -313,6 +309,63 @@ export function makePredictor(gateway: Gateway, id: string, ctx: CallContext): P
   return spec.kind === 'jev'
     ? new JevPredictor(gateway, spec.model, ctx, spec.promptVersion)
     : new LlmPredictor(gateway, spec.model, ctx, spec.promptVersion);
+}
+
+/**
+ * A successful prediction rescaled by a calibration temperature (harness `calibrationTemperature`): p ∝ p^(1/T), top
+ * pick unchanged. The confidence follows on Jev's scale (`confidenceOf`): a yes/no answer's |p − ½|·2, else the top
+ * probability. T = 1, or a failed prediction, is returned as it is.
+ */
+export function calibratedResult(
+  r: PredictionResult,
+  q: Pick<Question, 'type'>,
+  t: number,
+): PredictionResult {
+  if (t === 1 || !r.ok) return r;
+  const dist = temperatureScale(r.dist, t);
+  const top = dist[argmax(dist)]!;
+  return { ...r, dist, confidence: q.type === 'noul' ? Math.abs(2 * top - 1) : top };
+}
+
+/**
+ * The primary as selection sees it (ADR-0048). Calibration only rescales the stored prediction, so selection scores
+ * candidates on the predictor's raw scale: the scale VOI's weights and the hypothesis posterior were tuned on, and
+ * the same model call. Returns that raw predictor, its ID (the registered twin at calibration temperature 1 when
+ * there is one, so rows it produces are labelled with what made them), and the rescale that turns its prediction for
+ * the chosen question into the stored primary.
+ */
+export function selectionView(
+  gateway: Gateway,
+  id: string,
+  ctx: CallContext,
+): {
+  predictor: Predictor;
+  id: string;
+  calibrate: (r: PredictionResult, q: Pick<Question, 'type'>) => PredictionResult;
+} {
+  const spec = parsePredictorId(id);
+  const prompt = resolvePredictPrompt(
+    spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind],
+    spec.kind,
+    spec.model,
+  );
+  const t = prompt.harness.calibrationTemperature;
+  if (t === 1) return { predictor: makePredictor(gateway, id, ctx), id, calibrate: (r) => r };
+  const raw = { ...prompt, harness: { ...prompt.harness, calibrationTemperature: 1 } };
+  const same = (p: PredictPrompt) =>
+    JSON.stringify([p.components, p.harness]) === JSON.stringify([raw.components, raw.harness]);
+  const rawId = Object.values(PREDICT_PROMPTS)
+    .filter((v) => v.kind === spec.kind)
+    .map((v) => resolvePredictPrompt(v.id, spec.kind, spec.model))
+    .filter(same)
+    .map((p) => predictorIdOf(spec.kind, spec.model, p))
+    .find((pid) => !predictorIdProblem(pid));
+  const predictor = rawId
+    ? makePredictor(gateway, rawId, ctx)
+    : spec.kind === 'jev'
+      ? new JevPredictor(gateway, spec.model, ctx, raw)
+      : new LlmPredictor(gateway, spec.model, ctx, raw);
+  return { predictor, id: rawId ?? predictor.id, calibrate: (r, q) => calibratedResult(r, q, t) };
 }
 
 /** The prompt version stored with a prediction from this predictor (invariant 4). */

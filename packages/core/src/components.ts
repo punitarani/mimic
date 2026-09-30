@@ -265,8 +265,8 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
   /**
    * ADR-0041: the incumbent Jev templates with a calibration temperature of 4. Fitted on the prod dev person and
    * checked on the two test people, it cut their log loss from 1.80 to 1.12 and calibration error from 0.27 to
-   * 0.10. It only rescales Jev's answer, so it is not a default shadow (a second identical Jev call per question):
-   * `evaluate --from stored` derives it from the stored primary for free. Promotion to primary goes through a config.
+   * 0.10. It only rescales Jev's answer, so it was never a shadow (a second identical Jev call per question):
+   * `evaluate --from stored` derived it from the stored primary for free. The primary since cfg.default.v7 (ADR-0048).
    */
   'jev-predict.v2': {
     id: 'jev-predict.v2',
@@ -305,6 +305,11 @@ export function fill(template: string, vars: Record<string, string>): string {
 }
 
 /** Problems with a component's text: missing or unknown placeholders, empty text, too many words. */
+/** Words as the component word limits count them. */
+export function wordCount(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
 export function componentProblems(id: ComponentId, text: string): string[] {
   const spec = COMPONENT_SPECS[id];
   const found = placeholdersOf(text);
@@ -313,7 +318,7 @@ export function componentProblems(id: ComponentId, text: string): string[] {
   if (!text.trim()) out.push('empty');
   for (const r of spec.required) if (!found.includes(r)) out.push(`missing {${r}}`);
   for (const f of found) if (!allowed.has(f)) out.push(`unknown placeholder {${f}}`);
-  const words = text.trim().split(/\s+/).length;
+  const words = wordCount(text);
   if (words > spec.maxWords) out.push(`${words} words (max ${spec.maxWords})`);
   return out;
 }

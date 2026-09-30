@@ -105,7 +105,9 @@ export interface OptimizeResult {
     logLossDelta: PairedDelta;
     byPerson: Record<string, PairedDelta>;
   };
-  holdout: { seed: Metrics; best: Metrics; delta: PairedDelta } | null;
+  /** `accuracyDelta` is the paired item-accuracy change (absent in results from before ADR-0048). */
+  holdout: { seed: Metrics; best: Metrics; delta: PairedDelta; accuracyDelta?: PairedDelta } | null;
+  /** True only when the validation gain beats noise and replicates on the holdout (ADR-0048). */
   improved: boolean;
   verdict: string;
   suggestedVersion: string | null;
@@ -562,29 +564,25 @@ async function finish(
     try {
       const s = await evaluate(seed.candidate, holdout, { meter: new Meter() });
       const b = await evaluate(best.candidate, holdout, { meter: new Meter() });
-      holdoutOut = { seed: metricsOf(s), best: metricsOf(b), delta: pairedDelta(s, b, 'value', 'holdout') };
+      holdoutOut = {
+        seed: metricsOf(s),
+        best: metricsOf(b),
+        delta: pairedDelta(s, b, 'value', 'holdout'),
+        accuracyDelta: pairedDelta(s, b, 'itemAcc', 'holdout-acc'),
+      };
     } catch (e) {
       if (!(e instanceof OutageStop)) throw e;
       holdoutError = e.message;
     }
   }
   const margin = state.noise?.valMargin ?? 0;
-  const improved =
-    best !== seed &&
-    !holdoutError &&
-    delta.mean > margin &&
-    delta.ciLow > 0 &&
-    (!holdoutOut || holdoutOut.delta.mean >= -margin);
-  const verdict =
-    best === seed
-      ? 'No candidate beat the seed on validation.'
-      : holdoutError
-        ? `Undecided: the holdout check hit a ${holdoutError}; resume with the same --run-dir to finish it.`
-        : improved
-          ? `Improved: validation score +${delta.mean.toFixed(4)} nats per question (90% CI ${delta.ciLow.toFixed(4)} to ${delta.ciHigh.toFixed(4)}), above the noise margin ${margin.toFixed(4)}${holdoutOut ? `; holdout ${holdoutOut.delta.mean >= 0 ? '+' : ''}${holdoutOut.delta.mean.toFixed(4)}` : '; no test-split people to hold out'}.`
-          : holdoutOut && holdoutOut.delta.mean < -margin
-            ? `Not shipped: it lost on the holdout (${holdoutOut.delta.mean.toFixed(4)} nats per question) despite a validation gain of +${delta.mean.toFixed(4)}.`
-            : `Not shipped: the best candidate's gain (+${delta.mean.toFixed(4)}, CI ${delta.ciLow.toFixed(4)} to ${delta.ciHigh.toFixed(4)}) is within noise (margin ${margin.toFixed(4)}).`;
+  const { improved, verdict } = judge({
+    sameAsSeed: best === seed,
+    holdoutError,
+    val: delta,
+    margin,
+    holdout: holdoutOut,
+  });
   const base = best.candidate.baseVersion;
   const bestInput: CandidateInput = {
     label: best.candidate.label,
@@ -610,6 +608,45 @@ async function finish(
     suggestedVersion: improved ? nextVersion(best.candidate.kind) : null,
     bestInput,
   };
+}
+
+/**
+ * The verdict on a run (ADR-0048). "Improved" needs a validation gain above the noise margin with a 90% CI above zero,
+ * and a replication on the holdout: its paired gain above zero with 90% confidence, and item accuracy not lower with
+ * 90% confidence. A validation gain that does not replicate is "Unconfirmed" and gets no suggested version.
+ */
+export function judge(x: {
+  sameAsSeed: boolean;
+  holdoutError: string | null;
+  val: PairedDelta;
+  margin: number;
+  holdout: OptimizeResult['holdout'];
+}): { improved: boolean; verdict: string } {
+  const valGain = !x.sameAsSeed && x.val.mean > x.margin && x.val.ciLow > 0;
+  const acc = x.holdout?.accuracyDelta;
+  // An improvement has to replicate on people the search never saw (ADR-0048): with a handful of training people a
+  // validation gain can be fitting them. The holdout gain must be above zero with 90% confidence, and holdout item
+  // accuracy must not be lower with 90% confidence.
+  const confirmed = !!x.holdout && x.holdout.delta.ciLow > 0 && (!acc || acc.ciHigh >= 0);
+  const improved = valGain && !x.holdoutError && confirmed;
+  const valText = `validation score +${x.val.mean.toFixed(4)} nats per question (90% CI ${x.val.ciLow.toFixed(4)} to ${x.val.ciHigh.toFixed(4)}), above the noise margin ${x.margin.toFixed(4)}`;
+  const holdoutText = x.holdout
+    ? `holdout ${x.holdout.delta.mean >= 0 ? '+' : ''}${x.holdout.delta.mean.toFixed(4)} (90% CI ${x.holdout.delta.ciLow.toFixed(4)} to ${x.holdout.delta.ciHigh.toFixed(4)})${acc ? `, item accuracy ${acc.mean >= 0 ? '+' : ''}${(acc.mean * 100).toFixed(1)} points` : ''}`
+    : '';
+  const verdict = x.sameAsSeed
+    ? 'No candidate beat the seed on validation.'
+    : x.holdoutError
+      ? `Undecided: the holdout check hit a ${x.holdoutError}; resume with the same --run-dir to finish it.`
+      : !valGain
+        ? `Not shipped: the best candidate's gain (+${x.val.mean.toFixed(4)}, CI ${x.val.ciLow.toFixed(4)} to ${x.val.ciHigh.toFixed(4)}) is within noise (margin ${x.margin.toFixed(4)}).`
+        : !x.holdout
+          ? `Unconfirmed: ${valText}, but there are no test-split people to confirm it on. Not registered.`
+          : x.holdout.delta.mean < -x.margin
+            ? `Not shipped: it lost on the holdout (${x.holdout.delta.mean.toFixed(4)} nats per question) despite a validation gain of +${x.val.mean.toFixed(4)}.`
+            : improved
+              ? `Improved: ${valText}; confirmed on the holdout: ${holdoutText}.`
+              : `Unconfirmed: ${valText}, but it did not replicate on the holdout: ${holdoutText}. Not registered: the gain may fit the training people only.`;
+  return { improved, verdict };
 }
 
 /** A ready-to-paste `PREDICT_PROMPTS` entry for a winner (packages/core/src/components.ts). */

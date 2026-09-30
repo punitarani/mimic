@@ -6,7 +6,7 @@ import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
 import { getReserveSet, reserveSetId } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
-import { LlmPredictor, makePredictor, promptVersionOf } from '../predictors';
+import { LlmPredictor, makePredictor, promptVersionOf, selectionView } from '../predictors';
 import { pickRepeat } from '../repeats';
 import { questionAllowed } from '../scope';
 import { repeatAgreement, scorePrediction } from '../scoring';
@@ -406,6 +406,9 @@ async function serveWithPredictions(
   // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
   const primary = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
   const baselinePredictor = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.baseline'));
+  // Selection scores candidates on the primary's raw scale and calibrates only the chosen question's prediction, so a
+  // calibrated primary changes what is stored and shown, not which question is asked (ADR-0048).
+  const view = selectionView(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
 
   const state = await timed(deps, 'state', () => sealedState(deps, loaded, cfg, seq, pool));
   const baseState = contextState(loaded, cfg);
@@ -428,8 +431,8 @@ async function serveWithPredictions(
     ];
   } else {
     const selector = makeSelector(cfg.selector);
-    // Same prompt as the primary, including a prompt variant (ADR-0028); logged under its own purpose.
-    const explore = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'select.bald'));
+    // Same prompt and scale as selection's primary (ADR-0028, ADR-0048); logged under its own purpose.
+    const explore = selectionView(deps.gateway, primarySpec, ctxFor(m, 'select.bald')).predictor;
     const [hyp, redundancy, voi] = await Promise.all([
       usesHypotheses(cfg.selector) ? loadHypothesisSet(deps, m, loaded) : undefined,
       timed(deps, 'redundancy', () => redundancyFn(deps, m, pool, asked)),
@@ -439,7 +442,7 @@ async function serveWithPredictions(
       selector.select({
         pool,
         state,
-        primary,
+        primary: view.predictor,
         coverage: (q) => questionCoverage(counts, q),
         redundancy,
         rng,
@@ -449,7 +452,7 @@ async function serveWithPredictions(
       }),
     );
     chosen = sel.question as QuestionRecord;
-    primaryResult = sel.primary;
+    primaryResult = view.calibrate(sel.primary, chosen);
     selection = { selector: cfg.selector.type, ...sel.diagnostics };
     if (hyp && sel.hypothesisPreds) {
       selection.hypothesisWeights = hyp.weights.map((w) => Math.round(w * 1000) / 1000);
@@ -459,14 +462,15 @@ async function serveWithPredictions(
           id: deps.newId(),
           questionId: chosen.id,
           mimicId: m.id,
-          predictorId: primarySpec,
+          // Raw scale, labelled with what made it: the posterior reads these likelihoods (ADR-0048).
+          predictorId: view.id,
           role: 'hypothesis',
           dist: h.result.dist,
           confidence: h.result.confidence ?? null,
           stateHash: h.state.meta.stateHash,
           evidenceSeqMax: h.state.meta.evidenceSeqMax,
           configHash: m.configHash,
-          promptVersion: promptVersionOf(primarySpec),
+          promptVersion: promptVersionOf(view.id),
           modelSnapshot: h.result.modelSnapshot,
           costUsd: h.result.costUsd,
           latencyMs: h.result.latencyMs,

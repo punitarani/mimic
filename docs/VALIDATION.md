@@ -406,3 +406,31 @@ Nothing below comes from real people, and nothing is a measure of prediction acc
   answers. `export --env local --keep-identity` then `replay --mode online`: 23 primaries, 11 checkable, 12
   `rescoped`, state-hash match 1.000, pass. A research export of the same data withheld 7 questions and 33 trait
   rows. Scripted, so a check of the machinery, not a result.
+
+## Calibrated primary and the first prod reports (ADR-0048)
+
+The prod evidence (4 consented people, 265 questions) is in ADR-0048. The checks here use offline fakes, plus one live
+probe.
+
+- **Selection is unchanged by calibration** (`packages/eval/test/calibrated-primary.test.ts`). The same scripted
+  person was run for 16 turns under v6 and under v7, with the same seed:
+  - the questions served are identical;
+  - v7's stored primary and baseline equal v6's rescaled at T = 4, recorded as `jev-predict.v2`;
+  - hypothesis rows stay raw, labelled `jev:typesafe/jev-1.13`.
+
+  With selection switched to the calibrated scale, all three tests fail, so they would catch that regression.
+- **Core** (`components.test.ts`, `math.test.ts`):
+  - `selectionView` finds the uncalibrated twin, and one raw call rescales exactly to the calibrated predictor's
+    output;
+  - an uncalibrated primary and a failed prediction pass through untouched;
+  - the v7, v6, v5 and v4 hashes are pinned, and v7 is v6 with only its predictors changed.
+- **Eval** (`optimize.test.ts`):
+  - `judge` replays the first prod run's numbers and calls them "Unconfirmed", and covers the other verdicts;
+  - reflect v2 aims at 102 words for a 120-word limit, and a 131-word reply is told to cut 29;
+  - paired comparisons match the difference of means;
+  - a calibrated primary gets no derived rows.
+- **Live probe:** 12 calls each for GLM and DeepSeek, with and without the key enum, on long states (about $0.03).
+  - GLM took 1.4 s with the enum and 13.4 s without, served by Wafer or Together per call.
+  - DeepSeek went to Wafer every time, at the same cost either way.
+  - So the enum is not what slowed GLM or raised DeepSeek's cost in the backfill.
+

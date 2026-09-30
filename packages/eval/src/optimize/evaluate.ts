@@ -764,6 +764,63 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
   return rows;
 }
 
+export interface PairedRow {
+  model: string;
+  from: string;
+  to: string;
+  n: number;
+  /** to − from on the questions both answered; failures count as uniform, as everywhere in this report. */
+  logLoss: PairedDelta;
+  itemAcc: PairedDelta;
+  failedFrom: number;
+  failedTo: number;
+}
+
+/**
+ * Every pair of stored predictors on the same model (prompt versions, calibration, reasoning settings), compared on
+ * the questions both answered, with paired 90% CIs (ADR-0048). Unpaired rows compare different question sets while
+ * a backfill is still running, which once made a neutral change look 0.05–0.08 nats worse. Primary, shadow and
+ * derived rows only: a baseline sees another state and a hypothesis row another person.
+ */
+export function pairedComparisons(recs: EvalRecord[]): PairedRow[] {
+  const byId = new Map<string, EvalRecord[]>();
+  for (const r of recs) {
+    const role = r.candidate.split('|')[1];
+    if (role !== 'primary' && role !== 'shadow' && role !== 'derived') continue;
+    const list = byId.get(r.predictorId);
+    if (list) list.push(r);
+    else byId.set(r.predictorId, [r]);
+  }
+  // The incumbent spelling first, then by version, so each pair reads old → new.
+  const order = (id: string) => [id.includes('@') ? 1 : 0, id] as const;
+  const ids = [...byId.keys()].sort((a, b) => order(a)[0] - order(b)[0] || a.localeCompare(b));
+  const rows: PairedRow[] = [];
+  for (const [i, from] of ids.entries())
+    for (const to of ids.slice(i + 1)) {
+      const model = parsePredictorId(from).model;
+      if (parsePredictorId(to).model !== model || parsePredictorId(to).kind !== parsePredictorId(from).kind)
+        continue;
+      const a = byId.get(from)!;
+      const b = byId.get(to)!;
+      const shared = new Set(b.map((r) => r.instanceId));
+      const both = a.filter((r) => shared.has(r.instanceId));
+      if (both.length < 10) continue;
+      const ids2 = new Set(both.map((r) => r.instanceId));
+      const b2 = b.filter((r) => ids2.has(r.instanceId));
+      rows.push({
+        model,
+        from,
+        to,
+        n: both.length,
+        logLoss: pairedDelta(both, b2, 'logLoss', `${from}>${to}`),
+        itemAcc: pairedDelta(both, b2, 'itemAcc', `${from}>${to}:acc`),
+        failedFrom: both.filter((r) => !r.ok).length,
+        failedTo: b2.filter((r) => !r.ok).length,
+      });
+    }
+  return rows;
+}
+
 /** Self-consistency per person from repeat probes, smoothed toward the 0.8 prior (PLAN §9.10). */
 export function selfConsistencyOf(instances: EvalInstance[]): Record<string, { n: number; c: number }> {
   const out: Record<string, { n: number; c: number }> = {};

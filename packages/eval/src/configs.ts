@@ -8,9 +8,9 @@ import {
 } from '@mimic/core';
 
 /**
- * The M10 candidate (ADR-0042): the default config (cfg.default.v6) on ontology v2 with reserve.v2, gen.v3, gates.v3,
- * reflect.v2 and an everyday-first domain mix. An eval config only: cfg.default.v7 (ADR-0044) adds the selector's
- * category balance and trust ramp on top of it.
+ * The M10 candidate (ADR-0042): the default config (cfg.default.v7 since ADR-0048) on ontology v2 with reserve.v2,
+ * gen.v3, gates.v3, reflect.v2 and an everyday-first domain mix. An eval config only: cfg.default.v8 (ADR-0044) adds
+ * the selector's category balance and trust ramp on top of it.
  */
 export const M10_CANDIDATE_CONFIG: PipelineConfig = {
   ...DEFAULT_CONFIG,

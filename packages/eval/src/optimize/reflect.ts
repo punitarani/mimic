@@ -5,6 +5,7 @@ import {
   type ComponentId,
   componentReadBy,
   type Gateway,
+  wordCount,
 } from '@mimic/core';
 import { type Candidate, type EvalRecord, stateExcerpt } from './evaluate';
 import type { EvalInstance } from './instances';
@@ -81,7 +82,7 @@ export function leakageProblems(text: string, parent: string, corpus: LeakCorpus
  * The optimizer's own prompts are offline research tooling, never product prompts; they are versioned here, recorded
  * on every run, and mirrored to docs/prompts/optimize/ (a change means a new version).
  */
-export const REFLECT_PROMPT_VERSION = 'optimize.reflect.v1';
+export const REFLECT_PROMPT_VERSION = 'optimize.reflect.v2';
 export const DIAGNOSE_PROMPT_VERSION = 'optimize.diagnose.v1';
 
 export const REFLECT_SYSTEM = `You improve one text component of a system that predicts how a specific person will answer a typed question
@@ -130,6 +131,14 @@ export function reflectiveCases(instances: Map<string, EvalInstance>, recs: Eval
     .join('\n\n');
 }
 
+/**
+ * The length to aim for, below the hard limit (v2): a reply written to the limit itself overshot it in 9 of 30
+ * iterations of the first prod run (ADR-0048), mostly when the parent was already near it.
+ */
+export function targetWords(id: ComponentId): number {
+  return Math.floor(COMPONENT_SPECS[id].maxWords * 0.85);
+}
+
 export function reflectMessages(c: Candidate, id: ComponentId, cases: string) {
   const spec = COMPONENT_SPECS[id];
   const placeholders = [...spec.required, ...spec.optional];
@@ -146,7 +155,7 @@ export function reflectMessages(c: Candidate, id: ComponentId, cases: string) {
         `ROLE: ${spec.role}`,
         `PREDICTOR: ${c.kind === 'jev' ? 'a decision model that reads the state and the question text and returns calibrated probabilities (it cannot follow long instructions, so wording matters more than length)' : 'an LLM returning JSON probabilities'}`,
         `PLACEHOLDERS (keep exactly): ${placeholders.length ? placeholders.map((p) => `{${p}}`).join(' ') : 'none'}`,
-        `WORD LIMIT: ${spec.maxWords}`,
+        `WORD LIMIT: ${spec.maxWords}, hard. Aim for ${targetWords(id)} or fewer (the current text has ${wordCount(c.prompt.components[id])}); to add a point, cut a weaker one.`,
         '',
         `CURRENT TEXT:\n<<<\n${c.prompt.components[id]}\n>>>`,
         '',
@@ -199,11 +208,18 @@ export async function proposeComponent(
     text = parseReflection(res.content);
     problems = text ? check(text) : ['no <component> in the reply'];
     if (!problems.length) return { text, problems, costUsd, calls: attempt + 1 };
+    const max = COMPONENT_SPECS[id].maxWords;
+    const n = text ? wordCount(text) : 0;
+    // Name the cut in words: "the limit is 120" alone let replies come back over it (ADR-0048).
+    const cut =
+      n > max
+        ? ` It has ${n} words: cut at least ${n - targetWords(id)} (to about ${targetWords(id)}) by removing the least useful sentences, not by rewording.`
+        : '';
     messages.push(
       { role: 'assistant', content: res.content },
       {
         role: 'user',
-        content: `That text can't be used: ${problems.join('; ')}. Fix exactly these problems (the word limit is ${COMPONENT_SPECS[id].maxWords}) and return the whole component again inside <component>...</component>.`,
+        content: `That text can't be used: ${problems.join('; ')}.${cut} Fix exactly these problems (the word limit is ${max}) and return the whole component again inside <component>...</component>.`,
       },
     );
   }
@@ -275,7 +291,7 @@ ${input}
       REFLECT_PROMPT_VERSION,
       'Reflection (rewrite one component)',
       REFLECT_SYSTEM,
-      'COMPONENT, ROLE, PREDICTOR, PLACEHOLDERS, WORD LIMIT, CURRENT TEXT, THE OTHER COMPONENTS, CASES (one person per call:\nInputs, Generated outputs, Correct answer, Feedback). One repair turn names any problems with the reply.',
+      "COMPONENT, ROLE, PREDICTOR, PLACEHOLDERS, WORD LIMIT (the hard limit, a target 15% below it and the current\ntext's count), CURRENT TEXT, THE OTHER COMPONENTS, CASES (one person per call: Inputs, Generated outputs, Correct\nanswer, Feedback). One repair turn names any problems with the reply; a reply over the limit is told how many words\nto cut.",
     ),
     [`docs/prompts/optimize/${DIAGNOSE_PROMPT_VERSION}.md`]: doc(
       DIAGNOSE_PROMPT_VERSION,
