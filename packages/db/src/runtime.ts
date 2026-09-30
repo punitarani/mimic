@@ -13,7 +13,7 @@ import {
 } from '@mimic/core';
 import { CfKv, R2Blobs, SqlVectors, StoreBudget, StoreCallLog, VectorizeVectors } from './bindings';
 import { retryer } from './busy';
-import { type FlagshipBinding, flaggedEnv, flagsFor } from './flags';
+import { type FlagshipBinding, flaggedEnv, flagsFor, warnOnce } from './flags';
 import { d1Db } from './index';
 import { DrizzleStore } from './store';
 
@@ -117,16 +117,10 @@ export function queueFor(env: MimicBindings): JobQueue {
   return new RoutedQueue(new CfQueue(env.JOBS), env.IDENTITY_JOBS ? new CfQueue(env.IDENTITY_JOBS) : null);
 }
 
-const warned = new Set<string>();
-
 /** Spend limits from the vars; an invalid value keeps its default and is logged once per isolate. */
 export function spendLimitsFor(env: Pick<MimicBindings, 'BUDGET_USD' | 'BUDGET_SESSION_SHARE'>): SpendLimits {
   const { limits, problems } = parseSpendLimits(env);
-  for (const p of problems) {
-    if (warned.has(p)) continue;
-    warned.add(p);
-    console.warn(p);
-  }
+  for (const p of problems) warnOnce(p);
   return limits;
 }
 

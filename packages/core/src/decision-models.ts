@@ -31,20 +31,39 @@ export interface DecisionPlan {
 /** Key of option `i` of a decomposed question. Jev keys are `q_<ulid>`, so they never contain a dot. */
 const partKey = (key: string, i: number) => `${key}.${i}`;
 
-/** One yes/no question per option of a choice or score question. */
+/**
+ * The wording that turns one option of a choice or score question into a yes/no question for a `noulOnly` model. It
+ * is part of what span-01 answers, so it is versioned like a prompt (CLAUDE.md, PLAN Appendix A): any edit means a
+ * new `id`, and `span-decisions.request.json` (recorded from a live call) pins the text, so a changed template fails
+ * the contract test until it is re-recorded. Each call's trace holds the exact text sent.
+ */
+export const NOUL_SPLIT = {
+  id: 'noul-split.v1',
+  choice: {
+    instructions: '{instructions}\nOption: {option}\nWould the person choose this option?',
+    true: '{option}',
+    false: 'The person would choose a different option',
+  },
+  score: {
+    instructions: '{instructions}\nAnswer: {option}\nWould the person give this answer?',
+    true: "The person's answer would be: {option}",
+    false: 'The person would give a different answer',
+  },
+} as const;
+
+const fillSplit = (t: string, instructions: string, option: string) =>
+  t.replace('{instructions}', () => instructions).replace(/\{option\}/g, () => option);
+
+/** One yes/no question per option of a choice or score question (NOUL_SPLIT). */
 function optionQuestions(q: Exclude<DecisionQuestion, { type: 'noul' }>): DecisionQuestion[] {
-  if (q.type === 'choice')
-    return Object.values(q.criteria).map((text) => ({
-      type: 'noul',
-      instructions: `${q.instructions}\nOption: ${text}\nWould the person choose this option?`,
-      criteria: { true: text, false: 'The person would choose a different option' },
-    }));
-  return q.criteria.map((label) => ({
+  const t = NOUL_SPLIT[q.type];
+  const options = q.type === 'choice' ? Object.values(q.criteria) : q.criteria;
+  return options.map((option) => ({
     type: 'noul',
-    instructions: `${q.instructions}\nAnswer: ${label}\nWould the person give this answer?`,
+    instructions: fillSplit(t.instructions, q.instructions, option),
     criteria: {
-      true: `The person's answer would be: ${label}`,
-      false: 'The person would give a different answer',
+      true: fillSplit(t.true, q.instructions, option),
+      false: fillSplit(t.false, q.instructions, option),
     },
   }));
 }

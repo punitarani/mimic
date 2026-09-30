@@ -27,7 +27,11 @@ export class FlagshipFlags implements FlagReader {
     try {
       return coerceFlag(await this.binding.get(key, fallback, ctx), fallback);
     } catch (e) {
-      warnOnce(`flag ${key} could not be read; using its default (${e instanceof Error ? e.message : e})`);
+      // Once per flag: the error text varies, so it is logged but not part of the key.
+      warnOnce(
+        `flag ${key} unreadable`,
+        `flag ${key} could not be read; using its default (${e instanceof Error ? e.message : e})`,
+      );
       return fallback;
     }
   }
@@ -48,9 +52,10 @@ export function flagsFor(env: { FLAGS?: FlagshipBinding }): FlagReader {
 }
 
 const warned = new Set<string>();
-function warnOnce(message: string): void {
-  if (warned.has(message)) return;
-  warned.add(message);
+/** Logs `message` once per isolate for each `key` (the message itself when no key is given). */
+export function warnOnce(key: string, message: string = key): void {
+  if (warned.has(key)) return;
+  warned.add(key);
   console.warn(message);
 }
 
@@ -83,6 +88,9 @@ export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
   if (!env.FLAGS) return env;
   const flags = flagsFor(env);
   const out: E = { ...env };
+  // These flags hold for the whole environment, not a person: a fixed targeting key makes every request, batch and
+  // cron run evaluate them alike (without one, Flagship buckets a percentage rule at random on each read).
+  const ctx = { targetingKey: 'environment' };
   await Promise.all(
     SETTING_SPECS.map(async (spec) => {
       const name = spec.setting!;
@@ -91,8 +99,8 @@ export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
       const fallback = current ?? spec.fallback;
       const read =
         spec.kind === 'number'
-          ? await flags.number(spec.key, Number(fallback))
-          : await flags.string(spec.key, String(fallback));
+          ? await flags.number(spec.key, Number(fallback), ctx)
+          : await flags.string(spec.key, String(fallback), ctx);
       const value = spec.parse(read);
       if (value === null)
         return warnOnce(
@@ -109,9 +117,11 @@ export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
   return out;
 }
 
-/** One flag as the Worker's binding resolves it, for `/api/health` (ADR-0051). */
+/**
+ * One flag as the Worker's binding resolves it, for `/api/health` (ADR-0051). No value: the endpoint is public, and
+ * whether each flag evaluates is all the smoke test needs.
+ */
 export interface FlagHealth {
-  value: unknown;
   reason?: string;
   errorCode?: string;
   /** False when the binding errored or served a value the code can't use. */
@@ -136,14 +146,19 @@ export async function flagHealth(env: {
           spec.kind === 'number'
             ? await binding.getNumberDetails(spec.key, Number(spec.fallback), ctx)
             : await binding.getStringDetails(spec.key, String(spec.fallback), ctx);
+        // Runtime reads are untyped and coerced (FlagshipFlags), so a flag made with another type (a number flag
+        // made as a string, say) still works there: judge it by that read, and keep the error code visible.
+        const mismatch = d.errorCode === 'TYPE_MISMATCH';
+        const value = mismatch
+          ? coerceFlag(await binding.get(spec.key, spec.fallback, ctx), spec.fallback)
+          : d.value;
         flags[spec.key] = {
-          value: d.value,
           ...(d.reason ? { reason: d.reason } : {}),
           ...(d.errorCode ? { errorCode: d.errorCode } : {}),
-          ok: !d.errorCode && d.reason !== 'ERROR' && spec.parse(d.value) !== null,
+          ok: (mismatch || (!d.errorCode && d.reason !== 'ERROR')) && spec.parse(value) !== null,
         };
       } catch (e) {
-        flags[spec.key] = { value: null, errorCode: e instanceof Error ? e.message : String(e), ok: false };
+        flags[spec.key] = { errorCode: e instanceof Error ? e.name : 'Error', ok: false };
       }
     }),
   );

@@ -349,8 +349,11 @@ export function spendCaps(cfg: PipelineConfig, limits: SpendLimits = {}): SpendC
   return { totalUsd, sessionUsd: totalUsd * (limits.sessionShare ?? DEFAULT_SESSION_SHARE) };
 }
 
-/** The same ranges deploy preflight checks (scripts/deploy/settings.mjs); a test keeps the two in step. */
-const SpendEnv = z.object({
+/**
+ * The same ranges deploy preflight checks (scripts/deploy/settings.mjs); a test keeps the two in step. The budget
+ * flags (`FLAG_SPECS`, ADR-0051) parse with these too.
+ */
+export const SpendEnv = z.object({
   BUDGET_USD: z.coerce.number().positive(),
   BUDGET_SESSION_SHARE: z.coerce.number().gt(0).max(1),
 });

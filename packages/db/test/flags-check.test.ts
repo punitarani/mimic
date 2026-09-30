@@ -36,7 +36,10 @@ const good = (): LiveFlag[] => [
  * The Flagship REST API over an in-memory app: list (two pages, with a cursor), create (409 on a duplicate) and
  * evaluate (the default variation, as a bare object like the docs show). `deny` answers 403 to paths it prefixes.
  */
-function fakeApi(flags: LiveFlag[], opts: { deny?: string[]; denyPost?: boolean; enveloped?: boolean } = {}) {
+function fakeApi(
+  flags: LiveFlag[],
+  opts: { deny?: string[]; denyPost?: boolean; enveloped?: boolean; endCursor?: string | null } = {},
+) {
   const calls: string[] = [];
   const fetch = async (url: string, init: RequestInit = {}) => {
     const u = new URL(url);
@@ -54,7 +57,7 @@ function fakeApi(flags: LiveFlag[], opts: { deny?: string[]; denyPost?: boolean;
         success: true,
         errors: [],
         result: page,
-        result_info: { cursor: second || sorted.length <= 3 ? null : 'p2' },
+        result_info: { cursor: second || sorted.length <= 3 ? (opts.endCursor ?? null) : 'p2' },
       });
     }
     if (path === '/flags' && method === 'POST') {
@@ -90,6 +93,16 @@ describe('flags:check (ADR-0051)', () => {
     expect(calls.filter((c) => c.startsWith('GET /flags'))).toHaveLength(2);
     expect(calls.filter((c) => c.startsWith('GET /evaluate'))).toHaveLength(ALL_FLAGS.length);
     expect(renderReport(APP, r)).toContain('✓ every flag is defined');
+  });
+
+  it('stops at an empty end cursor instead of starting over from the first page', async () => {
+    const { api, calls } = fakeApi(good(), { endCursor: '' });
+    expect((await api.listFlags()).map((f) => f.key)).toEqual(
+      good()
+        .map((f) => f.key)
+        .sort(),
+    );
+    expect(calls.filter((c) => c.startsWith('GET /flags'))).toHaveLength(2);
   });
 
   it('accepts an evaluation inside the usual envelope too', async () => {

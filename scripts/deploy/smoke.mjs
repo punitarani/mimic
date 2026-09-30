@@ -47,7 +47,7 @@ export async function smoke(
         // Every flag evaluates through the Worker's FLAGS binding (ADR-0051); an unbound environment reports none.
         if (json.flags?.ok === false) {
           const bad = Object.entries(json.flags.flags ?? {}).filter(([, f]) => !f.ok);
-          return `flags don't evaluate: ${bad.map(([k, f]) => `${k} (${f.errorCode ?? JSON.stringify(f.value)})`).join(', ')}`;
+          return `flags don't evaluate: ${bad.map(([k, f]) => `${k} (${f.errorCode ?? 'a value the code cannot use'})`).join(', ')}`;
         }
         return null;
       },

@@ -1,4 +1,4 @@
-import { DECISION_MODELS, DEFAULT_BUDGET_USD, DEFAULT_SESSION_SHARE } from './config';
+import { DECISION_MODELS, DEFAULT_BUDGET_USD, DEFAULT_SESSION_SHARE, SpendEnv } from './config';
 
 /**
  * Runtime feature flags and tunables (ADR-0051). The host evaluates them (Cloudflare Flagship in deployed envs,
@@ -99,17 +99,16 @@ export interface FlagSpec {
   variations: Record<string, string | number>;
 }
 
-const MODEL_ID = /^[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
-
 /**
  * The model a `decisions-model` value names: a variant of DECISION_MODELS (case and spacing ignored, so a label such
- * as "Span-01" works), or an OpenRouter Decisions model ID. Null for anything else, which leaves Jev in place.
+ * as "Span-01" works), or one of the pinned model IDs they map to. Null for anything else, which leaves Jev in place:
+ * a model is served only once it is registered, pinned and reviewed in code, never from a dashboard edit alone.
  */
 export function decisionModelOf(value: string): string | null {
   const v = value.trim();
   const key = v.toLowerCase().replace(/[\s_]+/g, '-');
   if (Object.hasOwn(DECISION_MODELS, key)) return DECISION_MODELS[key]!;
-  return MODEL_ID.test(v) ? v : null;
+  return Object.values(DECISION_MODELS).includes(v) ? v : null;
 }
 
 const norm = (s: string) =>
@@ -127,6 +126,15 @@ export function providerValue(value: string, allowed: readonly string[]): string
   if (!n) return null;
   if ((n === 'off' || n === 'disabled') && allowed.includes('none')) return 'none';
   return allowed.find((v) => norm(v) === n) ?? null;
+}
+
+/** A spend-limit flag's value: a number, or a numeric string, in the range its var takes (`SpendEnv`). */
+function spendValue(k: keyof typeof SpendEnv.shape) {
+  return (raw: unknown): number | null => {
+    const n =
+      typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : Number.NaN;
+    return Number.isFinite(n) && SpendEnv.shape[k].safeParse(n).success ? n : null;
+  };
 }
 
 function provider(
@@ -153,7 +161,7 @@ export const FLAG_SPECS = {
     key: 'decisions-model',
     kind: 'string',
     description:
-      'The model Jev decision calls for served predictions run on: jev (the default: unchanged), span-01, or an OpenRouter Decisions model ID (ADR-0051).',
+      'The model Jev decision calls for served predictions run on: jev (the default: unchanged) or span-01, each pinned in code (ADR-0051).',
     fallback: 'jev',
     parse: (raw) => (typeof raw === 'string' && decisionModelOf(raw) ? raw : null),
     variations: Object.fromEntries(Object.keys(DECISION_MODELS).map((v) => [v, v])),
@@ -164,11 +172,7 @@ export const FLAG_SPECS = {
     description: 'Spend cap per mimic in USD on the standard budget (ADR-0035). Over the BUDGET_USD var.',
     fallback: DEFAULT_BUDGET_USD,
     setting: 'BUDGET_USD',
-    parse: (raw) => {
-      const n =
-        typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : Number.NaN;
-      return Number.isFinite(n) && n > 0 ? n : null;
-    },
+    parse: spendValue('BUDGET_USD'),
     variations: { standard: DEFAULT_BUDGET_USD },
   },
   budgetSessionShare: {
@@ -178,11 +182,7 @@ export const FLAG_SPECS = {
       'Share of the cap the learning session may spend, above 0 and at most 1; the rest is kept for the mimic page (ADR-0035). Over the BUDGET_SESSION_SHARE var.',
     fallback: DEFAULT_SESSION_SHARE,
     setting: 'BUDGET_SESSION_SHARE',
-    parse: (raw) => {
-      const n =
-        typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : Number.NaN;
-      return Number.isFinite(n) && n > 0 && n <= 1 ? n : null;
-    },
+    parse: spendValue('BUDGET_SESSION_SHARE'),
     variations: { standard: DEFAULT_SESSION_SHARE },
   },
   searchProvider: provider(

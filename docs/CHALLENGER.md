@@ -39,11 +39,14 @@ The model page is https://openrouter.ai/respan/span-01. Live calls on 2026-09-30
   - Each `choice` option and each `score` level becomes its own yes/no question ("would the person choose this
     option?"). The probabilities are normalized into a distribution (one-vs-rest): the expected level for a score,
     the top option for a choice.
+  - The wording is `NOUL_SPLIT` (`noul-split.v1`), versioned like a prompt: an edit means a new ID, and the recorded
+    fixture pins the text.
   - Jev's requests pass through untouched, and the trace records exactly what was sent.
   - The one-vs-rest step is an approximation, so the benchmark reports quality per question type.
 - **Fallback.** If span-01 fails, the same request goes to Jev. A failure is an HTTP error after the adapter's
-  retries, a timeout, a malformed response, or a question left unanswered. Each attempt is its own `model_calls` row.
-  A budget refusal is not retried.
+  retries, a timeout, a malformed response, or a question left unanswered. Each attempt is its own `model_calls` row;
+  a rejected answer's row keeps the cost span-01 billed, which counts against the budget. A budget refusal is not
+  retried.
 - **Recording.** A prediction keeps its config's predictor ID. Its `modelSnapshot` names the model that answered, so
   reports split on it.
   - To make span-01 permanent, ship a new default config (after `cfg.default.v8`) with `jev:respan/span-01-20260925@jev-predict.v2`
@@ -51,6 +54,9 @@ The model page is https://openrouter.ai/respan/span-01. Live calls on 2026-09-30
   - The primary's calibration (`jev-predict.v2`, temperature 4, fitted on Jev) applies to span-01's answers too.
 
 ## Flags
+
+A model is served only once it is registered and pinned in `DECISION_MODELS` (`packages/core/src/config.ts`), so a
+dashboard edit alone can't put an unreviewed model in front of people.
 
 Flags live in the Cloudflare Flagship app **`mimic`** (`c4598f95-4f82-48c0-a8c5-62588cc2b598`). Both prod Workers bind
 it as `FLAGS`; the ID is pinned in both `wrangler.jsonc` files. Preview and local dev bind none, so every flag reads
@@ -61,7 +67,7 @@ its key, type, code default, the var it overrides, and the values it accepts.
 
 | Flag | Values | Code default | What it does |
 | --- | --- | --- | --- |
-| `decisions-model` | `jev`, `span-01`, or an OpenRouter Decisions model ID | `jev` | The model Jev's served predictions run on |
+| `decisions-model` | `jev` or `span-01` (or the pinned model ID either maps to) | `jev` | The model Jev's served predictions run on |
 | `budget-usd` | A number above 0 | `BUDGET_USD`, else 1 | Spend cap per mimic (ADR-0035) |
 | `budget-session-share` | A number above 0, at most 1 | `BUDGET_SESSION_SHARE`, else 0.8 | The session's share of the cap |
 | `search-provider` | `exa`, `perplexity`, `none` | `SEARCH_PROVIDER` | People search |
@@ -96,7 +102,9 @@ its key, type, code default, the var it overrides, and the values it accepts.
     change without a commit.
   - Deploy preflight, which stops a deploy before it ships code that reads a broken flag.
 - **Post-deploy:** `/api/health` evaluates every flag through the deployed Worker's own binding (`flagHealth`), and
-  the smoke test fails if any errors (for example `FLAG_NOT_FOUND` or `TYPE_MISMATCH`).
+  the smoke test fails if any flag errors or serves a value the code can't use.
+  - The endpoint is public, so it reports each flag's reason and error code, never its value.
+  - A type mismatch the runtime coerces, such as a number flag made as a string, passes.
 
 ### Enable span-01
 
@@ -110,7 +118,8 @@ its key, type, code default, the var it overrides, and the values it accepts.
 ### Roll back
 
 Set `decisions-model`'s default variation to `jev` and delete its rules. The next request runs on Jev, with no
-deploy. Turning the flag off (Enabled → off) also works, because a disabled flag serves its default variation. If
+deploy. Turning the flag off (Enabled → off) works only while the default variation is still `jev`: a disabled flag
+serves its default variation, so after step 4 has made `span-01` the default, turning it off keeps span-01. If
 Flagship itself fails, reads return the code default (`jev`).
 
 ## Run the benchmark

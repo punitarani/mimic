@@ -125,6 +125,21 @@ describe('Flagship flags (ADR-0051)', () => {
     expect(d.spend).toEqual({ budgetUsd: 4 });
   });
 
+  it('evaluates the environment-wide flags with one fixed targeting key', async () => {
+    const seen: unknown[] = [];
+    const binding = flagship({ [FLAG_KEYS.budgetUsd]: 3 });
+    const spy: FlagshipBinding = {
+      ...binding,
+      get: async (key, fallback, ctx) => {
+        seen.push(ctx);
+        return binding.get(key, fallback, ctx);
+      },
+    };
+    await flaggedEnv(env({ FLAGS: spy }));
+    expect(seen.length).toBeGreaterThan(0);
+    for (const ctx of seen) expect(ctx).toEqual({ targetingKey: 'environment' });
+  });
+
   it('with FLAGS bound, the router is live and Jev serves until decisions-model says span-01', async () => {
     const req = { model: JEV_MODEL, state: {}, questions: {} };
     const ctx = { purpose: 'predict.primary', mimicId: 'm' };
@@ -147,7 +162,9 @@ describe('Flagship flags (ADR-0051)', () => {
     const good = await flagHealth({ FLAGS: flagship(all) });
     expect(good.ok).toBe(true);
     expect(Object.keys(good.flags).sort()).toEqual(Object.values(FLAG_KEYS).sort());
-    expect(good.flags['decisions-model']).toEqual({ value: 'jev', reason: 'DEFAULT', ok: true });
+    expect(good.flags['decisions-model']).toEqual({ reason: 'DEFAULT', ok: true });
+    // The endpoint is public: it says whether each flag evaluates, never what it serves.
+    expect(JSON.stringify(good)).not.toMatch(/"value"|"jev"|"exa"/);
 
     const { 'budget-usd': _, ...missing } = all;
     const bad = await flagHealth({
@@ -158,5 +175,15 @@ describe('Flagship flags (ADR-0051)', () => {
     expect(bad.flags['decisions-model']).toMatchObject({ ok: false });
     expect(bad.flags['search-provider']).toMatchObject({ errorCode: 'TYPE_MISMATCH', ok: false });
     expect((await flagHealth({ FLAGS: flagship(all, { throws: true }) })).ok).toBe(false);
+
+    // A number flag made as a string in the dashboard: the runtime reads it (coerced), so health agrees.
+    const asString = await flagHealth({ FLAGS: flagship({ ...all, 'budget-usd': '1' }) });
+    expect(asString.flags['budget-usd']).toEqual({
+      reason: 'ERROR',
+      errorCode: 'TYPE_MISMATCH',
+      ok: true,
+    });
+    expect(asString.ok).toBe(true);
+    expect(await new FlagshipFlags(flagship({ 'budget-usd': '1' })).number('budget-usd', 5)).toBe(1);
   });
 });

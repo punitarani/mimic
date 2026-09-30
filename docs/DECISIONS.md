@@ -1855,13 +1855,19 @@ $0.042/M. It is added as a challenger behind the Flagship string flag `decisions
     question type and cost per request.
 - **Fallback, logged.** The span-01 call uses the same adapter, timeout and retries as Jev. If it fails (an error, a
   timeout, or a question unanswered or mistyped), the same request goes to Jev. Each attempt is its own
-  `model_calls` row, and a budget refusal is not retried.
+  `model_calls` row, and a budget refusal is not retried. A rejected answer was still billed, so its failed row keeps
+  the provider's usage and cost, which count against the budget (`RejectedResponseError`).
 - **Versioning (invariant 4).** A rerouted prediction keeps its config's predictor ID. Its `modelSnapshot` names the
   model that answered, so reports split on it.
   - The flag is for the trial and rollout.
   - To make span-01 permanent, ship a config with `jev:respan/span-01-20260925@…` as primary, so predictor IDs and
     config hashes say so.
-  - `SPAN_MODEL` pins the dated snapshot. A `decisions-model` variant maps to a model in code (`DECISION_MODELS`).
+  - `SPAN_MODEL` pins the dated snapshot. A `decisions-model` value serves only a model registered and pinned in
+    `DECISION_MODELS`; anything else leaves Jev in place, so a dashboard edit can't serve an unreviewed model.
+  - The option-splitting wording is `NOUL_SPLIT` (`noul-split.v1`), versioned like a prompt, with the recorded
+    fixture pinning its text.
+  - Flags that hold for the whole environment (budgets, providers) are evaluated with one fixed targeting key, so
+    every request reads them alike.
 - **Flagship over env vars.** Flagship toggles at runtime without a redeploy, rolls out by percentage on a stable key
   (the mimic ID, so each person keeps one model), and rolls back in seconds. Env vars need a Doppler change and a CD
   run for each of those.
@@ -1875,8 +1881,8 @@ $0.042/M. It is added as a challenger behind the Flagship string flag `decisions
     variation the code can't use, and on a flag that doesn't evaluate through Flagship's evaluate API. It warns about
     flags nothing reads, flags that override their setting, and unusable variations nothing serves yet.
   - **Where it runs:** in the Flags workflow on every PR, every push and daily, and in deploy preflight.
-  - **After deploy**, `/api/health` evaluates every flag through the Worker's own binding, and the smoke test fails
-    on an error.
+  - **After deploy**, `/api/health` evaluates every flag through the Worker's own binding (reason and error code
+    only; the endpoint is public), and the smoke test fails on an error.
   - **Token.** The check needs only Flagship App · Read and Evaluate. The app ID is pinned in `wrangler.jsonc`, so
     the deploy needs no Flagship permission to find it. Preview binds no app.
 - **Migrated to flags:** `budget-usd`, `budget-session-share`, `search-provider`, `enrich-provider` and

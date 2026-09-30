@@ -164,6 +164,21 @@ interface CallOutcome {
   raw: unknown;
 }
 
+/**
+ * A response the provider returned (and billed) that the caller rejects, such as a challenger's incomplete answer
+ * (ADR-0051). `withModelCall` logs it as a failed call that still carries the response's usage and cost, and charges
+ * that cost to the mimic's budget.
+ */
+export class RejectedResponseError extends Error {
+  constructor(
+    message: string,
+    readonly outcome: CallOutcome,
+  ) {
+    super(message);
+    this.name = 'RejectedResponseError';
+  }
+}
+
 export function traceKey(id: string, createdAt: number): string {
   return `traces/${new Date(createdAt).toISOString().slice(0, 10)}/${id}.json`;
 }
@@ -231,19 +246,29 @@ export async function withModelCall<T extends CallOutcome>(
     return out;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // A rejected response was still answered and billed: its usage and cost are logged and charged.
+    const paid = err instanceof RejectedResponseError ? err.outcome : null;
     await deps.log.write(
       {
         ...base,
-        modelSnapshot: null,
-        inputTokens: 0,
-        outputTokens: 0,
-        costUsd: 0,
-        latencyMs: deps.clock() - started,
+        modelSnapshot: paid?.modelSnapshot ?? null,
+        inputTokens: paid?.usage.inputTokens ?? 0,
+        outputTokens: paid?.usage.outputTokens ?? 0,
+        costUsd: paid?.usage.costUsd ?? 0,
+        latencyMs: paid?.latencyMs ?? deps.clock() - started,
+        ...(paid ? { attempts: paid.attempts ?? 1 } : {}),
         ok: false,
         error: message.slice(0, 1000),
       },
-      { ...trace, request: redact(request), error: message },
+      {
+        ...trace,
+        request: redact(request),
+        ...(paid ? { response: redact(paid.raw) } : {}),
+        error: message,
+      },
     );
+    if (paid && ctx.mimicId && deps.budget && paid.usage.costUsd > 0)
+      await deps.budget.add(ctx.mimicId, paid.usage.costUsd);
     throw err;
   }
 }
@@ -303,9 +328,11 @@ export class Gateway {
       async () => {
         const res = plan.answer(await this.deps.decisions.decide(plan.request));
         const missing = complete ? unansweredQuestions(req, res) : [];
+        // Thrown with the response, so the failed row keeps the cost the provider charged for it.
         if (missing.length)
-          throw new Error(
+          throw new RejectedResponseError(
             `${req.model} left ${missing.length} of ${Object.keys(req.questions).length} questions unanswered (${missing.slice(0, 5).join(', ')})`,
+            res,
           );
         return res;
       },

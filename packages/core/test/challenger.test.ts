@@ -124,22 +124,26 @@ describe('the decisions-model flag (ADR-0051)', () => {
     expect(log.rows.map((r) => [r.model, r.ok])).toEqual([[SPAN_MODEL, true]]);
   });
 
-  it('span-01 means its pinned snapshot; labels and raw model IDs work too', async () => {
+  it('serves only registered, pinned models: labels work, unregistered model IDs leave Jev in place', async () => {
     expect(SPAN_MODEL).toBe('respan/span-01-20260925');
     expect(DECISION_MODELS).toEqual({ jev: JEV_MODEL, 'span-01': SPAN_MODEL });
     for (const [value, model] of [
       ['span-01', SPAN_MODEL],
       ['Span-01', SPAN_MODEL],
       [' span_01 ', SPAN_MODEL],
+      ['respan/span-01-20260925', SPAN_MODEL],
       ['Jev', JEV_MODEL],
-      ['respan/span-01-lite', 'respan/span-01-lite'],
+      // Not pinned in code: an unreviewed model, an unpinned alias, a Jev version bump.
+      ['respan/span-01-lite', null],
+      ['respan/span-01', null],
+      ['typesafe/jev-1.14', null],
       ['not a model', null],
       ['', null],
     ] as const)
       expect({ value, model: decisionModelOf(value) }).toEqual({ value, model });
     const { g, seen } = gateway(new StaticFlags({ [FLAG_KEYS.decisionsModel]: 'respan/span-01' }));
     await g.decide(ctx, req());
-    expect(seen).toEqual(['respan/span-01']);
+    expect(seen).toEqual([JEV_MODEL]);
   });
 
   it('falls back to Jev when the challenger fails, logging both attempts', async () => {
@@ -160,6 +164,21 @@ describe('the decisions-model flag (ADR-0051)', () => {
     expect(seen).toEqual([SPAN_MODEL, JEV_MODEL]);
     expect(Object.keys(res.answers)).toEqual(['a', 'b']);
     expect(log.rows[0]!.error).toMatch(/left 1 of 2 questions unanswered \(a\)/);
+  });
+
+  it('a rejected challenger answer is still logged and charged at the cost the provider billed', async () => {
+    const added: number[] = [];
+    const budget: BudgetLedger = {
+      get: async () => ({ spendUsd: 0, budgetUsd: 1 }),
+      add: async (_m, usd) => void added.push(usd),
+    };
+    const { g, log } = gateway(ON, { partial: [SPAN_MODEL], budget });
+    await g.decide(ctx, req());
+    expect(log.rows.map((r) => [r.model, r.ok, r.costUsd, r.modelSnapshot])).toEqual([
+      [SPAN_MODEL, false, 0.0001, `${SPAN_MODEL}-snap`],
+      [JEV_MODEL, true, 0.0001, `${JEV_MODEL}-snap`],
+    ]);
+    expect(added).toEqual([0.0001, 0.0001]);
   });
 
   it('a Jev failure after a challenger failure is the caller’s error, as it is today', async () => {

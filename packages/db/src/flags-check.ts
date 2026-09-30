@@ -81,12 +81,16 @@ export function flagshipApi(opts: { accountId: string; token: string; appId: str
   return {
     async listFlags(): Promise<LiveFlag[]> {
       const out: LiveFlag[] = [];
-      let cursor: string | null | undefined = '';
-      for (let page = 0; page < 50 && cursor !== null && cursor !== undefined; page++) {
+      let cursor: string | null = null;
+      for (let page = 0; page < 50; page++) {
         const q = new URLSearchParams({ limit: '200', ...(cursor ? { cursor } : {}) });
         const { env } = await call('GET', `/flags?${q}`);
-        out.push(...z.array(Flag).parse(env?.result ?? []));
-        cursor = env?.result_info?.cursor ?? null;
+        const flags = z.array(Flag).parse(env?.result ?? []);
+        out.push(...flags);
+        // A null cursor marks the last page. An empty one, or an empty page, ends it too: requesting without a
+        // cursor would start again from the first page.
+        cursor = env?.result_info?.cursor || null;
+        if (!cursor || !flags.length) break;
       }
       return out;
     },
@@ -218,7 +222,10 @@ export async function flagsCheckCli(argv: string[], env: NodeJS.ProcessEnv = pro
     }
     throw new Error(msg);
   }
-  const settings = z.record(z.string(), z.string()).parse(JSON.parse(values.settings));
+  // Wrangler vars may be JSON numbers or booleans (BUDGET_USD may be a number): compare them as the var text.
+  const settings = z
+    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]).transform(String))
+    .parse(JSON.parse(values.settings));
   const report = await runFlagsCheck({
     api: flagshipApi({ accountId, token, appId: values.app }),
     appId: values.app,
