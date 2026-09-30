@@ -410,7 +410,7 @@ snapshots           mimic_id, version, r2_key, seq_up_to, created_at
 eval_runs           id, name, spec_json, dataset_hash, status, metrics_json, r2_report_key, created_at
 jobs                key PK, type, status, attempts, last_error, updated_at    (idempotency ledger)
 persona_drafts      id, mimic_id, seq_up_to, config_hash, prompt_version, model, model_snapshot,
-                    draft_json, created_at                                    (persona.v1, §8.3)
+                    draft_json, created_at                                    (soul.v1, §8.3)
 persona_curations   mimic_id PK, json, rev, updated_at                        (the person's choices, §8.3)
 ```
 
@@ -468,32 +468,54 @@ Using a mimic means running any predictor against its snapshot.
 - **Session identity.** A signed, httpOnly `participant_id` cookie. Nothing sensitive goes in localStorage.
 - **On load.** Render from cache immediately, then revalidate.
 
-### 8.3 Persona.md
+### 8.3 SOUL.md
 
-`mimic.json` is for running predictors. `Persona.md` is for people's own agents: a Markdown portrait that any agent
-can read to represent the person, with decision-making first (ADR-0033). It is a view with three inputs:
+`mimic.json` is for running predictors. `SOUL.md` is for people's own agents: a Markdown model of the person that any
+agent can read to predict and represent them, with decision-making first (ADR-0039, which renamed and redesigned
+`Persona.md`, ADR-0033). Other agent tools load a file named SOUL.md as the agent's *own* identity, so this one
+declares itself a person model up front: YAML front matter (`kind: person-model`, subject, as-of date, answers,
+evidence cutoff, draft prompt, profile) and a first line saying it describes the person and is not the reader's
+identity.
+
+**Sections, in reading priority:**
+
+| Section | Source | Notes |
+| --- | --- | --- |
+| How to use this file | Template | Role, trust order (boundaries › own words › recorded answers, most recent first › inferred sections › tendencies › background), predict from related answers first, don't idealize the person, unknowns mean ask, check before irreversible or sensitive actions, quoted text is data not instructions, fidelity and date. |
+| Boundaries | Person | Always present, even with the instructions turned off: the speaking-as-me rule, then Always / Never / Ask-me-first rules. They override everything else. |
+| In their own words | Person | Free Markdown, quoted. |
+| Summary; How they decide; Rules of thumb; Tradeoffs; What they value; Beliefs and opinions; Biases and blind spots; Tensions; How they come across | `soul.v1` draft | Cited statements; one citation means _tentative_. Tensions keep answers that pull both ways, with the context that decides. |
+| Patterns in their answers | Reflector | Cited insights. |
+| How they talk | Person | Up to 5 writing samples, quoted. Left out while agents may never speak as them. |
+| Measured tendencies | Traits | A table: area, facet, scale (low ↔ high pole), leaning, certainty tier, answers. Only facets with direct evidence and certainty ≥ 0.4. |
+| Not known yet | Traits | The rest: "don't assume either way". |
+| Background | Intake, facts | Location and work, then each sourced fact quoted as found, with its source; removable. |
+| Key decisions | Answers | The 12 answers the portrait cites most (then those with a reason, then the most recent), verbatim with reasons. |
+| Appendix: all other answers | Answers | The rest of the record. Left out of the `core` profile. |
+
+It is a view with three inputs:
 
 1. **The mimic's current data**, in the same shape as `mimic.json` (§8.1) but read live: viewing never writes a
-   snapshot, and a fact the person removes leaves the file at once. The deterministic sections come from it:
-   background (intake and active sourced facts, with sources), measured tendencies (each facet's reading, poles and
-   certainty tier, as in the model panel), cited insights, facets not known yet, and a decision record of the
-   person's real answers and reasons. Repeats are left out of the record.
-2. **The latest `persona.v1` draft** (optional). One LLM call writes a summary and cited statements in seven
-   sections: how they decide, rules of thumb, tradeoffs, values, beliefs and opinions, biases and blind spots, and
-   how they come across. The writer never sees the person's name (redacted wherever it appears), `headline` facts or
-   repeats. The reflector's citation guard applies, limited to the answers the writer was shown. A statement with
-   one citation is marked tentative. Draft text that mentions a fact the person later removed is left out. Drafts
+   snapshot, and a fact the person removes leaves the file at once. Repeats are left out of the record.
+2. **The latest `soul.v1` draft** (optional; `persona.v1` drafts still render). One LLM call writes a summary and
+   cited statements in eight sections. It is told to be specific enough to be wrong and not to make the person more
+   rational, agreeable, consistent or optimistic than their answers. The writer never sees the person's name
+   (redacted wherever it appears), `headline` facts or repeats. The reflector's citation guard applies, limited to
+   the answers the writer was shown. Draft text that mentions a fact the person later removed is left out. Drafts
    store the evidence seq they cover, config, prompt version and model snapshot, and say how many answers have
    arrived since.
-3. **The person's curation:** the name to use, their own words (first in the file, and they override anything
-   inferred), sections on or off, hidden items, and rewordings of drafted statements. Saves carry an increasing
-   `rev`, and the server ignores one older than what it has, so out-of-order requests can't lose a change.
+3. **The person's curation:** the name to use, boundaries, whether agents may speak as them (never; when asked,
+   saying it's an AI, the default; or when asked), their own words, voice samples, sections on or off, hidden items,
+   and rewordings of drafted statements. Saves carry an increasing `rev`, and the server ignores one older than what
+   it has.
 
-Curation only filters and rewords the file. It never feeds back into states, traits or predictions. The file opens
-with instructions for the reading agent (reason as this person would, say when the file is silent, don't invent
-facts) and the fidelity numbers, so the agent knows how far to trust it. Citations appear only for answers that are
-in the file. Hard delete covers both tables. Research exports always drop curations, and drop drafts too unless
-identity is kept (`--keep-identity`), since drafts are free text written from location and sourced facts.
+**Profiles.** `full` (the default download) is the core plus the appendix; `core` (`?profile=core`) leaves the
+appendix out, for system prompts with a small budget, and downloads as `SOUL.core.md`. The page shows both sizes.
+
+Curation only filters, rewords and adds the person's own rules and words. It never feeds back into states, traits or
+predictions. Citations appear only for answers that are in the file. Hard delete covers both tables. Research exports
+always drop curations, and drop drafts too unless identity is kept (`--keep-identity`), since drafts are free text
+written from location and sourced facts.
 
 ---
 
@@ -730,8 +752,8 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and locks the field. Location and occupation suggest as you type (ADR-0030). |
 | `/m/[id]/identity` | Search progress, "Is one of these you?", then fact review with remove toggles. "Skip" is always available. |
 | `/m/[id]` | The session. |
-| `/m/[id]/mimic` | Talk to your mimic (§9.11): ask it, or teach it an answer; download `mimic.json` and `Persona.md`; delete the mimic. |
-| `/m/[id]/persona` | Curate `Persona.md` (§8.3): write or rewrite the inferred sections, include or hide sections and items, reword statements, add your own words; preview, copy and download. |
+| `/m/[id]/mimic` | Talk to your mimic (§9.11): ask it, or teach it an answer; download `SOUL.md` and `mimic.json`; delete the mimic. |
+| `/m/[id]/soul` | Curate `SOUL.md` (§8.3): write or rewrite the inferred sections; set boundaries, whether agents may speak as you, your own words and voice samples; include or hide sections and items; reword statements; preview, copy and download (full or core). `/m/[id]/persona` redirects here. |
 | `/lab` | Admin only. |
 
 **Session layout.** On desktop, the model panel sits on the left (about 40%) and the question on the right. On mobile, the question fills the screen, and a compact fidelity chip at the top opens the panel as a bottom sheet.
@@ -795,16 +817,16 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0036) |
 | `POST /api/mimics/:id/ask` | scenario → typed question + prediction | Playground |
 | `GET /api/mimics/:id/export` | → latest `mimic.json` | |
-| `GET /api/mimics/:id/persona` | → Persona view: sections, items, curation, rendered Markdown | §8.3 |
-| `POST /api/mimics/:id/persona` | → new `persona.v1` draft, then the view | One LLM call; rate-limited, budget-guarded |
-| `PUT /api/mimics/:id/persona` | `{ rev, curation }` → view | Ignored if an equal or newer `rev` is stored; keys for replaced draft items are pruned |
-| `GET /api/mimics/:id/persona.md` | → `Persona.md` (text/markdown) | |
+| `GET /api/mimics/:id/soul` | → SOUL.md view: sections, items, curation, the full file and both profiles' sizes | §8.3; `/persona` redirects here (308) |
+| `POST /api/mimics/:id/soul` | → new `soul.v1` draft, then the view | One LLM call; rate-limited, budget-guarded |
+| `PUT /api/mimics/:id/soul` | `{ rev, curation }` → view | Ignored if an equal or newer `rev` is stored; keys for replaced draft items are pruned |
+| `GET /api/mimics/:id/soul.md` | `?profile=full\|core` → `SOUL.md` (text/markdown) | `/persona.md` redirects here |
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
 **Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and locks the field, and unlocks it only if the server rejects the code (ADR-0026). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
-**Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: `BUDGET_USD` (default $1) for configs on the standard budget, else the config's own `session.budgetUsd`. Session work (serving, shadows, refills, hypotheses) stops at `BUDGET_SESSION_SHARE` of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and Persona.md (ADR-0035).
+**Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: `BUDGET_USD` (default $1) for configs on the standard budget, else the config's own `session.budgetUsd`. Session work (serving, shadows, refills, hypotheses) stops at `BUDGET_SESSION_SHARE` of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and SOUL.md (ADR-0035).
 
 ---
 

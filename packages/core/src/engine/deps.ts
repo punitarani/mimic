@@ -104,7 +104,7 @@ export function allocateArm<T extends { weight: number }>(
   return arms[arms.length - 1]!;
 }
 
-/** This mimic's caps: the session stops at `sessionUsd`; asking, teaching and Persona.md run to `totalUsd`. */
+/** This mimic's caps: the session stops at `sessionUsd`; asking, teaching and SOUL.md run to `totalUsd`. */
 export function capsFor(deps: EngineDeps, cfg: PipelineConfig): SpendCaps {
   return spendCaps(cfg, deps.spend);
 }

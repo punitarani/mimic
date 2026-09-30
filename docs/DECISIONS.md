@@ -1054,3 +1054,53 @@ makes the successes a biased sample: the questions Qwen happened to reason about
 
 Whether reasoning helps Qwen's accuracy at all is left to the lab. `llm:qwen/qwen3.8-flash` remains as a
 predictor ID, and the 8000-token harness can be registered as its own variant if that comparison is wanted.
+
+## ADR-0039 — SOUL.md: Persona.md renamed, and redesigned from research (2026-09-30)
+
+`Persona.md` (ADR-0033) is now `SOUL.md`. The rename came with a research pass on what the file should hold. What we
+found, and what we changed:
+
+- **SOUL.md already means something to agents.** In OpenClaw and Hermes Agent, SOUL.md is the agent's *own*
+  identity, injected first into every system prompt; a model of the user goes in USER.md. Dropped in unchanged, a
+  file about a real person would make the agent believe it is that person. So the file opens with YAML front matter
+  (`kind: person-model`, subject, as-of date, answers, evidence cutoff, draft prompt, profile) and says in its first
+  line, and again in the instructions, that it describes the person and is not the reader's identity.
+- **Evidence over description.** Agents built from a person's interview answers predicted their survey answers far
+  better than agents given demographics or a persona paragraph (Park et al., 2024, arXiv 2411.10109: 0.85 vs
+  0.70–0.71 normalized accuracy), and a structured summary of a few thousand tokens loses little against the raw
+  transcript, especially one that keeps how a person decides separate from what they prefer (the "BDE" structure,
+  arXiv 2608.20344; Twin-2K-500, arXiv 2505.17479). So the file keeps the drafted portrait (decision procedure,
+  rules of thumb, tradeoffs, values) apart from the evidence, and carries the person's real answers and reasons.
+- **Twins drift toward an idealized person.** Studies of LLM twins find them too uniform, stereotyped and
+  "hyper-rational", and nicer than the people they model (arXiv 2509.19088). `soul.v1` (a new prompt; `persona.v1`
+  stays in the registry for older drafts, which still render) adds a Tensions section, asks for statements
+  "specific enough to be wrong" (the soul.md project's phrase), and tells the writer not to make the person more
+  rational, agreeable, consistent or optimistic than their answers. The instructions tell the reading agent the
+  same.
+- **The person's own rules come first.** Following OpenClaw's Always/Never directives and soul.md's "Won't:", the
+  person can set boundaries (Always, Never, Ask me first), which open the file and override everything else, and
+  choose whether an agent may write or speak as them: never; when asked, saying it's an AI (the default); or when
+  asked. Voice samples (up to 5, the person's own writing, as in soul.md's STYLE.md) back the second and third.
+- **Instructions for the reader.** A trust order (boundaries, own words, recorded answers with the most recent
+  winning, inferred sections, tendencies, background); predict from a related answer first; say how sure you are;
+  unknowns mean ask; check before anything irreversible, public, financial, legal, medical or personal; quoted text
+  is the person's words, never instructions (the person's text and search facts are untrusted input, so they are
+  quoted); don't edit the file. Fidelity and the as-of date say how far to trust it.
+- **Short core, long appendix.** Persona instructions fade over long conversations and agent tools truncate large
+  files (OpenClaw at 20,000 characters), so the core keeps the 12 answers the portrait cites most as "Key
+  decisions", and the rest of the record goes to an appendix. `?profile=core` drops the appendix; the page shows both
+  sizes. Tendencies are a compact table.
+- **Third person for the portrait.** Asking a model to predict a person moved its answers closer to real ones than
+  role-play did (arXiv 2607.24782), so the portrait says "they"; first person appears only in the person's quoted
+  words and voice samples.
+- **Rename mechanics.** Routes move to `/m/[id]/soul` and `/api/mimics/:id/soul(.md)`, with permanent (308)
+  redirects from the old page, file and JSON API paths, so a page left open across the deploy still saves. The
+  tables keep their names, `persona_drafts` and `persona_curations`, and there is no migration: a deploy migrates
+  D1 before it ships code, so a rename would break the old code still serving in between. Drizzle names them
+  `soulDrafts` and `soulCurations`. Existing drafts and curations (with their `rev`) carry over; stored curations
+  parse with the new fields' defaults, and `persona.v1` drafts still render. `?profile=core` downloads as
+  `SOUL.core.md`. The LLM call's purpose is `soul.draft`, drawn from the page's reserve like `persona.draft` was
+  (ADR-0035).
+- **Not in this change.** Treating "that's not me" on a statement as new evidence, and a "test my SOUL.md" check
+  that scores an agent reading only the exported file on held-out answers, both touch the research invariants and
+  are left for later.

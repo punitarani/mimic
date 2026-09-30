@@ -3,12 +3,12 @@ import type {
   ExperimentRecord,
   FeedbackResult,
   NextResult,
-  PersonaSave,
-  PersonaView,
   PlaygroundHistory,
   PlaygroundPrediction,
   PublicQuestion,
   RewindResult,
+  SoulSave,
+  SoulView,
   UiSnapshot,
 } from '@mimic/core';
 
@@ -136,13 +136,12 @@ export const api = {
     call<{ draft: Draft }>('POST', `/api/mimics/${id}/ask`, { scenario }),
   predict: (id: string, question: Draft & { rationale: boolean }) =>
     call<PlaygroundPrediction>('POST', `/api/mimics/${id}/ask`, { question }),
-  persona: (id: string) => call<PersonaView>('GET', `/api/mimics/${id}/persona`),
-  draftPersona: (id: string) => call<PersonaView>('POST', `/api/mimics/${id}/persona`),
-  curatePersona: (id: string, save: PersonaSave) =>
-    call<PersonaView>('PUT', `/api/mimics/${id}/persona`, save),
+  soul: (id: string) => call<SoulView>('GET', `/api/mimics/${id}/soul`),
+  draftSoul: (id: string) => call<SoulView>('POST', `/api/mimics/${id}/soul`),
+  curateSoul: (id: string, save: SoulSave) => call<SoulView>('PUT', `/api/mimics/${id}/soul`, save),
   /** Fire-and-forget save that outlives the page (leaving it mid-debounce); the server orders saves by rev. */
-  curatePersonaOnLeave: (id: string, save: PersonaSave) =>
-    void fetch(`/api/mimics/${id}/persona`, {
+  curateSoulOnLeave: (id: string, save: SoulSave) =>
+    void fetch(`/api/mimics/${id}/soul`, {
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(save),

@@ -72,7 +72,7 @@ export interface BudgetLedger {
  * - `session`: background session and research work, held to the session's share so it never draws on the reserve.
  * - `serve`: the calls that serve a session question. `/next` admits a serve only under the session's share, and the
  *   guard then holds its calls to the whole cap, so a serve that starts under the share is never cut off halfway.
- * - `page`: asking, teaching, Persona.md and learning from answers, held to the whole cap.
+ * - `page`: asking, teaching, SOUL.md and learning from answers, held to the whole cap.
  */
 export type SpendScope = 'session' | 'serve' | 'page';
 
@@ -101,7 +101,7 @@ export const SPEND_SCOPES: Readonly<Record<string, SpendScope>> = {
   'playground.predict': 'page',
   'playground.baseline': 'page',
   'playground.rationale': 'page',
-  'persona.draft': 'page',
+  'soul.draft': 'page',
 };
 
 /** An unlisted purpose is held to the session's share, so a new call can't spend the reserve by accident. */

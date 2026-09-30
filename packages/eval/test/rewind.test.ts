@@ -699,7 +699,7 @@ describe('undo the latest answer (ADR-0036)', () => {
     expect(await engine.deps.store.getAnswerForQuestion(q1.id)).not.toBeNull();
   }, 30_000);
 
-  it('rolls back persona drafts that cover the undone answer (ADR-0033)', async () => {
+  it('rolls back SOUL.md drafts that cover the undone answer (ADR-0033, ADR-0039)', async () => {
     const id = await start();
     const { store } = engine.deps;
     await answerMany(id, 2);
@@ -716,10 +716,10 @@ describe('undo the latest answer (ADR-0036)', () => {
       draft: { summary: `Up to ${seqUpTo}`, statements: [] },
       createdAt: Date.now() + seqUpTo,
     });
-    await store.insertPersonaDraft(draft(2));
-    await store.insertPersonaDraft(draft(3));
+    await store.insertSoulDraft(draft(2));
+    await store.insertSoulDraft(draft(3));
     await rewindLastAnswer(engine.deps, id, { questionId: q3.id });
-    expect((await store.latestPersonaDraft(id))?.seqUpTo).toBe(2);
+    expect((await store.latestSoulDraft(id))?.seqUpTo).toBe(2);
   }, 30_000);
 
   it('hard delete removes rewinds too', async () => {

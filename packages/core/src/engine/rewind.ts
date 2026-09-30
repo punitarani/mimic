@@ -41,7 +41,7 @@ export function citedSeqs(sourceRef: string | null): number[] {
 
 /**
  * What a retraction at `fromSeq` invalidates, beyond what the store selects by seq (traits, insights, reflection
- * facts by `seq_up_to`, persona drafts, fidelity): reflection facts written before `seq_up_to` existed, found by the
+ * facts by `seq_up_to`, SOUL.md drafts, fidelity): reflection facts written before `seq_up_to` existed, found by the
  * evidence they cite.
  */
 export function derivedRollback(mimicId: string, fromSeq: number, facts: FactRecord[]): DerivedRollback {

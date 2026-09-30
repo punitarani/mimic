@@ -203,7 +203,7 @@ export const STANDARD_CONFIG_BUDGET_USD = 0.5;
 export interface SpendCaps {
   /** Nothing is spent past this: the gateway refuses every call for the mimic. */
   totalUsd: number;
-  /** The session stops here, keeping the rest for asking, teaching and Persona.md. */
+  /** The session stops here, keeping the rest for asking, teaching and SOUL.md. */
   sessionUsd: number;
 }
 
