@@ -191,7 +191,9 @@ export default async function Lab({ searchParams }: { searchParams: Promise<{ al
           </Section>
           <Section title="Eval runs">
             {o.evalRuns.length === 0 ? (
-              <p className="text-[13px] text-muted">None yet. Run `pnpm eval -- replay … --report`.</p>
+              <p className="text-[13px] text-muted">
+                None yet. Publish one with `pnpm eval -- report --data … --run … --to local`.
+              </p>
             ) : (
               <ul className="space-y-2 text-[13px]">
                 {o.evalRuns.map((r) => (

@@ -1,5 +1,6 @@
 import {
   EngineError,
+  enqueueMissingShadows,
   Job,
   jobKey,
   MAX_JOB_ATTEMPTS,
@@ -13,6 +14,9 @@ import { engineDeps, type MimicBindings } from '@mimic/db/runtime';
 export interface Env extends MimicBindings {
   JOBS: Queue<Job>;
 }
+
+/** Shadows normally land within seconds; older gaps are lost enqueues (PENDING_WINDOW_MS in the lab is 15 min). */
+const SHADOW_GRACE_MS = 10 * 60 * 1000;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -79,12 +83,15 @@ export default {
     const requeued = await requeueStaleJobs(d);
     if (requeued) console.log(`requeued ${requeued} stale jobs`);
     const recent = (await d.store.listMimics({})).filter((m) => m.updatedAt > Date.now() - 24 * 3600 * 1000);
+    let shadows = 0;
     for (const m of recent) {
       try {
+        shadows += await enqueueMissingShadows(d, m.id, Date.now() - SHADOW_GRACE_MS);
         await writeSnapshot(d, m.id);
       } catch (e) {
-        console.error(`snapshot ${m.id} failed`, e);
+        console.error(`cron ${m.id} failed`, e);
       }
     }
+    if (shadows) console.log(`enqueued ${shadows} missing shadows`);
   },
 } satisfies ExportedHandler<Env>;

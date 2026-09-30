@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { Client } from '@libsql/client';
 import {
   FixtureEnricher,
   FixturePeopleSearch,
@@ -6,13 +7,23 @@ import {
   makeProviders,
   type Providers,
 } from '@mimic/adapters';
-import { EMBEDDING_MODEL, type EngineDeps, Gateway, type Job, MemoryQueue, runJob, ulid } from '@mimic/core';
+import {
+  EMBEDDING_MODEL,
+  type EngineDeps,
+  Gateway,
+  type Job,
+  MemoryQueue,
+  runJob,
+  seededRng,
+  ulid,
+} from '@mimic/core';
 import { SqlVectors, StoreBudget, StoreCallLog } from '@mimic/db';
 import { FsBlobs, MemoryBlobs, MemoryKv, openLocalDb } from '@mimic/db/local';
 import { FakeDecisions, FakeLlm } from './fakes';
 
 export interface LocalEngine {
   deps: EngineDeps;
+  client: Client;
   providers: Providers;
   queue: MemoryQueue;
   close: () => void;
@@ -28,11 +39,13 @@ export interface LocalOptions {
   /** 'offline' uses deterministic fakes (zero spend); 'live' uses the real providers from the environment. */
   providers: 'offline' | 'live';
   clock?: () => number;
+  /** Deterministic IDs (mimic IDs seed anchor order and selection), for reproducible offline tests. */
+  seed?: string;
 }
 
 /** Engine deps for Node: libSQL with the D1 schema and migrations, filesystem blobs, SQL vectors, inline queue. */
 export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> {
-  const { db, store, close } = await openLocalDb(opts.db);
+  const { db, store, client, close } = await openLocalDb(opts.db);
   const blobs = opts.blobsDir ? new FsBlobs(opts.blobsDir) : new MemoryBlobs();
   const clock = opts.clock ?? (() => Date.now());
   const providers: Providers =
@@ -58,6 +71,7 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
     newId: () => ulid(),
   });
   const queue = new MemoryQueue();
+  const newId = opts.seed ? seededIds(opts.seed) : () => ulid();
   const deps: EngineDeps = {
     store,
     gateway,
@@ -66,7 +80,7 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
     vectors: new SqlVectors(db),
     jobs: queue,
     clock,
-    newId: () => ulid(),
+    newId,
   };
   const drain = async (filter?: (job: Job) => boolean) => {
     let n = 0;
@@ -84,9 +98,15 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
     }
     return n;
   };
-  return { deps, providers, queue, close, drain };
+  return { deps, client, providers, queue, close, drain };
 }
 
 export function defaultDataPath(name: string): string {
   return join(process.cwd(), 'data', name);
+}
+
+function seededIds(seed: string): () => string {
+  const rng = seededRng(seed);
+  let t = Date.UTC(2026, 0, 1);
+  return () => ulid(t++, rng);
 }

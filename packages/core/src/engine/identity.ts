@@ -134,6 +134,7 @@ function anchorQuestions(
     quality: null,
     createdAt: now + i,
     servedAt: null,
+    stateAt: null,
   }));
 }
 
@@ -333,6 +334,7 @@ function fact(
     confidence,
     userState: 'active',
     createdAt: now,
+    userStateAt: null,
   };
 }
 
@@ -390,7 +392,7 @@ export async function setFactState(
   factId: string,
   userState: 'active' | 'removed',
 ): Promise<void> {
-  const ok = await deps.store.updateFact(mimicId, factId, { userState });
+  const ok = await deps.store.updateFact(mimicId, factId, { userState, userStateAt: deps.clock() });
   if (!ok) throw new EngineError('not_found', 'Fact not found');
   if (userState === 'removed')
     await deps.vectors.deleteByIds([vectorId.fact(mimicId, factId)]).catch(() => {});

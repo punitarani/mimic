@@ -141,3 +141,54 @@ export function callMetrics(calls: CallRow[]): CallMetrics[] {
     })
     .sort((a, b) => b.costUsd - a.costUsd);
 }
+
+export function pearson(xs: number[], ys: number[]): number | null {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 3) return null;
+  const mx = mean(xs.slice(0, n));
+  const my = mean(ys.slice(0, n));
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (xs[i]! - mx) * (ys[i]! - my);
+    sxx += (xs[i]! - mx) ** 2;
+    syy += (ys[i]! - my) ** 2;
+  }
+  return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : null;
+}
+
+export function stdev(xs: number[]): number {
+  if (xs.length < 2) return 0;
+  const m = mean(xs);
+  return Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / (xs.length - 1));
+}
+
+/**
+ * Across-person item metrics (PLAN §12.3): for each shared item answered by ≥ minPeople people, the correlation
+ * between predicted and actual values across people, and the dispersion ratio SD(predicted) / SD(actual). A ratio
+ * well below 1 means predictions are compressed toward a stereotype (RQ3).
+ */
+export function itemAcrossPeople(
+  rows: Array<{ itemKey: string; predicted: number; actual: number }>,
+  minPeople = 5,
+): { items: number; meanCorrelation: number | null; meanDispersionRatio: number | null } {
+  const by = new Map<string, Array<{ predicted: number; actual: number }>>();
+  for (const r of rows) by.set(r.itemKey, [...(by.get(r.itemKey) ?? []), r]);
+  const corrs: number[] = [];
+  const disp: number[] = [];
+  for (const g of by.values()) {
+    if (g.length < minPeople) continue;
+    const p = g.map((x) => x.predicted);
+    const a = g.map((x) => x.actual);
+    const c = pearson(p, a);
+    if (c !== null) corrs.push(c);
+    const sa = stdev(a);
+    if (sa > 0) disp.push(stdev(p) / sa);
+  }
+  return {
+    items: corrs.length,
+    meanCorrelation: corrs.length ? mean(corrs) : null,
+    meanDispersionRatio: disp.length ? mean(disp) : null,
+  };
+}

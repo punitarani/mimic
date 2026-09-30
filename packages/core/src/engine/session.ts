@@ -15,7 +15,8 @@ import {
   contextState,
   facetCounts,
   type LoadedMimic,
-  loadMimicData,
+  loadMimicDataAt,
+  STATE_SETTLE_MS,
   sealedState,
   stateBlobKey,
   vectorId,
@@ -81,7 +82,9 @@ function maxSeq(questions: QuestionRecord[]): number {
 export async function serveNext(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   const m = await timed(deps, 'mimic', () => requireMimic(deps, mimicId));
   const cfg = await loadConfig(deps, m.configHash);
-  const loaded = await timed(deps, 'load', () => loadMimicData(deps, m));
+  // Derived data is pinned to `stateAt` so the sealed states can be rebuilt exactly from an export (ADR-0017).
+  const stateAt = deps.clock() - STATE_SETTLE_MS;
+  const loaded = await timed(deps, 'load', () => loadMimicDataAt(deps, m, stateAt, m.seqMax + 1));
   const { questions } = loaded;
   const progress = progressOf(questions, cfg);
 
@@ -97,7 +100,8 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
   const anchor = questions
     .filter((q) => q.kind === 'anchor' && q.status === 'pooled')
     .sort((a, b) => a.createdAt - b.createdAt)[0];
-  if (anchor) return serveWithPredictions(deps, m, cfg, loaded, seq, anchor, [anchor], progress, rng);
+  if (anchor)
+    return serveWithPredictions(deps, m, cfg, loaded, stateAt, seq, anchor, [anchor], progress, rng);
 
   // 2) Repeat probes, scheduled outside the selector; no predictions (PLAN §9.5).
   const served = questions
@@ -121,6 +125,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
       status: 'pooled',
       createdAt: deps.clock(),
       servedAt: null,
+      stateAt: null,
     };
     await deps.store.insertQuestions([rep]);
     const ok = await deps.store.serveQuestion({
@@ -128,6 +133,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
       mimicId: m.id,
       seq,
       servedAt: deps.clock(),
+      stateAt: null,
       predictions: [],
     });
     if (!ok) return raced(deps, m.id);
@@ -143,7 +149,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
     pool = await addReserve(deps, m, questions);
     if (pool.length === 0) return { status: 'waiting', progress };
   }
-  return serveWithPredictions(deps, m, cfg, loaded, seq, null, pool, progress, rng);
+  return serveWithPredictions(deps, m, cfg, loaded, stateAt, seq, null, pool, progress, rng);
 }
 
 async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
@@ -183,6 +189,7 @@ async function addReserve(
       quality: null,
       createdAt: now + i,
       servedAt: null,
+      stateAt: null,
     }));
   if (recs.length) await deps.store.insertQuestions(recs);
   return recs;
@@ -235,6 +242,7 @@ async function serveWithPredictions(
   m: MimicRecord,
   cfg: PipelineConfig,
   loaded: LoadedMimic,
+  stateAt: number,
   seq: number,
   fixed: QuestionRecord | null,
   pool: QuestionRecord[],
@@ -333,7 +341,14 @@ async function serveWithPredictions(
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
   const ok = await timed(deps, 'persist', () =>
-    deps.store.serveQuestion({ questionId: chosen.id, mimicId: m.id, seq, servedAt: now, predictions }),
+    deps.store.serveQuestion({
+      questionId: chosen.id,
+      mimicId: m.id,
+      seq,
+      servedAt: now,
+      stateAt,
+      predictions,
+    }),
   );
   if (!ok) return raced(deps, m.id);
 

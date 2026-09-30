@@ -1,6 +1,13 @@
 import type { PipelineConfig } from '../config';
 import { type BuildOptions, buildState, type EvidenceItem, type MimicData } from '../state-builder';
-import type { AnswerRecord, MimicRecord, QuestionRecord } from '../store';
+import type {
+  AnswerRecord,
+  FactRecord,
+  InsightRecord,
+  MimicRecord,
+  QuestionRecord,
+  TraitRecord,
+} from '../store';
 import type { PersonState, Question } from '../types';
 import type { EngineDeps } from './deps';
 
@@ -10,15 +17,23 @@ export interface LoadedMimic {
   answers: AnswerRecord[];
 }
 
-/** Loads everything the state builder needs. Evidence is the raw source of truth (PLAN §3.3). */
-export async function loadMimicData(deps: EngineDeps, m: MimicRecord): Promise<LoadedMimic> {
-  const [facts, questions, answers, traits, insights] = await Promise.all([
-    deps.store.listFacts(m.id),
-    deps.store.listQuestions(m.id),
-    deps.store.listAnswers(m.id),
-    deps.store.listTraits(m.id),
-    deps.store.listInsights(m.id),
-  ]);
+/**
+ * How far the as-of time of a sealed state's derived data lags the serve (ADR-0017). A trait or insight write that
+ * is in flight while a question is served lands clearly on one side of it, so replay sees exactly what serving saw.
+ */
+export const STATE_SETTLE_MS = 2_000;
+
+function assemble(
+  m: MimicRecord,
+  rows: {
+    facts: FactRecord[];
+    questions: QuestionRecord[];
+    answers: AnswerRecord[];
+    traits: TraitRecord[];
+    insights: InsightRecord[];
+  },
+): LoadedMimic {
+  const { facts, questions, answers, traits, insights } = rows;
   const qById = new Map(questions.map((q) => [q.id, q]));
   const evidence: EvidenceItem[] = [];
   for (const a of answers) {
@@ -49,11 +64,68 @@ export async function loadMimicData(deps: EngineDeps, m: MimicRecord): Promise<L
       facts,
       evidence,
       traits,
-      insights: insights.filter((i) => i.status === 'active'),
+      insights,
     },
     questions,
     answers,
   };
+}
+
+/** Loads everything the state builder needs, as it stands now. Evidence is the raw source of truth (PLAN §3.3). */
+export async function loadMimicData(deps: EngineDeps, m: MimicRecord): Promise<LoadedMimic> {
+  const [facts, questions, answers, traits, insights] = await Promise.all([
+    deps.store.listFacts(m.id),
+    deps.store.listQuestions(m.id),
+    deps.store.listAnswers(m.id),
+    deps.store.listTraits(m.id),
+    deps.store.listInsights(m.id),
+  ]);
+  return assemble(m, {
+    facts,
+    questions,
+    answers,
+    traits,
+    insights: insights.filter((i) => i.status === 'active'),
+  });
+}
+
+/**
+ * The mimic's data with its derived parts as they stood at `at` (ADR-0017): trait estimates from the append-only
+ * history, insights created by then and not yet superseded, facts created by then and never re-activated after it. Serving builds sealed
+ * states from this view and records `at` as the question's `stateAt`, so replay can rebuild them exactly from an
+ * export. Evidence is not time-filtered; sealing by seq happens in the state builder.
+ */
+export async function loadMimicDataAt(
+  deps: EngineDeps,
+  m: MimicRecord,
+  at: number,
+  beforeSeq: number,
+): Promise<LoadedMimic> {
+  const [facts, questions, answers, traits, insights] = await Promise.all([
+    deps.store.listFacts(m.id),
+    deps.store.listQuestions(m.id),
+    deps.store.listAnswers(m.id),
+    deps.store.listTraitsAsOf(m.id, at, beforeSeq),
+    deps.store.listInsights(m.id),
+  ]);
+  return assemble(m, {
+    facts: facts
+      .filter((f) => f.createdAt <= at)
+      .map((f) => ({
+        ...f,
+        // Removal is never time-travelled: a fact removed now, or toggled after `at`, stays out (PLAN §3.8; ADR-0017).
+        userState:
+          f.userState === 'removed' || (f.userStateAt !== null && f.userStateAt > at) ? 'removed' : 'active',
+      })),
+    questions,
+    answers,
+    traits,
+    insights: insights.filter(
+      (i) =>
+        i.createdAt <= at &&
+        (i.status === 'active' || (i.statusChangedAt !== null && i.statusChangedAt > at)),
+    ),
+  });
 }
 
 export function stateOptions(

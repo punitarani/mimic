@@ -24,7 +24,7 @@ import {
   type Store,
   type TraitRecord,
 } from '@mimic/core';
-import { and, asc, desc, eq, gte, inArray, like, lt, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, gte, inArray, like, lt, lte, sql } from 'drizzle-orm';
 import type { BatchItem, BatchResponse } from 'drizzle-orm/batch';
 import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
 import { z } from 'zod';
@@ -105,6 +105,7 @@ const toQuestion = (r: QRow): QuestionRecord => {
     quality: parse(Obj, r.qualityJson, null as Record<string, unknown> | null),
     createdAt: r.createdAt,
     servedAt: r.servedAt,
+    stateAt: r.stateAt,
   };
   if (r.repeatOf) q.repeatOf = r.repeatOf;
   if (r.itemKey) q.itemKey = r.itemKey;
@@ -130,6 +131,7 @@ const fromQuestion = (q: QuestionRecord): typeof s.questions.$inferInsert => ({
   qualityJson: q.quality ? JSON.stringify(q.quality) : null,
   createdAt: q.createdAt,
   servedAt: q.servedAt,
+  stateAt: q.stateAt,
 });
 
 const toPrediction = (r: PRow): PredictionRecord => ({
@@ -311,7 +313,7 @@ export class DrizzleStore implements Store {
       .orderBy(asc(s.facts.createdAt))
       .all();
   }
-  async updateFact(mimicId: string, id: string, patch: Pick<FactRecord, 'userState'>) {
+  async updateFact(mimicId: string, id: string, patch: Pick<FactRecord, 'userState' | 'userStateAt'>) {
     const r = await this.db
       .update(s.facts)
       .set(patch)
@@ -349,12 +351,13 @@ export class DrizzleStore implements Store {
     mimicId: string;
     seq: number;
     servedAt: number;
+    stateAt: number | null;
     predictions: PredictionRecord[];
   }) {
     const stmts: BatchItem<'sqlite'>[] = [
       this.db
         .update(s.questions)
-        .set({ seq: args.seq, status: 'served', servedAt: args.servedAt })
+        .set({ seq: args.seq, status: 'served', servedAt: args.servedAt, stateAt: args.stateAt })
         .where(and(eq(s.questions.id, args.questionId), eq(s.questions.status, 'pooled'))),
       this.db
         .update(s.mimics)
@@ -476,6 +479,22 @@ export class DrizzleStore implements Store {
       .all();
     return rows.map(({ id: _id, ...r }) => toTrait(r));
   }
+  async listTraitsAsOf(mimicId: string, at: number, beforeSeq: number) {
+    const h = s.traitHistory;
+    const { id: _id, ...cols } = getTableColumns(h);
+    const ranked = this.db
+      .select({
+        ...cols,
+        rank: sql<number>`row_number() over (partition by ${h.facetId}, ${h.method} order by ${h.seqUpTo} desc, ${h.id} asc)`.as(
+          'rank',
+        ),
+      })
+      .from(h)
+      .where(and(eq(h.mimicId, mimicId), lte(h.createdAt, at), lt(h.seqUpTo, beforeSeq)))
+      .as('ranked');
+    const rows = await this.db.select().from(ranked).where(eq(ranked.rank, 1)).all();
+    return rows.map(({ rank: _rank, ...r }) => toTrait(r));
+  }
   async upsertTraits(recs: TraitRecord[]) {
     if (!recs.length) return 0;
     const rows = recs.map(fromTrait);
@@ -524,6 +543,7 @@ export class DrizzleStore implements Store {
       promptVersion: r.promptVersion,
       status: r.status,
       createdAt: r.createdAt,
+      statusChangedAt: r.statusChangedAt,
     }));
   }
   async insertInsights(recs: InsightRecord[]) {
@@ -536,8 +556,8 @@ export class DrizzleStore implements Store {
       })),
     );
   }
-  async updateInsightStatus(id: string, status: InsightRecord['status']) {
-    await this.db.update(s.insights).set({ status }).where(eq(s.insights.id, id));
+  async updateInsightStatus(id: string, status: InsightRecord['status'], at: number) {
+    await this.db.update(s.insights).set({ status, statusChangedAt: at }).where(eq(s.insights.id, id));
   }
   async listKg(mimicId: string) {
     const [nodes, edges] = await Promise.all([

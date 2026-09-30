@@ -24,6 +24,13 @@ pnpm eval -- <export|replay|select|import|report|session> ...
 
 `pnpm dev` serves the web app on http://localhost:3000 and the worker on http://localhost:8787. It copies
 `.dev.vars.example` to `.dev.vars` in both apps on first run (dev invite code: `mimic-dev`).
+It also fires the worker's cron every 10 minutes (stale-job requeue, missing shadows, snapshots; ADR-0019).
+
+Eval loop on dev data: `pnpm eval -- export --env local --out data/x.sqlite`, then `replay --data data/x.sqlite`, then
+`report --data … --run <id> --to local` (shown in `/lab`). Reproducing online predictions needs an export made with
+`--keep-identity`: internal use only, never share it (ADR-0018). Sealed states pin their derived data to
+`questions.state_at` so replay rebuilds them exactly (ADR-0017); load states with `loadMimicDataAt`, not the current
+trait rows.
 
 ## Repo map
 

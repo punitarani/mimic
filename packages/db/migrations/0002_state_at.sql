@@ -1,0 +1,1 @@
+ALTER TABLE `questions` ADD `state_at` integer;

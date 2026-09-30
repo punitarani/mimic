@@ -44,6 +44,8 @@ export interface QuestionRecord extends Question {
   quality: Record<string, unknown> | null;
   createdAt: number;
   servedAt: number | null;
+  /** As-of time of the derived data in this question's sealed states; replay rebuilds them from it (ADR-0017). */
+  stateAt: number | null;
 }
 
 export interface PredictionRecord {
@@ -103,6 +105,8 @@ export interface FactRecord {
   confidence: number;
   userState: 'active' | 'removed';
   createdAt: number;
+  /** When userState last changed (null = never). */
+  userStateAt: number | null;
 }
 
 export interface CandidateRecord {
@@ -134,6 +138,8 @@ export interface InsightRecord extends Insight {
   promptVersion: string;
   status: 'active' | 'superseded' | 'user_rejected';
   createdAt: number;
+  /** When status left `active` (null = still active). */
+  statusChangedAt: number | null;
 }
 
 export type KgNodeType = 'Person' | 'Organization' | 'Place' | 'Occupation' | 'Skill' | 'Interest' | 'Facet';
@@ -258,7 +264,11 @@ export interface Store {
   ): Promise<void>;
   insertFacts(recs: FactRecord[]): Promise<void>;
   listFacts(mimicId: string): Promise<FactRecord[]>;
-  updateFact(mimicId: string, id: string, patch: Pick<FactRecord, 'userState'>): Promise<boolean>;
+  updateFact(
+    mimicId: string,
+    id: string,
+    patch: Pick<FactRecord, 'userState' | 'userStateAt'>,
+  ): Promise<boolean>;
   // questions
   insertQuestions(recs: QuestionRecord[]): Promise<void>;
   getQuestion(id: string): Promise<QuestionRecord | null>;
@@ -273,6 +283,7 @@ export interface Store {
     mimicId: string;
     seq: number;
     servedAt: number;
+    stateAt: number | null;
     predictions: PredictionRecord[];
   }): Promise<boolean>;
   // predictions & answers
@@ -292,11 +303,16 @@ export interface Store {
   // derived state
   listTraits(mimicId: string): Promise<TraitRecord[]>;
   listTraitHistory(mimicId: string): Promise<TraitRecord[]>;
+  /**
+   * The estimates as they stood at `at`, sealed below `beforeSeq`: per facet and method, the history row with the
+   * highest seqUpTo, first write winning ties (the same rule as the monotonic upsert).
+   */
+  listTraitsAsOf(mimicId: string, at: number, beforeSeq: number): Promise<TraitRecord[]>;
   /** Monotonic: only writes estimates whose seqUpTo is greater than the stored one. Always appends history. */
   upsertTraits(recs: TraitRecord[]): Promise<number>;
   listInsights(mimicId: string): Promise<InsightRecord[]>;
   insertInsights(recs: InsightRecord[]): Promise<void>;
-  updateInsightStatus(id: string, status: InsightRecord['status']): Promise<void>;
+  updateInsightStatus(id: string, status: InsightRecord['status'], at: number): Promise<void>;
   listKg(mimicId: string): Promise<{ nodes: KgNodeRecord[]; edges: KgEdgeRecord[] }>;
   insertKg(nodes: KgNodeRecord[], edges: KgEdgeRecord[]): Promise<void>;
   insertFidelity(rec: FidelityRecord): Promise<void>;

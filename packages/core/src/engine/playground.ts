@@ -4,7 +4,7 @@ import { generateRationale, scenarioToQuestion, validateDraft } from '../learnin
 import { JevPredictor } from '../predictors';
 import type { PredictionRecord, QuestionRecord } from '../store';
 import type { Distribution } from '../types';
-import { contextState, loadMimicData, sealedState, stateBlobKey } from './data';
+import { contextState, loadMimicDataAt, STATE_SETTLE_MS, sealedState, stateBlobKey } from './data';
 import { ctxFor, type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
 import { JEV_PROMPT_VERSION, type PublicQuestion, toPublic } from './session';
 
@@ -56,7 +56,8 @@ export async function predictPlayground(
   const { rationale: _wantsRationale, ...question } = input;
   const v = validateDraft({ ...question, domain: 'casual', facetIds: ['__pg'] }, new Set(['__pg']));
   if ('error' in v) throw new EngineError('invalid', `Invalid question: ${v.error}`);
-  const loaded = await loadMimicData(deps, m);
+  const stateAt = deps.clock() - STATE_SETTLE_MS;
+  const loaded = await loadMimicDataAt(deps, m, stateAt, m.seqMax + 1);
   const seq = loaded.questions.reduce((a, q) => Math.max(a, q.seq ?? 0), 0) + 1;
   const now = deps.clock();
   const q: QuestionRecord = {
@@ -74,6 +75,7 @@ export async function predictPlayground(
     quality: null,
     createdAt: now,
     servedAt: null,
+    stateAt: null,
   };
   await deps.store.insertQuestions([q]);
   const model = cfg.predictor.primary.replace(/^jev:/, '');
@@ -113,6 +115,7 @@ export async function predictPlayground(
     mimicId: m.id,
     seq,
     servedAt: now,
+    stateAt,
     predictions: [rec('primary', state, primary), rec('baseline', base, baseline!)],
   });
   if (!ok) throw new EngineError('conflict', 'Busy; try again');

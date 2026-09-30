@@ -1,7 +1,10 @@
 const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
-/** ULID: 48-bit millisecond timestamp + 80 bits of randomness, Crockford base32. Sorts by time. */
-export function ulid(now: number = Date.now()): string {
+/**
+ * ULID: 48-bit millisecond timestamp + 80 bits of randomness, Crockford base32. Sorts by time. Pass `rng` only for
+ * reproducible offline runs (tests); IDs in the app are always random.
+ */
+export function ulid(now: number = Date.now(), rng?: () => number): string {
   let ts = '';
   let t = now;
   for (let i = 0; i < 10; i++) {
@@ -9,7 +12,8 @@ export function ulid(now: number = Date.now()): string {
     t = Math.floor(t / 32);
   }
   const rand = new Uint8Array(16);
-  crypto.getRandomValues(rand);
+  if (rng) for (let i = 0; i < 16; i++) rand[i] = Math.floor(rng() * 32);
+  else crypto.getRandomValues(rand);
   let r = '';
   for (let i = 0; i < 16; i++) r += ALPHABET[rand[i]! % 32];
   return ts + r;

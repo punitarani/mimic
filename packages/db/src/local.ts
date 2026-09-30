@@ -1,6 +1,6 @@
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
-import { createClient } from '@libsql/client';
+import { type Client, createClient } from '@libsql/client';
 import type { BlobStore, KvStore } from '@mimic/core';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
@@ -12,12 +12,12 @@ export const MIGRATIONS_DIR = join(dirname(new URL(import.meta.url).pathname), '
 /** A local SQLite database with the same Drizzle schema and migrations as D1 (for the CLI and tests). */
 export async function openLocalDb(
   path: string,
-): Promise<{ db: MimicDb; store: DrizzleStore; close: () => void }> {
+): Promise<{ db: MimicDb; store: DrizzleStore; client: Client; close: () => void }> {
   if (path !== ':memory:') await mkdir(dirname(path), { recursive: true });
   const client = createClient({ url: path === ':memory:' ? ':memory:' : `file:${path}` });
   const db = drizzle(client, { schema }) as unknown as MimicDb;
   await migrate(drizzle(client), { migrationsFolder: MIGRATIONS_DIR });
-  return { db, store: new DrizzleStore(db), close: () => client.close() };
+  return { db, store: new DrizzleStore(db), client, close: () => client.close() };
 }
 
 export class FsBlobs implements BlobStore {

@@ -74,6 +74,8 @@ export const facts = sqliteTable(
     confidence: real('confidence').notNull(),
     userState: text('user_state', { enum: ['active', 'removed'] }).notNull(),
     createdAt: integer('created_at').notNull(),
+    /** Last change of user_state (ADR-0017). */
+    userStateAt: integer('user_state_at'),
   },
   (t) => [index('facts_mimic_idx').on(t.mimicId)],
 );
@@ -99,6 +101,8 @@ export const questions = sqliteTable(
     qualityJson: text('quality_json'),
     createdAt: integer('created_at').notNull(),
     servedAt: integer('served_at'),
+    /** As-of time of the derived data (traits, insights, facts) in this question's sealed states (ADR-0017). */
+    stateAt: integer('state_at'),
   },
   (t) => [
     index('questions_mimic_idx').on(t.mimicId),
@@ -211,6 +215,8 @@ export const insights = sqliteTable(
     promptVersion: text('prompt_version').notNull(),
     status: text('status', { enum: ['active', 'superseded', 'user_rejected'] }).notNull(),
     createdAt: integer('created_at').notNull(),
+    /** When the status left `active` (ADR-0017: lets replay rebuild the state as it was at serve time). */
+    statusChangedAt: integer('status_changed_at'),
   },
   (t) => [index('insights_mimic_idx').on(t.mimicId)],
 );

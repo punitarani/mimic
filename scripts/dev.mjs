@@ -50,9 +50,26 @@ migrate.on('exit', (code) => {
   run(
     'worker',
     'pnpm',
-    ['exec', 'wrangler', 'dev', '--port', '8787', '--persist-to', '../../.wrangler/state'],
+    [
+      'exec',
+      'wrangler',
+      'dev',
+      '--port',
+      '8787',
+      '--persist-to',
+      '../../.wrangler/state',
+      '--test-scheduled',
+    ],
     'apps/worker',
   );
+  // `wrangler dev` never fires cron triggers; fire the worker's cron (stale-job requeue, missing shadows,
+  // snapshots) every 10 minutes so dev behaves like a deployed env.
+  const cron = () =>
+    fetch('http://127.0.0.1:8787/__scheduled?cron=*/30+*+*+*+*').catch(() => {
+      /* the worker may still be starting */
+    });
+  setTimeout(cron, 30_000);
+  setInterval(cron, 10 * 60_000);
   run('web', 'pnpm', ['exec', 'next', 'dev', '--port', '3000'], 'apps/web');
   console.log('[dev] web http://localhost:3000 · worker http://localhost:8787 · relay http://127.0.0.1:8790');
 });

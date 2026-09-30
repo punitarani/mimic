@@ -106,7 +106,9 @@ describe('identity (PLAN §9.2, M3)', () => {
   });
 
   it('removed facts never appear in any state, prompt or export', async () => {
-    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    // Human pacing: sealed states see derived data older than STATE_SETTLE_MS, so time must move like a session's.
+    let t = Date.now();
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline', clock: () => (t += 1_000) });
     const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
     await engine.drain();
     const [top] = await engine.deps.store.listCandidates(m.id);

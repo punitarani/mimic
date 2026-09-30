@@ -121,3 +121,67 @@ writing the sealed-state blobs and then enqueueing the shadow jobs that read the
 `learn.answer` enqueue. The primary and baseline predictions are still persisted before `/next` returns
 (PLAN §3.2). Question-prompt vectors for the redundancy term are cached per isolate. Both routes emit per-phase
 `Server-Timing` headers.
+
+## ADR-0017 — Sealed states pin their derived data to a recorded time (2026-09-30)
+
+PLAN §3 requires every prediction to be reproducible from its config hash, prompt version, model snapshot and state
+hash, and M7 requires replaying an export to reproduce the online primary scores. Evidence is sealed by seq, but a
+state also carries derived data (trait estimates, insights, identity facts) that background jobs write at any time.
+The first live reproduction rebuilt only 22 of 28 states: `learn.answer` traits landed 0.4–4.5 s before `servedAt`,
+after `/next` had loaded its data, so a rebuild "as of servedAt" saw traits the served state never had.
+
+- `/next` (and the playground) take `stateAt = now − STATE_SETTLE_MS` (2 s) before loading, and build sealed states
+  from `loadMimicDataAt(m, stateAt, seq)`, the same loader replay uses. `stateAt` is stored on the question
+  (`questions.state_at`, migration 0002). The 2 s lag means a write in flight while a question is served lands
+  clearly on one side of `stateAt`. Derived data younger than that waits for the next question; evidence is never
+  time-filtered.
+- As-of rules: trait estimates come from the append-only `trait_history` (latest `seqUpTo` below the question's seq
+  among rows written by `stateAt`, first write winning ties, which is the monotonic upsert's rule). Insights count if
+  created by then and not superseded before then (`insights.status_changed_at`, migration 0001). Facts count if
+  created by then and not removed. Removal is never time-travelled: a fact removed now, or toggled after `stateAt`,
+  stays out, so a state served before a removal no longer rebuilds byte for byte. Privacy wins over replay
+  (PLAN §3.8). `facts.user_state_at` records the last toggle.
+- Checkpoint replay uses the same loader, as of the `stateAt` of the question at the checkpoint. Before, it used the
+  current trait rows, whose `seqUpTo` is the latest, so early checkpoints silently lost their traits.
+- Two kinds of state are reported but not hash-checked by `replay --mode online`:
+  - Legacy: served before `state_at` existed; rebuilt as of `servedAt`, approximately.
+  - Truncated: over the evidence budget, where retrieval ranked evidence against the candidate pool with
+    embeddings. Neither is in the export, so only the sealed state blob in R2 (keyed by the state hash) reproduces
+    these exactly.
+- Tests: the reproduction test injects a trait write between `stateAt` and the read. It fails without pinning (95.7%
+  hash match) and passes with it (100%).
+
+## ADR-0018 — Eval exports, the identity-keeping export and the Twin-2K-500 importer (2026-09-30)
+
+- `export --env local` copies rows straight from the shared miniflare SQLite file, since `wrangler d1 export` has no
+  `--persist-to`. Remote environments use `wrangler d1 export --remote --no-schema`. Both then apply the same scrub
+  (`scrubExport`):
+  - Only research-consented mimics are kept; jobs and vectors are dropped.
+  - Names, locations, links, URLs, trace and snapshot keys, and idempotency keys are removed.
+  - Mimic and participant IDs become salted hashes.
+- `--keep-identity` skips the identity scrub (consent filtering still applies). It exists only for the internal
+  reproducibility check: sealed states include the name and location, so their hashes can only be rebuilt from an
+  unscrubbed copy. The CLI warns that such a file must never be shared.
+- The dataset hash covers the content of every data table except `eval_runs` and migration bookkeeping, row order
+  ignored. Eval commands record their runs in the data file, and a file hash changed after each run.
+- Twin-2K-500 (`import twin2k500`) reads JSON Lines converted from the Hugging Face `wave_split` config. Only items
+  that map onto typed primitives are imported:
+  - single-choice MC with 2–5 options (yes/no → `noul`);
+  - Matrix rows with 2–5 columns (5 ordered columns → `score`).
+  Waves 1–3 become evidence, wave 4 becomes held-out items (`twin2k/w4/…`, never in a state), and wave 1–3 answers
+  to wave 4 questions become repeat pairs for test-retest self-consistency. Hugging Face is not reachable from this
+  environment, so the importer is tested on a synthetic six-person fixture in the dataset's shape
+  (`packages/eval/fixtures/twin2k500.sample.jsonl`).
+- `select` simulates selection within each person's already-answered pool. It is biased, since the pool was itself
+  selected online; its reports say so. Use it for iteration only.
+
+## ADR-0019 — The worker's cron runs in local dev and repairs missing shadows (2026-09-30)
+
+`wrangler dev` never fires cron triggers, so the stale-job requeue from M5 never ran locally. `pnpm dev` now starts
+the worker with `--test-scheduled` and calls `/__scheduled` 30 s after start and every 10 minutes after that. The
+cron also calls `enqueueMissingShadows` for mimics active in the last 24 h. This covers shadows whose enqueue was
+lost outright, so no ledger row exists to requeue. Examples are a failed `after()` and data served before shadows
+existed. Each such shadow is enqueued for questions served more than 10 minutes ago. Shadows read the sealed state
+blob, so a late shadow is still sealed (PLAN §3.1), and job keys make repeats no-ops. On local dev data the first
+run requeued 12 stale jobs and enqueued 51 missing shadows; the lab's invariant monitor went from 25 incomplete
+questions to 0.

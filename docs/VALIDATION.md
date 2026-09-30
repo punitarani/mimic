@@ -93,3 +93,41 @@ Playwright against `pnpm dev` (14 answered questions, keyboard only):
 - Browser, live providers: 6 answers → Stop here → scenario → DeepSeek drafts a typed question → Jev predicts
   61% / 39% → generated first-person sentence, labeled → the person answers → download `mimic.json` (`mimic/1`, v2,
   playground evidence included) → delete → `GET /api/mimics/:id` returns 404.
+
+## M7 Eval CLI
+
+Local dev data. Answers came from a scripted rule-based answerer, not people, so the accuracy numbers below validate
+the pipeline only and are not research results.
+
+- `export --env local`: kept 4 consented mimics and dropped 8 without research consent. The scrubbed file contains no
+  name, location or original mimic ID (byte search of the SQLite file); IDs are `m_…`/`p_…` hashes.
+- `replay --mode online` on a `--keep-identity` export, live Jev:
+
+  | | |
+  | --- | --- |
+  | Primary predictions | 60 (32 pinned by `stateAt`, 28 legacy, 0 over budget) |
+  | State hash match (pinned) | 100% (32/32); 14 of 16 states per person carried traits, 7–8 carried insights |
+  | Model snapshot match | 100% |
+  | Argmax agreement | 95% |
+  | Mean TVD / p95 | 0.043 / 0.090 |
+  | Accuracy online → replay | 45.7% → 48.0% (mean \|Δ item accuracy\| 0.025 ≤ 0.05) |
+  | Verdict | pass |
+
+  Before ADR-0017, the same check rebuilt only 22 of 28 states: traits written while `/next` was running leaked into
+  the rebuild. Jev isn't bit-for-bit deterministic (see M5), so scores are compared within a tolerance.
+- Checkpoint replay (k = 4, 8, 12; 4 people): primary vs context-only baseline, fidelity and failure rates per
+  checkpoint, at $0.0004 per person.
+- `report --to local` publishes the run to `eval_runs` and R2. `/lab` lists it and `/lab/evals/[id]` renders the
+  report (screenshots `m7-lab-evals.png`, `m7-reproduce.png`, `m7-replay.png`).
+- Tests (`packages/eval/test/eval.test.ts`, offline):
+  - Reproduction holds under an injected mid-serve trait write.
+  - Checkpoint replay covers the baseline, fidelity and across-person metrics.
+  - Selection simulation per budget.
+  - Dataset hash is stable across recorded runs.
+  - Export scrubbing.
+  - Twin item mapping, plus import and held-out replay.
+
+  Seeded IDs make the cohort tests deterministic; the across-person test had been flaky because random mimic IDs
+  set the anchor order.
+- Found and fixed along the way: the local cron never ran in dev (ADR-0019), and the dataset hash drifted as eval
+  runs were recorded (ADR-0018).

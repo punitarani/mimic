@@ -1,4 +1,4 @@
-import { hashJson, MimicJson, type PersonState } from '@mimic/core';
+import { enqueueMissingShadows, hashJson, jobKey, MimicJson, type PersonState } from '@mimic/core';
 import { schema } from '@mimic/db';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -86,6 +86,29 @@ describe('scripted 30-turn session (offline fakes)', () => {
       expect(primary[0]!.configHash).toBeTruthy();
       expect(primary[0]!.promptVersion).toBe('jev-predict.v1');
     }
+  });
+
+  it('re-enqueues shadows whose enqueue was lost (cron repair), still on the sealed state', async () => {
+    const { store } = engine.deps;
+    const q = (await store.listQuestions(mimicId)).find((x) => x.kind === 'adaptive' && x.seq !== null)!;
+    const lost = (await store.listPredictions({ questionId: q.id }))
+      .filter((p) => p.role === 'shadow')
+      .slice(0, 2);
+    // Simulate a lost enqueue: no prediction, no score and no ledger row.
+    for (const p of lost) {
+      await engine.client.execute({ sql: 'delete from scores where prediction_id = ?', args: [p.id] });
+      await engine.client.execute({ sql: 'delete from predictions where id = ?', args: [p.id] });
+      const key = jobKey({ type: 'predict.shadow', mimicId, questionId: q.id, predictorId: p.predictorId });
+      await engine.client.execute({ sql: 'delete from jobs where key = ?', args: [key] });
+    }
+    expect(await enqueueMissingShadows(engine.deps, mimicId, q.servedAt!)).toBe(0); // within the grace period
+    expect(await enqueueMissingShadows(engine.deps, mimicId, Number.MAX_SAFE_INTEGER)).toBe(2);
+    await engine.drain();
+    const after = (await store.listPredictions({ questionId: q.id })).filter((p) => p.role === 'shadow');
+    expect(after).toHaveLength(3);
+    const primary = (await store.listPredictions({ questionId: q.id, roles: ['primary'] }))[0]!;
+    for (const p of after) expect(p.stateHash).toBe(primary.stateHash);
+    expect(await enqueueMissingShadows(engine.deps, mimicId, Number.MAX_SAFE_INTEGER)).toBe(0);
   });
 
   it('scores every sealed prediction once the answer arrives, and appends fidelity', async () => {

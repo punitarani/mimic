@@ -86,6 +86,37 @@ export async function requeueStaleJobs(deps: EngineDeps, limit = 200): Promise<n
   return n;
 }
 
+/**
+ * Cron safety net for shadows whose enqueue was lost outright (no ledger row to requeue): enqueues every expected
+ * shadow missing on the mimic's questions served before `servedBefore`. Shadows read the sealed state blob, so a late
+ * one is still sealed (PLAN §3.1); job keys make repeats no-ops.
+ */
+export async function enqueueMissingShadows(
+  deps: EngineDeps,
+  mimicId: string,
+  servedBefore: number,
+): Promise<number> {
+  const m = await requireMimic(deps, mimicId);
+  const cfg = await loadConfig(deps, m.configHash);
+  if (!cfg.predictor.shadows.length) return 0;
+  const [questions, shadows] = await Promise.all([
+    deps.store.listQuestions(m.id),
+    deps.store.listPredictions({ mimicId: m.id, roles: ['shadow'] }),
+  ]);
+  const have = new Set(shadows.map((p) => `${p.questionId}|${p.predictorId}`));
+  let n = 0;
+  for (const q of questions) {
+    if (q.seq === null || q.servedAt === null || q.servedAt >= servedBefore) continue;
+    if (q.kind !== 'anchor' && q.kind !== 'adaptive') continue;
+    for (const predictorId of cfg.predictor.shadows) {
+      if (have.has(`${q.id}|${predictorId}`)) continue;
+      await deps.jobs.enqueue({ type: 'predict.shadow', mimicId: m.id, questionId: q.id, predictorId });
+      n++;
+    }
+  }
+  return n;
+}
+
 async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> {
   // A job for a deleted mimic is a no-op.
   if (job.type !== 'noop' && !(await deps.store.getMimic(job.mimicId))) return;
@@ -293,6 +324,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
     quality: { gates: g.p, gatesVersion: GATES_VERSION, rationale: d.rationale ?? null },
     createdAt: now + i,
     servedAt: null,
+    stateAt: null,
   }));
   if (!recs.length) return;
   await deps.store.insertQuestions(recs);
@@ -455,7 +487,7 @@ export async function runReflection(
     earlierEvidence: earlier,
   });
   const now = deps.clock();
-  for (const c of delta.contradictions) await deps.store.updateInsightStatus(c.insightId, 'superseded');
+  for (const c of delta.contradictions) await deps.store.updateInsightStatus(c.insightId, 'superseded', now);
   const insights: InsightRecord[] = delta.insights.map((i) => ({
     id: deps.newId(),
     mimicId: m.id,
@@ -468,6 +500,7 @@ export async function runReflection(
     promptVersion: cfg.reflector.promptVersion,
     status: 'active',
     createdAt: now,
+    statusChangedAt: null,
   }));
   if (insights.length) await deps.store.insertInsights(insights);
   const facts: FactRecord[] = delta.facts.map((f) => ({
@@ -481,6 +514,7 @@ export async function runReflection(
     confidence: 0.6,
     userState: 'active',
     createdAt: now,
+    userStateAt: null,
   }));
   await addFacts(deps, m, facts);
   // Link insights to facet nodes in the KG.
