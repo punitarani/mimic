@@ -21,6 +21,7 @@ describe('job keys', () => {
       },
       { type: 'backfill.predictor', runId: 'R', predictorId: 'jev:typesafe/jev-1.13', consentedOnly: false },
       { type: 'backfill.mimic', runId: 'R', mimicId: 'M', predictorId: 'llm:xiaomi/mimo-v2.6-pro' },
+      { type: 'stats.refresh', bucket: '2026-09-30T10' },
     ];
     for (const j of jobs) expect(jobFromKey(jobKey(j))).toEqual(j);
     expect(jobFromKey('bogus:1')).toBeNull();

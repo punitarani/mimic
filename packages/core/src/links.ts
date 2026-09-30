@@ -1,5 +1,5 @@
 /**
- * Link rules shared by the engine, the route handlers and the browser (ADR-0027). No dependencies, so client code
+ * Link rules shared by the engine, the route handlers and the browser (ADR-0029). No dependencies, so client code
  * imports it as `@mimic/core/links` without pulling in the engine.
  */
 

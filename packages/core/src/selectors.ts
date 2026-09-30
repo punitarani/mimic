@@ -1,7 +1,8 @@
+import { type BeliefState, COVERAGE_TARGET, overExposed } from './belief';
 import type { PipelineConfig } from './config';
-import { entropy, meanDist, normalizedEntropy, optionKeys } from './distribution';
+import { entropy, meanDist, normalizedEntropy, optionKeys, P_FLOOR } from './distribution';
 import { canonicalJson, sha256Hex } from './hash';
-import type { PersonState, PredictionResult, Predictor, Question } from './types';
+import type { Distribution, PersonState, PredictionResult, Predictor, Question } from './types';
 
 export interface SelectContext {
   pool: Question[];
@@ -15,14 +16,24 @@ export interface SelectContext {
   rng: () => number;
   /** BALD persona hypotheses (PLAN §9.5). */
   hypotheses?: string[];
+  /** Posterior weight of each hypothesis (docs/SELECTION.md §6); uniform when absent. */
+  hypothesisWeights?: number[];
   /** Predictor for BALD's hypothesis calls (same model; logged under its own purpose). Defaults to `primary`. */
   explore?: Predictor;
+  /** The person's belief state (`voi` only). */
+  belief?: BeliefState;
+  /** Cross-person informativeness of a candidate in [0, 1], or null when unknown (`voi` only). */
+  population?: (q: Question) => number | null;
+  /** Session target, for the fatigue term. */
+  sessionTarget?: number;
 }
 
 export interface Selection {
   question: Question;
   primary: PredictionResult;
   diagnostics: Record<string, number>;
+  /** The chosen question's prediction under each hypothesis, with the state it was predicted from (`voi`). */
+  hypothesisPreds?: Array<{ index: number; state: PersonState; result: PredictionResult }>;
 }
 
 export interface Selector {
@@ -172,6 +183,208 @@ export class BaldSelector implements Selector {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Value of information (docs/SELECTION.md §4, ADR-0027)
+// ---------------------------------------------------------------------------------------------------------------
+
+export type VoiConfig = Extract<PipelineConfig['selector'], { type: 'voi' }>;
+
+/** Prompts longer than this many words count as full burden. */
+export const BURDEN_WORDS = 40;
+
+/**
+ * Posterior weights over K persona hypotheses from the likelihood each gave the answers observed since the set was
+ * written: w_k ∝ Π_t p_k(a_t), uniform prior, likelihoods floored at P_FLOOR. Uniform with no observations.
+ */
+export function hypothesisPosterior(obs: Array<{ index: number; pAnswer: number }>, k: number): number[] {
+  const logw = new Array<number>(k).fill(0);
+  for (const o of obs) {
+    if (o.index < 0 || o.index >= k) continue;
+    logw[o.index]! += Math.log(Math.max(P_FLOOR, Math.min(1, o.pAnswer)));
+  }
+  const max = Math.max(...logw);
+  const w = logw.map((x) => Math.exp(x - max));
+  const sum = w.reduce((a, b) => a + b, 0);
+  return w.map((x) => x / sum);
+}
+
+/** Weighted BALD mutual information: H(Σ_k w_k p_k) − Σ_k w_k H(p_k), in nats. */
+export function weightedMutualInformation(dists: Distribution[], weights: number[], keys: string[]): number {
+  const total = weights.reduce((a, b) => a + b, 0) || 1;
+  const w = weights.map((x) => x / total);
+  const mix: Distribution = Object.fromEntries(keys.map((k) => [k, 0]));
+  let expected = 0;
+  dists.forEach((d, i) => {
+    for (const k of keys) mix[k]! += w[i]! * (d[k] ?? 0);
+    expected += w[i]! * entropy(d);
+  });
+  return Math.max(0, entropy(mix) - expected);
+}
+
+/**
+ * Burden of asking `q` now, in [0, 1]: prompt length weighted by session fatigue, plus streaks of the same type or
+ * domain in the last served questions (Krosnick's satisficing: length, difficulty and monotony).
+ */
+export function burdenOf(
+  q: Pick<Question, 'prompt' | 'type' | 'domain'>,
+  belief: BeliefState | undefined,
+  sessionTarget: number,
+): number {
+  const words = q.prompt.trim().split(/\s+/).length;
+  const length = Math.min(1, words / BURDEN_WORDS);
+  const n = belief?.person.nAnswered ?? 0;
+  const fatigue = Math.min(1, n / Math.max(1, sessionTarget));
+  const streak = (xs: string[], v: string) => {
+    if (xs.length >= 3 && xs.slice(-3).every((x) => x === v)) return 1;
+    if (xs.length >= 2 && xs.slice(-2).every((x) => x === v)) return 0.5;
+    return 0;
+  };
+  const typeStreak = belief ? streak(belief.recent.types, q.type) : 0;
+  const domainStreak = belief ? streak(belief.recent.domains, q.domain) : 0;
+  return Math.min(1, 0.6 * length * (0.5 + 0.5 * fatigue) + 0.25 * typeStreak + 0.15 * domainStreak);
+}
+
+export interface VoiParts {
+  info: number;
+  gap: number;
+  conflict: number;
+  weakness: number;
+  population: number;
+  redundancy: number;
+  burden: number;
+  score: number;
+}
+
+/**
+ * score(q) = info + λ·gap + β·conflict + γ·weakness + π·(pop − ½) − μ·redundancy − ν·burden. `info` is on one scale
+ * for the whole selection: when any candidate has ≥ 2 hypothesis predictions, it is the posterior-weighted
+ * hypothesis MI (0 for a candidate whose exploration calls failed, never its entropy); otherwise it is the
+ * normalised predictive entropy for every candidate.
+ */
+export class VoiSelector implements Selector {
+  readonly type = 'voi' as const;
+  constructor(private readonly cfg: VoiConfig) {}
+
+  parts(
+    ctx: SelectContext,
+    q: Question,
+    primary: PredictionResult,
+    hypDists: Distribution[],
+    weights: number[],
+    hypRegime: boolean,
+  ): VoiParts {
+    const keys = optionKeys(q);
+    const logN = Math.log(Math.max(2, keys.length));
+    const info = hypRegime
+      ? hypDists.length >= 2
+        ? Math.min(1, weightedMutualInformation(hypDists, weights, keys) / logN)
+        : 0
+      : normalizedEntropy(primary.dist);
+    const b = ctx.belief;
+    const facets = q.facetIds.map((f) => b?.facets[f]).filter((x): x is NonNullable<typeof x> => !!x);
+    const meanOf = (pick: (f: NonNullable<(typeof facets)[number]>) => number) =>
+      facets.length ? facets.reduce((s, f) => s + pick(f), 0) / facets.length : 0;
+    const facetGap = b ? meanOf((f) => 1 - f.coverage) : 1 - ctx.coverage(q);
+    const domainGap = b ? b.domains[q.domain].shortfall : 0;
+    const gap = b ? 0.5 * facetGap + 0.5 * domainGap : facetGap;
+    const conflict = meanOf((f) => f.conflict);
+    const weakness = b ? 0.5 * meanOf((f) => f.weakness) + 0.5 * b.domains[q.domain].weakness : 0;
+    const pop = this.cfg.piPopulation > 0 ? (ctx.population?.(q) ?? null) : null;
+    const population = pop === null ? 0 : pop - 0.5;
+    const redundancy = ctx.redundancy(q);
+    const burden = burdenOf(q, b, ctx.sessionTarget ?? 30);
+    const score =
+      info +
+      this.cfg.lambdaCoverage * gap +
+      this.cfg.betaConflict * conflict +
+      this.cfg.gammaWeakness * weakness +
+      this.cfg.piPopulation * population -
+      this.cfg.muRedundancy * redundancy -
+      this.cfg.nuBurden * burden;
+    return { info, gap, conflict, weakness, population, redundancy, burden, score };
+  }
+
+  /** Exposure control: candidates whose facets already dominate the adaptive questions, unless all do. */
+  private eligible(ctx: SelectContext): boolean[] {
+    const b = ctx.belief;
+    const flags = ctx.pool.map(() => true);
+    if (!b) return flags;
+    const over = ctx.pool.map((q) => q.facetIds.some((f) => overExposed(b, f, this.cfg.exposureCap)));
+    return over.every(Boolean) ? flags : over.map((o) => !o);
+  }
+
+  async select(ctx: SelectContext): Promise<Selection> {
+    const hyps = (ctx.hypotheses ?? []).slice(0, this.cfg.k);
+    const useHyps = this.cfg.k >= 2 && hyps.length >= 2;
+    const hypStates = useHyps ? hyps.map((h) => withHypothesis(ctx.state, h)) : [];
+    const [primaryPreds, ...hypPreds] = await Promise.all([
+      ctx.primary.predict(ctx.state, ctx.pool),
+      ...hypStates.map((s) => (ctx.explore ?? ctx.primary).predict(s, ctx.pool)),
+    ]);
+    const weights =
+      (ctx.hypothesisWeights ?? []).length === hyps.length && hyps.length
+        ? ctx.hypothesisWeights!
+        : hyps.map(() => 1 / Math.max(1, hyps.length));
+    const eligible = this.eligible(ctx);
+    const okHypsFor = (i: number) =>
+      hypPreds.map((ps, k) => ({ d: ps[i]!, w: weights[k]! })).filter((x) => x.d.ok);
+    // One information scale per selection (see the class comment).
+    const hypRegime = hypStates.length >= 2 && ctx.pool.some((_, i) => okHypsFor(i).length >= 2);
+    let best = -1;
+    let bestParts: VoiParts | null = null;
+    ctx.pool.forEach((q, i) => {
+      const p = primaryPreds[i]!;
+      if (!p.ok || !eligible[i]) return;
+      const okHyps = okHypsFor(i);
+      const parts = this.parts(
+        ctx,
+        q,
+        p,
+        okHyps.map((x) => x.d.dist),
+        okHyps.map((x) => x.w),
+        hypRegime,
+      );
+      if (!bestParts || parts.score > bestParts.score) {
+        best = i;
+        bestParts = parts;
+      }
+    });
+    if (best < 0 || !bestParts) {
+      const i = Math.floor(ctx.rng() * ctx.pool.length);
+      return {
+        question: ctx.pool[i]!,
+        primary: primaryPreds[i]!,
+        diagnostics: { poolSize: ctx.pool.length, failed: 1 },
+      };
+    }
+    const parts: VoiParts = bestParts;
+    const chosen = ctx.pool[best]!;
+    const selection: Selection = {
+      question: chosen,
+      primary: primaryPreds[best]!,
+      diagnostics: {
+        poolSize: ctx.pool.length,
+        eligible: eligible.filter(Boolean).length,
+        k: hypStates.length,
+        score: parts.score,
+        info: parts.info,
+        gap: parts.gap,
+        conflict: parts.conflict,
+        weakness: parts.weakness,
+        population: parts.population,
+        redundancy: parts.redundancy,
+        burden: parts.burden,
+      },
+    };
+    if (hypStates.length)
+      // Failed exploration calls carry no information and are not persisted (the call log records them).
+      selection.hypothesisPreds = hypStates
+        .map((state, k) => ({ index: k, state, result: hypPreds[k]![best]! }))
+        .filter((h) => h.result.ok);
+    return selection;
+  }
+}
+
 export function makeSelector(cfg: PipelineConfig['selector']): Selector {
   switch (cfg.type) {
     case 'random':
@@ -182,11 +395,15 @@ export function makeSelector(cfg: PipelineConfig['selector']): Selector {
       return new EntropySelector(cfg.lambdaCoverage, cfg.muRedundancy);
     case 'bald':
       return new BaldSelector(cfg.k, cfg.lambdaCoverage);
+    case 'voi':
+      return new VoiSelector(cfg);
   }
 }
 
-/** Facets reach full coverage after this many answered questions touch them. */
-export const COVERAGE_TARGET = 3;
+/** Selectors that explore with persona hypotheses, so `hypotheses.refresh` must run for them. */
+export function usesHypotheses(cfg: PipelineConfig['selector']): boolean {
+  return cfg.type === 'bald' || (cfg.type === 'voi' && cfg.k >= 2);
+}
 
 export function facetCoverage(counts: Map<string, number>, facetId: string): number {
   return Math.min(1, (counts.get(facetId) ?? 0) / COVERAGE_TARGET);

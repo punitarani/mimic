@@ -46,6 +46,8 @@ export interface QuestionRecord extends Question {
   servedAt: number | null;
   /** As-of time of the derived data in this question's sealed states; replay rebuilds them from it (ADR-0017). */
   stateAt: number | null;
+  /** The selector's diagnostics for the winning score, written when served (ADR-0027). */
+  selection?: Record<string, unknown> | null;
 }
 
 export interface PredictionRecord {
@@ -67,6 +69,8 @@ export interface PredictionRecord {
   error: string | null;
   /** True when the primary came from the LLM fallback because Jev errored (PLAN §16). */
   fallback: boolean;
+  /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (docs/SELECTION.md §6). */
+  hypothesis?: string | null;
   createdAt: number;
 }
 
@@ -121,7 +125,7 @@ export interface CandidateRecord {
   summary: string;
   jevSamePersonP: number | null;
   r2Key: string | null;
-  /** `superseded`: set aside by a newer search, not judged by the person (ADR-0027). */
+  /** `superseded`: set aside by a newer search, not judged by the person (ADR-0029). */
   status: CandidateStatus;
   createdAt: number;
 }
@@ -240,6 +244,18 @@ export interface ScoredPredictionRow {
   question: Pick<QuestionRecord, 'id' | 'kind' | 'type' | 'seq' | 'itemKey'>;
 }
 
+/** One scored primary or baseline with what the item statistics need (ADR-0027). */
+export interface ScoredItemSource {
+  mimicId: string;
+  questionId: string;
+  role: 'primary' | 'baseline';
+  fallback: boolean;
+  itemAcc: number;
+  logLoss: number;
+  question: Pick<QuestionRecord, 'kind' | 'type' | 'domain' | 'facetIds' | 'options' | 'itemKey'>;
+  answer: { value: string; latencyMs: number };
+}
+
 /** Persistence port used by the engine. Implemented with Drizzle over D1 (Workers) and libSQL (Node CLI). */
 export interface Store {
   // participants
@@ -295,6 +311,7 @@ export interface Store {
     servedAt: number;
     stateAt: number | null;
     predictions: PredictionRecord[];
+    selection?: Record<string, unknown> | null;
   }): Promise<boolean>;
   // predictions & answers
   insertPredictions(recs: PredictionRecord[]): Promise<void>;
@@ -331,6 +348,15 @@ export interface Store {
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
+  // cross-person item statistics (aggregate only; ADR-0027)
+  /** Every scored primary and baseline of the matching mimics' anchor and adaptive questions, in one query. */
+  listScoredForStats(filter: {
+    consentResearch: boolean;
+    split: 'dev' | 'test';
+  }): Promise<ScoredItemSource[]>;
+  /** Replaces the whole table atomically, so keys absent from `recs` are removed. */
+  replaceItemStats(recs: import('./population').ItemStatRecord[]): Promise<void>;
+  listItemStats(): Promise<import('./population').ItemStatRecord[]>;
   // jobs ledger
   getJob(key: string): Promise<JobRecord | null>;
   putJob(rec: JobRecord): Promise<void>;

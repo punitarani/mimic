@@ -378,7 +378,126 @@ landing page's button carries it to `/new`.
   hydration only fills the field in.
 - Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
 
-## ADR-0027 — Identity search: plain queries, the person's link, a name filter and search again (2026-09-30)
+## ADR-0027 — Value-of-information selection, belief-driven generation and cross-person item statistics (2026-09-30)
+
+The adaptive loop asked what the predictor was unsure about. That over-selects noisy questions, ignores what the
+person's own answers contradict, ignores where the mimic is actually wrong, and learns nothing from other people.
+`docs/SELECTION.md` sets out the replacement and the research behind it (adaptive testing, expected information
+gain, BALD, the digital-twin mega-study, response-time evidence, survey satisficing, hierarchical priors). This
+ADR records the decisions.
+
+- **Belief state** (`packages/core/src/belief.ts`): per facet, uncertainty (trait-read entropy and confidence),
+  conflict (Jev vs psychometric reads, superseded insights, repeat flips, torn answers), weakness (the sealed
+  primary's recent error on the facet, shrunk toward the person's overall error), coverage and exposure; per
+  domain, share and weakness; per person, median latency, speeding and straightlining. Pure and deterministic;
+  never in a prompt or a state.
+- **`voi` selector** (`selector.type = 'voi'`): `info + λ·gap + β·conflict + γ·weakness + π·(pop − ½) − μ·redundancy
+  − ν·burden`, with exposure control (a facet may take at most 35% of the adaptive questions once 4 are answered).
+  `info` is on one scale per selection: posterior-weighted hypothesis mutual information when any candidate has
+  ≥ 2 hypothesis predictions (0 for a candidate whose exploration calls failed), else predictive entropy for every
+  candidate. Exposure control is shared with the generator (`overExposed`) and starts after 4 adaptive answers.
+  The chosen question's sealed primary is still the plain-state prediction from the batched call. The winning
+  score's components go to `questions.selection_json`.
+- **Persona posterior.** The chosen question's per-hypothesis predictions are stored as `role = hypothesis` rows
+  tagged `{set seqUpTo}:{index}` (`predictions.hypothesis`), with their states in R2 like every other prediction
+  (ADR-0010). They are never scored. On each serve the weights are recomputed from those rows and the answers
+  given since the set was written (uniform prior, likelihoods floored at 1e-4). `hypotheses.refresh` now runs
+  for `voi` as well as `bald`. Backfill and the missing-shadow repair ignore hypothesis rows.
+- **`gen.v2`**: targets are the five facets with the highest need, each with why (unexplored, uncertain,
+  conflicted, weak) and the person's current reading, so the generator pitches trade-offs at that reading (the
+  adaptive-testing rule that an item is most informative where its difficulty matches the estimate). Facets over
+  the exposure cap are listed to avoid; the domain quota is tilted toward the weakest domains. Pooled candidates
+  count toward coverage so a refill does not pile onto facets the pool already has.
+- **Latency hints** (`stateBuilder.latencyHints`, builder `full.v2`): evidence carries `pace: quick | slow` for
+  answers under half or over twice the person's median latency over the sealed evidence, costed against the
+  budget as rendered. A latency of 0 means "not recorded" everywhere (no pace, never speeding). Deterministic
+  from exported data (`answers.latency_ms`), so replay still reproduces states. Optional and undefaulted in the schema,
+  so configs written before it keep their hashes (v3 is pinned in a test next to v4).
+- **Item statistics** (`item_stats`, migration 0003, `stats.refresh` from the cron hourly): aggregate rows per
+  `item_key` and per `facet | domain | type` archetype over research-consented dev-split mimics, read in one join
+  query and written by replacing the whole table atomically, so a deleted mimic or a withdrawn consent drops out
+  at the next run and no stale key survives. Groups with fewer than 5 people are never written, so no stored row
+  is one person's numbers. `pop(q)` is `½·answer entropy + ½·baseline error` for items, or the mean over the
+  question's facets' archetypes of `½·surprise + ½·baseline error`, shrunk toward ½ with a prior of 20 answers.
+  It ranks candidates only, never enters a prompt or a state (PLAN §3.8), and its weight π is bounded. The test
+  split never feeds it. `/next` reads the table through a per-isolate cache with a 5-minute TTL.
+- **Guardrails against getting worse with use**: every term is bounded; coverage, uncertainty and conflict decay
+  on their own; the exposure cap stops a noisy facet from monopolising a session; weakness is prequential; burden
+  grows with session length; population statistics are a shrunk, bounded prior that cannot override the person's
+  own terms and are reported as a separate ablation (`pnpm eval -- select --selector entropy,voi` and
+  `--no-population`).
+- **Default config `cfg.default.v4`** = v3 + `voi`, `gen.v2` and latency hints. Mimics created under v1–v3 keep
+  their configs. Not done: one-step lookahead EIG on the pool (exact but |pool| × |options| Jev calls), a shared
+  bank of generated questions (needs a leakage check), Twin-2K-500 item statistics as a cold-start prior.
+
+## ADR-0028 — Prediction prompt variants, the eval loop and GEPA-style optimization (2026-09-30)
+
+`docs/OPTIMIZATION.md` is the design; this records what was built and the choices made.
+
+**Prompt components and variants.** The prediction prompts are named text components
+(`packages/core/src/components.ts`): the LLM predictor's system prompt and user template, the evidence line of the state
+text, and Jev's instructions and criteria templates. The incumbents render byte for byte what the old literals did
+(pinned by a test). A registered variant is addressable as `llm:<model>@<version>` or `jev:<model>@<version>`
+(`parsePredictorId`), so it can be a config's primary or shadow, and `pnpm backfill` can run it over served questions
+on the primary's sealed states. `predictions.prompt_version` now comes from the predictor ID instead of a literal.
+Without a suffix nothing changes: the IDs, prompts and config hashes of v1–v3 are untouched. Variants are mirrored to
+`docs/prompts/variants/`. A variant may also set harness options: reasoning effort, max tokens, an output schema with
+a short rationale before the probabilities, and Jev receiving the state as the LLMs' text rendering.
+
+**Evaluator.** `mimic-eval evaluate` scores candidates on sealed instances: each served question with its state rebuilt
+as served (ADR-0017), or, for Twin-2K-500 people, their first k answers against the held-out wave. Each record carries
+log loss, item accuracy, Brier, the stored baseline's accuracy on the same question, and textual feedback (the answer,
+the person's reason, the profile-only guess, related earlier answers, repeat agreement). `--from stored` reports on the
+predictions already stored, with no model calls, and fits a temperature per predictor, shrinkage toward the baseline
+and Jev + LLM log-linear pools on dev people, checked on test people.
+
+**Optimizer.** `mimic-eval optimize` is a TypeScript GEPA loop over the real engine code (no Python, no second copy of
+the prompts): Pareto parent sampling over per-instance validation scores, one component rewritten per iteration by a
+reflection model reading a minibatch of cases, acceptance only when the child beats its parent on the minibatch by
+more than the measured noise floor, then a full validation pass. Choices:
+
+- *Objective:* −log loss per question, so calibration counts; a failed output scores as a uniform guess minus 1 nat.
+- *Splits:* dev people train and validate (by person with 6 or more dev people, otherwise by question); test people
+  are a holdout evaluated once, after selection (PLAN §12.4). "Improved" needs the validation gain above twice the
+  noise standard error, a 90% bootstrap CI above zero, and no loss on the holdout beyond that margin.
+- *Leakage lint:* a child is rejected if it adds a 6-word sequence from any question, reason or insight in the data, or
+  an identity detail (name, location, employer, fact). Instruction-only optimization with no real-person demos keeps
+  invariant 8.
+- *Reflection model:* `anthropic/claude-sonnet-5.5` by default ($2/$10 per million tokens at the time), low reasoning
+  effort. It is offline tooling, logged through the gateway as `eval.reflect`, never in a production config.
+- *Budgets:* hard caps on predictions (`--max-metric-calls`, default 400) and dollars (`--max-usd`, default 2); an
+  iteration that could not be validated within either is not started. Runs are resumable from `--run-dir`.
+- *Cost:* Jev components are the default target because Jev bills input only (about $0.0001 per question), so a run
+  is dominated by reflection calls.
+- *One person per reflection:* each minibatch is drawn from one person, and `diagnose` makes one call per person, so
+  no prompt mixes people's answers (invariant 8). Names are left out of the cases as well. These are offline analysis
+  calls on consented, scrubbed data, and their output passes the leakage lint before it can reach a product prompt.
+- *Tooling prompts are versioned:* the reflection and diagnosis prompts (`optimize.reflect.v1`,
+  `optimize.diagnose.v1`) live in `packages/eval/src/optimize/reflect.ts`, are recorded on each run and mirrored to
+  `docs/prompts/optimize/` with a sync test. A reply that breaks a rule gets one repair turn naming the problems.
+- *Transport failures are not scores:* predictors label a failure `transport` or `output`. Only the failed questions
+  are retried once. A transport failure is never cached. If it persists, the optimizer stops gracefully rather than
+  let an outage decide an acceptance, the Pareto front or the holdout; the run can be resumed. A malformed output is
+  the candidate's fault and is scored as a failure.
+- *Batching and margins:* Jev questions that share a state go in one request, split only near the 32K context. The
+  minibatch margin uses the size of the minibatch actually drawn. With six or more dev people, a balanced, seeded
+  half of them validate. A run directory refuses to resume against different data, since exports re-salt IDs.
+- *Validation at the edges:* `PipelineConfig` rejects an unregistered or incumbent-aliased `@<version>`, so `/lab`
+  can't register a config that would break `/next`. `pnpm backfill` checks a version against
+  `docs/prompts/variants/` before enqueueing. Published metrics are compacted to fit one D1 statement; the full report
+  is in R2.
+
+**Shipping.** A winner is never deployed by the optimizer. It writes the candidate and a `PREDICT_PROMPTS` entry to
+paste; registering it is a code change reviewed like any other, then `pnpm backfill --predictor <id>@<version>` gives a
+within-person comparison on identical sealed states in `/lab`, and promotion to primary goes through a config and an
+experiment arm. Calibration post-processing is reported but not applied online yet (a later config field).
+
+**Where it runs.** `.github/workflows/optimize.yml` (Actions → Optimize), like the backfill: export prod (consented,
+scrubbed), optionally add Twin-2K-500 people, report on stored predictions for free, and optionally optimize. Only
+aggregates and prompt text leave the runner: the step summary, `/lab`, and an artifact with the candidate. Hugging
+Face is blocked in the Claude Code environment, so the Twin step runs only in Actions and is best-effort there.
+
+## ADR-0029 — Identity search: plain queries, the person's link, a name filter and search again (2026-09-30)
 
 Two real people tried identity search in prod and neither was offered: a software engineer with a rare name got two
 strangers, and a recent graduate with a common name got nothing. Replaying their intakes against Exa found the causes.

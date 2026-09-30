@@ -43,7 +43,7 @@ export function quantile(xs: number[], q: number): number {
   return s[lo]! + (s[hi]! - s[lo]!) * (pos - lo);
 }
 
-const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+export const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
 /**
  * Per-predictor metrics (PLAN §12.3): accuracy (item_acc), log loss, Brier, ECE (10 bins), lift over the baseline
