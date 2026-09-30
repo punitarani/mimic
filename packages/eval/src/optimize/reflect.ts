@@ -1,4 +1,4 @@
-import { argmax, COMPONENT_SPECS, type ComponentId, type Gateway } from '@mimic/core';
+import { argmax, type ChatMessage, COMPONENT_SPECS, type ComponentId, type Gateway } from '@mimic/core';
 import { type Candidate, type EvalRecord, stateExcerpt } from './evaluate';
 import type { EvalInstance } from './instances';
 
@@ -84,7 +84,7 @@ Rules:
   cases, and never copy their wording. Describe general strategy: how to weigh evidence, what to attend to, how to
   spread probability.
 - Keep every placeholder in curly braces exactly as listed. Add no new ones.
-- Stay within the word limit.
+- Stay within the word limit. It is a hard limit: longer text is rejected.
 - Return the new text inside <component>...</component>, with nothing else inside the tags.`;
 
 function distLine(inst: EvalInstance, rec: EvalRecord): string {
@@ -151,19 +151,41 @@ export function parseReflection(content: string): string | null {
   return text || null;
 }
 
+/**
+ * Asks the reflection model for a new version of one component. If the reply breaks a rule (`check` returns problems:
+ * missing placeholders, too long, copied person text), it gets one repair turn naming the problems, since a rejected
+ * reply otherwise wastes the whole iteration. Returns the text and its problems (empty when valid).
+ */
 export async function proposeComponent(
   gateway: Gateway,
   model: string,
   c: Candidate,
   id: ComponentId,
   cases: string,
-): Promise<{ text: string | null; costUsd: number }> {
-  const res = await gateway.chat(
-    { purpose: 'eval.reflect' },
-    { model, messages: reflectMessages(c, id, cases), reasoningEffort: 'low', maxTokens: 6000 },
-  );
-  // Placeholders and length are checked by the caller (componentProblems), like every other candidate.
-  return { text: parseReflection(res.content), costUsd: res.usage.costUsd };
+  check: (text: string) => string[] = () => [],
+): Promise<{ text: string | null; problems: string[]; costUsd: number; calls: number }> {
+  const messages: ChatMessage[] = reflectMessages(c, id, cases);
+  let costUsd = 0;
+  let text: string | null = null;
+  let problems: string[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await gateway.chat(
+      { purpose: 'eval.reflect' },
+      { model, messages, reasoningEffort: 'low', maxTokens: 6000 },
+    );
+    costUsd += res.usage.costUsd;
+    text = parseReflection(res.content);
+    problems = text ? check(text) : ['no <component> in the reply'];
+    if (!problems.length) return { text, problems, costUsd, calls: attempt + 1 };
+    messages.push(
+      { role: 'assistant', content: res.content },
+      {
+        role: 'user',
+        content: `That text can't be used: ${problems.join('; ')}. Fix exactly these problems (the word limit is ${COMPONENT_SPECS[id].maxWords}) and return the whole component again inside <component>...</component>.`,
+      },
+    );
+  }
+  return { text, problems, costUsd, calls: 2 };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

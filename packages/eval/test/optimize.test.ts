@@ -28,7 +28,7 @@ import {
 } from '../src/optimize/evaluate';
 import { optimize, sampleParent, splitInstances, variantSnippet } from '../src/optimize/gepa';
 import { type EvalInstance, loadInstances } from '../src/optimize/instances';
-import { leakageProblems, leakCorpus, parseReflection } from '../src/optimize/reflect';
+import { leakageProblems, leakCorpus, parseReflection, proposeComponent } from '../src/optimize/reflect';
 import { renderReport } from '../src/report';
 import { runSession, SessionScript } from '../src/session';
 
@@ -225,6 +225,37 @@ describe('leakage lint', () => {
     ).toEqual([]);
     // Text already in the parent is not new leakage.
     expect(leakageProblems(`Keep ${q}`, `Keep ${q}`, corpus())).toEqual([]);
+  });
+
+  it('gives an invalid reflection one repair turn naming its problems', async () => {
+    const replies = ['<component>Too long {prompt}</component>', '<component>Short {prompt}</component>'];
+    const seen: string[] = [];
+    const gw = new Gateway({
+      decisions: new HintDecisions(),
+      llm: {
+        provider: 'x',
+        chat: async (req) => {
+          seen.push(req.messages.at(-1)!.content);
+          return {
+            content: replies.shift()!,
+            modelSnapshot: 'r',
+            usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.01 },
+            latencyMs: 1,
+            raw: {},
+          };
+        },
+      },
+      log: { write: async () => {} },
+      clock: () => 0,
+      newId: ulid,
+    });
+    const c = resolveCandidate({ predictor: 'jev:typesafe/jev-1.13' });
+    const r = await proposeComponent(gw, 'm', c, 'jev.instructions', 'cases', (t) =>
+      t.startsWith('Too') ? ['too long'] : [],
+    );
+    expect(r).toMatchObject({ text: 'Short {prompt}', problems: [], calls: 2 });
+    expect(r.costUsd).toBeCloseTo(0.02);
+    expect(seen[1]).toContain("That text can't be used: too long");
   });
 
   it('parses the reflection reply', () => {

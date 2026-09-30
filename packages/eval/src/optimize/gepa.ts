@@ -374,19 +374,23 @@ export async function optimize(
         );
         save();
       };
-      let text: string | null;
+      const check = (t: string) => [
+        ...componentProblems(component, t),
+        ...leakageProblems(t, parent.candidate.prompt.components[component], corpus),
+      ];
+      let proposal: Awaited<ReturnType<typeof proposeComponent>>;
       try {
-        const r = await proposeComponent(
+        proposal = await proposeComponent(
           deps.gateway,
           run.reflectionModel,
           parent.candidate,
           component,
           reflectiveCases(byId, parentRecs),
+          check,
         );
-        meter.usd += r.costUsd;
-        meter.reflections++;
-        state.meter.reflectionUsd += r.costUsd;
-        text = r.text;
+        meter.usd += proposal.costUsd;
+        meter.reflections += proposal.calls;
+        state.meter.reflectionUsd += proposal.costUsd;
         reflectionErrors = 0;
       } catch (e) {
         if (e instanceof BudgetStop) throw e;
@@ -398,16 +402,9 @@ export async function optimize(
         }
         continue;
       }
-      if (!text) {
-        log({ outcome: 'invalid', detail: 'no <component> in the reply' });
-        continue;
-      }
-      const problems = [
-        ...componentProblems(component, text),
-        ...leakageProblems(text, parent.candidate.prompt.components[component], corpus),
-      ];
-      if (problems.length) {
-        log({ outcome: 'invalid', detail: problems.join('; ') });
+      const text = proposal.text;
+      if (!text || proposal.problems.length) {
+        log({ outcome: 'invalid', detail: proposal.problems.join('; ') });
         continue;
       }
       const child = withComponent(parent.candidate, component, text, `#${it} ${component}`);
