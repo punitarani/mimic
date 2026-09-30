@@ -22,17 +22,17 @@ on:
         options: [report, optimize]
         default: report
       predictor:
-        description: Seed predictor, e.g. jev:typesafe/jev-1.13 or llm:deepseek/deepseek-v4.1-flash
+        description: Seed predictor, e.g. jev:typesafe/jev-1.13@jev-predict.v2 (calibrated) or llm:deepseek/deepseek-v4.1-flash@predict.v2
         type: string
-        default: jev:typesafe/jev-1.13
+        default: jev:typesafe/jev-1.13@jev-predict.v2
       components:
         description: Components to rewrite, comma-separated (empty uses the defaults for the predictor kind)
         type: string
         default: ''
       max_metric_calls:
-        description: Budget in predictions (GEPA metric calls)
+        description: Budget in predictions (GEPA metric calls); max_usd stops the run first if it binds
         type: string
-        default: '400'
+        default: '2500'
       max_usd:
         description: Spend cap in USD for the optimize run
         type: string

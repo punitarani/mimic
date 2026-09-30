@@ -106,20 +106,39 @@ export const INCUMBENT_COMPONENTS: PredictComponents = {
 };
 
 export interface PredictHarness {
-  /** LLM reasoning effort (never temperature; CLAUDE.md). */
+  /** LLM reasoning effort (never temperature; CLAUDE.md). Used when `reasoningMaxTokens` is null. */
   reasoningEffort: 'none' | 'low' | 'medium';
+  /**
+   * An explicit reasoning token budget, for models that ignore effort levels and take a budget instead (OpenRouter
+   * `reasoning.max_tokens`). Null means use `reasoningEffort`.
+   */
+  reasoningMaxTokens: number | null;
+  /** Output cap. It covers reasoning and the answer together, so it must leave room for both. */
   maxTokens: number;
   /** LLM output schema: `probs`, or `reasoned` (a short rationale written before the probabilities). */
   schema: 'probs' | 'reasoned';
   /** How the state reaches Jev: the JSON object, or the same text rendering the LLMs see. */
   jevState: 'json' | 'text';
+  /**
+   * Post-hoc calibration of the returned distribution: p ∝ p^(1/T). 1 leaves it alone; above 1 softens an
+   * overconfident predictor. Not a sampling temperature: nothing is sent to the provider.
+   */
+  calibrationTemperature: number;
+  /**
+   * Accept an LLM's option labels in place of their keys: some models answer a 0–4 scale with "Never", "Often", …
+   * as keys. Used only when every option is then covered, each by one label.
+   */
+  labelKeys: boolean;
 }
 
 export const INCUMBENT_HARNESS: PredictHarness = {
   reasoningEffort: 'low',
+  reasoningMaxTokens: null,
   maxTokens: 3000,
   schema: 'probs',
   jevState: 'json',
+  calibrationTemperature: 1,
+  labelKeys: false,
 };
 
 export interface PredictPromptVariant {
@@ -129,6 +148,11 @@ export interface PredictPromptVariant {
   /** Overrides over the incumbent; omitted components keep the incumbent text. */
   components: Partial<PredictComponents>;
   harness: Partial<PredictHarness>;
+  /**
+   * Per-model harness overrides (reasoning control and caps differ by model), applied over `harness`. A model not
+   * listed gets `harness`. Part of the version: changing a model's settings means a new version ID.
+   */
+  modelHarness?: Record<string, Partial<PredictHarness>>;
   /** Where it came from, e.g. the optimize run that produced it. */
   source: string;
 }
@@ -164,9 +188,44 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
     harness: {},
     source: 'PLAN §9.6',
   },
+  /**
+   * ADR-0037: the incumbent prompt with reasoning controls and caps set per model from measured usage, and option
+   * labels accepted as keys. Every model reasons at a low setting: an effort level where the model honours one, a
+   * 1,024-token budget where it only takes a budget. A cap is about twice the largest completion measured (at least
+   * 1,500), twice the budget for a budget model, so reasoning can't eat the answer. A truncated call is billed for its
+   * whole cap, so a generous cap costs almost nothing. Models not listed keep the incumbent harness.
+   */
+  'predict.v2': {
+    id: 'predict.v2',
+    kind: 'llm',
+    title: 'LLM predictor, per-model reasoning budgets',
+    components: {},
+    harness: { labelKeys: true },
+    modelHarness: {
+      'openai/gpt-6-luna': { reasoningEffort: 'low', maxTokens: 1500 },
+      'deepseek/deepseek-v4.1-flash': { reasoningEffort: 'low', maxTokens: 6000 },
+      'z-ai/glm-5.3-flash': { reasoningEffort: 'low', maxTokens: 3000 },
+      'xiaomi/mimo-v2.6-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
+      'qwen/qwen3.8-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
+    },
+    source: 'ADR-0037: reasoning usage measured per model on long states',
+  },
+  /**
+   * ADR-0037: the incumbent Jev templates with a calibration temperature of 4. Fitted on the prod dev person and
+   * checked on the two test people, it cut their log loss from 1.80 to 1.12 and calibration error from 0.27 to
+   * 0.10. Runs as a shadow first; promotion to primary goes through a config.
+   */
+  'jev-predict.v2': {
+    id: 'jev-predict.v2',
+    kind: 'jev',
+    title: 'Jev prediction templates, calibrated (temperature 4)',
+    components: {},
+    harness: { calibrationTemperature: 4 },
+    source: 'ADR-0037: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)',
+  },
 };
 
-export function resolvePredictPrompt(version: string, kind: 'jev' | 'llm'): PredictPrompt {
+export function resolvePredictPrompt(version: string, kind: 'jev' | 'llm', model?: string): PredictPrompt {
   const v = PREDICT_PROMPTS[version];
   if (!v) throw new Error(`Unknown prediction prompt version: ${version}`);
   if (v.kind !== kind) throw new Error(`Prompt version ${version} is for ${v.kind} predictors, not ${kind}`);
@@ -174,7 +233,7 @@ export function resolvePredictPrompt(version: string, kind: 'jev' | 'llm'): Pred
     version,
     kind,
     components: { ...INCUMBENT_COMPONENTS, ...v.components },
-    harness: { ...INCUMBENT_HARNESS, ...v.harness },
+    harness: { ...INCUMBENT_HARNESS, ...v.harness, ...(model ? v.modelHarness?.[model] : undefined) },
   };
 }
 
@@ -219,9 +278,30 @@ export function renderVariantDoc(v: PredictPromptVariant): string {
     '',
     `- Predictor kind: \`${v.kind}\` (use as \`${v.kind}:<model>@${v.id}\`)`,
     `- Source: ${v.source}`,
-    `- Harness: \`${JSON.stringify(p.harness)}\``,
-    '',
   ];
+  const models = Object.entries(v.modelHarness ?? {});
+  lines.push(
+    `- Harness${models.length ? ' (models not listed below)' : ''}: \`${JSON.stringify(p.harness)}\``,
+    '',
+  );
+  if (models.length) {
+    lines.push(
+      '## Per-model harness',
+      '',
+      '| Model | Reasoning | Token cap (reasoning and answer) | Other settings |',
+      '| --- | --- | --- | --- |',
+      ...models.map(([m, o]) => {
+        const h = resolvePredictPrompt(v.id, v.kind, m).harness;
+        const reasoning = h.reasoningMaxTokens
+          ? `budget ${h.reasoningMaxTokens} tokens`
+          : `effort ${h.reasoningEffort}`;
+        const { reasoningEffort: _e, reasoningMaxTokens: _b, maxTokens: _c, ...other } = o;
+        const rest = Object.keys(other).length ? `\`${JSON.stringify(other)}\`` : '—';
+        return `| \`${m}\` | ${reasoning} | ${h.maxTokens} | ${rest} |`;
+      }),
+      '',
+    );
+  }
   for (const id of COMPONENT_IDS) {
     if (!componentReadBy(id, p)) continue;
     const overridden = id in v.components ? '' : ' (incumbent)';

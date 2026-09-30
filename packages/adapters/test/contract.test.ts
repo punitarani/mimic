@@ -183,6 +183,20 @@ describe('OpenRouter chat', () => {
     expect(body).not.toHaveProperty('provider');
     expect(body).not.toHaveProperty('temperature');
   });
+
+  it('sends a reasoning budget when given one, else the effort, never both', () => {
+    const chat = new OpenRouterChat();
+    const base = { model: 'qwen/qwen3.8-flash', messages: [], maxTokens: 2400 };
+    expect(chat.buildBody({ ...base, reasoningEffort: 'low' }).reasoning).toEqual({
+      effort: 'low',
+      exclude: true,
+    });
+    expect(chat.buildBody({ ...base, reasoningEffort: 'low', reasoningMaxTokens: 1024 }).reasoning).toEqual({
+      max_tokens: 1024,
+      exclude: true,
+    });
+    expect(chat.buildBody(base)).not.toHaveProperty('reasoning');
+  });
 });
 
 describe('embeddings', () => {

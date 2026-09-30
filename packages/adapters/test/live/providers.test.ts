@@ -1,6 +1,12 @@
 // Live smoke tests: one real call per provider. Run with `pnpm test:live` (LIVE=1). Each call costs a fraction of
 // a cent. Keys come from the environment; in the Claude Code remote env the outbound proxy injects them.
-import { DEFAULT_CONFIG, LLM_PREDICTOR_MAX_TOKENS, PROMPTS, parsePredictorId } from '@mimic/core';
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_PROMPT_VERSION,
+  PROMPTS,
+  parsePredictorId,
+  resolvePredictPrompt,
+} from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
   ExaEnricher,
@@ -62,19 +68,23 @@ describe.skipIf(!LIVE)('live providers', () => {
     expect(r.usage.costUsd).toBeGreaterThan(0);
   }, 60_000);
 
-  // One call per LLM shadow in the default config, with the exact predict.v1 request a shadow makes.
-  const shadowModels = DEFAULT_CONFIG.predictor.shadows
+  // One call per LLM shadow in the default config, with the exact request that shadow makes: its prompt version's
+  // text, reasoning control (effort or budget) and cap for that model (ADR-0037).
+  const shadows = DEFAULT_CONFIG.predictor.shadows
     .map(parsePredictorId)
     .filter((p) => p.kind === 'llm')
-    .map((p) => p.model);
-  it.each(shadowModels)(
-    'shadow %s returns a predict.v1 distribution',
-    async (model) => {
-      const p = PROMPTS['predict.v1'];
+    .map((p) => ({
+      model: p.model,
+      prompt: resolvePredictPrompt(p.promptVersion ?? DEFAULT_PROMPT_VERSION.llm, 'llm', p.model),
+    }));
+  it.each(shadows.map((s) => [s.model, s] as const))(
+    'shadow %s returns a valid distribution',
+    async (_, { model, prompt }) => {
+      const h = prompt.harness;
       const r = await new OpenRouterChat(or).chat({
         model,
         messages: [
-          { role: 'system', content: p.system },
+          { role: 'system', content: prompt.components['predict.system'] },
           {
             role: 'user',
             content:
@@ -82,9 +92,11 @@ describe.skipIf(!LIVE)('live providers', () => {
               'QUESTION: A friend invites you to a loud party on Saturday. Do you go?\nOPTIONS:\nyes: Yes\nno: No',
           },
         ],
-        jsonSchema: { name: 'probs', schema: p.schema },
-        reasoningEffort: 'low',
-        maxTokens: LLM_PREDICTOR_MAX_TOKENS,
+        jsonSchema: { name: 'probs', schema: PROMPTS['predict.v1'].schema },
+        ...(h.reasoningMaxTokens
+          ? { reasoningMaxTokens: h.reasoningMaxTokens }
+          : { reasoningEffort: h.reasoningEffort }),
+        maxTokens: h.maxTokens,
       });
       const probs = JSON.parse(r.content).probs as Array<{ key: string; p: number }>;
       expect(probs.map((x) => x.key).sort()).toEqual(['no', 'yes']);

@@ -153,13 +153,34 @@ export const DEFAULT_CONFIG_V3: PipelineConfig = {
  * `pnpm backfill` adds new shadows to their served questions. Deviation (ADR-0004): generator and reflector default
  * to DeepSeek V4.1 Flash, not GPT-6 Luna.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V4: PipelineConfig = {
   ...DEFAULT_CONFIG_V3,
   generator: { ...DEFAULT_CONFIG_V3.generator, promptVersion: 'gen.v2' },
   selector: VOI_SELECTOR,
   stateBuilder: { ...DEFAULT_CONFIG_V3.stateBuilder, latencyHints: true },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v4';
+
+/**
+ * `cfg.default.v5` (ADR-0037): v4 with every LLM shadow on `predict.v2` (reasoning set per model: a low effort, or a
+ * 1,024-token budget for models that only take one, and caps sized from measured usage), plus Jev with a calibration
+ * temperature (`jev-predict.v2`) as a shadow beside the primary. The primary is unchanged. Older mimics keep their
+ * config; `pnpm backfill` adds the new shadows to questions already served.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V4,
+  predictor: {
+    primary: `jev:${JEV_MODEL}`,
+    shadows: [
+      `llm:${LLM.luna}@predict.v2`,
+      `llm:${LLM.deepseek}@predict.v2`,
+      `llm:${LLM.glm}@predict.v2`,
+      `llm:${LLM.mimoFlash}@predict.v2`,
+      `llm:${LLM.qwenFlash}@predict.v2`,
+      `jev:${JEV_MODEL}@jev-predict.v2`,
+    ],
+  },
+};
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v5';
 
 /**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never

@@ -6,7 +6,9 @@ import {
   componentReadBy,
   DEFAULT_PROMPT_VERSION,
   type Gateway,
+  INCUMBENT_HARNESS,
   PREDICT_PROMPTS,
+  type PredictHarness,
   seededRng,
   shuffle,
   unitHash,
@@ -600,12 +602,30 @@ export function variantSnippet(r: OptimizeResult, runId: string): string | null 
   const c = r.best.candidate;
   // A registered variant overrides the incumbent, not the seed's base variant, so diff against the incumbent.
   const incumbent = DEFAULT_PROMPT_VERSION[c.kind];
+  // An LLM's reasoning settings and cap were measured for its model (ADR-0037), so they stay with that model. Other
+  // models keep what the seed's base variant gave them (its shared harness and their own `modelHarness` entries), so
+  // promoting the winner to every shadow doesn't reset them to the incumbent. Jev is one model, so its settings apply
+  // as they are.
+  let harnessLines = `harness: ${JSON.stringify(changedHarness(c, incumbent))},`;
+  if (c.kind === 'llm') {
+    const base = c.baseVersion === incumbent ? undefined : PREDICT_PROMPTS[c.baseVersion];
+    const shared: Partial<PredictHarness> = base?.harness ?? {};
+    const inherited: PredictHarness = { ...INCUMBENT_HARNESS, ...shared };
+    const own: Partial<PredictHarness> = {};
+    for (const k of Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>)
+      if (c.prompt.harness[k] !== inherited[k]) Object.assign(own, { [k]: c.prompt.harness[k] });
+    const perModel: Record<string, Partial<PredictHarness>> = { ...base?.modelHarness };
+    if (Object.keys(own).length) perModel[c.model] = own;
+    else delete perModel[c.model];
+    harnessLines = `harness: ${JSON.stringify(shared)},`;
+    if (Object.keys(perModel).length) harnessLines += `\n    modelHarness: ${JSON.stringify(perModel)},`;
+  }
   return `  '${v}': {
     id: '${v}',
     kind: '${c.kind}',
     title: ${JSON.stringify(`Optimized by ${r.state.spec.name}`)},
     components: ${JSON.stringify(changedComponents(c, incumbent), null, 2).replace(/\n/g, '\n    ')},
-    harness: ${JSON.stringify(changedHarness(c, incumbent))},
+    ${harnessLines}
     source: ${JSON.stringify(`mimic-eval optimize run ${runId}`)},
   },`;
 }

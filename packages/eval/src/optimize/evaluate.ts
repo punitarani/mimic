@@ -26,6 +26,7 @@ import {
   scorePrediction,
   seededRng,
   selfConsistency,
+  temperatureScale,
   uniform,
 } from '@mimic/core';
 import { z } from 'zod';
@@ -47,6 +48,9 @@ export const CandidateInput = z.object({
       maxTokens: z.number().int().min(200).max(20_000),
       schema: z.enum(['probs', 'reasoned']),
       jevState: z.enum(['json', 'text']),
+      reasoningMaxTokens: z.number().int().min(128).max(32_000).nullable(),
+      calibrationTemperature: z.number().min(0.1).max(20),
+      labelKeys: z.boolean(),
     })
     .partial()
     .default({}),
@@ -68,7 +72,7 @@ export function resolveCandidate(input: CandidateInput): Candidate {
   const c = CandidateInput.parse(input);
   const spec = parsePredictorId(c.predictor);
   const baseVersion = spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind];
-  const base = resolvePredictPrompt(baseVersion, spec.kind);
+  const base = resolvePredictPrompt(baseVersion, spec.kind, spec.model);
   const prompt = {
     kind: spec.kind,
     components: { ...base.components, ...c.components },
@@ -99,7 +103,7 @@ export function changedComponents(
   c: Candidate,
   against: string = c.baseVersion,
 ): Partial<Record<ComponentId, string>> {
-  const base = resolvePredictPrompt(against, c.kind);
+  const base = resolvePredictPrompt(against, c.kind, c.model);
   const out: Partial<Record<ComponentId, string>> = {};
   for (const id of COMPONENT_IDS)
     if (c.prompt.components[id] !== base.components[id]) out[id] = c.prompt.components[id];
@@ -107,7 +111,7 @@ export function changedComponents(
 }
 
 export function changedHarness(c: Candidate, against: string = c.baseVersion): Partial<PredictHarness> {
-  const base = resolvePredictPrompt(against, c.kind).harness;
+  const base = resolvePredictPrompt(against, c.kind, c.model).harness;
   const out: Partial<PredictHarness> = {};
   for (const k of Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>)
     if (c.prompt.harness[k] !== base[k]) Object.assign(out, { [k]: c.prompt.harness[k] });
@@ -560,13 +564,8 @@ export function noiseSd(
 // Post-hoc calibration and pooling on stored predictions (M11; no model calls)
 // ---------------------------------------------------------------------------------------------------------------
 
-export function temperatureScale(dist: Distribution, t: number): Distribution {
-  const keys = Object.keys(dist);
-  return normalizeDist(
-    Object.fromEntries(keys.map((k) => [k, Math.max(dist[k]!, P_FLOOR) ** (1 / t)])),
-    keys,
-  );
-}
+/** Moved to core (ADR-0037): a registered prompt variant applies it online. */
+export { temperatureScale };
 
 /** Log-linear pool: p ∝ a^w · b^(1−w). */
 export function pool(a: Distribution, b: Distribution, w: number): Distribution {
@@ -660,7 +659,8 @@ function fitParam(
  */
 export function calibrationFits(instances: EvalInstance[]): FitRow[] {
   const rows: FitRow[] = [];
-  const temps = Array.from({ length: 31 }, (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000);
+  // 0.25 to 16: the first prod report put Jev's best temperature at the old top of 4 (ADR-0037).
+  const temps = Array.from({ length: 46 }, (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000);
   const unit = Array.from({ length: 21 }, (_, i) => i / 20);
   const byPredictor = new Map<string, Pair[]>();
   const primary = new Map<string, Distribution>();

@@ -1,10 +1,10 @@
-# jev-predict.v1 — Jev prediction templates (incumbent)
+# jev-predict.v2 — Jev prediction templates, calibrated (temperature 4)
 
 > Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0028).
 
-- Predictor kind: `jev` (use as `jev:<model>@jev-predict.v1`)
-- Source: PLAN §9.6
-- Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":1,"labelKeys":false}`
+- Predictor kind: `jev` (use as `jev:<model>@jev-predict.v2`)
+- Source: ADR-0037: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)
+- Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":4,"labelKeys":false}`
 
 ## jev.instructions (incumbent)
 

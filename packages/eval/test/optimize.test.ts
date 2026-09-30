@@ -27,7 +27,7 @@ import {
   temperatureScale,
   toRecord,
 } from '../src/optimize/evaluate';
-import { optimize, sampleParent, splitInstances, variantSnippet } from '../src/optimize/gepa';
+import { nextVersion, optimize, sampleParent, splitInstances, variantSnippet } from '../src/optimize/gepa';
 import { type EvalInstance, loadInstances } from '../src/optimize/instances';
 import { leakageProblems, leakCorpus, parseReflection, proposeComponent } from '../src/optimize/reflect';
 import { compactMetrics, METRICS_ROW_LIMIT, renderReport } from '../src/report';
@@ -398,9 +398,9 @@ describe('optimize (GEPA loop, offline)', () => {
     expect(r.state.history.some((h) => h.outcome === 'accepted')).toBe(true);
     expect(r.best.candidate.prompt.components['jev.instructions']).toContain(FAKE_REFLECTION_HINT);
     expect(r.improved).toBe(true);
-    expect(r.suggestedVersion).toBe('jev-predict.v2');
+    expect(r.suggestedVersion).toBe(nextVersion('jev'));
     expect(r.bestInput.components?.['jev.instructions']).toContain('{prompt}');
-    expect(variantSnippet(r, 'RUN')).toContain("'jev-predict.v2': {");
+    expect(variantSnippet(r, 'RUN')).toContain(`'${nextVersion('jev')}': {`);
     // Deterministic fake: the noise floor is zero.
     expect(r.state.noise?.sd).toBe(0);
     const holdoutPeople = new Set(r.state.split.holdout.map((id) => id.split(':')[0]));
@@ -451,6 +451,29 @@ describe('optimize (GEPA loop, offline)', () => {
     expect([...seen].sort()).toEqual(['a', 'b']);
   });
 
+  it("keeps an LLM winner's reasoning settings with its model in the variant snippet (ADR-0037)", () => {
+    const snippet = (predictor: string, v: string) =>
+      variantSnippet(
+        {
+          suggestedVersion: v,
+          best: { candidate: resolveCandidate({ predictor }) },
+          state: { spec: { name: 'x' } },
+        } as never,
+        'RUN',
+      )!;
+    const qwen = snippet('llm:qwen/qwen3.8-flash@predict.v2', 'predict.v3');
+    expect(qwen).toContain('harness: {"labelKeys":true},');
+    expect(qwen).toContain('"qwen/qwen3.8-flash":{"reasoningMaxTokens":1024,"maxTokens":2048}');
+    // The other models keep their predict.v2 settings, so the winner can replace predict.v2 on every shadow.
+    expect(qwen).toContain('"xiaomi/mimo-v2.6-flash":{"reasoningMaxTokens":1024,"maxTokens":2048}');
+    expect(qwen).toContain('"deepseek/deepseek-v4.1-flash":{"reasoningEffort":"low","maxTokens":6000}');
+    expect(snippet('llm:qwen/qwen3.8-flash', 'predict.v3')).toContain('harness: {},');
+    expect(snippet('llm:qwen/qwen3.8-flash', 'predict.v3')).not.toContain('modelHarness');
+    const jev = snippet('jev:typesafe/jev-1.13@jev-predict.v2', 'jev-predict.v3');
+    expect(jev).toContain('harness: {"calibrationTemperature":4},');
+    expect(jev).not.toContain('modelHarness');
+  });
+
   it('renders an optimize report with the verdict and the changed components', async () => {
     const r = await optimize({ gateway: gateway(), runDir: tmp(), log: () => {} }, spec, instances);
     const md = renderReport({
@@ -478,7 +501,7 @@ describe('optimize (GEPA loop, offline)', () => {
     });
     expect(md).toContain('**Verdict.** Improved');
     expect(md).toContain('### jev.instructions');
-    expect(md).toContain('jev-predict.v2');
+    expect(md).toContain(nextVersion('jev'));
     // Aggregates and prompt text only: no question from the data.
     for (const i of instances.slice(0, 20)) expect(md).not.toContain(i.question.prompt);
   }, 60_000);

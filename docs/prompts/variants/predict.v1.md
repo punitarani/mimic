@@ -4,7 +4,7 @@
 
 - Predictor kind: `llm` (use as `llm:<model>@predict.v1`)
 - Source: PLAN Appendix A.3
-- Harness: `{"reasoningEffort":"low","maxTokens":3000,"schema":"probs","jevState":"json"}`
+- Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":1,"labelKeys":false}`
 
 ## predict.system (incumbent)
 

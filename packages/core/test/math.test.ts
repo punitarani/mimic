@@ -7,6 +7,7 @@ import {
   configHash,
   DEFAULT_CONFIG,
   DEFAULT_CONFIG_V3,
+  DEFAULT_CONFIG_V4,
   entropy,
   expectedCalibrationError,
   gateFailures,
@@ -158,11 +159,21 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v4 and its predecessors (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v5 and its predecessors (configs are immutable: a change needs a new config)', () => {
+    expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
+    // v5 (ADR-0037): v4 with every LLM shadow on predict.v2 and calibrated Jev as a shadow; nothing else changes.
+    expect(
+      DEFAULT_CONFIG.predictor.shadows.every(
+        (s) => s.endsWith('@predict.v2') || s.endsWith('@jev-predict.v2'),
+      ),
+    ).toBe(true);
+    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V4.predictor }).toEqual(DEFAULT_CONFIG_V4);
     expect(configHash(DEFAULT_CONFIG)).toBe(
+      '42d9672dfebede0b013cd8d3e7c144f94283662553cd0aaaa31a08395c723d97',
+    );
+    expect(configHash(DEFAULT_CONFIG_V4)).toBe(
       '9783a40b1abf03d36281002a627336edfec98930f993cb62f542a206916460c3',
     );
-    expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
     expect(DEFAULT_CONFIG.selector.type).toBe('voi');
     expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v2');
     expect(DEFAULT_CONFIG.stateBuilder.latencyHints).toBe(true);
