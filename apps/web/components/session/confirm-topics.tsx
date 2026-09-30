@@ -54,7 +54,7 @@ export function ConfirmTopics({
           ref={heading}
           id={`${id}-title`}
           tabIndex={-1}
-          className="m-0 font-serif text-[26px] font-normal leading-[34px] text-graphite lg:text-[32px] lg:leading-[40px]"
+          className="m-0 font-serif text-[26px] outline-none font-normal leading-[34px] text-graphite lg:text-[32px] lg:leading-[40px]"
         >
           Before we ask about sensitive topics
         </h1>

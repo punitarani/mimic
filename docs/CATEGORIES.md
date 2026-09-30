@@ -53,7 +53,10 @@ is rejected in code, and professional reserve items are skipped, whatever facet 
 
 Five areas each sit behind their own consent, asked for under the category they belong to. A sensitive area is
 reachable only when its category is selected and its consent is given. Intake starts with every consent ticked, so
-the person turns off what they'd rather not share (ADR-0049); a scope sent without consents grants none.
+the person turns off what they'd rather not share (ADR-0049); a scope sent without consents grants none. The four
+special-category areas also need a confirmation, because a box left ticked is not a choice (ADR-0050): ticking the
+area yourself, or "Ask me" on the card the session shows after six answers. Until then the area is stored as
+consented but never asked about.
 
 | Area | Name | Why we ask (shown with the consent) | Category | Special-category |
 | --- | --- | --- | --- | --- |
@@ -79,38 +82,52 @@ categories that apply here). Money in detail is sensitive by our policy but not 
   toward dropping; professional facts (an employer, a job title, a school) are kept for health, because working in
   health care says nothing about the person's own health.
 - **Respectful wording.** Sensitive questions are asked plainly, never presuming a belief, identity, condition or
-  orientation, with options covering the range and no "prefer not to say" (the consent is the opt-out). Under
+  orientation, with options covering the range. The options include no "prefer not to say", so the mimic never has
+  to predict one. Instead the session shows a "Prefer not to say" button beside them (below). Under
   gates.v3 the `demeaning` Jev gate rejects loaded or demeaning drafts, and the `sensitive` gate asks each draft only
   about the areas it is not tagged with: a draft must be tagged with a facet of every sensitive area it touches, and
   its tags are already limited to consented areas, so an untagged or mis-tagged sensitive question never reaches the
   pool (ADR-0042).
 - **Later in the session.** No sensitive question is served among the first five, and none before the person has
   answered a few ordinary ones (the trust ramp, ADR-0044).
+- **Prefer not to say.** Any sensitive question can be skipped with "Prefer not to say" (ADR-0050). Nothing is
+  stored or scored. The question's sensitive facets join the person's declined facets and are never asked about
+  again, until the person chooses "Ask again" in Topics and consent.
 
 ## 3. The consent model
 
-Stored on the mimic (`mimics.categories_json`, `consents_json`, `research_consents_json`, `scope_at`; migration
-0007) as a `MimicScope`:
+Stored on the mimic (`mimics.categories_json`, `consents_json`, `research_consents_json`, `scope_at`, migration
+0007; `confirmed_json`, `declined_json`, migration 0008) as a `MimicScope`:
 
 ```ts
 { categories: Category[];                               // at least one
   consents: { politics?, religion?, sexuality?, health?, money?: true };
-  researchConsents: { politics?, religion?, sexuality?, health?: true } }
+  researchConsents: { politics?, religion?, sexuality?, health?: true };
+  confirmed?: { politics?, religion?, sexuality?, health?: true };   // chosen, not left pre-ticked (ADR-0050)
+  declined?: string[] }                                  // facet ids skipped with "Prefer not to say"
 ```
+
+A facet is allowed (`facetAllowed`) when its category is selected, it is not declined, and, if sensitive, its area
+is consented and, for a special-category area, confirmed.
 
 - **Defaults.** Every category, no sensitive area, no special-category research use (`DEFAULT_SCOPE`). Mimics created
   before ADR-0040, and API calls that send no scope, read as this default. The intake form starts from `INTAKE_SCOPE`
   instead: every category and every sensitive area ticked, research use still off (ADR-0049).
 - **Normalisation** (`normalizeScope`). Categories are kept in canonical order; only `true` flags are stored; a
   consent whose category is deselected is dropped (reselecting the category asks again); a research consent is
-  kept only with the area's consent and research consent overall.
+  kept only with the area's consent and research consent overall; a confirmation only with the area's consent.
 - **Changing it later** (`setScope`, from the session menu). The new scope applies to the next question.
-  - **Narrowing** (a category deselected or a consent withdrawn) stamps `scope_at`. Every pooled or
+  - **Narrowing** (a category deselected, a consent or confirmation withdrawn) stamps `scope_at`. Every pooled or
     served-but-unanswered question touching a now-blocked facet is discarded and never served. Earlier answers in
     that area, the trait estimates and insights built on them, and reflection facts citing them are hidden from
     every later state, snapshot, view, export and `mimic.json`. The rows stay in the database until the person
     deletes the mimic (hard delete removes everything, as before).
-  - **Widening** changes no stored data. The pool fills with the new areas on the next refill.
+  - **Declining** a sensitive question ("Prefer not to say") discards it and any pooled question on its facets. It
+    stamps `scope_at` only if an earlier answer touched those facets, so a skip hides nothing already learned and
+    replay keeps checking every state.
+  - **Widening** (a category or consent added, an area confirmed, "Ask again") changes no stored data. The pool
+    fills with the new areas on the next refill.
+  - A request that omits `confirmed` or `declined` keeps the stored values.
 - **Replay.** Hidden data is never time-travelled back into a rebuilt state: privacy wins over byte-for-byte replay,
   as it does for removed facts (ADR-0017). `replay --mode online` reports states served before `scope_at` as
   `rescoped`, next to `legacy` and `truncated`, and checks hashes on the rest.
@@ -155,8 +172,12 @@ The facet list every stage uses comes from one place, `facetsFor`, which is scop
 | Research export | Special-category rows scrubbed without research consent for the area | M11 |
 | Scope changes | `setScope` discards out-of-scope pooled and waiting questions and refills the pool; `PATCH /api/mimics/:id/scope`; "Topics and consent" in the session menu | M9 / M11 |
 | Replay | States served before a narrowing are reported as `rescoped`, every other state is hash-checked | M11 |
+| Confirmation | `facetAllowed` blocks a special-category area that is consented but not confirmed; the session asks once after six answers | M12 |
+| Prefer not to say | `POST /api/mimics/:id/decline` (`declineQuestion`) adds the question's sensitive facets to `declined`, which `facetAllowed` blocks | M12 |
 
 The leakage tests prove that no served question, trait read, insight, fact, graph node, view or export touches a
 deselected or non-consented category (`packages/eval/test/scope.test.ts`), and that a sensitive facet is learned only
 from a direct, consented question, never from the web, and leaves research exports without research consent
-(`packages/eval/test/leakage.test.ts`, `packages/core/test/guards.test.ts`).
+(`packages/eval/test/leakage.test.ts`, `packages/core/test/guards.test.ts`). `packages/eval/test/consent.test.ts`
+proves that a pre-ticked, unconfirmed special-category area is never asked about, and that a declined facet is never
+asked about again.

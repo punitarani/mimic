@@ -460,4 +460,10 @@ Nothing below comes from real people, and nothing is a measure of prediction acc
   restart). Every generated question passed the concrete gate and, by hand, described a specific situation.
   Scripted, so a check of the machinery, not a result.
 - **Replay.** `replay --mode online` matched every state of the run-b sessions (90 of 90) and of a local dev export.
+- **Confirmed consent and "Prefer not to say" (ADR-0050, offline fakes).** `packages/eval/test/consent.test.ts`:
+  a person who left every area pre-ticked gets no special-category question in 32 turns while money questions
+  appear; confirming politics and health brings those two areas only and hides nothing; a declined question is
+  discarded unanswered, its facet is never served again, and "Ask again" restores it. Truth tables in
+  `packages/core/test/scope.test.ts`, form reducers in `apps/web/lib/scope-form.test.ts`. The live runs above
+  confirmed every area by script, so the confirmation changes none of their questions.
 - **Not measured:** efficiency on real people (R6). It is the E3b arm's job (ADR-0045).

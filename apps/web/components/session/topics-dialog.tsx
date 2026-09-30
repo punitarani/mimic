@@ -4,6 +4,7 @@ import type { MimicScope } from '@mimic/core/scope';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { allowDeclined, canSave, narrows, sameScope } from '@/lib/scope-form';
+import { sentence } from '@/lib/session-view';
 import { ScopeResearch, ScopeTopics } from '../scope-form';
 import { cn } from '../ui';
 
@@ -97,9 +98,10 @@ export function TopicsDialog({
                       key={f.id}
                       className="flex items-center justify-between gap-3 text-[14px] text-graphite"
                     >
-                      <span>{f.name}</span>
+                      <span>{sentence(f.name)}</span>
                       <button
                         type="button"
+                        aria-label={`Ask again about ${f.name}`}
                         onClick={() => setDraft(allowDeclined(draft, f.id))}
                         className="h-8 rounded-[6px] px-2 text-[13px] font-medium text-graphite underline underline-offset-2 hover:bg-g8"
                       >
