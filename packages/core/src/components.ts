@@ -45,9 +45,9 @@ export const COMPONENT_SPECS: Record<ComponentId, ComponentSpec> = {
     kinds: ['llm'],
   },
   'state.evidence.line': {
-    role: "How one earlier answer is rendered in the state text. {why} expands to ' (why: …)' or nothing.",
+    role: "How one earlier answer is rendered in the state text. {pace} expands to ' (answered quickly)', ' (took a while)' or nothing; {why} to ' (why: …)' or nothing.",
     required: ['seq', 'q', 'answer'],
-    optional: ['options', 'why'],
+    optional: ['options', 'pace', 'why'],
     maxWords: 40,
     kinds: ['llm', 'jev'],
   },
@@ -97,7 +97,7 @@ export function componentReadBy(
 export const INCUMBENT_COMPONENTS: PredictComponents = {
   'predict.system': PROMPTS['predict.v1'].system,
   'predict.user': 'STATE:\n{state}\n\nQUESTION: {prompt}\nOPTIONS:\n{options}',
-  'state.evidence.line': '#{seq} {q} [{options}] → {answer}{why}',
+  'state.evidence.line': '#{seq} {q} [{options}] → {answer}{pace}{why}',
   'jev.instructions':
     'Predict how the person described in the state would answer this question, based only on the state: "{prompt}"',
   'jev.choice': 'The person would choose: {label}',
@@ -145,7 +145,7 @@ export const DEFAULT_PROMPT_VERSION = { jev: 'jev-predict.v1', llm: 'predict.v1'
 
 /**
  * Registered prediction prompt versions. Add a variant here (never edit one) to ship an optimized candidate; it is then
- * addressable as `llm:<model>@<id>` or `jev:<model>@<id>` in configs and `pnpm backfill` (ADR-0027).
+ * addressable as `llm:<model>@<id>` or `jev:<model>@<id>` in configs and `pnpm backfill` (ADR-0028).
  */
 export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
   'predict.v1': {
@@ -215,7 +215,7 @@ export function renderVariantDoc(v: PredictPromptVariant): string {
   const lines = [
     `# ${v.id} — ${v.title}`,
     '',
-    '> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0027).',
+    '> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0028).',
     '',
     `- Predictor kind: \`${v.kind}\` (use as \`${v.kind}:<model>@${v.id}\`)`,
     `- Source: ${v.source}`,

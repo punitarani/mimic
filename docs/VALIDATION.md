@@ -190,7 +190,30 @@ Screenshots are in `docs/screenshots/v2-*.png`; videos are `docs/media/session-v
     the snapshot's history bands, basics and facet labels.
   - `next build` compiles.
 
-## Evals and prompt optimization (ADR-0027)
+## Selection v2: value of information (ADR-0027)
+
+Offline fakes only (deterministic; outputs are arbitrary), so nothing below is a research result. It validates the
+machinery: `pnpm check` passes with 74 core unit tests and 41 eval integration tests.
+
+- Unit tests (`packages/core/test/belief.test.ts`, `selection.test.ts`, `state.test.ts`): the belief state's
+  uncertainty, conflict (method gap, superseded insights, repeat flips, torn answers), shrunk weakness, coverage,
+  exposure, domain shares, speeding and straightlining; generator targets and the tilted domain quota; the
+  hypothesis posterior and weighted mutual information; burden; the `voi` selector's pick with and without
+  hypotheses, exposure control, population and belief terms, and its failure fallback; item statistics with no
+  per-person data, shrinkage and the people threshold; latency hints (builder `full.v2`, median over the sealed
+  evidence, no hints below three timed answers, context-only untouched). Config hashes: v4 pinned, v3 unchanged.
+- Integration (`packages/eval/test/selection.test.ts`, 7 people × 24 turns plus one late-comer): every adaptive
+  question served by `voi` records its score components; each hypothesis prediction of the chosen question is
+  stored, sealed (`evidence_seq_max < seq`), never scored, and rebuilds from its state blob; posterior weights
+  move away from uniform once answers arrive; sealed states use `full.v2` and baselines stay context-only;
+  `stats.refresh` aggregates consented dev-split mimics with no names or IDs in any row, is idempotent, and a
+  session served afterwards carries a population term; `gen.v2` candidates and their calls are logged.
+- The existing 30-turn session test still holds: 1 primary, 1 context-only baseline and 5 shadows per scored
+  question sharing one state hash, none for repeats, 28 × 7 scored rows, 30 fidelity rows.
+- Not yet measured: E3 arms `entropy` vs `voi` on real people, and `pnpm eval -- select --selector entropy,voi`
+  on a real export. Both need human answers.
+
+## Evals and prompt optimization (ADR-0028)
 
 Checked in the Claude Code environment. Prod data isn't reachable here, so the live runs used two scripted live
 sessions: 17 answered questions, with one dev person and one test person. The metrics below validate the machinery

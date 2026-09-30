@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { EvalRunRecord, PipelineConfig } from '@mimic/core';
+import { type EvalRunRecord, type PipelineConfig, VOI_SELECTOR } from '@mimic/core';
 import { schema } from '@mimic/db';
 import { sql } from 'drizzle-orm';
 import { datasetHash, exportData } from './export';
@@ -35,7 +35,8 @@ Commands
             --checkpoints 10,20,30 --split dev|test|all [--targets later|heldout] [--limit N] [--offline]
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
   select    Pool-restricted selection simulation (biased; iteration only)
-            --data <file.sqlite> --selector random|coverage|entropy --budget 5,10,20 [--split dev] [--limit N]
+            --data <file.sqlite> --selector random|coverage|entropy|bald|voi[,…] --budget 5,10,20 [--split dev]
+            [--limit N] [--no-population]   several selectors run on the same people and report side by side
   import    import twin2k500 --path <twin2k500.jsonl> --out <file.sqlite> [--limit N]
   report    --data <file.sqlite> --run <id> [--to local|preview|prod]   writes report.{json,md}; --to publishes to /lab
   evaluate  Score prediction prompts on sealed instances (docs/OPTIMIZATION.md §5)
@@ -194,6 +195,7 @@ async function selectCmd(argv: string[]) {
       limit: { type: 'string' },
       seed: { type: 'string', default: 'select' },
       offline: { type: 'boolean', default: false },
+      'no-population': { type: 'boolean', default: false },
     },
   });
   if (!values.data) throw new Error('--data is required');
@@ -204,17 +206,19 @@ async function selectCmd(argv: string[]) {
     coverage: { type: 'coverage' },
     entropy: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
     bald: { type: 'bald', k: 4, lambdaCoverage: 0.3 },
+    voi: VOI_SELECTOR,
   };
-  const selector = selectors[values.selector];
-  if (!selector) throw new Error(`unknown selector ${values.selector}`);
+  const chosen = values.selector.split(',').map((s) => s.trim());
+  for (const s of chosen) if (!selectors[s]) throw new Error(`unknown selector ${s}`);
   const { run } = await simulateSelection(
     engine.deps,
     {
-      name: `select ${values.selector}`,
-      selector,
+      name: `select ${chosen.join(' vs ')}`,
+      selectors: chosen.map((label) => ({ label, selector: selectors[label]! })),
       budgets: list(values.budget),
       split: values.split as 'dev' | 'test' | 'all',
       seed: values.seed,
+      population: !values['no-population'],
       ...(values.limit ? { limitPeople: Number(values.limit) } : {}),
     },
     await datasetHash(engine.client),

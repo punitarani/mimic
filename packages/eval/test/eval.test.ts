@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { VOI_SELECTOR } from '@mimic/core';
 import { schema } from '@mimic/db';
 import type { MemoryBlobs } from '@mimic/db/local';
 import { sql } from 'drizzle-orm';
@@ -107,16 +108,27 @@ describe('replay (M7)', () => {
       engine.deps,
       {
         name: 's',
-        selector: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
+        selectors: [
+          { label: 'entropy', selector: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 } },
+          { label: 'voi', selector: VOI_SELECTOR },
+        ],
         budgets: [3, 6],
         split: 'all',
         seed: 's',
       },
       'hash',
     );
-    expect(r.results.map((x) => x.budget)).toEqual([3, 6]);
-    expect(r.results[0]!.people).toBe(1);
-    expect(r.results[0]!.accuracy).toBeGreaterThan(0);
+    expect(r.results.map((x) => `${x.selector}|${x.budget}`)).toEqual([
+      'entropy|3',
+      'entropy|6',
+      'voi|3',
+      'voi|6',
+    ]);
+    for (const x of r.results) {
+      expect(x.people).toBe(1);
+      expect(x.accuracy).toBeGreaterThan(0);
+    }
+    expect(renderReport(r.run)).toContain('| voi | 6 |');
   }, 60_000);
 
   it('keeps the dataset hash when eval runs are recorded, and changes it when the data changes', async () => {
@@ -127,7 +139,9 @@ describe('replay (M7)', () => {
       engine.deps,
       {
         name: 's',
-        selector: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
+        selectors: [
+          { label: 'entropy', selector: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 } },
+        ],
         budgets: [2],
         split: 'all',
         seed: 's',

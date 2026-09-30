@@ -1,3 +1,4 @@
+import { LATENCY_MIN_N, medianOf, paceOf } from './belief';
 import { fill, INCUMBENT_COMPONENTS, type PredictComponents } from './components';
 import { canonicalJson, sha256Hex } from './hash';
 import type {
@@ -24,6 +25,8 @@ export interface EvidenceItem {
   answer: string;
   why?: string | null;
   facetIds: string[];
+  /** Time from question shown to answer, for latency hints. */
+  latencyMs?: number;
 }
 
 export interface MimicData {
@@ -47,6 +50,8 @@ export interface BuildOptions {
   contextOnly?: boolean;
   forQuestions?: Question[];
   queryEmbedding?: number[];
+  /** Annotate evidence with `pace` against the person's median latency over the sealed evidence (builder `.v2`). */
+  latencyHints?: boolean;
 }
 
 export const SECTION_BUDGETS = { identity: 600, traits: 500, insights: 800 } as const;
@@ -62,7 +67,7 @@ export function estimateTokens(value: unknown): number {
  */
 export function buildState(m: MimicData, opts: BuildOptions): PersonState {
   const identity = buildIdentity(m);
-  const builder = opts.contextOnly ? 'context.v1' : `${opts.strategy}.v1`;
+  const builder = opts.contextOnly ? 'context.v1' : `${opts.strategy}.${opts.latencyHints ? 'v2' : 'v1'}`;
   if (opts.contextOnly) return finalize({ identity, evidence: [] }, builder, 0);
 
   const includeTraits = opts.strategy === 'structured' || opts.strategy === 'full';
@@ -108,7 +113,12 @@ export function buildState(m: MimicData, opts: BuildOptions): PersonState {
       .sort((a, b) => a.seq - b.seq);
     const used = estimateTokens({ identity, traits, insights });
     const remaining = Math.max(0, opts.budgetTokens - used);
-    evidence = selectEvidence(eligible, remaining, m, opts).map(toStateEvidence);
+    // The median is over every sealed answer, not only the ones that fit the budget, so it is stable as evidence
+    // grows and reproducible from an export.
+    const median = opts.latencyHints ? latencyMedian(eligible) : null;
+    evidence = selectEvidence(eligible, remaining, m, opts, median).map((e) =>
+      toStateEvidence(e, { medianLatencyMs: median }),
+    );
     for (const e of evidence) seqMax = Math.max(seqMax, e.seq);
   }
 
@@ -160,8 +170,10 @@ function selectEvidence(
   budget: number,
   m: MimicData,
   opts: BuildOptions,
+  medianLatencyMs: number | null,
 ): EvidenceItem[] {
-  const cost = (xs: EvidenceItem[]) => estimateTokens(xs.map(toStateEvidence));
+  // Costed exactly as rendered, pace marks included, so the budget holds with latency hints on.
+  const cost = (xs: EvidenceItem[]) => estimateTokens(xs.map((e) => toStateEvidence(e, { medianLatencyMs })));
   if (cost(items) <= budget) return items;
 
   // Outgrown the budget: anchors + top-K by similarity to the targets + the last recentN (PLAN §9.9).
@@ -205,7 +217,19 @@ function rankBySimilarity(items: EvidenceItem[], m: MimicData, opts: BuildOption
   return scored.sort((a, b) => b.s - a.s || b.e.seq - a.e.seq).map((x) => x.e);
 }
 
-export function toStateEvidence(e: EvidenceItem): StateEvidence {
+/** Median answer latency over the items that carry one; null below LATENCY_MIN_N answers. */
+export function latencyMedian(items: EvidenceItem[]): number | null {
+  const xs = items.map((e) => e.latencyMs).filter((x): x is number => typeof x === 'number' && x > 0);
+  return xs.length >= LATENCY_MIN_N ? medianOf(xs) : null;
+}
+
+/**
+ * With `opts.medianLatencyMs`, decisive and torn answers are marked (`pace`); even-paced ones carry no mark. The
+ * option is an object so that `xs.map(toStateEvidence)`, which passes the index as the second argument, can never
+ * inject a median.
+ */
+export function toStateEvidence(e: EvidenceItem, opts?: { medianLatencyMs: number | null }): StateEvidence {
+  const medianLatencyMs = typeof opts === 'object' && opts !== null ? opts.medianLatencyMs : null;
   const label = e.options.find((o) => o.key === e.answer)?.label ?? e.answer;
   const out: StateEvidence = {
     seq: e.seq,
@@ -215,6 +239,10 @@ export function toStateEvidence(e: EvidenceItem): StateEvidence {
     answer: label,
   };
   if (e.why) out.why = e.why.slice(0, WHY_MAX_CHARS);
+  if (medianLatencyMs !== null && typeof e.latencyMs === 'number' && e.latencyMs > 0) {
+    const pace = paceOf(e.latencyMs, medianLatencyMs);
+    if (pace !== 'even') out.pace = pace;
+  }
   return out;
 }
 
@@ -234,6 +262,7 @@ export function renderEvidenceLine(
     q: e.q,
     options: e.options.join(' | '),
     answer: e.answer,
+    pace: e.pace === 'quick' ? ' (answered quickly)' : e.pace === 'slow' ? ' (took a while)' : '',
     why: e.why ? ` (why: ${e.why})` : '',
   });
 }

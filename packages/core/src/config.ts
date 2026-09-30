@@ -43,8 +43,23 @@ export const PipelineConfig = z.object({
     z.object({ type: z.literal('coverage') }),
     z.object({ type: z.literal('entropy'), lambdaCoverage: z.number(), muRedundancy: z.number() }),
     z.object({ type: z.literal('bald'), k: z.number().int(), lambdaCoverage: z.number() }),
+    /** Value of information (docs/SELECTION.md §4, ADR-0027). */
+    z.object({
+      type: z.literal('voi'),
+      /** Persona hypotheses per selection; below 2 the information term is predictive entropy. */
+      k: z.number().int().min(0),
+      lambdaCoverage: z.number(),
+      muRedundancy: z.number(),
+      betaConflict: z.number(),
+      gammaWeakness: z.number(),
+      /** Weight of the cross-person item prior; 0 turns population statistics off. */
+      piPopulation: z.number(),
+      nuBurden: z.number(),
+      /** A candidate whose facets already take more than this share of the adaptive questions is skipped. */
+      exposureCap: z.number().min(0).max(1),
+    }),
   ]),
-  /** Predictor IDs, optionally `@<version>` naming a registered prompt variant (ADR-0027); checked on parse. */
+  /** Predictor IDs, optionally `@<version>` naming a registered prompt variant (ADR-0028); checked on parse. */
   predictor: z.object({
     primary: z.string().superRefine(checkPredictor),
     shadows: z.array(z.string().superRefine(checkPredictor)),
@@ -54,6 +69,11 @@ export const PipelineConfig = z.object({
     budgetTokens: z.number().int(),
     retrievalK: z.number().int(),
     recentN: z.number().int(),
+    /**
+     * Annotate state evidence with the answer's pace against the person's own median latency (docs/SELECTION.md
+     * §8). Optional, not defaulted, so configs written before it keep their hash.
+     */
+    latencyHints: z.boolean().optional(),
   }),
   traitReader: z.object({ type: z.enum(['jev', 'none']), everyN: z.number().int() }),
   reflector: z.object({
@@ -80,13 +100,23 @@ export const LLM = {
 } as const;
 export const EMBEDDING_MODEL = 'baai/bge-base-en-v1.5';
 
+export const VOI_SELECTOR: Extract<PipelineConfig['selector'], { type: 'voi' }> = {
+  type: 'voi',
+  k: 4,
+  lambdaCoverage: 0.3,
+  muRedundancy: 0.5,
+  betaConflict: 0.25,
+  gammaWeakness: 0.25,
+  piPopulation: 0.15,
+  nuBurden: 0.2,
+  exposureCap: 0.35,
+};
+
 /**
- * `cfg.default.v3`: the v1 shadows plus MiMo V2.6 Flash and Qwen3.8 Flash (ADR-0025). v2 added MiMo V2.6 Pro
- * (ADR-0024); v3 drops it, since Flash-tier models cost a fraction as much. Configs are immutable, so older mimics keep
- * the config they were created with; `pnpm backfill` adds new shadows to their served questions. Deviation
- * (ADR-0004): generator and reflector default to DeepSeek V4.1 Flash, not GPT-6 Luna.
+ * `cfg.default.v3` (ADR-0025): the v1 shadows plus MiMo V2.6 Flash and Qwen3.8 Flash, the `entropy` selector and
+ * `gen.v1`. Kept so its hash stays pinned; mimics created under it keep it.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V3: PipelineConfig = {
   version: 1,
   ontologyVersion: 'v1',
   anchors: { setId: 'anchors.v1', count: 10 },
@@ -116,7 +146,20 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   session: { target: 30, budgetUsd: 0.5 },
   embedding: { model: EMBEDDING_MODEL },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v3';
+
+/**
+ * `cfg.default.v4` (ADR-0027): v3 with the value-of-information selector, belief-driven generation (`gen.v2`) and
+ * latency hints in the state. Configs are immutable, so older mimics keep the config they were created with;
+ * `pnpm backfill` adds new shadows to their served questions. Deviation (ADR-0004): generator and reflector default
+ * to DeepSeek V4.1 Flash, not GPT-6 Luna.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V3,
+  generator: { ...DEFAULT_CONFIG_V3.generator, promptVersion: 'gen.v2' },
+  selector: VOI_SELECTOR,
+  stateBuilder: { ...DEFAULT_CONFIG_V3.stateBuilder, latencyHints: true },
+};
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v4';
 
 export function configHash(config: PipelineConfig): string {
   return sha256Hex(canonicalJson(PipelineConfig.parse(config)));
@@ -126,7 +169,7 @@ export type PredictorSpec = { kind: 'jev' | 'llm'; model: string; promptVersion?
 
 /**
  * `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` for a registered prediction prompt variant
- * (packages/core/src/components.ts, ADR-0027). Without a version the predictor uses the incumbent prompt.
+ * (packages/core/src/components.ts, ADR-0028). Without a version the predictor uses the incumbent prompt.
  */
 export function parsePredictorId(id: string): PredictorSpec {
   const idx = id.indexOf(':');

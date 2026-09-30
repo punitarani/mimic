@@ -34,7 +34,7 @@ import { DEFAULT_COMPONENTS, type OptimizeSpec, optimize, variantSnippet } from 
 import { type EvalInstance, loadInstances, personLabel } from './instances';
 import { DIAGNOSE_PROMPT_VERSION, diagnose, REFLECT_PROMPT_VERSION } from './reflect';
 
-/** Offline reflection model for optimization runs: strong, and cheap at the ~10–40 calls a run makes (ADR-0027). */
+/** Offline reflection model for optimization runs: strong, and cheap at the ~10–40 calls a run makes (ADR-0028). */
 export const DEFAULT_REFLECTION_MODEL = 'anthropic/claude-sonnet-5.5';
 
 type Env = 'local' | 'preview' | 'prod';

@@ -45,7 +45,7 @@ describe('backfill arguments', () => {
       yes: true,
     });
     assert.equal(parseBackfillArgs(['--predictor', MIMO]).env, 'local');
-    // Prompt variants (ADR-0027) are accepted; anything that could break out of the inlined SQL is not.
+    // Prompt variants (ADR-0028) are accepted; anything that could break out of the inlined SQL is not.
     assert.deepEqual(parseBackfillArgs(['--predictor', 'jev:typesafe/jev-1.13@jev-predict.v2']).predictors, [
       'jev:typesafe/jev-1.13@jev-predict.v2',
     ]);

@@ -1,6 +1,6 @@
 # optimize.reflect.v1 — Reflection (rewrite one component)
 
-> Generated from `packages/eval/src/optimize/reflect.ts`. Offline research tooling (ADR-0027), never a product
+> Generated from `packages/eval/src/optimize/reflect.ts`. Offline research tooling (ADR-0028), never a product
 > prompt; a change means a new version ID.
 
 ## System

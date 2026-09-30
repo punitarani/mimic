@@ -50,7 +50,7 @@ const state: PersonState = {
   meta: { evidenceSeqMax: 2, stateHash: 'h', builder: 'full.v1', tokens: 1 },
 };
 
-describe('prediction prompt components (ADR-0027)', () => {
+describe('prediction prompt components (ADR-0028)', () => {
   it('the incumbent renders exactly what the original literals produced', () => {
     // The pre-refactor templates (PLAN §9.6 and the old renderStateText), written out literally.
     expect(predictionQuestion(q('choice'))).toEqual({
@@ -82,6 +82,18 @@ describe('prediction prompt components (ADR-0027)', () => {
       ].join('\n'),
     );
     expect(INCUMBENT_COMPONENTS['predict.system']).toBe(PROMPTS['predict.v1'].system);
+    // Latency hints (ADR-0027) render exactly as the pre-component literal did.
+    const paced = {
+      ...state,
+      evidence: [
+        { ...state.evidence[0]!, pace: 'quick' as const },
+        { ...state.evidence[1]!, pace: 'slow' as const },
+      ],
+    };
+    expect(renderStateText(paced).split('\n').slice(-2)).toEqual([
+      '#1 Tea or coffee? [Tea | Coffee] → Tea (answered quickly) (why: calm)',
+      '#2 Early bird? [Yes | No] → No (took a while)',
+    ]);
   });
 
   it('sends the incumbent LLM messages unchanged', async () => {

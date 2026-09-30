@@ -1,3 +1,4 @@
+export * from './belief';
 export * from './components';
 export * from './config';
 export * from './distribution';
@@ -11,6 +12,7 @@ export * from './jobs';
 export * from './learning';
 export * from './metrics';
 export * from './ontology';
+export * from './population';
 export * from './predictors';
 export * from './prompts';
 export * from './repeats';

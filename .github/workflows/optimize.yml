@@ -1,4 +1,4 @@
-# Evaluate and optimize the prediction prompts on prod data (docs/OPTIMIZATION.md, ADR-0027), from the Actions tab:
+# Evaluate and optimize the prediction prompts on prod data (docs/OPTIMIZATION.md, ADR-0028), from the Actions tab:
 # Actions → Optimize → Run workflow.
 #
 #   report    (default) a report from the predictions already stored online: every predictor per split, person and

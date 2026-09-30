@@ -1,7 +1,7 @@
 # Mimic — Evals and GEPA-style prompt and harness optimization
 
 v1 · 2026-09-30 · Status: M9 (evaluator) and M10 (optimizer, shipping path) are built, and M11's fits are
-reported; see ADR-0027 and "What is built" below. M12 (re-derivation) and M13 (generator) are not built yet.
+reported; see ADR-0028 and "What is built" below. M12 (re-derivation) and M13 (generator) are not built yet.
 
 ## What is built
 
@@ -14,7 +14,7 @@ reported; see ADR-0027 and "What is built" below. M12 (re-derivation) and M13 (g
 | `mimic-eval optimize` | same | GEPA loop: Pareto sampling, minibatch reflection, noise-margin acceptance, leakage lint, spend and call caps, resume, holdout check, verdict, `PREDICT_PROMPTS` snippet |
 | Actions → Optimize | `.github/workflows/optimize.yml` | Export prod (scrubbed), optional Twin-2K-500, free report, optional capped run; publishes to `/lab` |
 
-Decisions taken for v1 are in §14 and ADR-0027. Deviations from the proposal below: cache hits are not logged as
+Decisions taken for v1 are in §14 and ADR-0028. Deviations from the proposal below: cache hits are not logged as
 zero-cost `model_calls` rows (they are not calls; the run's own cache is in `--run-dir`); the components not yet
 exposed (`state.section.*`, `state.trait.line`, `jev.state.keys`, `jev.trait.instructions`, `reflect.system`,
 `hyp.system`, `gen.system`) wait for M12/M13; prompt versions travel in predictor IDs rather than a new config field,
