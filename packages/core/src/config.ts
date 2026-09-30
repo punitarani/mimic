@@ -149,17 +149,36 @@ export const DEFAULT_CONFIG_V3: PipelineConfig = {
 
 /**
  * `cfg.default.v4` (ADR-0027): v3 with the value-of-information selector, belief-driven generation (`gen.v2`) and
- * latency hints in the state. Configs are immutable, so older mimics keep the config they were created with;
- * `pnpm backfill` adds new shadows to their served questions. Deviation (ADR-0004): generator and reflector default
- * to DeepSeek V4.1 Flash, not GPT-6 Luna.
+ * latency hints in the state. Kept so its hash stays pinned; mimics created under it keep it.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V4: PipelineConfig = {
   ...DEFAULT_CONFIG_V3,
   generator: { ...DEFAULT_CONFIG_V3.generator, promptVersion: 'gen.v2' },
   selector: VOI_SELECTOR,
   stateBuilder: { ...DEFAULT_CONFIG_V3.stateBuilder, latencyHints: true },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v4';
+
+/**
+ * `cfg.default.v5` (ADR-0038): v4 with the Qwen3.8 Flash shadow run with reasoning off (`predict.v1-direct`). At
+ * effort low it reasoned for 1–4.5K tokens (about a minute, and often past max_tokens); off, it answers in about 2 s.
+ * Configs are immutable, so older mimics keep the config they were created with; `pnpm backfill` adds new shadows to
+ * their served questions. Deviation (ADR-0004): generator and reflector default to DeepSeek V4.1 Flash, not GPT-6
+ * Luna.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V4,
+  predictor: {
+    ...DEFAULT_CONFIG_V4.predictor,
+    shadows: [
+      `llm:${LLM.luna}`,
+      `llm:${LLM.deepseek}`,
+      `llm:${LLM.glm}`,
+      `llm:${LLM.mimoFlash}`,
+      `llm:${LLM.qwenFlash}@predict.v1-direct`,
+    ],
+  },
+};
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v5';
 
 /**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never

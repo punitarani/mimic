@@ -74,7 +74,7 @@ describe('scripted 30-turn session (offline fakes)', () => {
       expect(shadows.map((s) => s.predictorId).sort()).toEqual([
         'llm:deepseek/deepseek-v4.1-flash',
         'llm:openai/gpt-6-luna',
-        'llm:qwen/qwen3.8-flash',
+        'llm:qwen/qwen3.8-flash@predict.v1-direct',
         'llm:xiaomi/mimo-v2.6-flash',
         'llm:z-ai/glm-5.3-flash',
       ]);
