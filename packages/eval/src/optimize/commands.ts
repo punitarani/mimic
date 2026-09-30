@@ -177,6 +177,7 @@ export async function evaluateCmd(argv: string[]) {
       from: { type: 'string' },
       predictor: { type: 'string' },
       candidate: { type: 'string' },
+      split: { type: 'string' },
       repeat: { type: 'boolean', default: false },
       'max-usd': { type: 'string', default: '2' },
       concurrency: { type: 'string', default: '8' },
@@ -184,8 +185,9 @@ export async function evaluateCmd(argv: string[]) {
   });
   if (!values.data) throw new Error('--data is required');
   const stored = values.from === 'stored';
-  // The stored report compares dev (fit) with test (check), so it reads every split unless told otherwise.
-  const split = stored && !argv.includes('--split') ? 'all' : values.split;
+  // The stored report compares dev (fit) with test (check), so it reads every split unless told otherwise; a live
+  // evaluation defaults to dev people.
+  const split = values.split ?? (stored ? 'all' : 'dev');
   const loaded = await loadData(values.data, loadOptsOf({ ...values, split }));
   console.log(
     `${loaded.instances.length} instances from ${new Set(loaded.instances.map((i) => i.mimicId)).size} people`,
@@ -237,6 +239,7 @@ export async function evaluateCmd(argv: string[]) {
     const concurrency = positive('concurrency', values.concurrency);
     let stopReason: string | null = null;
     try {
+      const cache = new Map<string, EvalRecord>();
       for (const c of cands) {
         let recs: EvalRecord[];
         try {
@@ -244,12 +247,19 @@ export async function evaluateCmd(argv: string[]) {
             gateway: engine.deps.gateway,
             meter,
             concurrency,
+            cache,
           });
         } catch (e) {
-          // The spend cap stops new work; report the candidates already scored instead of discarding them.
-          if (!(e instanceof BudgetStop) || !results.length) throw e;
-          stopReason = `${e.message}; ${c.label} and later candidates were not scored`;
+          if (!(e instanceof BudgetStop)) throw e;
+          // The spend cap stops new work; report what was paid for (a partial candidate included) instead of
+          // discarding it. A partial candidate is compared on the instances it covers.
+          const partial = loaded.instances
+            .map((i) => cache.get(`${c.hash}|${i.id}`))
+            .filter((r): r is EvalRecord => !!r);
+          stopReason = `${e.message}; ${c.label} scored on ${partial.length} of ${loaded.instances.length} instances${cands.at(-1) === c ? '' : ', later candidates not at all'}`;
           console.warn(`stopped: ${stopReason}`);
+          if (partial.length) results.push({ c, recs: partial });
+          if (!results.length) throw e;
           break;
         }
         results.push({ c, recs });
@@ -280,7 +290,7 @@ export async function evaluateCmd(argv: string[]) {
       run = {
         id: ulid(),
         name: values.name ?? `evaluate ${cands.map((c) => c.label).join(' vs ')}`,
-        spec: { kind: 'evaluate', mode: 'live', split: values.split, k: values.k, seed: values.seed },
+        spec: { kind: 'evaluate', mode: 'live', split, k: values.k, seed: values.seed, stopReason },
         datasetHash: loaded.datasetHash,
         status: 'done',
         metrics: {

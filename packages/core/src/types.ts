@@ -108,6 +108,11 @@ export interface PredictionResult {
   modelSnapshot: string;
   ok: boolean;
   error?: string;
+  /**
+   * Why it failed: `transport` (the provider errored or timed out; worth retrying) or `output` (the model answered but
+   * the answer was unusable; the prompt's fault). Set on failures only.
+   */
+  errorKind?: 'transport' | 'output';
   /** Raw model output (LLM only, truncated). Kept in memory for eval traces; never persisted with the prediction. */
   raw?: string;
 }

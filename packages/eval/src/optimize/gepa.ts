@@ -1,9 +1,9 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  COMPONENT_SPECS,
   type ComponentId,
   componentProblems,
+  componentReadBy,
   DEFAULT_PROMPT_VERSION,
   type Gateway,
   PREDICT_PROMPTS,
@@ -23,6 +23,7 @@ import {
   type Metrics,
   metricsOf,
   noiseSd,
+  OutageStop,
   type PairedDelta,
   pairedDelta,
   resolveCandidate,
@@ -118,10 +119,16 @@ export function splitInstances(
   spec: Pick<OptimizeSpec, 'valSize' | 'holdoutSize' | 'rngSeed'>,
 ) {
   const dev = instances.filter((i) => i.split === 'dev');
-  const people = new Set(dev.map((i) => i.mimicId));
-  const by: 'person' | 'question' = people.size >= 6 ? 'person' : 'question';
+  const people = [...new Set(dev.map((i) => i.mimicId))];
+  const by: 'person' | 'question' = people.length >= 6 ? 'person' : 'question';
+  // By person: a balanced, seeded half of the people validate (never all on one side). By question: a seeded coin.
+  const valPeople = new Set(
+    [...people]
+      .sort((a, b) => unitHash(`gepa:${spec.rngSeed}:${a}`) - unitHash(`gepa:${spec.rngSeed}:${b}`))
+      .slice(0, Math.ceil(people.length / 2)),
+  );
   const isVal = (i: EvalInstance) =>
-    unitHash(`gepa:${spec.rngSeed}:${by === 'person' ? i.mimicId : i.id}`) < 0.5;
+    by === 'person' ? valPeople.has(i.mimicId) : unitHash(`gepa:${spec.rngSeed}:${i.id}`) < 0.5;
   const rng = seededRng(`split:${spec.rngSeed}`);
   const val = shuffle(dev.filter(isVal), rng).slice(0, spec.valSize);
   const train = dev.filter((i) => !isVal(i));
@@ -222,8 +229,10 @@ export async function optimize(
 
   const seedCandidate = resolveCandidate(spec.seed);
   for (const id of spec.components)
-    if (!COMPONENT_SPECS[id].kinds.includes(seedCandidate.kind))
-      throw new Error(`${id} is not read by ${seedCandidate.kind} predictors`);
+    if (!componentReadBy(id, seedCandidate.prompt))
+      throw new Error(
+        `${id} is not read by this ${seedCandidate.kind} predictor${id === 'state.evidence.line' ? ' (Jev reads it only with harness.jevState "text")' : ''}`,
+      );
   const split = splitInstances(instances, spec);
   if (!split.val.length || !split.train.length)
     throw new Error(
@@ -268,6 +277,16 @@ export async function optimize(
   const train = pick(state.split.train);
   const val = pick(state.split.val);
   const holdout = pick(state.split.holdout);
+  // Exports re-salt mimic IDs, so a run directory only resumes against the data it was started on.
+  const missing =
+    state.split.train.length -
+    train.length +
+    (state.split.val.length - val.length) +
+    (state.split.holdout.length - holdout.length);
+  if (missing)
+    throw new Error(
+      `${missing} instances saved in ${deps.runDir} are not in this data (a new export re-salts IDs); start a new --run-dir`,
+    );
   const meter = new Meter(run.maxUsd, run.maxMetricCalls);
   meter.usd = state.meter.usd;
   meter.predictions = state.meter.predictions;
@@ -284,8 +303,8 @@ export async function optimize(
   const evaluate: Evaluate = async (c, xs, opts = {}) => {
     const m = opts.meter ?? meter;
     const cached = new Set(xs.filter((i) => cache.has(`${c.hash}|${i.id}`)).map((i) => i.id));
-    try {
-      return await evaluateCandidate(c, xs, {
+    const go = (ys: EvalInstance[]) =>
+      evaluateCandidate(c, ys, {
         gateway: deps.gateway,
         meter: m,
         cache,
@@ -293,6 +312,20 @@ export async function optimize(
         concurrency: run.concurrency,
         purpose: 'eval.optimize',
       });
+    try {
+      const recs = await go(xs);
+      // An outage must never become a score (it would decide acceptance, the Pareto front and the verdict): ask the
+      // transport failures once more, then stop the run gracefully. Everything paid for is kept; resume later.
+      const failed = xs.filter((_, j) => recs[j]!.transient);
+      if (!failed.length) return recs;
+      const again = new Map((await go(failed)).map((r) => [r.instanceId, r]));
+      const merged = recs.map((r) => again.get(r.instanceId) ?? r);
+      const still = merged.filter((r) => r.transient).length;
+      if (still)
+        throw new OutageStop(
+          `provider outage: ${still} prediction(s) failed in transport twice (${merged.find((r) => r.transient)!.error}); resume with --run-dir later`,
+        );
+      return merged;
     } finally {
       if (m !== meter) {
         meter.usd += m.usd;
@@ -355,7 +388,10 @@ export async function optimize(
       const perPrediction = meter.predictions
         ? (meter.usd - state.meter.reflectionUsd) / meter.predictions
         : 0;
-      const perReflection = meter.reflections ? state.meter.reflectionUsd / meter.reflections : 0;
+      // Per proposal (a proposal may take a repair turn). Before the first one the cost is unknown; after every
+      // proposal the cap is checked again before anything else is spent.
+      const proposals = state.history.filter((h) => h.outcome !== 'error').length;
+      const perReflection = proposals ? state.meter.reflectionUsd / proposals : 0;
       if (meter.usd + perPrediction * needed + perReflection > run.maxUsd) {
         state.stopReason = `spend cap: $${meter.usd.toFixed(4)} spent, the next iteration could cost ~$${(perPrediction * needed + perReflection).toFixed(4)}`;
         break;
@@ -365,12 +401,17 @@ export async function optimize(
       const parent = sampleParent(state.pool, state.split.val, rng);
       const component = run.components[(it - 1) % run.components.length]!;
       // One person per minibatch, so no reflection prompt mixes people's answers (invariant 8).
-      const people = [...new Set(train.map((i) => i.mimicId))];
+      const counts = new Map<string, number>();
+      for (const i of train) counts.set(i.mimicId, (counts.get(i.mimicId) ?? 0) + 1);
+      const enough = [...counts.keys()].filter((p) => counts.get(p)! >= Math.min(3, run.minibatch));
+      const people = enough.length ? enough : [...counts.keys()];
       const person = people[Math.floor(rng() * people.length)]!;
       const batch = shuffle(
         train.filter((i) => i.mimicId === person),
         rng,
       ).slice(0, run.minibatch);
+      // The margin is the noise of this batch's mean, so a person with few questions needs a bigger gain.
+      const margin = state.noise.sd / Math.sqrt(batch.length);
       const parentRecs = await evaluate(parent.candidate, batch);
       const parentScore = mean(parentRecs.map((r) => r.value));
       const log = (h: Omit<HistoryEntry, 'iteration' | 'parent' | 'component'>) => {
@@ -398,6 +439,7 @@ export async function optimize(
         meter.reflections += proposal.calls;
         state.meter.reflectionUsd += proposal.costUsd;
         reflectionErrors = 0;
+        meter.check();
       } catch (e) {
         if (e instanceof BudgetStop) throw e;
         reflectionErrors++;
@@ -420,10 +462,10 @@ export async function optimize(
       }
       const childRecs = await evaluate(child, batch);
       const childScore = mean(childRecs.map((r) => r.value));
-      if (childScore - parentScore <= state.noise.minibatchMargin) {
+      if (childScore - parentScore <= margin) {
         log({
           outcome: 'rejected',
-          detail: `minibatch ${childScore.toFixed(3)} vs parent ${parentScore.toFixed(3)} (margin ${state.noise.minibatchMargin.toFixed(3)})`,
+          detail: `minibatch ${childScore.toFixed(3)} vs parent ${parentScore.toFixed(3)} (margin ${margin.toFixed(3)}, n ${batch.length})`,
           parentMinibatch: parentScore,
           childMinibatch: childScore,
         });
@@ -494,25 +536,36 @@ async function finish(
     );
   }
   let holdoutOut: OptimizeResult['holdout'] = null;
+  let holdoutError: string | null = null;
   if (holdout.length && best !== seed) {
     // The holdout is spent once, after selection, on the two candidates that matter (winner's curse, §3.2). The caps
     // bound the search; this final check runs past them (two passes of at most holdoutSize predictions).
-    const s = await evaluate(seed.candidate, holdout, { meter: new Meter() });
-    const b = await evaluate(best.candidate, holdout, { meter: new Meter() });
-    holdoutOut = { seed: metricsOf(s), best: metricsOf(b), delta: pairedDelta(s, b, 'value', 'holdout') };
+    try {
+      const s = await evaluate(seed.candidate, holdout, { meter: new Meter() });
+      const b = await evaluate(best.candidate, holdout, { meter: new Meter() });
+      holdoutOut = { seed: metricsOf(s), best: metricsOf(b), delta: pairedDelta(s, b, 'value', 'holdout') };
+    } catch (e) {
+      if (!(e instanceof OutageStop)) throw e;
+      holdoutError = e.message;
+    }
   }
   const margin = state.noise?.valMargin ?? 0;
   const improved =
     best !== seed &&
+    !holdoutError &&
     delta.mean > margin &&
     delta.ciLow > 0 &&
     (!holdoutOut || holdoutOut.delta.mean >= -margin);
   const verdict =
     best === seed
       ? 'No candidate beat the seed on validation.'
-      : improved
-        ? `Improved: validation score +${delta.mean.toFixed(4)} nats per question (90% CI ${delta.ciLow.toFixed(4)} to ${delta.ciHigh.toFixed(4)}), above the noise margin ${margin.toFixed(4)}${holdoutOut ? `; holdout ${holdoutOut.delta.mean >= 0 ? '+' : ''}${holdoutOut.delta.mean.toFixed(4)}` : '; no test-split people to hold out'}.`
-        : `Not shipped: the best candidate's gain (+${delta.mean.toFixed(4)}, CI ${delta.ciLow.toFixed(4)} to ${delta.ciHigh.toFixed(4)}) is within noise (margin ${margin.toFixed(4)})${holdoutOut && holdoutOut.delta.mean < -margin ? ' or it lost on the holdout' : ''}.`;
+      : holdoutError
+        ? `Undecided: the holdout check hit a ${holdoutError}; resume with the same --run-dir to finish it.`
+        : improved
+          ? `Improved: validation score +${delta.mean.toFixed(4)} nats per question (90% CI ${delta.ciLow.toFixed(4)} to ${delta.ciHigh.toFixed(4)}), above the noise margin ${margin.toFixed(4)}${holdoutOut ? `; holdout ${holdoutOut.delta.mean >= 0 ? '+' : ''}${holdoutOut.delta.mean.toFixed(4)}` : '; no test-split people to hold out'}.`
+          : holdoutOut && holdoutOut.delta.mean < -margin
+            ? `Not shipped: it lost on the holdout (${holdoutOut.delta.mean.toFixed(4)} nats per question) despite a validation gain of +${delta.mean.toFixed(4)}.`
+            : `Not shipped: the best candidate's gain (+${delta.mean.toFixed(4)}, CI ${delta.ciLow.toFixed(4)} to ${delta.ciHigh.toFixed(4)}) is within noise (margin ${margin.toFixed(4)}).`;
   const base = best.candidate.baseVersion;
   const bestInput: CandidateInput = {
     label: best.candidate.label,

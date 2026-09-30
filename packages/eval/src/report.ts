@@ -123,6 +123,26 @@ function wrangler(args: string[], env: 'local' | 'preview' | 'prod'): void {
 
 const q = (v: unknown) => (v === null || v === undefined ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`);
 
+/** D1 caps a statement at about 100 KB; the full report is the R2 Markdown, so the row keeps a compact copy. */
+export const METRICS_ROW_LIMIT = 60_000;
+
+/**
+ * Metrics small enough for one D1 statement: per-person breakdowns go first (they grow with the cohort), then
+ * everything but top-level scalars. /lab renders the R2 report whenever there is one.
+ */
+export function compactMetrics(metrics: unknown): unknown {
+  if (JSON.stringify(metrics ?? null).length <= METRICS_ROW_LIMIT) return metrics;
+  const noPeople = JSON.parse(JSON.stringify(metrics), (k, v) => (k === 'byPerson' ? undefined : v));
+  if (JSON.stringify(noPeople).length <= METRICS_ROW_LIMIT)
+    return { ...noPeople, compacted: 'per-person rows in the R2 report' };
+  const scalars = Object.fromEntries(
+    Object.entries((metrics ?? {}) as Record<string, unknown>).filter(
+      ([, v]) => v === null || typeof v !== 'object',
+    ),
+  );
+  return { ...scalars, compacted: 'see the R2 report' };
+}
+
 /** `mimic-eval report --to <env>`: uploads report.{json,md} to R2 and the eval_runs row to D1, so /lab shows it. */
 export function publishReport(
   run: EvalRunRecord,
@@ -162,7 +182,7 @@ export function publishReport(
     JSON.stringify(run.spec),
     run.datasetHash,
     run.status,
-    JSON.stringify(run.metrics),
+    JSON.stringify(compactMetrics(run.metrics)),
     `${key}.md`,
   ]
     .map(q)

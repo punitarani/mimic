@@ -81,6 +81,18 @@ export const COMPONENT_SPECS: Record<ComponentId, ComponentSpec> = {
   },
 };
 
+/**
+ * Whether a predictor with this prompt actually reads a component. Jev reads the evidence line only when it gets the
+ * state as text (`harness.jevState: 'text'`); otherwise rewriting it changes nothing.
+ */
+export function componentReadBy(
+  id: ComponentId,
+  p: { kind: 'jev' | 'llm'; harness: Pick<PredictHarness, 'jevState'> },
+): boolean {
+  if (!COMPONENT_SPECS[id].kinds.includes(p.kind)) return false;
+  return !(p.kind === 'jev' && id === 'state.evidence.line' && p.harness.jevState !== 'text');
+}
+
 /** The components as they shipped in `predict.v1` and `jev-predict.v1` (byte-identical to the original literals). */
 export const INCUMBENT_COMPONENTS: PredictComponents = {
   'predict.system': PROMPTS['predict.v1'].system,
@@ -211,7 +223,7 @@ export function renderVariantDoc(v: PredictPromptVariant): string {
     '',
   ];
   for (const id of COMPONENT_IDS) {
-    if (!COMPONENT_SPECS[id].kinds.includes(v.kind)) continue;
+    if (!componentReadBy(id, p)) continue;
     const overridden = id in v.components ? '' : ' (incumbent)';
     lines.push(`## ${id}${overridden}`, '', '```', p.components[id], '```', '');
   }

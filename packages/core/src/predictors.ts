@@ -7,7 +7,7 @@ import {
   promptHash,
   resolvePredictPrompt,
 } from './components';
-import { parsePredictorId } from './config';
+import { parsePredictorId, predictorIdProblem } from './config';
 import { normalizeDist, optionKeys } from './distribution';
 import type { CallContext, Gateway } from './gateway';
 import { answerToDistribution, confidenceOf, predictionQuestion } from './jev';
@@ -77,7 +77,8 @@ export class JevPredictor implements Predictor {
       const share = res.usage.costUsd / qs.length;
       return qs.map((q) => {
         const a = res.answers[jevKey(q)];
-        if (!a) return failed(`missing answer for ${jevKey(q)}`, res.latencyMs, res.modelSnapshot, share);
+        if (!a)
+          return failed(`missing answer for ${jevKey(q)}`, res.latencyMs, res.modelSnapshot, share, 'output');
         try {
           const out: PredictionResult = {
             dist: answerToDistribution(q, a),
@@ -90,12 +91,12 @@ export class JevPredictor implements Predictor {
           if (c !== undefined) out.confidence = c;
           return out;
         } catch (e) {
-          return failed(String(e), res.latencyMs, res.modelSnapshot, share);
+          return failed(String(e), res.latencyMs, res.modelSnapshot, share, 'output');
         }
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return qs.map(() => failed(msg, 0, this.model, 0));
+      return qs.map(() => failed(msg, 0, this.model, 0, 'transport'));
     }
   }
 }
@@ -174,7 +175,8 @@ export class LlmPredictor implements Predictor {
         raw: res.content.slice(0, 2000),
       };
       const parsed = LlmProbs.safeParse(parseJsonLoose(res.content));
-      if (!parsed.success) return { ...base, dist: {}, ok: false, error: 'invalid JSON output' };
+      if (!parsed.success)
+        return { ...base, dist: {}, ok: false, error: 'invalid JSON output', errorKind: 'output' };
       const raw: Record<string, number> =
         'probs' in parsed.data && Array.isArray(parsed.data.probs)
           ? Object.fromEntries(parsed.data.probs.map((x) => [x.key, x.p]))
@@ -182,17 +184,29 @@ export class LlmPredictor implements Predictor {
       const covered = keys.filter((k) => typeof raw[k] === 'number' && raw[k]! >= 0);
       const sum = covered.reduce((a, k) => a + raw[k]!, 0);
       if (covered.length < keys.length || !(sum > 0)) {
-        return { ...base, dist: {}, ok: false, error: 'output does not cover every option' };
+        return {
+          ...base,
+          dist: {},
+          ok: false,
+          error: 'output does not cover every option',
+          errorKind: 'output',
+        };
       }
       return { ...base, dist: normalizeDist(raw, keys), ok: true };
     } catch (e) {
-      return failed(e instanceof Error ? e.message : String(e), 0, this.model, 0);
+      return failed(e instanceof Error ? e.message : String(e), 0, this.model, 0, 'transport');
     }
   }
 }
 
-function failed(error: string, latencyMs: number, modelSnapshot: string, costUsd: number): PredictionResult {
-  return { dist: {}, costUsd, latencyMs, modelSnapshot, ok: false, error };
+function failed(
+  error: string,
+  latencyMs: number,
+  modelSnapshot: string,
+  costUsd: number,
+  errorKind: 'transport' | 'output',
+): PredictionResult {
+  return { dist: {}, costUsd, latencyMs, modelSnapshot, ok: false, error, errorKind };
 }
 
 /** Parses JSON from model output, tolerating code fences and surrounding prose. */
@@ -232,14 +246,8 @@ export function promptVersionOf(predictorId: string): string {
   return spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind];
 }
 
-/**
- * Throws unless the ID parses and names a registered prompt version of the right kind. The incumbent is spelled
- * without a suffix: `llm:<model>@predict.v1` is the same predictor as `llm:<model>` but would be stored under a
- * second ID, duplicating its shadows and splitting its metrics.
- */
+/** Throws unless the ID parses and any `@<version>` is registered, of the right kind, and not the incumbent. */
 export function assertPredictorId(id: string): void {
-  const spec = parsePredictorId(id);
-  if (spec.promptVersion === DEFAULT_PROMPT_VERSION[spec.kind])
-    throw new Error(`${id} names the incumbent prompt; use ${spec.kind}:${spec.model}`);
-  resolvePredictPrompt(spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind], spec.kind);
+  const problem = predictorIdProblem(id);
+  if (problem) throw new Error(problem);
 }

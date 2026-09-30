@@ -3,12 +3,13 @@ import {
   COMPONENT_IDS,
   COMPONENT_SPECS,
   componentProblems,
+  componentReadBy,
   fill,
   INCUMBENT_COMPONENTS,
   PREDICT_PROMPTS,
   resolvePredictPrompt,
 } from '../src/components';
-import { parsePredictorId } from '../src/config';
+import { configHash, DEFAULT_CONFIG, PipelineConfig, parsePredictorId } from '../src/config';
 import { Gateway } from '../src/gateway';
 import { predictionQuestion } from '../src/jev';
 import { assertPredictorId, LlmPredictor, makePredictor, promptVersionOf } from '../src/predictors';
@@ -126,12 +127,32 @@ describe('prediction prompt components (ADR-0027)', () => {
     expect(promptVersionOf('llm:vendor/model')).toBe('predict.v1');
     expect(promptVersionOf('jev:typesafe/jev-1.13')).toBe('jev-predict.v1');
     expect(promptVersionOf('llm:vendor/model@predict.v1')).toBe('predict.v1');
-    expect(() => assertPredictorId('llm:vendor/model@nope.v9')).toThrow(/Unknown prediction prompt/);
-    expect(() => assertPredictorId('llm:vendor/model@jev-predict.v1')).toThrow(/for jev predictors/);
+    expect(() => assertPredictorId('llm:vendor/model@nope.v9')).toThrow(/unknown prediction prompt version/);
+    expect(() => assertPredictorId('llm:vendor/model@jev-predict.v1')).toThrow(/is a jev prompt, not llm/);
     expect(() => assertPredictorId('llm:vendor/model@predict.v1')).toThrow(/names the incumbent/);
     expect(() => assertPredictorId('jev:typesafe/jev-1.13')).not.toThrow();
     const gw = {} as Gateway;
     expect(makePredictor(gw, 'llm:vendor/model@predict.v1', { purpose: 't' }).id).toBe('llm:vendor/model');
+  });
+
+  it('rejects a config naming an unregistered or incumbent prompt version, and reads what Jev reads', () => {
+    const cfg = (primary: string, shadows: string[] = []) => ({
+      ...DEFAULT_CONFIG,
+      predictor: { primary, shadows },
+    });
+    expect(PipelineConfig.safeParse(cfg('jev:typesafe/jev-1.13')).success).toBe(true);
+    expect(PipelineConfig.safeParse(cfg('jev:typesafe/jev-1.13@jev-predict.v9')).success).toBe(false);
+    expect(PipelineConfig.safeParse(cfg('jev:typesafe/jev-1.13', ['llm:x/y@predict.v1'])).success).toBe(
+      false,
+    );
+    // The defaults' hashes are pinned elsewhere; validation must not change what parse returns.
+    expect(configHash(DEFAULT_CONFIG)).toBe(configHash(PipelineConfig.parse(DEFAULT_CONFIG)));
+    const jev = resolvePredictPrompt('jev-predict.v1', 'jev');
+    expect(componentReadBy('state.evidence.line', jev)).toBe(false);
+    expect(
+      componentReadBy('state.evidence.line', { ...jev, harness: { ...jev.harness, jevState: 'text' } }),
+    ).toBe(true);
+    expect(componentReadBy('predict.system', jev)).toBe(false);
   });
 
   it('every registered variant resolves, and its components are valid', () => {

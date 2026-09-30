@@ -107,8 +107,9 @@ jobs:
           [ "$PUBLISH" = true ] && args+=(--publish prod)
           pnpm eval -- evaluate "${args[@]}"
 
+      # Runs even if the free report (or its publishing) failed: the optimize run doesn't depend on it.
       - name: Optimize
-        if: inputs.mode == 'optimize'
+        if: inputs.mode == 'optimize' && !cancelled()
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -130,7 +131,7 @@ jobs:
 
       # The candidate and its report only: prompt text that passed the leakage lint, and aggregate metrics.
       - name: Upload the result
-        if: inputs.mode == 'optimize'
+        if: inputs.mode == 'optimize' && !cancelled()
         uses: actions/upload-artifact@v4
         with:
           name: optimize-result

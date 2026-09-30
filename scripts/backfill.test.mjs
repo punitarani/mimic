@@ -1,11 +1,15 @@
 // node --test scripts/*.test.mjs (part of `pnpm test`). No network: OpenRouter, D1, the queue and the local worker
 // are fakes behind the same interfaces.
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
   backfill,
   backfillJobs,
   checkModel,
+  checkPromptVersion,
   inlineParams,
   localTarget,
   missingQuery,
@@ -102,8 +106,18 @@ describe('backfill plan', () => {
     await assert.rejects(checkModel('llm:acme/typo', openRouter), /not an OpenRouter model/);
     await assert.rejects(checkModel('llm:acme/plain', openRouter), /structured outputs/);
     assert.match(await checkModel('jev:typesafe/jev-1.13', openRouter), /Jev/);
-    // A prompt variant is checked as its bare model.
-    assert.match(await checkModel(`${MIMO}@predict.v2`, openRouter), /MiMo-V2\.6-Pro on OpenRouter/);
+    // A prompt variant must be registered (mirrored to docs/prompts/variants/) and not the incumbent.
+    await assert.rejects(checkModel(`${MIMO}@predict.v9`, openRouter), /not a registered prompt variant/);
+    await assert.rejects(checkModel(`${MIMO}@predict.v1`, openRouter), /names the incumbent prompt/);
+    await assert.rejects(checkModel(`${MIMO}@jev-predict.v1`, openRouter), /incumbent|not a llm/);
+    const dir = mkdtempSync(join(tmpdir(), 'variants-'));
+    mkdirSync(join(dir, 'docs/prompts/variants'), { recursive: true });
+    writeFileSync(join(dir, 'docs/prompts/variants/predict.v2.md'), '- Predictor kind: `llm` (use as …)\n');
+    assert.equal(checkPromptVersion(`${MIMO}@predict.v2`, dir), 'predict.v2');
+    assert.throws(
+      () => checkPromptVersion('jev:typesafe/jev-1.13@predict.v2', dir),
+      /not a jev prompt variant/,
+    );
   });
 });
 

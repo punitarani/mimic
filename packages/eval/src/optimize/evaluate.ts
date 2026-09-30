@@ -18,11 +18,14 @@ import {
   type Predictor,
   type PredictPrompt,
   parsePredictorId,
+  predictionQuestion,
   promptHash,
   quantile,
+  renderStateText,
   resolvePredictPrompt,
   scorePrediction,
   seededRng,
+  selfConsistency,
   uniform,
 } from '@mimic/core';
 import { z } from 'zod';
@@ -137,6 +140,8 @@ export interface EvalRecord {
   modelSnapshot: string;
   ok: boolean;
   error: string | null;
+  /** Failed in transport (provider error after a retry): not the candidate's score, never cached. */
+  transient: boolean;
   dist: Distribution;
   answer: string;
   logLoss: number;
@@ -162,7 +167,10 @@ export function toRecord(
   inst: EvalInstance,
   candidate: string,
   predictorId: string,
-  r: Pick<PredictionResult, 'dist' | 'ok' | 'error' | 'costUsd' | 'latencyMs' | 'modelSnapshot' | 'raw'>,
+  r: Pick<
+    PredictionResult,
+    'dist' | 'ok' | 'error' | 'errorKind' | 'costUsd' | 'latencyMs' | 'modelSnapshot' | 'raw'
+  >,
 ): EvalRecord {
   const q = inst.question;
   const keys = q.options.map((o) => o.key);
@@ -183,6 +191,7 @@ export function toRecord(
     modelSnapshot: r.modelSnapshot,
     ok: r.ok,
     error: r.ok ? null : (r.error ?? 'failed'),
+    transient: !r.ok && r.errorKind === 'transport',
     dist,
     answer: inst.answer,
     logLoss: s.logLoss,
@@ -270,6 +279,14 @@ export class BudgetStop extends Error {
   }
 }
 
+/** A provider kept failing in transport: stop gracefully (like a budget stop) rather than score the outage. */
+export class OutageStop extends BudgetStop {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OutageStop';
+  }
+}
+
 /** Spend and call accounting shared by every evaluation in a run; stops new work past the caps. */
 export class Meter {
   usd = 0;
@@ -312,8 +329,37 @@ export async function mapLimit<T, R>(
   return out;
 }
 
-const OUTPUT_ERRORS = new Set(['invalid JSON output', 'output does not cover every option']);
-const JEV_CHUNK = 40;
+/**
+ * Jev's context is 32K tokens (PLAN §5.1). Questions that share a state go in one request, as production does, and
+ * are split only when state plus questions would pass this budget.
+ */
+export const JEV_REQUEST_TOKENS = 28_000;
+
+export function jevRequests(c: Candidate, instances: EvalInstance[]): EvalInstance[][] {
+  const out: EvalInstance[][] = [];
+  const tokens = (x: unknown) => Math.ceil(JSON.stringify(x).length / 4);
+  for (const g of groupBy(instances, (i) => i.state.meta.stateHash).values()) {
+    const state = g[0]!.state;
+    const stateTokens =
+      c.prompt.harness.jevState === 'text'
+        ? tokens(renderStateText(state, c.prompt.components))
+        : state.meta.tokens;
+    let cur: EvalInstance[] = [];
+    let used = stateTokens;
+    for (const i of g) {
+      const t = tokens(predictionQuestion(i.question, c.prompt.components));
+      if (cur.length && used + t > JEV_REQUEST_TOKENS) {
+        out.push(cur);
+        cur = [];
+        used = stateTokens;
+      }
+      cur.push(i);
+      used += t;
+    }
+    if (cur.length) out.push(cur);
+  }
+  return out;
+}
 
 export interface EvaluateOptions {
   gateway: Gateway;
@@ -328,8 +374,9 @@ export interface EvaluateOptions {
 
 /**
  * Runs a candidate over instances and scores each prediction. Jev questions that share a state go in one request
- * (PLAN §5.1); LLM questions run one call each. A transport error is retried once; a malformed output is not, since
- * it is the candidate's fault. Every call goes through the gateway, so it is logged (invariant 5).
+ * (PLAN §5.1); LLM questions run one call each. A transport failure is retried once, for the failed questions only;
+ * an output failure is not, since it is the candidate's fault. A prediction that still fails in transport comes back
+ * marked `transient` and is never cached. Every call goes through the gateway, so it is logged (invariant 5).
  */
 export async function evaluateCandidate(
   c: Candidate,
@@ -345,34 +392,34 @@ export async function evaluateCandidate(
     if (hit) out.set(i.id, hit);
     else todo.push(i);
   }
-  const groups: EvalInstance[][] = [];
-  if (c.kind === 'jev') {
-    for (const g of groupBy(todo, (i) => i.state.meta.stateHash).values())
-      for (let j = 0; j < g.length; j += JEV_CHUNK) groups.push(g.slice(j, j + JEV_CHUNK));
-  } else for (const i of todo) groups.push([i]);
+  const groups = c.kind === 'jev' ? jevRequests(c, todo) : todo.map((i) => [i]);
 
   await mapLimit(groups, opts.concurrency ?? 8, async (g) => {
     opts.meter.check();
-    const run = () =>
-      predictor.predict(
-        g[0]!.state,
-        g.map((i) => i.question),
-      );
-    let res = await run();
+    const state = g[0]!.state;
+    const res = await predictor.predict(
+      state,
+      g.map((i) => i.question),
+    );
     let spent = res.reduce((a, r) => a + r.costUsd, 0);
-    if (res.some((r) => !r.ok && !OUTPUT_ERRORS.has(r.error ?? ''))) {
-      const again = await run();
+    const retry = res.flatMap((r, j) => (!r.ok && r.errorKind !== 'output' ? [j] : []));
+    if (retry.length) {
+      const again = await predictor.predict(
+        state,
+        retry.map((j) => g[j]!.question),
+      );
       spent += again.reduce((a, r) => a + r.costUsd, 0);
-      res = res.map((r, j) => (r.ok ? r : again[j]!));
+      retry.forEach((j, n) => {
+        res[j] = again[n]!;
+      });
     }
     opts.meter.usd += spent;
     opts.meter.predictions += g.length;
     g.forEach((inst, j) => {
       const rec = toRecord(inst, c.hash, predictor.id, res[j]!);
       out.set(inst.id, rec);
-      // A transport failure (still failing after the retry) is the provider's fault, not the candidate's: don't cache
-      // it, so a resumed run or a later comparison re-asks instead of scoring an outage as a permanent penalty.
-      if (!rec.ok && !OUTPUT_ERRORS.has(rec.error ?? '')) return;
+      // A transport failure is the provider's fault, not the candidate's: never cache it, so a later pass re-asks.
+      if (rec.transient) return;
       // A fresh pass (the noise floor) is a second sample, not the candidate's score: keep the first in the cache.
       if (!opts.fresh || !opts.cache?.has(key(inst))) opts.cache?.set(key(inst), rec);
     });
@@ -495,11 +542,15 @@ export function pairedDelta(
 
 /** SD of the per-instance difference between two passes of the same candidate: the noise floor. */
 export function noiseSd(
-  a: Array<Pick<EvalRecord, 'instanceId' | 'value'>>,
-  b: Array<Pick<EvalRecord, 'instanceId' | 'value'>>,
+  a: Array<Pick<EvalRecord, 'instanceId' | 'value'> & { transient?: boolean }>,
+  b: Array<Pick<EvalRecord, 'instanceId' | 'value'> & { transient?: boolean }>,
 ): number {
   const bi = new Map(b.map((r) => [r.instanceId, r]));
-  const d = a.filter((r) => bi.has(r.instanceId)).map((r) => bi.get(r.instanceId)!.value - r.value);
+  // Transport failures are outages, not noise.
+  const ok = (r: Pick<EvalRecord, 'instanceId' | 'value'> & { transient?: boolean }) => !r.transient;
+  const d = a
+    .filter((r) => ok(r) && bi.has(r.instanceId) && ok(bi.get(r.instanceId)!))
+    .map((r) => bi.get(r.instanceId)!.value - r.value);
   if (d.length < 2) return 0;
   const m = mean(d);
   return Math.sqrt(d.reduce((s, x) => s + (x - m) ** 2, 0) / (d.length - 1));
@@ -662,10 +713,8 @@ export function selfConsistencyOf(instances: EvalInstance[]): Record<string, { n
   const out: Record<string, { n: number; c: number }> = {};
   for (const [m, xs] of groupBy(instances, (i) => i.mimicId)) {
     const a = xs.map((i) => i.repeatAgreement).filter((x): x is number => x !== null);
-    out[`${personLabel(m)} (${xs[0]!.split})`] = {
-      n: a.length,
-      c: (a.reduce((s, x) => s + x, 0) + 5 * 0.8) / (a.length + 5),
-    };
+    // The product's own smoothing (PLAN §9.10), so the report matches the fidelity people see.
+    out[`${personLabel(m)} (${xs[0]!.split})`] = { n: a.length, c: selfConsistency(a) };
   }
   return out;
 }

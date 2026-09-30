@@ -423,8 +423,17 @@ more than the measured noise floor, then a full validation pass. Choices:
 - *Tooling prompts are versioned:* the reflection and diagnosis prompts (`optimize.reflect.v1`,
   `optimize.diagnose.v1`) live in `packages/eval/src/optimize/reflect.ts`, are recorded on each run and mirrored to
   `docs/prompts/optimize/` with a sync test. A reply that breaks a rule gets one repair turn naming the problems.
-- *Transport failures are not scores:* a prediction that fails for a provider error (after one retry) is not cached,
-  so a resumed run asks again; a malformed output is the candidate's fault and is scored as a failure.
+- *Transport failures are not scores:* predictors label a failure `transport` or `output`. Only the failed questions
+  are retried once. A transport failure is never cached. If it persists, the optimizer stops gracefully rather than
+  let an outage decide an acceptance, the Pareto front or the holdout; the run can be resumed. A malformed output is
+  the candidate's fault and is scored as a failure.
+- *Batching and margins:* Jev questions that share a state go in one request, split only near the 32K context. The
+  minibatch margin uses the size of the minibatch actually drawn. With six or more dev people, a balanced, seeded
+  half of them validate. A run directory refuses to resume against different data, since exports re-salt IDs.
+- *Validation at the edges:* `PipelineConfig` rejects an unregistered or incumbent-aliased `@<version>`, so `/lab`
+  can't register a config that would break `/next`. `pnpm backfill` checks a version against
+  `docs/prompts/variants/` before enqueueing. Published metrics are compacted to fit one D1 statement; the full report
+  is in R2.
 
 **Shipping.** A winner is never deployed by the optimizer. It writes the candidate and a `PREDICT_PROMPTS` entry to
 paste; registering it is a code change reviewed like any other, then `pnpm backfill --predictor <id>@<version>` gives a

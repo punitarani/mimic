@@ -18,6 +18,7 @@ import {
   changedComponents,
   evaluateCandidate,
   feedbackFor,
+  jevRequests,
   Meter,
   pairedDelta,
   predictorFor,
@@ -29,7 +30,7 @@ import {
 import { optimize, sampleParent, splitInstances, variantSnippet } from '../src/optimize/gepa';
 import { type EvalInstance, loadInstances } from '../src/optimize/instances';
 import { leakageProblems, leakCorpus, parseReflection, proposeComponent } from '../src/optimize/reflect';
-import { renderReport } from '../src/report';
+import { compactMetrics, METRICS_ROW_LIMIT, renderReport } from '../src/report';
 import { runSession, SessionScript } from '../src/session';
 
 let engine: LocalEngine;
@@ -207,6 +208,114 @@ describe('evaluate', () => {
     await expect(
       evaluateCandidate(c, instances.slice(12, 20), { gateway: gw, meter: new Meter(0), cache }),
     ).rejects.toThrow(/spend cap/);
+  });
+});
+
+describe('outages, batching and splits', () => {
+  class DownDecisions implements DecisionProvider {
+    readonly provider = 'down';
+    calls = 0;
+    async decide(): Promise<never> {
+      this.calls++;
+      throw new Error('503 upstream unavailable');
+    }
+  }
+
+  it('marks transport failures transient, retries them once, and never caches them', async () => {
+    const down = new DownDecisions();
+    const cache = new Map();
+    const c = resolveCandidate({ predictor: 'jev:typesafe/jev-1.13' });
+    const xs = instances.slice(0, 4);
+    const recs = await evaluateCandidate(c, xs, { gateway: gateway(down), meter: new Meter(), cache });
+    expect(recs.every((r) => r.transient && !r.ok)).toBe(true);
+    expect(cache.size).toBe(0);
+    // One request per state, plus one retry of the failed questions.
+    expect(down.calls).toBe(2 * new Set(xs.map((i) => i.state.meta.stateHash)).size);
+  });
+
+  it('stops an optimize run on an outage instead of scoring it', async () => {
+    await expect(
+      optimize(
+        { gateway: gateway(new DownDecisions()), runDir: tmp(), log: () => {} },
+        {
+          name: 'x',
+          seed: { predictor: 'jev:typesafe/jev-1.13' },
+          components: ['jev.instructions'],
+          reflectionModel: 'r',
+          maxMetricCalls: 400,
+          maxUsd: 5,
+          minibatch: 4,
+          valSize: 10,
+          holdoutSize: 10,
+          maxIterations: 2,
+          noise: false,
+          concurrency: 2,
+          rngSeed: 'o',
+        },
+        instances,
+      ),
+    ).rejects.toThrow(/provider outage/);
+  });
+
+  it('batches every Jev question that shares a state into one request, within the context budget', () => {
+    const c = resolveCandidate({ predictor: 'jev:typesafe/jev-1.13' });
+    const one = instances[0]!;
+    const same = Array.from({ length: 60 }, (_, n) => ({ ...one, id: `${one.id}#${n}` }));
+    expect(jevRequests(c, same)).toHaveLength(1);
+    const big = same.map((i) => ({ ...i, question: { ...i.question, prompt: 'x '.repeat(4000) } }));
+    expect(jevRequests(c, big).length).toBeGreaterThan(1);
+    expect(jevRequests(c, big).flat()).toHaveLength(60);
+  });
+
+  it('splits six or more dev people into balanced train and val halves', () => {
+    const fake = Array.from({ length: 7 }, (_, p) =>
+      Array.from({ length: 3 }, (_, q) => ({
+        ...instances[0]!,
+        id: `m${p}:${q}`,
+        mimicId: `m${p}`,
+        split: 'dev' as const,
+      })),
+    ).flat();
+    for (const seed of ['a', 'b', 'c', 'd', 'e']) {
+      const s = splitInstances(fake, { valSize: 100, holdoutSize: 10, rngSeed: seed });
+      expect(s.by).toBe('person');
+      expect(new Set(s.val.map((i) => i.mimicId)).size).toBe(4);
+      expect(new Set(s.train.map((i) => i.mimicId)).size).toBe(3);
+    }
+  });
+
+  it('refuses to resume a run directory against different data', async () => {
+    const runDir = tmp();
+    const spec = {
+      name: 'x',
+      seed: { predictor: 'jev:typesafe/jev-1.13' },
+      components: ['jev.instructions' as const],
+      reflectionModel: 'r',
+      maxMetricCalls: 400,
+      maxUsd: 5,
+      minibatch: 4,
+      valSize: 10,
+      holdoutSize: 10,
+      maxIterations: 1,
+      noise: false,
+      concurrency: 2,
+      rngSeed: 'o',
+    };
+    await optimize({ gateway: gateway(), runDir, log: () => {} }, spec, instances);
+    const renamed = instances.map((i) => ({ ...i, id: `x${i.id}` }));
+    await expect(optimize({ gateway: gateway(), runDir, log: () => {} }, spec, renamed)).rejects.toThrow(
+      /not in this data/,
+    );
+  }, 60_000);
+
+  it('compacts published metrics that would overflow a D1 statement', () => {
+    const small = { a: 1 };
+    expect(compactMetrics(small)).toBe(small);
+    const big = { people: 50, rows: [{ byPerson: { p: 'x'.repeat(70_000) }, all: { n: 1 } }] };
+    const c = compactMetrics(big) as Record<string, unknown>;
+    expect(JSON.stringify(c).length).toBeLessThan(METRICS_ROW_LIMIT);
+    expect(c.compacted).toBeDefined();
+    expect((c.rows as Array<Record<string, unknown>>)[0]!.all).toEqual({ n: 1 });
   });
 });
 

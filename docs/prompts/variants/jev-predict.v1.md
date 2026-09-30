@@ -6,12 +6,6 @@
 - Source: PLAN §9.6
 - Harness: `{"reasoningEffort":"low","maxTokens":3000,"schema":"probs","jevState":"json"}`
 
-## state.evidence.line (incumbent)
-
-```
-#{seq} {q} [{options}] → {answer}{why}
-```
-
 ## jev.instructions (incumbent)
 
 ```

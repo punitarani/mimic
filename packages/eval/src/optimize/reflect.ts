@@ -1,4 +1,11 @@
-import { argmax, type ChatMessage, COMPONENT_SPECS, type ComponentId, type Gateway } from '@mimic/core';
+import {
+  argmax,
+  type ChatMessage,
+  COMPONENT_SPECS,
+  type ComponentId,
+  componentReadBy,
+  type Gateway,
+} from '@mimic/core';
 import { type Candidate, type EvalRecord, stateExcerpt } from './evaluate';
 import type { EvalInstance } from './instances';
 
@@ -127,7 +134,7 @@ export function reflectMessages(c: Candidate, id: ComponentId, cases: string) {
   const spec = COMPONENT_SPECS[id];
   const placeholders = [...spec.required, ...spec.optional];
   const others = (Object.keys(c.prompt.components) as ComponentId[])
-    .filter((k) => k !== id && COMPONENT_SPECS[k].kinds.includes(c.kind))
+    .filter((k) => k !== id && componentReadBy(k, c.prompt))
     .map((k) => `[${k}]\n${c.prompt.components[k]}`)
     .join('\n\n');
   return [
