@@ -32,11 +32,11 @@ export const mimics = sqliteTable(
     consentApp: bool('consent_app').notNull(),
     consentSearch: bool('consent_search').notNull(),
     consentResearch: bool('consent_research').notNull(),
-    /** ADR-0038: selected categories, sensitive-area consents and special-category research consents (JSON). */
+    /** ADR-0040: selected categories, sensitive-area consents and special-category research consents (JSON). */
     categoriesJson: text('categories_json').notNull().default('["psychology","values","life","work"]'),
     consentsJson: text('consents_json').notNull().default('{}'),
     researchConsentsJson: text('research_consents_json').notNull().default('{}'),
-    /** When the scope last shrank (ADR-0038). */
+    /** When the scope last shrank (ADR-0040). */
     scopeAt: integer('scope_at'),
     split: text('split', { enum: ['dev', 'test'] }).notNull(),
     seqMax: integer('seq_max').notNull().default(0),
@@ -404,8 +404,12 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
-/** ADR-0033: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds Persona.md. */
-export const personaDrafts = sqliteTable(
+/**
+ * ADR-0039: SOUL.md drafts (`soul.v1`, and `persona.v1` from before the rename), derived from the evidence up to
+ * seq_up_to; the latest feeds SOUL.md. The table keeps its Persona.md-era name: deploys migrate before they ship
+ * code, so renaming it would break the old code still serving until then.
+ */
+export const soulDrafts = sqliteTable(
   'persona_drafts',
   {
     id: text('id').primaryKey(),
@@ -421,8 +425,8 @@ export const personaDrafts = sqliteTable(
   (t) => [index('persona_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
 );
 
-/** ADR-0033: the person's choices for Persona.md (sections, hidden items, edits, their own words). */
-export const personaCurations = sqliteTable('persona_curations', {
+/** ADR-0039: the person's choices for SOUL.md; the table keeps its Persona.md-era name, as above. */
+export const soulCurations = sqliteTable('persona_curations', {
   mimicId: text('mimic_id').primaryKey(),
   json: text('json').notNull(),
   /** Client revision: saves apply only in increasing rev order. */
@@ -481,6 +485,6 @@ export const MIMIC_TABLES = [
   snapshots,
   mimicFacets,
   vectors,
-  personaDrafts,
-  personaCurations,
+  soulDrafts,
+  soulCurations,
 ] as const;

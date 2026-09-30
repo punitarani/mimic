@@ -42,7 +42,7 @@ export function citedSeqs(sourceRef: string | null): number[] {
 
 /**
  * What a retraction at `fromSeq` invalidates, beyond what the store selects by seq (traits, insights, reflection
- * facts by `seq_up_to`, persona drafts, fidelity): reflection facts written before `seq_up_to` existed, found by the
+ * facts by `seq_up_to`, SOUL.md drafts, fidelity): reflection facts written before `seq_up_to` existed, found by the
  * evidence they cite.
  */
 export function derivedRollback(mimicId: string, fromSeq: number, facts: FactRecord[]): DerivedRollback {
@@ -108,7 +108,7 @@ export async function rewindLastAnswer(
     throw new EngineError('conflict', 'Only your latest answer can be undone');
   }
   const q = qById.get(latest.questionId)!;
-  // A topic turned off since (ADR-0038): the question is hidden and must not be asked again.
+  // A topic turned off since (ADR-0040): the question is hidden and must not be asked again.
   const blocked = blockedFacetIds(m.scope, await facetsFor(deps, m, cfg, { scoped: false }));
   if (!questionAllowed(q, blocked)) {
     throw new EngineError('conflict', "You've turned this topic off since, so this answer can't be undone");

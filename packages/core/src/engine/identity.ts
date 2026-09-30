@@ -52,7 +52,7 @@ export const IntakeInput = z.object({
   attestSelf: z.literal(true),
   consentSearch: z.boolean(),
   consentResearch: z.boolean(),
-  /** Categories and sensitive consents (ADR-0038); absent means every category and no sensitive area. */
+  /** Categories and sensitive consents (ADR-0040); absent means every category and no sensitive area. */
   scope: MimicScope.optional(),
 });
 export type IntakeInput = z.infer<typeof IntakeInput>;
@@ -115,7 +115,7 @@ export async function createMimic(
 
 /**
  * Anchors are inserted up front in a per-person random order, encoded in createdAt (PLAN §9.3). Anchors touching a
- * category the person deselected are left out, so fewer are seeded (ADR-0038); the order of the rest is unchanged.
+ * category the person deselected are left out, so fewer are seeded (ADR-0040); the order of the rest is unchanged.
  */
 function anchorQuestions(
   deps: EngineDeps,

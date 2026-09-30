@@ -63,7 +63,7 @@ export function beliefFromLoaded(
   const beforeSeq = opts.beforeSeq ?? Number.MAX_SAFE_INTEGER;
   const qById = new Map(loaded.questions.map((q) => [q.id, q]));
   const accByQ = new Map(sources.scored.map((r) => [r.question.id, r.score.itemAcc]));
-  // Answers the scope hides (a withdrawn category) never count toward any belief (ADR-0038).
+  // Answers the scope hides (a withdrawn category) never count toward any belief (ADR-0040).
   const visible = loaded.answers.filter((a) => !loaded.scope.hiddenQuestionIds.has(a.questionId));
   const answers = beliefAnswers(visible, qById, accByQ, beforeSeq);
   const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));

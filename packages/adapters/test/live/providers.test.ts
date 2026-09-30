@@ -1,6 +1,12 @@
 // Live smoke tests: one real call per provider. Run with `pnpm test:live` (LIVE=1). Each call costs a fraction of
 // a cent. Keys come from the environment; in the Claude Code remote env the outbound proxy injects them.
-import { DEFAULT_CONFIG, LLM_PREDICTOR_MAX_TOKENS, PROMPTS, parsePredictorId } from '@mimic/core';
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_PROMPT_VERSION,
+  PROMPTS,
+  parsePredictorId,
+  resolvePredictPrompt,
+} from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
   ExaEnricher,
@@ -62,17 +68,18 @@ describe.skipIf(!LIVE)('live providers', () => {
     expect(r.usage.costUsd).toBeGreaterThan(0);
   }, 60_000);
 
-  // One call per LLM shadow in the default config, with the exact predict.v1 request a shadow makes.
-  const shadowModels = DEFAULT_CONFIG.predictor.shadows
-    .map(parsePredictorId)
-    .filter((p) => p.kind === 'llm')
-    .map((p) => p.model);
-  it.each(shadowModels)(
+  // One call per LLM shadow in the default config, with the request its prompt version makes (ADR-0028): the
+  // incumbent predict.v1 text, and each variant's harness (reasoning effort, max tokens).
+  const shadows = DEFAULT_CONFIG.predictor.shadows
+    .map((id) => ({ id, spec: parsePredictorId(id) }))
+    .filter((s) => s.spec.kind === 'llm');
+  it.each(shadows.map((s) => [s.id, s] as const))(
     'shadow %s returns a predict.v1 distribution',
-    async (model) => {
+    async (_id, { spec }) => {
       const p = PROMPTS['predict.v1'];
+      const h = resolvePredictPrompt(spec.promptVersion ?? DEFAULT_PROMPT_VERSION.llm, 'llm').harness;
       const r = await new OpenRouterChat(or).chat({
-        model,
+        model: spec.model,
         messages: [
           { role: 'system', content: p.system },
           {
@@ -83,8 +90,8 @@ describe.skipIf(!LIVE)('live providers', () => {
           },
         ],
         jsonSchema: { name: 'probs', schema: p.schema },
-        reasoningEffort: 'low',
-        maxTokens: LLM_PREDICTOR_MAX_TOKENS,
+        reasoningEffort: h.reasoningEffort,
+        maxTokens: h.maxTokens,
       });
       const probs = JSON.parse(r.content).probs as Array<{ key: string; p: number }>;
       expect(probs.map((x) => x.key).sort()).toEqual(['no', 'yes']);

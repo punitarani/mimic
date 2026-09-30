@@ -32,14 +32,14 @@ export const Domain = z.enum(['core', 'casual', 'professional']);
 export type Domain = z.infer<typeof Domain>;
 
 /**
- * The four person-facing categories a mimic can be asked about (docs/CATEGORIES.md, ADR-0038). Every facet belongs to
+ * The four person-facing categories a mimic can be asked about (docs/CATEGORIES.md, ADR-0040). Every facet belongs to
  * exactly one; a person can deselect any of them, and a deselected category is never asked about or learned.
  */
 export const Category = z.enum(['psychology', 'values', 'life', 'work']);
 export type Category = z.infer<typeof Category>;
 export const CATEGORIES: readonly Category[] = Category.options;
 
-/** Sensitive areas: opt-in, each under its own consent (ADR-0038). */
+/** Sensitive areas: opt-in, each under its own consent (ADR-0040). */
 export const SensitiveArea = z.enum(['politics', 'religion', 'sexuality', 'health', 'money']);
 export type SensitiveArea = z.infer<typeof SensitiveArea>;
 export const SENSITIVE_AREAS: readonly SensitiveArea[] = SensitiveArea.options;
@@ -105,9 +105,9 @@ export interface Facet {
   high: string;
   /** 5 ordered labels for trait reads, low → high. */
   labels: [string, string, string, string, string];
-  /** The person-facing category the facet belongs to (ADR-0038). */
+  /** The person-facing category the facet belongs to (ADR-0040). */
   category: Category;
-  /** Set on opt-in facets: asked and learned only with the person's consent for this area (ADR-0038). */
+  /** Set on opt-in facets: asked and learned only with the person's consent for this area (ADR-0040). */
   sensitive?: SensitiveArea;
   /** The research instrument or finding the facet is anchored in (ontology v2; docs/ontology/v2.sources.md). */
   source?: string;

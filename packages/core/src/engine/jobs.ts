@@ -241,7 +241,7 @@ async function missingPredictions(
   const out: Array<{ questionId: string; predictorId: string }> = [];
   for (const q of [...questions].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))) {
     if (q.seq === null || q.servedAt === null || q.servedAt >= servedBefore) continue;
-    // A question discarded after it was served (its category was withdrawn, ADR-0038) needs no more predictions.
+    // A question discarded after it was served (its category was withdrawn, ADR-0040) needs no more predictions.
     if (!isScoredKind(q.kind) || q.status === 'discarded') continue;
     if (!sealed.has(q.id)) continue;
     for (const predictorId of predictorIds) {

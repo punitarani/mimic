@@ -1,6 +1,6 @@
 # Categories and consent
 
-What a mimic may be asked about and learn, how a person chooses it, and how that choice is enforced (ADR-0038). The
+What a mimic may be asked about and learn, how a person chooses it, and how that choice is enforced (ADR-0040). The
 copy quoted here is the source the intake form and the session sheet render (`CATEGORY_INFO`, `AREA_INFO` and
 `SELF_ONLY_NOTE` in `packages/core/src/scope.ts`).
 
@@ -33,7 +33,7 @@ professional one can measure a psychology facet.
 every ontology version (it moves to the Money group in v2). Occupation facets, generated per person from their
 occupation, are always "Work and money"; none are generated when that category is deselected.
 
-Ontology v2 (ADR-0039) adds facets to every category and the sensitive facets below; its table is in
+Ontology v2 (ADR-0041) adds facets to every category and the sensitive facets below; its table is in
 `docs/ontology/v2.json` and its research anchors in `docs/ontology/v2.sources.md`.
 
 ## 2. Sensitive areas
@@ -59,7 +59,7 @@ categories that apply here). Money in detail is sensitive by our policy but not 
 - **Only direct, consented questions populate a sensitive facet.** Nothing about politics, religion, sexuality, health
   or detailed finances is inferred from other answers, from web search or from enrichment. The reflector is told
   so, and code enforces it: an insight may name a sensitive facet only when it cites an answer to a question that
-  asked about that facet directly, and a sensitive trait is read only once such an answer exists (ADR-0040).
+  asked about that facet directly, and a sensitive trait is read only once such an answer exists (ADR-0042).
 - **Never from the web.** Identity search and enrichment never ask for special-category fields, and a lexicon drops
   any fact from search or enrichment that reveals one (`specialAreaOfFact` in `packages/core/src/scope.ts`). It errs
   toward dropping; professional facts (an employer, a job title, a school) are kept for health, because working in
@@ -67,9 +67,9 @@ categories that apply here). Money in detail is sensitive by our policy but not 
 - **Respectful wording.** Sensitive questions are asked plainly, never presuming a belief, identity, condition or
   orientation, with options covering the range. The `demeaning` Jev gate rejects loaded or demeaning drafts; the
   `sensitive` gate stays as a backstop against drafts that touch a sensitive topic without being tagged with a
-  consented sensitive facet (ADR-0039).
+  consented sensitive facet (ADR-0041).
 - **Later in the session.** No sensitive question is served among the first five, and none before the person has
-  answered a few ordinary ones (the trust ramp, ADR-0041).
+  answered a few ordinary ones (the trust ramp, ADR-0043).
 
 ## 3. The consent model
 
@@ -82,7 +82,7 @@ Stored on the mimic (`mimics.categories_json`, `consents_json`, `research_consen
   researchConsents: { politics?, religion?, sexuality?, health?: true } }
 ```
 
-- **Defaults.** Every category, no sensitive area, no special-category research use. Mimics created before ADR-0038
+- **Defaults.** Every category, no sensitive area, no special-category research use. Mimics created before ADR-0040
   read as this default, which is exactly what they were asked about.
 - **Normalisation** (`normalizeScope`). Categories are kept in canonical order; only `true` flags are stored; a
   consent whose category is deselected is dropped (reselecting the category asks again); a research consent is
@@ -104,7 +104,7 @@ Stored on the mimic (`mimics.categories_json`, `consents_json`, `research_consen
 - For each special-category area a person has not consented to research use of, the export drops: questions
   touching that area's facets with their answers, predictions and scores; trait estimates and history for those
   facets; insights naming those facets or citing those answers; reflection facts citing those answers; knowledge
-  graph facet nodes and edges for those facets (ADR-0040).
+  graph facet nodes and edges for those facets (ADR-0042).
 - Money in detail follows plain research consent.
 - Aggregate item statistics (`item_stats`) count rows touching a special-category facet only from people who
   consented to research use of that area.

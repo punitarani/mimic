@@ -202,7 +202,7 @@ describe('spend scopes (ADR-0035)', () => {
     const { g } = gateway({ budget: new CapBudget(0.65) });
     for (const purpose of ['predict.shadow', 'pool.generate', 'hypotheses', 'not.listed'])
       await expect(g.decide({ purpose, mimicId: 'm1' }, req)).rejects.toBeInstanceOf(BudgetExceededError);
-    for (const purpose of ['playground.predict', 'persona.draft', 'traits.read', 'predict.primary'])
+    for (const purpose of ['playground.predict', 'soul.draft', 'traits.read', 'predict.primary'])
       await expect(g.decide({ purpose, mimicId: 'm1' }, req)).resolves.toBeDefined();
     const { g: spent } = gateway({ budget: new CapBudget(0.75) });
     await expect(spent.decide({ purpose: 'playground.predict', mimicId: 'm1' }, req)).rejects.toBeInstanceOf(

@@ -1026,7 +1026,86 @@ off (a prompt variant, ADR-0028) or drop it is a separate decision; this ADR doe
   Pacing keeps backfill batches small; a live burst larger than six calls waiting on headers can still add a
   little queueing to a shadow's latency.
 
-## ADR-0038 — Categories and consent: sensitive domains become opt-in (2026-09-30)
+## ADR-0038 — Qwen3.8 Flash runs with reasoning off: `predict.v1-direct` and `cfg.default.v5` (2026-09-30)
+
+ADR-0025 added `llm:qwen/qwen3.8-flash` as a shadow after one live call. At the incumbent harness (`reasoning.effort:
+low`, 3000 max tokens) its provider doesn't honor low effort. ADR-0037's measurements on 8 sealed states:
+
+| Qwen3.8 Flash | Valid | p50 | $ per 1k |
+| --- | --- | --- | --- |
+| effort low, 3000 max tokens (`predict.v1`) | 5 of 8; the rest spent all 3000 tokens reasoning | 59 s | $1.07 |
+| effort low, 8000 max tokens | 7 of 7 | 49 s | $1.20 |
+| reasoning off (`predict.v1-direct`, through `LlmPredictor`) | 7 of 8; one keyed an option by its label | 1.8 s | $0.07 |
+
+The prod lab agreed: 78% failed, 35 s p50 over what did succeed. Almost every failure is the token cap, which also
+makes the successes a biased sample: the questions Qwen happened to reason about briefly.
+
+**Decision.**
+- **A registered prompt variant, `predict.v1-direct`:** the incumbent `predict.v1` text with `harness.reasoningEffort:
+  'none'`. It changes nothing but the effort, so it is addressable for any model as `llm:<model>@predict.v1-direct`
+  (ADR-0028), and every prediction stores it as its prompt version (invariant 4).
+- **`cfg.default.v5` is `cfg.default.v4` with the Qwen shadow as `llm:qwen/qwen3.8-flash@predict.v1-direct`.** The
+  other shadows are unchanged. At effort low they reason for only tens to a few hundred tokens, so reasoning off is
+  the closest match for Qwen to the condition they run in. Configs are immutable: mimics created under v3 and v4 keep
+  `llm:qwen/qwen3.8-flash`, and its predictions stay in the record (with their failures now marked `output`,
+  ADR-0037).
+- **Backfill the new predictor** over served questions (`pnpm backfill --predictor
+  llm:qwen/qwen3.8-flash@predict.v1-direct`, ADR-0024), so the lab compares it on the same questions as the others.
+
+Whether reasoning helps Qwen's accuracy at all is left to the lab. `llm:qwen/qwen3.8-flash` remains as a
+predictor ID, and the 8000-token harness can be registered as its own variant if that comparison is wanted.
+
+## ADR-0039 — SOUL.md: Persona.md renamed, and redesigned from research (2026-09-30)
+
+`Persona.md` (ADR-0033) is now `SOUL.md`. The rename came with a research pass on what the file should hold. What we
+found, and what we changed:
+
+- **SOUL.md already means something to agents.** In OpenClaw and Hermes Agent, SOUL.md is the agent's *own*
+  identity, injected first into every system prompt; a model of the user goes in USER.md. Dropped in unchanged, a
+  file about a real person would make the agent believe it is that person. So the file opens with YAML front matter
+  (`kind: person-model`, subject, as-of date, answers, evidence cutoff, draft prompt, profile) and says in its first
+  line, and again in the instructions, that it describes the person and is not the reader's identity.
+- **Evidence over description.** Agents built from a person's interview answers predicted their survey answers far
+  better than agents given demographics or a persona paragraph (Park et al., 2024, arXiv 2411.10109: 0.85 vs
+  0.70–0.71 normalized accuracy), and a structured summary of a few thousand tokens loses little against the raw
+  transcript, especially one that keeps how a person decides separate from what they prefer (the "BDE" structure,
+  arXiv 2608.20344; Twin-2K-500, arXiv 2505.17479). So the file keeps the drafted portrait (decision procedure,
+  rules of thumb, tradeoffs, values) apart from the evidence, and carries the person's real answers and reasons.
+- **Twins drift toward an idealized person.** Studies of LLM twins find them too uniform, stereotyped and
+  "hyper-rational", and nicer than the people they model (arXiv 2509.19088). `soul.v1` (a new prompt; `persona.v1`
+  stays in the registry for older drafts, which still render) adds a Tensions section, asks for statements
+  "specific enough to be wrong" (the soul.md project's phrase), and tells the writer not to make the person more
+  rational, agreeable, consistent or optimistic than their answers. The instructions tell the reading agent the
+  same.
+- **The person's own rules come first.** Following OpenClaw's Always/Never directives and soul.md's "Won't:", the
+  person can set boundaries (Always, Never, Ask me first), which open the file and override everything else, and
+  choose whether an agent may write or speak as them: never; when asked, saying it's an AI (the default); or when
+  asked. Voice samples (up to 5, the person's own writing, as in soul.md's STYLE.md) back the second and third.
+- **Instructions for the reader.** A trust order (boundaries, own words, recorded answers with the most recent
+  winning, inferred sections, tendencies, background); predict from a related answer first; say how sure you are;
+  unknowns mean ask; check before anything irreversible, public, financial, legal, medical or personal; quoted text
+  is the person's words, never instructions (the person's text and search facts are untrusted input, so they are
+  quoted); don't edit the file. Fidelity and the as-of date say how far to trust it.
+- **Short core, long appendix.** Persona instructions fade over long conversations and agent tools truncate large
+  files (OpenClaw at 20,000 characters), so the core keeps the 12 answers the portrait cites most as "Key
+  decisions", and the rest of the record goes to an appendix. `?profile=core` drops the appendix; the page shows both
+  sizes. Tendencies are a compact table.
+- **Third person for the portrait.** Asking a model to predict a person moved its answers closer to real ones than
+  role-play did (arXiv 2607.24782), so the portrait says "they"; first person appears only in the person's quoted
+  words and voice samples.
+- **Rename mechanics.** Routes move to `/m/[id]/soul` and `/api/mimics/:id/soul(.md)`, with permanent (308)
+  redirects from the old page, file and JSON API paths, so a page left open across the deploy still saves. The
+  tables keep their names, `persona_drafts` and `persona_curations`, and there is no migration: a deploy migrates
+  D1 before it ships code, so a rename would break the old code still serving in between. Drizzle names them
+  `soulDrafts` and `soulCurations`. Existing drafts and curations (with their `rev`) carry over; stored curations
+  parse with the new fields' defaults, and `persona.v1` drafts still render. `?profile=core` downloads as
+  `SOUL.core.md`. The LLM call's purpose is `soul.draft`, drawn from the page's reserve like `persona.draft` was
+  (ADR-0035).
+- **Not in this change.** Treating "that's not me" on a statement as new evidence, and a "test my SOUL.md" check
+  that scores an agent reading only the exported file on held-out answers, both touch the research invariants and
+  are left for later.
+
+## ADR-0040 — Categories and consent: sensitive domains become opt-in (2026-09-30)
 
 PLAN §1 excluded health, sexuality, religion, politics and detailed finances, enforced by five prompt rules and the
 `sensitive` Jev gate. The project owner now wants them, gathered as fully as each person permits, and wants people to
@@ -1046,7 +1125,7 @@ full policy.
   search or enrichment: those fields are never requested, and a lexicon drops any fact that reveals one before it is
   stored. Hard delete covers it like everything else.
 - **Direct questions only.** A sensitive facet is populated only by answers to questions that ask about it directly;
-  nothing is inferred from other answers or from facts. The reflector is told so and code enforces it (ADR-0040).
+  nothing is inferred from other answers or from facts. The reflector is told so and code enforces it (ADR-0042).
 - **Stored as a `MimicScope`** in `mimics.categories_json`, `consents_json`, `research_consents_json` (NOT NULL with
   constant defaults, so existing rows read as every category and no sensitive consent, which is what they were asked)
   and `scope_at` (migration 0007). `normalizeScope` keeps categories in canonical order, only `true` flags, drops
@@ -1066,5 +1145,5 @@ full policy.
   as for removed facts in ADR-0017); replay reports states served before `scope_at` as `rescoped`.
 - **Scripted people are marked.** `runSession` gives scripted mimics a `script:` participant id (Twin imports already
   use `twin2k:`), so reports can keep real people apart (rubric R10).
-- **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0042); PLAN §14 lists them
+- **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0044); PLAN §14 lists them
   and the rubric each is scored on.

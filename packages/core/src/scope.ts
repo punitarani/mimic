@@ -10,7 +10,7 @@ import {
 } from './types';
 
 /**
- * What a mimic may be asked about and learn (docs/CATEGORIES.md, ADR-0038): the categories the person selected, the
+ * What a mimic may be asked about and learn (docs/CATEGORIES.md, ADR-0040): the categories the person selected, the
  * sensitive areas they consented to, and the special-category areas they allow in research exports. Pure and
  * client-safe (only zod), so the intake form, the session sheet and the engine share one definition.
  */
@@ -38,7 +38,7 @@ export const MimicScope = z.object({
 });
 export type MimicScope = z.infer<typeof MimicScope>;
 
-/** Every category, no sensitive area: what intake starts from and what mimics created before ADR-0038 read as. */
+/** Every category, no sensitive area: what intake starts from and what mimics created before ADR-0040 read as. */
 export const DEFAULT_SCOPE: MimicScope = { categories: [...CATEGORIES], consents: {}, researchConsents: {} };
 
 export interface CategoryInfo {
@@ -246,7 +246,7 @@ export function specialFacetIds(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Special-category facts from web search (ADR-0038): never stored. Enrichment never asks for these fields; this
+// Special-category facts from web search (ADR-0040): never stored. Enrichment never asks for these fields; this
 // lexicon is the backstop for free text (interests, projects, headlines). It errs toward dropping.
 // ---------------------------------------------------------------------------------------------------------------
 

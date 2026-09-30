@@ -521,7 +521,7 @@ export default function SessionPage() {
                 body={
                   s && s.mimic.spendUsd >= s.mimic.budgetUsd
                     ? "This session reached its spending limit. You can still answer questions yourself on your mimic's page."
-                    : "This session used its share of the budget. The rest is kept for your mimic's page, where you can ask it questions, teach it and curate Persona.md."
+                    : "This session used its share of the budget. The rest is kept for your mimic's page, where you can ask it questions, teach it and curate SOUL.md."
                 }
               />
             ) : (

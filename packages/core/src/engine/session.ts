@@ -216,7 +216,7 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
   const seq = maxSeq(questions) + 1;
   const rng = seededRng(`select:${m.id}:${seq}`);
 
-  // Nothing the person's scope hides is ever served (ADR-0038): out-of-scope anchors, repeat sources and pooled
+  // Nothing the person's scope hides is ever served (ADR-0040): out-of-scope anchors, repeat sources and pooled
   // questions are skipped here even if a scope change raced the discard in setScope.
   const inScope = (q: QuestionRecord) => !loaded.scope.hiddenQuestionIds.has(q.id);
 

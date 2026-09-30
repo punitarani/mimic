@@ -19,7 +19,7 @@ import { type Facet, isScoredKind, learnsFrom, type PersonState, type Question }
 import { type EngineDeps, facetsFor, loadConfig } from './deps';
 
 export interface LoadedMimic {
-  /** Evidence, traits, insights and facts within the person's scope (ADR-0038). */
+  /** Evidence, traits, insights and facts within the person's scope (ADR-0040). */
   data: MimicData;
   /** Every question and answer, in or out of scope (seq bookkeeping, repeats, fidelity). */
   questions: QuestionRecord[];
@@ -35,7 +35,7 @@ export interface LoadedMimic {
 export const STATE_SETTLE_MS = 2_000;
 
 /**
- * Builds the loaded view and applies the person's current scope (ADR-0038): answers to questions touching a blocked
+ * Builds the loaded view and applies the person's current scope (ADR-0040): answers to questions touching a blocked
  * facet, trait estimates of blocked facets, insights naming a blocked facet or citing a hidden answer, and reflection
  * facts citing a hidden answer are left out. With the default scope nothing is blocked and the view is unchanged.
  */
@@ -140,7 +140,7 @@ export async function loadMimicDataAt(
     allFacets(deps, m),
   ]);
   const kindOf = new Map(questions.map((q) => [q.id, q.kind]));
-  // The scope is today's, never time-travelled: what the person withdrew stays out of rebuilt states too (ADR-0038,
+  // The scope is today's, never time-travelled: what the person withdrew stays out of rebuilt states too (ADR-0040,
   // as fact removal in ADR-0017). Replay reports states served before `scopeAt` as rescoped.
   return assemble(m, facets, {
     facts: facts

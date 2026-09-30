@@ -48,7 +48,7 @@ const FACETS = [
 
 const scope = (over: Partial<MimicScope> = {}): MimicScope => ({ ...DEFAULT_SCOPE, ...over });
 
-describe('scope model (ADR-0038)', () => {
+describe('scope model (ADR-0040)', () => {
   it('allows a facet only when its category is selected and, if sensitive, its area is consented', () => {
     const all = scope();
     expect(facetAllowed(all, facet('x', 'psychology'))).toBe(true);
@@ -170,7 +170,7 @@ describe('scope model (ADR-0038)', () => {
   });
 });
 
-describe('special-category facts from search are never stored (ADR-0038)', () => {
+describe('special-category facts from search are never stored (ADR-0040)', () => {
   it('recognises religion, politics, health and sexuality in personal facts', () => {
     expect(specialAreaOfFact({ predicate: 'hasInterest', object: 'Baptist church choir' })).toBe('religion');
     expect(specialAreaOfFact({ predicate: 'hasInterest', object: 'Sunday mass' })).toBe('religion');

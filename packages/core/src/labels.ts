@@ -1,5 +1,5 @@
 /**
- * Display labels shared by the web app and Persona.md (ADR-0033). Client-safe: no imports, so client components can
+ * Display labels shared by the web app and SOUL.md (ADR-0039). Client-safe: no imports, so client components can
  * use it through `@mimic/core/labels` without bundling the engine.
  */
 
@@ -26,7 +26,7 @@ export function predicateLabel(predicate: string): string {
 
 export type CertaintyTier = 'low' | 'medium' | 'high';
 
-/** Tiers for a trait read's certainty (Jev confidence), as shown in the model panel and in Persona.md. */
+/** Tiers for a trait read's certainty (Jev confidence), as shown in the model panel and in SOUL.md. */
 export function certaintyTier(confidence: number): CertaintyTier {
   if (confidence >= 0.7) return 'high';
   if (confidence >= 0.4) return 'medium';
