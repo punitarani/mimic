@@ -375,7 +375,7 @@ describe('preflight', () => {
       "the token can't manage Access: add Account · Access: Apps and Policies · Edit, and turn on Zero Trust for " +
         'the account once (it picks a team name)',
       "the token can't see the zone punitarani.com, which serves mimic.punitarani.com: add Zone · Workers Routes · " +
-        'Edit and Zone · DNS · Edit for punitarani.com (the zone must be on this account)',
+        'Edit for punitarani.com (the zone must be on this account)',
     ]);
   });
 

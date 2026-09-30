@@ -157,8 +157,8 @@ export async function checkPermissions(cf, { domain = null } = {}) {
     }
     if (!zones.some((z) => z.name === zone)) {
       problems.push(
-        `the token can't see the zone ${zone}, which serves ${domain}: add Zone · Workers Routes · Edit and ` +
-          `Zone · DNS · Edit for ${zone} (the zone must be on this account)`,
+        `the token can't see the zone ${zone}, which serves ${domain}: add Zone · Workers Routes · Edit for ` +
+          `${zone} (the zone must be on this account)`,
       );
     }
   }

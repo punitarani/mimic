@@ -39,9 +39,11 @@ These are the only manual steps.
      - Queues: Edit
      - Vectorize: Edit
      - Access: Apps and Policies: Edit
-   - Zone `punitarani.com`:
-     - Workers Routes: Edit
-     - DNS: Edit
+   - Zone `punitarani.com` (or all zones):
+     - Workers Routes: Edit. A Custom Domain needs only this and Workers Scripts; Cloudflare creates the DNS record
+       and certificate itself.
+
+   Nothing else is needed (Pages, Containers, Tail and the like can be left off).
 3. **Doppler → GitHub.** In project `mimic`, config `prd`, set the variables below. Sync them to this repository's
    Actions secrets with Doppler's GitHub integration. CD reads repository secrets and nothing else.
 
