@@ -129,7 +129,7 @@ export class FakeLlm implements LlmClient {
     else if (sys.startsWith("Given a person's occupation")) out = this.occFacets();
     else if (sys.startsWith('Write {k}') || /^Write \d+ distinct/.test(sys)) out = this.hypotheses(user);
     else if (sys.startsWith("Turn the person's scenario")) out = this.ask(user);
-    else if (sys.startsWith('You write a portrait of one specific person')) out = this.persona(user);
+    else if (sys.startsWith('You write the portrait at the heart of a SOUL.md')) out = this.soul(user);
     else if (sys.startsWith('Write one short sentence'))
       out = { sentence: 'I tend to go with what worked before.' };
     else out = {};
@@ -201,7 +201,7 @@ export class FakeLlm implements LlmClient {
     };
   }
 
-  private persona(user: string) {
+  private soul(user: string) {
     const seqs = [...(user.split('ANSWERS:')[1] ?? '').matchAll(/^#(\d+)/gm)].map((m) => Number(m[1]));
     const cite = (i: number) => seqs.filter((_, j) => j % 3 === i % 3).slice(0, 3);
     return {
@@ -230,6 +230,12 @@ export class FakeLlm implements LlmClient {
           text: 'Leans on what worked before, even when conditions changed.',
           evidenceSeqs: cite(0),
           confidence: 0.55,
+        },
+        {
+          section: 'tensions',
+          text: 'Careful with plans at work, loose with them at home.',
+          evidenceSeqs: cite(1),
+          confidence: 0.5,
         },
         {
           section: 'values',

@@ -1,10 +1,19 @@
 'use client';
-import type { SoulCuration, SoulItem, SoulSave, SoulSection, SoulView } from '@mimic/core';
+import type {
+  BoundaryKind,
+  SoulCuration,
+  SoulItem,
+  SoulSave,
+  SoulSection,
+  SoulView,
+  SpeakAsMe,
+} from '@mimic/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TopBar } from '@/components/brand';
+import { CodeIcon, CrossIcon, DocIcon } from '@/components/session/icons';
 import { Button, buttonClass, Card, cn, ErrorText, Input, Spinner, Textarea } from '@/components/ui';
 import { api } from '@/lib/api';
 
@@ -103,9 +112,9 @@ export default function SoulPage() {
         <header className="space-y-2">
           <h1 className="font-serif text-3xl tracking-tight">SOUL.md</h1>
           <p className="text-[15px] text-muted">
-            A file any AI agent can read to represent you: your values, beliefs and biases, and above all how
-            you make decisions. Choose what goes in, reword what was inferred, add your own words, then
-            download it.
+            A file any AI agent can read to predict and represent you: your values, beliefs and biases, and
+            above all how you make decisions. Set your boundaries, choose what goes in, reword what was
+            inferred, add your own words, then download it.
           </p>
         </header>
         {!view || !curation ? (
@@ -179,7 +188,18 @@ function FileActions({
         download
         className={buttonClass('primary')}
       >
+        <DocIcon width={18} height={18} />
         Download SOUL.md
+      </a>
+      <a
+        href={busy ? undefined : `/api/mimics/${id}/soul.md?profile=core`}
+        aria-disabled={busy}
+        download
+        className={buttonClass('secondary')}
+        title="Everything except the appendix of answers, for system prompts with a small budget"
+      >
+        <CodeIcon width={18} height={18} />
+        Core only
       </a>
       <Button
         variant="secondary"
@@ -195,6 +215,9 @@ function FileActions({
       <span className="text-[13px] text-muted" aria-live="polite">
         {save === 'saving' ? 'Saving…' : save === 'error' ? 'Not saved' : 'Saved'}
       </span>
+      <span className="basis-full text-[13px] text-muted">
+        About {formatTokens(view.tokens.full)} tokens; the core alone is {formatTokens(view.tokens.core)}.
+      </span>
       {save === 'error' && (
         <Button variant="ghost" size="sm" onClick={onRetry}>
           Try again
@@ -202,6 +225,10 @@ function FileActions({
       )}
     </div>
   );
+}
+
+function formatTokens(n: number): string {
+  return n < 1000 ? String(n) : `${(n / 1000).toFixed(1)}K`;
 }
 
 function DraftCard({
@@ -249,7 +276,7 @@ function DraftCard({
       )}
       <div className="flex flex-wrap items-center gap-3">
         <Button variant={draft ? 'secondary' : 'primary'} onClick={write} disabled={busy || tooFew}>
-          {busy ? 'Writing… up to a minute' : draft ? 'Rewrite' : 'Write the inferred sections'}
+          {busy ? 'Writing… about a minute' : draft ? 'Rewrite' : 'Write the inferred sections'}
         </Button>
         {busy && <Spinner />}
       </div>
@@ -302,6 +329,20 @@ function Curate({
           />
         </div>
         <SectionToggle
+          section={view.sections.find((s) => s.id === 'boundaries')!}
+          on={!curation.disabled.includes('boundaries')}
+          onChange={(on) => setSection('boundaries', on)}
+        >
+          <Boundaries
+            value={curation.boundaries}
+            onChange={(boundaries) => update({ ...curation, boundaries })}
+          />
+        </SectionToggle>
+        <SpeakingAsYou
+          value={curation.speakAsMe}
+          onChange={(speakAsMe) => update({ ...curation, speakAsMe })}
+        />
+        <SectionToggle
           section={view.sections.find((s) => s.id === 'own_words')!}
           on={!curation.disabled.includes('own_words')}
           onChange={(on) => setSection('own_words', on)}
@@ -313,6 +354,16 @@ function Curate({
             placeholder="How you like to decide, what you won't compromise on, opinions you hold. Markdown works."
             value={curation.notes}
             onChange={(e) => update({ ...curation, notes: e.target.value })}
+          />
+        </SectionToggle>
+        <SectionToggle
+          section={view.sections.find((s) => s.id === 'voice')!}
+          on={!curation.disabled.includes('voice')}
+          onChange={(on) => setSection('voice', on)}
+        >
+          <VoiceSamples
+            value={curation.voiceSamples}
+            onChange={(voiceSamples) => update({ ...curation, voiceSamples })}
           />
         </SectionToggle>
       </div>
@@ -329,6 +380,143 @@ function Curate({
             <Items section={s} curation={curation} onToggle={setItem} onEdit={setEdit} />
           </SectionToggle>
         ))}
+    </div>
+  );
+}
+
+const BOUNDARY_KINDS: Array<{ kind: BoundaryKind; label: string }> = [
+  { kind: 'never', label: 'Never' },
+  { kind: 'always', label: 'Always' },
+  { kind: 'ask', label: 'Ask me first' },
+];
+const MAX_BOUNDARIES = 20;
+
+/** Rules any agent must follow for the person; blank rows are kept while editing and left out of the file. */
+function Boundaries({
+  value,
+  onChange,
+}: {
+  value: SoulCuration['boundaries'];
+  onChange: (v: SoulCuration['boundaries']) => void;
+}) {
+  const set = (i: number, patch: Partial<SoulCuration['boundaries'][number]>) =>
+    onChange(value.map((b, j) => (j === i ? { ...b, ...patch } : b)));
+  return (
+    <div className="space-y-2">
+      {value.map((b, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: rows have no identity beyond their position while typed
+        <div key={i} className="flex gap-2">
+          <select
+            aria-label={`Rule ${i + 1} kind`}
+            value={b.kind}
+            onChange={(e) => set(i, { kind: e.target.value as BoundaryKind })}
+            className="h-11 shrink-0 rounded-[10px] border border-line bg-raised px-2 text-[15px] hover:border-line-strong"
+          >
+            {BOUNDARY_KINDS.map((k) => (
+              <option key={k.kind} value={k.kind}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+          <Input
+            aria-label={`Rule ${i + 1}`}
+            maxLength={300}
+            placeholder={
+              b.kind === 'never'
+                ? 'Accept meetings before 10am for me'
+                : b.kind === 'ask'
+                  ? 'Before spending more than $100'
+                  : 'Reply within a day'
+            }
+            value={b.text}
+            onChange={(e) => set(i, { text: e.target.value })}
+          />
+          <Button
+            variant="ghost"
+            aria-label={`Remove rule ${i + 1}`}
+            onClick={() => onChange(value.filter((_, j) => j !== i))}
+          >
+            <CrossIcon width={16} height={16} />
+          </Button>
+        </div>
+      ))}
+      {value.length < MAX_BOUNDARIES && (
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => onChange([...value, { kind: 'never', text: '' }])}
+        >
+          Add a rule
+        </Button>
+      )}
+    </div>
+  );
+}
+
+const SPEAK_AS_ME: Array<{ value: SpeakAsMe; label: string; hint: string }> = [
+  { value: 'disclosed', label: 'When I ask, and it says it’s an AI', hint: 'The default.' },
+  { value: 'yes', label: 'When I ask', hint: 'It may write as you without saying it’s an AI.' },
+  { value: 'no', label: 'Never', hint: 'Agents only describe and predict you.' },
+];
+
+function SpeakingAsYou({ value, onChange }: { value: SpeakAsMe; onChange: (v: SpeakAsMe) => void }) {
+  return (
+    <fieldset className="space-y-2">
+      <legend className="text-lg font-medium">Speaking as you</legend>
+      <p className="text-[13px] text-muted">Whether an agent may write or speak in your name.</p>
+      <div className="space-y-1">
+        {SPEAK_AS_ME.map((o) => (
+          <label key={o.value} className="flex cursor-pointer gap-3 rounded-[10px] p-2 hover:bg-surface">
+            <input
+              type="radio"
+              name="speak-as-me"
+              value={o.value}
+              checked={value === o.value}
+              onChange={() => onChange(o.value)}
+              className="mt-1 size-[18px] shrink-0 accent-[var(--color-graphite)]"
+            />
+            <span>
+              <span className="block text-[15px]">{o.label}</span>
+              <span className="block text-[13px] text-muted">{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+const MAX_VOICE_SAMPLES = 5;
+
+/** A few real messages the person wrote, so agents that speak for them match the voice. */
+function VoiceSamples({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  return (
+    <div className="space-y-2">
+      {value.map((v, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: samples have no identity beyond their position while typed
+        <div key={i} className="flex gap-2">
+          <Textarea
+            aria-label={`Sample ${i + 1}`}
+            rows={3}
+            maxLength={600}
+            placeholder="Paste a message you wrote: an email, a chat reply, a note."
+            value={v}
+            onChange={(e) => onChange(value.map((x, j) => (j === i ? e.target.value : x)))}
+          />
+          <Button
+            variant="ghost"
+            aria-label={`Remove sample ${i + 1}`}
+            onClick={() => onChange(value.filter((_, j) => j !== i))}
+          >
+            <CrossIcon width={16} height={16} />
+          </Button>
+        </div>
+      ))}
+      {value.length < MAX_VOICE_SAMPLES && (
+        <Button variant="secondary" size="sm" onClick={() => onChange([...value, ''])}>
+          Add a sample
+        </Button>
+      )}
     </div>
   );
 }
@@ -514,7 +702,7 @@ function Meta({ item, edited }: { item: SoulItem; edited: boolean }) {
   const bits: string[] = [];
   if (edited) bits.push('edited by you');
   if (item.tentative) bits.push('tentative');
-  if (item.group) bits.push(item.group);
+  if (item.trait) bits.push(item.trait.group);
   if (item.detail) bits.push(item.detail);
   if (item.answer?.why) bits.push(`Why: “${item.answer.why}”`);
   if (item.cites.length && !item.answer)

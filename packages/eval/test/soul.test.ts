@@ -4,6 +4,7 @@ import {
   draftSoul,
   exportSoul,
   getSoul,
+  SoulCuration,
   serveNext,
   setFactState,
   soulKey,
@@ -47,7 +48,7 @@ async function mimic() {
 }
 
 describe('SOUL.md (ADR-0035)', () => {
-  it('drafts, curates and exports a persona from the latest snapshot', async () => {
+  it('drafts, curates and exports a SOUL.md from live data', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await mimic();
     await engine.drain();
@@ -61,13 +62,13 @@ describe('SOUL.md (ADR-0035)', () => {
     expect((await engine.deps.store.listSnapshots(m.id)).length).toBe(snaps);
     expect(before.draft).toBeNull();
     expect(before.source.answers).toBe(12);
-    expect(before.markdown).toContain('# Persona: Avery Quinn');
-    expect(before.markdown).toContain('## Decision record');
+    expect(before.markdown).toContain('# SOUL.md: Avery Quinn');
+    expect(before.markdown).toContain('## Key decisions');
     expect(before.markdown).toContain('Why: “Fast beats perfect for me”');
     expect(before.markdown).not.toContain('## Summary');
 
     const v = await draftSoul(engine.deps, m.id);
-    expect(v.draft).toMatchObject({ promptVersion: 'persona.v1', seqUpTo: 12, answers: 12, newAnswers: 0 });
+    expect(v.draft).toMatchObject({ promptVersion: 'soul.v1', seqUpTo: 12, answers: 12, newAnswers: 0 });
     expect(v.draft!.modelSnapshot).toMatch(/@fake$/);
     const statements = v.sections.filter((s) => s.items.some((i) => i.key.startsWith('st:')));
     // The fake writer returns two uncited statements; the citation guard drops them.
@@ -75,6 +76,7 @@ describe('SOUL.md (ADR-0035)', () => {
       'biases',
       'decision_style',
       'principles',
+      'tensions',
       'tradeoffs',
     ]);
     expect(v.markdown).toContain('## How they decide');
@@ -86,13 +88,14 @@ describe('SOUL.md (ADR-0035)', () => {
     expect(await engine.deps.blobs.get(call.r2TraceKey)).not.toContain('Avery');
 
     const st = v.sections.find((s) => s.id === 'decision_style')!.items[0]!;
-    const curation = {
+    const curation = SoulCuration.parse({
       name: 'Avery',
       notes: 'I never decide on money the same day.',
-      disabled: ['tendencies' as const],
+      boundaries: [{ kind: 'never', text: 'Book anything before 10am.' }],
+      disabled: ['tendencies'],
       hidden: [soulKey.identity('location'), 'st:gone'],
       edits: { [st.key]: 'Commits quickly, then revisits.', 'st:gone': 'stale' },
-    };
+    });
     const curated = await curateSoul(engine.deps, m.id, { rev: 10, curation });
     expect(curated.curation.hidden).toEqual([soulKey.identity('location')]);
     expect(curated.curation.edits).toEqual({ [st.key]: 'Commits quickly, then revisits.' });
@@ -101,11 +104,20 @@ describe('SOUL.md (ADR-0035)', () => {
     const late = await curateSoul(engine.deps, m.id, { rev: 9, curation: { ...curation, notes: 'Old.' } });
     expect(late).toMatchObject({ rev: 10, curation: { notes: 'I never decide on money the same day.' } });
     const md = await exportSoul(engine.deps, m.id);
-    expect(md).toContain('# Persona: Avery\n');
-    expect(md).toContain('## In their own words\n\nI never decide on money the same day.');
+    expect(md).toContain('kind: person-model\nsubject: "Avery"');
+    expect(md).toContain('# SOUL.md: Avery\n');
+    expect(md).toContain('- Never: Book anything before 10am.');
+    expect(md).toContain('## In their own words\n\n> I never decide on money the same day.');
     expect(md).toContain('- Commits quickly, then revisits.');
     expect(md).not.toContain('San Francisco');
     expect(md).not.toContain('## Measured tendencies');
+    // The core profile keeps everything but the appendix.
+    const core = await exportSoul(engine.deps, m.id, 'core');
+    expect(core).toContain('profile: core');
+    expect(core).toContain('## Key decisions');
+    expect(core).not.toContain('## Appendix');
+    // All 12 answers fit under "Key decisions", so there's no appendix yet.
+    expect(md).not.toContain('## Appendix');
 
     // A removed fact leaves the file at once, with no new answer or snapshot needed.
     const fact = (await engine.deps.store.listFacts(m.id)).find((f) => f.object === 'Planning trips')!;
@@ -118,6 +130,9 @@ describe('SOUL.md (ADR-0035)', () => {
     const later = await getSoul(engine.deps, m.id);
     expect(later.draft).toMatchObject({ answers: 12, newAnswers: 2 });
     expect(later.source.answers).toBe(14);
+    // Past the key-decision cap, the rest of the record moves to an appendix, which the core leaves out.
+    expect(later.markdown).toContain('## Appendix: all other answers');
+    expect(later.coreMarkdown).not.toContain('## Appendix');
     expect(later.markdown).toContain('**#14**');
     expect(later.markdown).toContain('- Commits quickly, then revisits.');
   }, 60_000);

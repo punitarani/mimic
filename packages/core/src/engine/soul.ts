@@ -5,6 +5,7 @@ import {
   pruneCuration,
   SOUL_MIN_ANSWERS,
   SOUL_PROMPT_VERSION,
+  type SoulProfile,
   type SoulSave,
   type SoulSource,
   type SoulView,
@@ -103,7 +104,7 @@ export async function curateSoul(deps: EngineDeps, mimicId: string, save: SoulSa
 }
 
 /**
- * Writes a new `persona.v1` draft from the mimic's current data. One LLM call through the gateway (logged,
+ * Writes a new `soul.v1` draft from the mimic's current data. One LLM call through the gateway (logged,
  * budget-guarded). The draft is derived data: it records the evidence, config, prompt and model snapshot it came from
  * (PLAN §3.4).
  */
@@ -124,7 +125,7 @@ export async function draftSoul(deps: EngineDeps, mimicId: string): Promise<Soul
   let { draft, modelSnapshot } = await write();
   if (!draft.statements.length) ({ draft, modelSnapshot } = await write());
   if (!draft.statements.length)
-    throw new EngineError('conflict', 'Could not write a persona from these answers. Try again.');
+    throw new EngineError('conflict', 'Could not write a SOUL.md from these answers. Try again.');
   const rec: SoulDraftRecord = {
     id: deps.newId(),
     mimicId: m.id,
@@ -140,7 +141,12 @@ export async function draftSoul(deps: EngineDeps, mimicId: string): Promise<Soul
   return view(deps, m, { loaded, draft: rec });
 }
 
-/** The file itself, as downloaded: `SOUL.md`. */
-export async function exportSoul(deps: EngineDeps, mimicId: string): Promise<string> {
-  return (await getSoul(deps, mimicId)).markdown;
+/** The file itself, as downloaded: `SOUL.md`, whole or just its core. */
+export async function exportSoul(
+  deps: EngineDeps,
+  mimicId: string,
+  profile: SoulProfile = 'full',
+): Promise<string> {
+  const v = await getSoul(deps, mimicId);
+  return profile === 'core' ? v.coreMarkdown : v.markdown;
 }
