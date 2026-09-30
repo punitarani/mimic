@@ -136,6 +136,13 @@ const SCENARIOS = [
  * a political question (rejected as out of scope without consent); a loaded religion question (rejected without
  * consent, fails `demeaning` with it).
  */
+/** What the fake reflector and hypothesis writer infer without being told (ADR-0043). */
+export const ROGUE_REFLECTION = {
+  insight: 'Sounds deeply religious and guided by faith.',
+  fact: 'Sunday mass',
+  hypothesis: 'Probably goes to church every Sunday.',
+} as const;
+
 export const ROGUE_PROMPTS = {
   selfRating: 'How well does this describe you? "I plan my week ahead."',
   untagged: 'Would you pray before making a big decision?',
@@ -219,7 +226,7 @@ export class FakeLlm implements LlmClient {
     } else if (sys.startsWith('You analyze where a predictor'))
       text = '1. Fake analysis: misses cluster on scale items.';
     else if (sys.startsWith('You write short, concrete questions')) out = this.generate(user);
-    else if (sys.startsWith("You analyze one person's answers")) out = this.reflect(user);
+    else if (sys.startsWith("You analyze one person's answers")) out = this.reflect(user, sys);
     else if (sys.startsWith('Estimate the probability')) out = this.predict(user);
     else if (sys.startsWith("Given a person's occupation")) out = this.occFacets();
     else if (sys.startsWith('Write {k}') || /^Write \d+ distinct/.test(sys)) out = this.hypotheses(user);
@@ -279,10 +286,25 @@ export class FakeLlm implements LlmClient {
     return { questions };
   }
 
-  private reflect(user: string) {
+  private reflect(user: string, sys = '') {
     const newBlock = user.split('NEW EVIDENCE:')[1]?.split('RELEVANT EARLIER EVIDENCE:')[0] ?? '';
     const seqs = [...newBlock.matchAll(/#(\d+)/g)].map((m) => Number(m[1]));
     if (!seqs.length) return { insights: [], facts: [], contradictions: [] };
+    // A reflector that infers what it must not (ADR-0043): religion from whatever the latest answer was. The guard
+    // keeps these only when that answer was to a direct religion question.
+    const rogue = sys.includes('religiosity [sensitive]')
+      ? {
+          insights: [
+            {
+              text: ROGUE_REFLECTION.insight,
+              facetIds: ['religiosity'],
+              evidenceSeqs: [seqs.at(-1)!],
+              confidence: 0.6,
+            },
+          ],
+          facts: [{ predicate: 'hasInterest', object: ROGUE_REFLECTION.fact, evidenceSeqs: [seqs.at(-1)!] }],
+        }
+      : { insights: [], facts: [] };
     return {
       insights: [
         {
@@ -292,8 +314,12 @@ export class FakeLlm implements LlmClient {
           confidence: 0.55,
         },
         { text: 'An uncited claim that must be dropped.', facetIds: [], evidenceSeqs: [], confidence: 0.9 },
+        ...rogue.insights,
       ],
-      facts: [{ predicate: 'hasInterest', object: 'Planning trips', evidenceSeqs: [seqs[0]!] }],
+      facts: [
+        { predicate: 'hasInterest', object: 'Planning trips', evidenceSeqs: [seqs[0]!] },
+        ...rogue.facts,
+      ],
       contradictions: [],
     };
   }
@@ -395,7 +421,8 @@ export class FakeLlm implements LlmClient {
     return {
       hypotheses: Array.from({ length: k }, (_, i) => ({
         id: `h${i}`,
-        text: `Reading ${i + 1}: this person leans ${['cautious', 'bold', 'balanced', 'social', 'independent'][i % 5]} in new situations.`,
+        // Reading 1 also guesses a religion it was never told (ADR-0043): the guard strips that sentence.
+        text: `Reading ${i + 1}: this person leans ${['cautious', 'bold', 'balanced', 'social', 'independent'][i % 5]} in new situations.${i === 0 ? ` ${ROGUE_REFLECTION.hypothesis}` : ''}`,
         leanings: [],
       })),
     };

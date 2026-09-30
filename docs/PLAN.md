@@ -845,12 +845,13 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 
 | Method and path | Request → response | Notes |
 |---|---|---|
-| `POST /api/mimics` | intake → `{ mimicId }` | Enqueues `identity.search` if consented |
+| `POST /api/mimics` | intake, with an optional `scope` → `{ mimicId }` | Enqueues `identity.search` if consented; scope defaults to every category, no sensitive area (ADR-0040) |
 | `GET /api/mimics/:id` | → UI snapshot | Profile, fidelity, facets, insights, KG, pool status |
 | `GET /api/mimics/:id/identity` | → `{ status, candidates, facts }` | |
 | `POST /api/mimics/:id/identity/confirm` | `{ candidateId \| null }` | Enqueues `identity.enrich` |
 | `POST /api/mimics/:id/identity/search` | `{ link }` | Searches again led by the link; only while a choice is pending (ADR-0029) |
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
+| `PATCH /api/mimics/:id/scope` | `MimicScope` → `{ scope, scopeAt, discarded }` | Categories and consents; narrowing hides what was learned in the withdrawn areas (ADR-0043) |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
 | `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0036) |

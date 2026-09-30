@@ -106,25 +106,44 @@ export function Checkbox({
   onChange,
   label,
   hint,
+  disabled = false,
+  describedBy,
 }: {
   id: string;
   checked: boolean;
   onChange: (v: boolean) => void;
   label: ReactNode;
-  hint?: string;
+  hint?: ReactNode;
+  disabled?: boolean;
+  /** Extra text that explains the box (for example why it is disabled), by element id. */
+  describedBy?: string;
 }) {
+  const hintId = hint ? `${id}-hint` : undefined;
+  const described = [hintId, describedBy].filter(Boolean).join(' ') || undefined;
   return (
-    <label htmlFor={id} className="flex cursor-pointer gap-3 rounded-[10px] p-2 -m-2 hover:bg-surface">
+    <label
+      htmlFor={id}
+      className={cn(
+        'flex gap-3 rounded-[10px] p-2 -m-2',
+        disabled ? 'cursor-not-allowed opacity-55' : 'cursor-pointer hover:bg-surface',
+      )}
+    >
       <input
         id={id}
         type="checkbox"
         checked={checked}
+        disabled={disabled}
+        aria-describedby={described}
         onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 size-[18px] shrink-0 accent-[var(--color-graphite)]"
       />
       <span>
         <span className="block text-[15px] text-graphite">{label}</span>
-        {hint ? <span className="block text-[13px] text-muted">{hint}</span> : null}
+        {hint ? (
+          <span id={hintId} className="block text-[13px] text-muted">
+            {hint}
+          </span>
+        ) : null}
       </span>
     </label>
   );

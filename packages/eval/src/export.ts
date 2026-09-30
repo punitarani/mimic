@@ -5,6 +5,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Client } from '@libsql/client';
+import {
+  allOntologyFacets,
+  type Facet,
+  MimicScope,
+  researchAllowed,
+  SPECIAL_AREAS,
+  type SpecialArea,
+  specialAreaOfFact,
+  specialAreasOfText,
+  stripSpecialAreas,
+} from '@mimic/core';
 import { openLocalDb } from '@mimic/db/local';
 import { remoteFlags, WORKER_DIR } from './wrangler';
 
@@ -24,6 +35,8 @@ export interface ExportResult {
   path: string;
   mimics: number;
   dropped: number;
+  /** Rows withheld by scope and research consent; null for an internal `--keep-identity` export. */
+  withheld: Withheld | null;
   datasetHash: string;
 }
 
@@ -119,12 +132,12 @@ export async function exportData(opts: ExportOptions): Promise<ExportResult> {
     if (inserts.trim()) await client.executeMultiple(inserts);
   }
 
-  const { dropped } = await scrubExport(client, { keepIdentity: opts.keepIdentity ?? false });
+  const { dropped, withheld } = await scrubExport(client, { keepIdentity: opts.keepIdentity ?? false });
   const mimics = Number((await client.execute('select count(*) as n from mimics')).rows[0]!.n);
   await client.execute('vacuum');
   const hash = await datasetHash(client);
   close();
-  return { path: out, mimics, dropped, datasetHash: hash };
+  return { path: out, mimics, dropped, withheld, datasetHash: hash };
 }
 
 /**
@@ -134,7 +147,7 @@ export async function exportData(opts: ExportOptions): Promise<ExportResult> {
 export async function scrubExport(
   client: Client,
   opts: { keepIdentity: boolean },
-): Promise<{ dropped: number }> {
+): Promise<{ dropped: number; withheld: Withheld | null }> {
   // Consent gates research use (PLAN §3.8).
   const nonConsented = (await client.execute('select id from mimics where consent_research = 0')).rows.map(
     (r) => String(r.id),
@@ -150,6 +163,10 @@ export async function scrubExport(
   await client.execute('delete from persona_curations');
   await client.execute('delete from vectors');
   await client.execute('delete from participants where id not in (select participant_id from mimics)');
+
+  // Special categories (ADR-0043) before the identity scrub, which blanks the references this reads. An internal
+  // `--keep-identity` export keeps them, because reproducing online predictions needs every sealed state's evidence.
+  const withheld = opts.keepIdentity ? null : await scrubSpecialCategories(client);
 
   if (!opts.keepIdentity) {
     const salt = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
@@ -201,7 +218,172 @@ export async function scrubExport(
       });
     }
   }
-  return { dropped: nonConsented.length };
+  return { dropped: nonConsented.length, withheld };
+}
+
+const inList = (n: number) => Array.from({ length: n }, () => '?').join(',');
+const json = <T>(v: unknown, fallback: T): T => {
+  try {
+    return JSON.parse(String(v)) as T;
+  } catch {
+    return fallback;
+  }
+};
+
+/** Rows withheld from a research export by scope and research consent (ADR-0043). */
+export interface Withheld {
+  questions: number;
+  traits: number;
+  insights: number;
+  facts: number;
+}
+
+/**
+ * Per person (ADR-0043): questions touching a facet outside their current scope, or a special-category facet without
+ * research consent for its area, go with their answers, undo records, predictions and scores; so do trait estimates
+ * and history for those facets, insights naming them or citing those answers, reflection facts citing those
+ * answers, graph facet nodes and their edges, and web facts the lexicon flags in an area without research consent.
+ * Sentences in the answers' own "why" text revealing such an area are removed. Money follows plain research consent.
+ */
+export async function scrubSpecialCategories(client: Client): Promise<Withheld> {
+  const out = { questions: 0, traits: 0, insights: 0, facts: 0 };
+  const ontology = allOntologyFacets();
+  const people = (
+    await client.execute('select id, categories_json, consents_json, research_consents_json from mimics')
+  ).rows;
+  for (const r of people) {
+    const id = String(r.id);
+    const parsed = MimicScope.safeParse({
+      categories: json(r.categories_json, []),
+      consents: json(r.consents_json, {}),
+      researchConsents: json(r.research_consents_json, {}),
+    });
+    if (!parsed.success) continue;
+    const scope = parsed.data;
+    const facets = new Map<string, Pick<Facet, 'id' | 'category' | 'sensitive'>>(ontology);
+    for (const f of (
+      await client.execute({ sql: 'select json from mimic_facets where mimic_id = ?', args: [id] })
+    ).rows) {
+      const facet = json<Facet | null>(f.json, null);
+      if (facet) facets.set(facet.id, { ...facet, category: facet.category ?? 'work' });
+    }
+    const blocked = new Set([...facets.keys()].filter((f) => !researchAllowed(scope, [f], facets)));
+    const keepAreas = new Set<SpecialArea>(SPECIAL_AREAS.filter((a) => scope.researchConsents[a] === true));
+
+    const qs = (
+      await client.execute({
+        sql: 'select id, seq, facet_ids_json from questions where mimic_id = ?',
+        args: [id],
+      })
+    ).rows;
+    const drop = qs.filter((q) => json<string[]>(q.facet_ids_json, []).some((f) => blocked.has(f)));
+    const dropIds = drop.map((q) => String(q.id));
+    const dropSeqs = new Set(drop.filter((q) => q.seq !== null).map((q) => Number(q.seq)));
+    if (dropIds.length) {
+      const ids = inList(dropIds.length);
+      await client.execute({
+        sql: `delete from scores where prediction_id in (select id from predictions where question_id in (${ids}))`,
+        args: dropIds,
+      });
+      await client.execute({
+        sql: `delete from scores where answer_id in (select id from answers where question_id in (${ids}))`,
+        args: dropIds,
+      });
+      for (const t of ['predictions', 'answers', 'answer_rewinds'])
+        await client.execute({ sql: `delete from ${t} where question_id in (${ids})`, args: dropIds });
+      await client.execute({ sql: `delete from questions where id in (${ids})`, args: dropIds });
+      out.questions += dropIds.length;
+    }
+
+    if (blocked.size) {
+      const fs = [...blocked];
+      for (const t of ['trait_estimates', 'trait_history']) {
+        const res = await client.execute({
+          sql: `delete from ${t} where mimic_id = ? and facet_id in (${inList(fs.length)})`,
+          args: [id, ...fs],
+        });
+        out.traits += res.rowsAffected;
+      }
+    }
+
+    const cites = (seqs: number[]) => seqs.some((s) => dropSeqs.has(s));
+    const insights = (
+      await client.execute({
+        sql: 'select id, text, facet_ids_json, evidence_seqs_json from insights where mimic_id = ?',
+        args: [id],
+      })
+    ).rows.filter(
+      (i) =>
+        json<string[]>(i.facet_ids_json, []).some((f) => blocked.has(f)) ||
+        cites(json<number[]>(i.evidence_seqs_json, [])) ||
+        specialAreasOfText(String(i.text)).some((a) => !keepAreas.has(a)),
+    );
+    const facts = (
+      await client.execute({
+        sql: 'select id, predicate, object, source, source_ref from facts where mimic_id = ?',
+        args: [id],
+      })
+    ).rows.filter((f) => {
+      const ref = String(f.source_ref ?? '');
+      if (f.source === 'reflection' && ref.startsWith('answers:'))
+        if (cites(ref.slice('answers:'.length).split(',').map(Number))) return true;
+      const area = specialAreaOfFact({ predicate: String(f.predicate), object: String(f.object) });
+      return area !== null && !keepAreas.has(area);
+    });
+    const gone = [...insights.map((i) => String(i.id)), ...facts.map((f) => String(f.id))];
+    if (insights.length)
+      await client.execute({
+        sql: `delete from insights where id in (${inList(insights.length)})`,
+        args: insights.map((i) => String(i.id)),
+      });
+    if (facts.length)
+      await client.execute({
+        sql: `delete from facts where id in (${inList(facts.length)})`,
+        args: facts.map((f) => String(f.id)),
+      });
+    if (gone.length)
+      await client.execute({
+        sql: `delete from kg_edges where mimic_id = ? and source_ref in (${inList(gone.length)})`,
+        args: [id, ...gone],
+      });
+    out.insights += insights.length;
+    out.facts += facts.length;
+
+    const facetNodes = (
+      await client.execute({
+        sql: "select id, props_json from kg_nodes where mimic_id = ? and type = 'Facet'",
+        args: [id],
+      })
+    ).rows.filter((n) => blocked.has(String(json<{ facetId?: string }>(n.props_json, {}).facetId ?? '')));
+    if (facetNodes.length) {
+      const ns = facetNodes.map((n) => String(n.id));
+      await client.execute({
+        sql: `delete from kg_edges where mimic_id = ? and (dst in (${inList(ns.length)}) or src in (${inList(ns.length)}))`,
+        args: [id, ...ns, ...ns],
+      });
+      await client.execute({ sql: `delete from kg_nodes where id in (${inList(ns.length)})`, args: ns });
+    }
+    await client.execute({
+      sql: `delete from mimic_facets where mimic_id = ? and facet_id in (${inList(Math.max(1, blocked.size))})`,
+      args: [id, ...(blocked.size ? [...blocked] : [''])],
+    });
+
+    for (const a of (
+      await client.execute({
+        sql: 'select id, why from answers where mimic_id = ? and why is not null',
+        args: [id],
+      })
+    ).rows) {
+      const why = String(a.why);
+      const kept = stripSpecialAreas(why, keepAreas);
+      if (kept !== why)
+        await client.execute({
+          sql: 'update answers set why = ? where id = ?',
+          args: [kept || null, String(a.id)],
+        });
+    }
+  }
+  return out;
 }
 
 /**

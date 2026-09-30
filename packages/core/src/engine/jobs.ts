@@ -14,9 +14,10 @@ import {
   reflect,
   runQualityGates,
 } from '../learning';
-import { getAnchorSet } from '../ontology';
+import { allOntologyFacets, getAnchorSet } from '../ontology';
 import { computeItemStats, type ScoredItemRow } from '../population';
 import { assertPredictorId, makePredictor, promptVersionOf } from '../predictors';
+import { guardHypothesisText, guardInsight, reflectionFactAllowed, researchAllowed } from '../scope';
 import { scorePrediction } from '../scoring';
 import { facetCoverage, usesHypotheses } from '../selectors';
 import { buildState, cosine, type EvidenceItem, toStateEvidence } from '../state-builder';
@@ -427,6 +428,10 @@ async function dispatch(deps: EngineDeps, job: Job, key: string, attempt: number
  */
 export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
   const sources = await deps.store.listScoredForStats({ consentResearch: true, split: 'dev' });
+  // Each person's current scope (ADR-0043): answers they withdrew never count, and a special-category facet counts
+  // only from people who consented to research use of that area.
+  const people = new Map((await deps.store.listMimics({ consentResearch: true })).map((m) => [m.id, m]));
+  const facetById = allOntologyFacets();
   const baselineByQ = new Map(
     sources.filter((r) => r.role === 'baseline').map((r) => [r.questionId, r.itemAcc]),
   );
@@ -434,6 +439,8 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
   for (const r of sources) {
     if (r.role !== 'primary' || r.fallback) continue;
     if (!isScoredKind(r.question.kind)) continue;
+    const who = people.get(r.mimicId);
+    if (!who || !researchAllowed(who.scope, r.question.facetIds, facetById)) continue;
     rows.push({
       mimicId: r.mimicId,
       itemKey: r.question.itemKey ?? null,
@@ -820,7 +827,7 @@ async function learnGuarded(
       },
     ],
     getAnchorSet(cfg.anchors.setId),
-  );
+  ).filter((t) => loaded.scope.allowed.has(t.facetId));
   for (const t of psych)
     traitWrites.push({
       ...t,
@@ -839,12 +846,14 @@ async function learnGuarded(
     const counts = new Map<string, number>();
     for (const e of learnable.filter((x) => x.seq <= seq))
       for (const f of e.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
+    // A sensitive facet is read only once a question has asked about it directly (ADR-0043): never from other answers.
+    const readable = facets.filter((f) => !f.sensitive || (counts.get(f.id) ?? 0) > 0);
     const { traits, modelSnapshot } = await readTraits(
       deps.gateway,
       ctxFor(m, 'traits.read', key),
       jevModel(deps),
       state,
-      facets,
+      readable,
       seq,
       counts,
     );
@@ -924,10 +933,16 @@ export async function runReflection(
     newEvidence,
     earlierEvidence: earlier,
   });
+  // Direct evidence only (ADR-0043): a sensitive tag or a special-category statement must cite a direct answer.
+  const keptInsights = delta.insights.flatMap((i) => {
+    const g = guardInsight(loaded.scope, i);
+    return g ? [g] : [];
+  });
+  const keptFacts = delta.facts.filter((f) => reflectionFactAllowed(loaded.scope, f));
   const now = deps.clock();
   for (const c of delta.contradictions)
     await deps.store.updateInsightStatus(c.insightId, 'superseded', now, seq);
-  const insights: InsightRecord[] = delta.insights.map((i) => ({
+  const insights: InsightRecord[] = keptInsights.map((i) => ({
     id: deps.newId(),
     mimicId: m.id,
     seqUpTo: seq,
@@ -942,7 +957,7 @@ export async function runReflection(
     statusChangedAt: null,
   }));
   if (insights.length) await deps.store.insertInsights(insights);
-  const facts: FactRecord[] = delta.facts.map((f) => ({
+  const facts: FactRecord[] = keptFacts.map((f) => ({
     id: deps.newId(),
     mimicId: m.id,
     predicate: f.predicate,
@@ -1033,7 +1048,12 @@ export async function runHypotheses(
     promptVersion: hypPromptVersion(cfg),
   });
   if (!hypotheses.length) return;
-  const body = JSON.stringify({ seqUpTo, hypotheses });
+  // Readings may not guess a special-category area the person hasn't answered a direct question about (ADR-0043).
+  const guarded = hypotheses
+    .map((h) => guardHypothesisText(loaded.scope, h, seqUpTo))
+    .filter((h) => h.length > 10);
+  if (!guarded.length) return;
+  const body = JSON.stringify({ seqUpTo, hypotheses: guarded });
   await deps.kv.put(`hyp:${m.id}`, body);
   // KV can't join the D1 guard (ADR-0036): if an undo landed while these were drawn from its state, take them back,
   // unless a newer set has replaced them already.

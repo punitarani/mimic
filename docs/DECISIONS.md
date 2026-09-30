@@ -1391,6 +1391,70 @@ and makes concreteness and respect things a gate checks rather than things a pro
   professional 30. The default config is unchanged until ADR-0044. Offline fakes append rogue drafts to every gen.v3 batch (a self-rating, an untagged
   religious question, a political one, a loaded one) so tests show each guard work.
 
+## ADR-0043 — Scope enforcement, direct evidence only, and the consent UI (2026-09-30)
+
+ADR-0040 made a deselected category or an unconsented sensitive area unreachable through the facet list. That left
+four ways in: a model inferring a sensitive trait from other answers, the web, cross-person statistics and research
+exports. This ADR closes them in code, adds the consent UI, and proves both with leakage tests.
+
+- **Direct evidence only** (`packages/core/src/scope.ts`). The scope view gains `sensitiveFacets` and `areaSeqs`
+  (the seqs of answered questions that asked about each area directly).
+  - Trait reader: a sensitive facet is sent to Jev only after a question has asked about it; psychometric anchor
+    traits are kept only for allowed facets.
+  - Reflector (`guardInsight`): an insight keeps a sensitive facet tag only when it cites a direct answer on that
+    facet; an insight whose text states a special-category attribute (the lexicon below) without citing a direct
+    answer in that area is dropped. Reflection facts (`reflectionFactAllowed`) follow the same rule.
+  - Hypotheses (`guardHypothesisText`): a sentence guessing a special-category area is removed unless a direct
+    answer in that area exists by the reading's `seqUpTo`.
+
+  Prompts (reflect.v2, hyp.v2) already say this; the guards make it true when a model ignores them. The offline
+  fakes now do ignore them (they infer religion from anything), so the tests exercise every guard.
+- **Never from the web.** `addFacts` drops search and enrichment facts naming politics, religion, sexuality or
+  health (the M9 lexicon, `specialAreaOfFact`) before the store, the graph or the vector index; identity candidates'
+  summaries and headlines lose such sentences (`stripSpecialText`) before Jev ranks them or they are stored; carried
+  candidate facts are filtered the same way. The Parallel output schema requests no such field, and a contract test
+  pins that. The lexicon can miss phrasing; the person reviews every web fact and can remove it.
+- **Item statistics.** `runStatsRefresh` counts a row only when the person's current scope still allows its facets
+  and, for a special-category facet, the person consented to research use of that area (`researchAllowed`). Money
+  follows plain research consent.
+- **Research export** (`scrubExport`, before the identity scrub). For each exported mimic, facets it may not share
+  (`researchAllowed`) are blocked: questions touching them go with their answers, rewinds, predictions and scores;
+  trait rows and history for them go; insights naming them or citing dropped seqs go; reflection facts citing dropped
+  seqs or stating a special-category attribute the person didn't share go; graph facet nodes and edges sourced from
+  dropped rows go; `mimic_facets` rows go; `why` text loses special-category sentences. `--keep-identity` exports
+  skip the scrub (reproduction needs every sealed state), and the CLI warning now says they contain special-category
+  answers.
+- **Views.** `uiSnapshot`, `mimic.json` and SOUL.md read through the loaders, so hidden answers, traits, insights and
+  facts were already gone. The graph now drops what they hide: in `mimic.json` through `scopedKg` (blocked facet
+  nodes, edges sourced from hidden facts or insights, orphans), in the session view through ADR-0046's `uiKg`, which
+  keeps only edges backed by in-scope facts and insights. Removed-fact lists skip hidden facts, evidence skips hidden questions, and `progress.basics`
+  counts only anchors actually seeded. `UiSnapshot.mimic` carries `scope` and `scopeAt`.
+- **Replay.** `reproduceOnline` reports primaries served before a narrowing (`scopeAt`) or on a now-hidden question
+  as `rescoped`, next to `legacy` and `truncated`, and checks every other state's hash. `report` shows the count.
+- **Scope changes** (`PATCH /api/mimics/:id/scope`, body `MimicScope`) call `setScope`, which now also enqueues a
+  pool refill, so a widened scope is asked about without waiting for the pool to drain.
+- **UI.**
+  - Intake: "What to ask about" after the profile fields. Four categories, all on, each with a one-line description;
+    each sensitive area nested under its category ("Ask about political views"), off by default, with why we ask
+    and the self-only note. An area is disabled, with a line saying why, while its category is off; the last
+    category on can't be turned off. With research consent, "Research use of sensitive answers" offers one box per
+    consented special area; money follows the research choice.
+  - Session: "Topics and consent" in the More menu opens a modal with the same form, "Changes apply from your next
+    question", a warning before a narrowing is saved, and Cancel and Save. Focus moves in on open and back to the
+    More button on close; Escape cancels. Saving refreshes the snapshot and discards a waiting question that
+    became out of scope.
+  - Model panel: "Not asked about: …" names the categories that are off.
+  - The form's rules live in a pure reducer (`apps/web/lib/scope-form.ts`) mirroring `normalizeScope`, with tests.
+    The snapshot cache buster moved to `v2`.
+- **Evidence.** `packages/eval/test/leakage.test.ts` (four offline cohorts under `cfg.m10.candidate`: no consents,
+  every consent, every consent plus special research consents, and health withdrawn after 12 turns),
+  `packages/core/test/guards.test.ts`, `apps/web/lib/scope-form.test.ts`, the adapters contract test, and
+  `scripts/browser/scope.mjs` (Playwright against `pnpm dev`, desktop and phone, light and dark; screenshots in
+  `docs/screenshots/m11-*.png`). Offline cohorts use fakes and scripted answers: they test mechanisms, not people.
+
+Not done here: the trust ramp (no sensitive question in the first five) and a sweep that reaches every consented
+sensitive facet by question 30 are selection changes and come with `cfg.default.v7` (ADR-0044).
+
 ## ADR-0046 — "Your map" as a knowledge network (2026-09-30)
 
 PLAN §10.1 drew the mini knowledge graph as "you, connected to organizations, places, skills, interests and facets",

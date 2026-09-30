@@ -1,6 +1,8 @@
 'use client';
 import type { UiSnapshot } from '@mimic/core';
+import { CATEGORY_INFO } from '@mimic/core/scope';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { notAsked } from '@/lib/scope-form';
 import {
   bandOf,
   type Change,
@@ -43,6 +45,7 @@ export function ModelPanel({ snap, facts, change, moved, lead = false, onFact, c
     <div className={cn('flex flex-col gap-12 pt-2 pb-16', className)}>
       {lead && changed}
       <Fidelity snap={snap} calibrating={calibrating} moved={moved} />
+      <NotAsked snap={snap} />
       {!lead && changed}
       {!calibrating && (
         <>
@@ -502,5 +505,16 @@ function Gaps({ snap }: { snap: UiSnapshot }) {
         ))}
       </div>
     </section>
+  );
+}
+
+/** Topics the person turned off (ADR-0043): never asked, so never "unexplored". Shown from the first question. */
+function NotAsked({ snap }: { snap: UiSnapshot }) {
+  const off = notAsked(snap.mimic.scope).map((c) => CATEGORY_INFO[c].name);
+  if (!off.length) return null;
+  return (
+    <p className="-mt-6 m-0 text-[13px] leading-5 text-slate">
+      Not asked about: {off.join('; ')}. You can change this in Topics and consent, in the menu.
+    </p>
   );
 }

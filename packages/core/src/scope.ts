@@ -3,6 +3,7 @@ import {
   CATEGORIES,
   Category,
   type Facet,
+  isSpecialArea,
   SENSITIVE_AREAS,
   type SensitiveArea,
   SPECIAL_AREAS,
@@ -28,6 +29,9 @@ const SpecialFlags = z.object({
   sexuality: z.boolean().optional(),
   health: z.boolean().optional(),
 });
+
+/** Re-exported so client code can import everything about scope from `@mimic/core/scope` alone. */
+export { CATEGORIES, Category, SENSITIVE_AREAS, SensitiveArea, SPECIAL_AREAS, SpecialArea } from './types';
 
 export const MimicScope = z.object({
   categories: z.array(Category).min(1).max(CATEGORIES.length),
@@ -178,6 +182,10 @@ export interface ScopeView {
   hiddenSeqs: Set<number>;
   /** Each allowed sensitive facet → seqs of the questions that asked about it directly. */
   sensitiveSeqs: Map<string, Set<number>>;
+  /** Each consented sensitive area → seqs of the questions that asked about one of its facets directly. */
+  areaSeqs: Map<SensitiveArea, Set<number>>;
+  /** Allowed sensitive facets and their areas. */
+  sensitiveFacets: Map<string, SensitiveArea>;
 }
 
 export function scopeView(
@@ -187,16 +195,17 @@ export function scopeView(
 ): ScopeView {
   const allowed = new Set<string>();
   const blocked = new Set<string>();
-  const sensitive = new Set<string>();
+  const sensitive = new Map<string, SensitiveArea>();
   for (const f of facets) {
     if (facetAllowed(scope, f)) {
       allowed.add(f.id);
-      if (f.sensitive) sensitive.add(f.id);
+      if (f.sensitive) sensitive.set(f.id, f.sensitive);
     } else blocked.add(f.id);
   }
   const hiddenQuestionIds = new Set<string>();
   const hiddenSeqs = new Set<number>();
   const sensitiveSeqs = new Map<string, Set<number>>();
+  const areaSeqs = new Map<SensitiveArea, Set<number>>();
   for (const q of questions) {
     if (!questionAllowed(q, blocked)) {
       hiddenQuestionIds.add(q.id);
@@ -205,13 +214,25 @@ export function scopeView(
     }
     if (q.seq === null) continue;
     for (const f of q.facetIds) {
-      if (!sensitive.has(f)) continue;
+      const area = sensitive.get(f);
+      if (!area) continue;
       const seqs = sensitiveSeqs.get(f) ?? new Set<number>();
       seqs.add(q.seq);
       sensitiveSeqs.set(f, seqs);
+      const bySeq = areaSeqs.get(area) ?? new Set<number>();
+      bySeq.add(q.seq);
+      areaSeqs.set(area, bySeq);
     }
   }
-  return { allowed, blocked, hiddenQuestionIds, hiddenSeqs, sensitiveSeqs };
+  return {
+    allowed,
+    blocked,
+    hiddenQuestionIds,
+    hiddenSeqs,
+    sensitiveSeqs,
+    areaSeqs,
+    sensitiveFacets: sensitive,
+  };
 }
 
 /** The seqs a reflection fact cites (`source_ref = 'answers:3,5'`), or [] for other sources. */
@@ -294,4 +315,83 @@ export function specialAreaOfFact(f: { predicate: string; object: string }): Spe
 export function stripSpecialText(text: string): string {
   const sentences = text.split(/(?<=[.!?])\s+|\n+/);
   return sentences.filter((s) => !LEXICON.some(({ pattern }) => pattern.test(s))).join(' ');
+}
+
+/** Every special-category area a free text reveals, by the same lexicon as facts. */
+export function specialAreasOfText(text: string): SpecialArea[] {
+  return LEXICON.filter(({ pattern }) => pattern.test(text)).map(({ area }) => area);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Direct evidence only (ADR-0043): what the reflector and the hypothesis writer may say about a sensitive area.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** True when one of `cited` answered a question that asked about `area` directly (and the area is consented). */
+export function citesDirect(view: ScopeView, area: SensitiveArea, cited: readonly number[]): boolean {
+  const seqs = view.areaSeqs.get(area);
+  return !!seqs && cited.some((s) => seqs.has(s));
+}
+
+/**
+ * An insight as it may be kept, or null to drop it. A sensitive facet tag stays only when the insight cites an answer
+ * to a question that asked about that facet directly; an insight whose text reveals a special-category area must
+ * cite a direct answer in that area. Nothing about politics, religion, sexuality or health is inferred from other
+ * answers, whatever the model wrote.
+ */
+export function guardInsight<T extends { text: string; facetIds: string[]; evidenceSeqs: number[] }>(
+  view: ScopeView,
+  insight: T,
+): T | null {
+  if (specialAreasOfText(insight.text).some((a) => !citesDirect(view, a, insight.evidenceSeqs))) return null;
+  const facetIds = insight.facetIds.filter((f) => {
+    if (view.blocked.has(f)) return false;
+    if (!view.sensitiveFacets.has(f)) return true;
+    const seqs = view.sensitiveSeqs.get(f);
+    return !!seqs && insight.evidenceSeqs.some((s) => seqs.has(s));
+  });
+  return { ...insight, facetIds };
+}
+
+/** A reflection fact revealing a special-category area is kept only when it cites a direct answer in that area. */
+export function reflectionFactAllowed(
+  view: ScopeView,
+  fact: { predicate: string; object: string; evidenceSeqs: readonly number[] },
+): boolean {
+  const area = specialAreaOfFact(fact);
+  return area === null || citesDirect(view, area, fact.evidenceSeqs);
+}
+
+/**
+ * Hypothesis text without the sentences that reveal a special-category area the person has not answered a direct
+ * question about (at or before `seqUpTo`).
+ */
+export function guardHypothesisText(view: ScopeView, text: string, seqUpTo: number): string {
+  const answered = (a: SpecialArea) => [...(view.areaSeqs.get(a) ?? [])].some((s) => s <= seqUpTo);
+  const sentences = text.split(/(?<=[.!?])\s+|\n+/);
+  return sentences.filter((s) => specialAreasOfText(s).every(answered)).join(' ');
+}
+
+/**
+ * Whether research may use a question with these facets (ADR-0043): every facet is inside the person's scope, and a
+ * special-category facet also has the person's research consent for its area. Money follows plain research consent.
+ * Facet ids the map doesn't know (occupation facets, imported items) pass.
+ */
+export function researchAllowed(
+  scope: MimicScope,
+  facetIds: readonly string[],
+  facetById: ReadonlyMap<string, Pick<Facet, 'id' | 'category' | 'sensitive'>>,
+): boolean {
+  return facetIds.every((id) => {
+    const f = facetById.get(id);
+    if (!f) return true;
+    if (!facetAllowed(scope, f)) return false;
+    const area = f.sensitive;
+    return !area || !isSpecialArea(area) || scope.researchConsents[area] === true;
+  });
+}
+
+/** Free text without the sentences revealing a special-category area outside `keep`. */
+export function stripSpecialAreas(text: string, keep: ReadonlySet<SpecialArea>): string {
+  const sentences = text.split(/(?<=[.!?])\s+|\n+/);
+  return sentences.filter((s) => specialAreasOfText(s).every((a) => keep.has(a))).join(' ');
 }

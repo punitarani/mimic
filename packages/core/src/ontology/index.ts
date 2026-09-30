@@ -25,6 +25,11 @@ export const ONTOLOGIES: Record<string, Facet[]> = { v1: ONTOLOGY_V1, v2: ONTOLO
 
 const GROUPS: Record<string, readonly string[]> = { v1: FACET_GROUPS, v2: FACET_GROUPS_V2 };
 
+/** Every facet of every ontology version by id (a facet id means the same thing in every version). */
+export function allOntologyFacets(): Map<string, Facet> {
+  return new Map(Object.values(ONTOLOGIES).flatMap((o) => o.map((f) => [f.id, f] as const)));
+}
+
 export function getOntology(version: string): Facet[] {
   const o = ONTOLOGIES[version];
   if (!o) throw new Error(`Unknown ontology version: ${version}`);

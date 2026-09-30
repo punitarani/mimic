@@ -298,9 +298,15 @@ async function exportCmd(argv: string[]) {
   console.log(
     `exported ${r.mimics} consented mimics (${r.dropped} without research consent dropped) → ${r.path}`,
   );
+  if (r.withheld)
+    console.log(
+      `withheld by scope and research consent: ${r.withheld.questions} questions, ${r.withheld.traits} trait rows, ${r.withheld.insights} insights, ${r.withheld.facts} facts`,
+    );
   console.log(`dataset hash ${r.datasetHash}`);
   if (values['keep-identity'])
-    console.warn('⚠ --keep-identity: contains names and locations. Internal use only; never share.');
+    console.warn(
+      '⚠ --keep-identity: contains names, locations and special-category answers (politics, religion, sexuality, health) without research consent for them. Internal use only; never share.',
+    );
 }
 
 async function importCmd(argv: string[]) {

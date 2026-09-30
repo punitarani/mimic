@@ -2,11 +2,13 @@ import type {
   AnswerResult,
   ExperimentRecord,
   FeedbackResult,
+  MimicScope,
   NextResult,
   PlaygroundHistory,
   PlaygroundPrediction,
   PublicQuestion,
   RewindResult,
+  ScopeChange,
   SoulSave,
   SoulView,
   UiSnapshot,
@@ -55,6 +57,8 @@ export interface IntakeRequest {
   attestSelf: true;
   consentSearch: boolean;
   consentResearch: boolean;
+  /** Categories and sensitive areas to ask about (ADR-0040); every category and no sensitive area when absent. */
+  scope?: MimicScope;
 }
 
 export interface IdentityView {
@@ -126,6 +130,7 @@ export const api = {
   finishIdentity: (id: string) => call<{ ok: true }>('POST', `/api/mimics/${id}/identity/finish`),
   searchAgain: (id: string, link: string) =>
     call<{ ok: true }>('POST', `/api/mimics/${id}/identity/search`, { link }),
+  setScope: (id: string, scope: MimicScope) => call<ScopeChange>('PATCH', `/api/mimics/${id}/scope`, scope),
   setFact: (id: string, factId: string, userState: 'active' | 'removed') =>
     call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
   next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),

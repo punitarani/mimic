@@ -37,5 +37,7 @@ export async function setScope(deps: EngineDeps, mimicId: string, input: MimicSc
       discarded++;
     }
   }
+  // Top the pool up from the new scope: widening adds areas, narrowing may have emptied it (ADR-0043).
+  await deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq: m.seqMax + 1 });
   return { scope, scopeAt, discarded };
 }

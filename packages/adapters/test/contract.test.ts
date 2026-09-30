@@ -9,6 +9,8 @@ import {
 } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
+  ENRICH_EXCLUSIONS,
+  ENRICH_OUTPUT_SCHEMA,
   ExaEnricher,
   ExaPeopleSearch,
   exaCandidate,
@@ -546,5 +548,16 @@ describe('http', () => {
     await expect(new OpenAiDecisionsStub().decide({ model: 'x', state: {}, questions: {} })).rejects.toThrow(
       /not implemented/,
     );
+  });
+});
+
+describe('special-category data is never requested from the web (ADR-0043)', () => {
+  it('asks enrichment for professional fields only, and tells it to leave special categories out', () => {
+    const fields = Object.keys(ENRICH_OUTPUT_SCHEMA.properties);
+    expect(
+      fields.filter((f) => /relig|faith|politic|party|vote|health|medical|sexual|orientation/i.test(f)),
+    ).toEqual([]);
+    for (const area of ['health', 'religion', 'politics', 'sexuality'])
+      expect(ENRICH_EXCLUSIONS).toContain(area);
   });
 });

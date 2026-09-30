@@ -1,9 +1,11 @@
 'use client';
 import { withScheme } from '@mimic/core/links';
+import { DEFAULT_SCOPE, type MimicScope } from '@mimic/core/scope';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import { AutocompleteInput } from '@/components/autocomplete';
 import { CreditsLink, TopBar } from '@/components/brand';
+import { ScopeResearch, ScopeTopics } from '@/components/scope-form';
 import { Button, Checkbox, ErrorText, Field, fieldLabelId, Input } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { loadOccupations, loadPlaces } from '@/lib/autocomplete';
@@ -55,6 +57,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
   const [attest, setAttest] = useState(false);
   const [search, setSearch] = useState(true);
   const [research, setResearch] = useState(false);
+  const [scope, setScope] = useState<MimicScope>(DEFAULT_SCOPE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const setValue = (k: keyof typeof f) => (v: string) => setF((prev) => ({ ...prev, [k]: v }));
@@ -84,6 +87,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
         attestSelf: true,
         consentSearch: search,
         consentResearch: research,
+        scope,
       });
       router.push(r.identity ? `/m/${r.mimicId}/identity` : `/m/${r.mimicId}`);
     } catch (err) {
@@ -167,6 +171,9 @@ function IntakeForm({ invite }: { invite: string | null }) {
           placeholder="linkedin.com/in/you"
         />
       </Field>
+      <div className="border-t border-line pt-5">
+        <ScopeTopics value={scope} onChange={setScope} />
+      </div>
       <div className="space-y-4 border-t border-line pt-5">
         <Checkbox id="attest" checked={attest} onChange={setAttest} label="I'm building a mimic of myself" />
         <Checkbox
@@ -183,6 +190,9 @@ function IntakeForm({ invite }: { invite: string | null }) {
           label="Use my answers, without my name or location, for research"
           hint="Only answers from people who check this are used to compare methods."
         />
+        {research && (
+          <ScopeResearch value={scope} onChange={setScope} className="ml-[30px] border-l border-line pl-4" />
+        )}
       </div>
       <ErrorText>{error}</ErrorText>
       <Button
