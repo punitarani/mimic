@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 
 const KgGraph = dynamic(() => import('./kg-graph').then((m) => m.KgGraph), {
   ssr: false,
-  loading: () => <div className="h-[220px] rounded-[10px] bg-surface" />,
+  loading: () => <div className="h-[520px] rounded-[10px] bg-surface" />,
 });
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
@@ -125,7 +125,7 @@ export function KgMap({ snap }: { snap: UiSnapshot }) {
         Your map
       </h2>
       <div className="mt-2">
-        <KgGraph kg={snap.kg} />
+        <KgGraph kg={snap.kg} facets={snap.facets} />
       </div>
     </section>
   );

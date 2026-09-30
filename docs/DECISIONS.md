@@ -1391,6 +1391,53 @@ and makes concreteness and respect things a gate checks rather than things a pro
   professional 30. The default config is unchanged until ADR-0044. Offline fakes append rogue drafts to every gen.v3 batch (a self-rating, an untagged
   religious question, a political one, a loaded one) so tests show each guard work.
 
+## ADR-0046 — "Your map" as a knowledge network (2026-09-30)
+
+PLAN §10.1 drew the mini knowledge graph as "you, connected to organizations, places, skills, interests and facets",
+with react-force-graph-2d (§10.2). In practice that was a star: `addFacts()` and the reflector write every KG edge
+from the person node, so every other node hung off "You"; raw fact strings ("Technologies: Azure, Docker", "Slash —
+Software Engineer") were single nodes; a location given twice was two nodes; and labels overlapped on a white canvas
+that ignored the theme.
+
+**Decision.** The stored KG is unchanged: it stays evidence-derived and person-anchored (invariant 3). The map is a
+view built from it on the client, in three modules under `apps/web/lib/kg`:
+- **`build.ts` (data).** Drops the person node (the whole map is the person's). Splits composite labels
+  (`clean.ts`: "Company — Role", "Role at Company", headlines, "Label: a, b, c", role lists, dated and aliased
+  names), dedupes by a normalized key per kind (places by city, companies by name and alias), gives each node one
+  category (Work, Places, Interests, Skills, Traits), and drops fragments that name nothing (over six words, hedged,
+  cut off mid-phrase, or a statement). Then infers typed links from what the facts share: role and company named
+  together, the current title and employer on one profile, related roles, profile skills and the current role (at
+  most six, spread across lists), items of one list or one profile's history, the current employer and home on one
+  profile, a school or company named after a place, entities and traits citing the same answers, traits one insight
+  names together or whose insights cite the same answers. A link's weight is a confidence no higher than its weaker
+  end's. `filterGraph` keeps what meets the threshold (0.5 by default; the slider goes 0.3–0.9), drops isolated
+  nodes, and caps any node at 30% of the others, cutting its weakest links first and never a neighbor's only link.
+- **`layout.ts`.** d3-force, synchronous and seeded: category anchors around a ring, a weaker pull on nodes whose
+  links cross categories (bridges), collision on node and label boxes, the canvas and the controls' corner as bounds.
+  Same graph and width, same layout; nothing moves once drawn.
+- **`labels.ts`.** Screen-space greedy placement: two nodes per category first, then by importance; below, above,
+  right or left; a label that would touch another label, a node or the edge is left for hover or zoom. So labels
+  never overlap.
+- **Renderer** (`components/kg-graph.tsx`, SVG on the theme's sheet, colors as `--kg-*` tokens: the old hues, lifted
+  in dark mode for contrast). Curved thin edges, width and opacity by weight; node size by degree and confidence.
+  Hover dims all but the neighborhood and shows description, sources, answer seqs, confidence and links; click or tap
+  focuses the neighborhood with the details docked beside it. Drag to pan, drag a dot to move it, pinch or
+  Ctrl-scroll or the buttons to zoom, keys when focused. Legend items toggle categories; search rings matches. A
+  screen-reader list mirrors the map. react-force-graph-2d is removed.
+- **Motion** (PLAN §10.2 animates only the reveal and the fidelity update). The map is drawn settled, with no
+  simulation on screen; focus, reset and threshold or category changes ease over about 0.4 s so the person can follow
+  where things went, and jump instead under reduced motion.
+
+**Snapshot.** `uiSnapshot().kg` (via `uiKg`) now carries optional provenance: node source, URL and facet ID; edge
+source, URL, the answer seqs a fact or insight cites, and an `exhibits` edge's insight ID and text. It also stops
+showing what the person took back or the scope hides (ADR-0040): edges whose fact was removed or cites an answer out
+of scope, and `exhibits` edges whose insight is superseded or out of scope, are dropped, as are blocked facets and
+nodes left without an edge. The 60-node cap keeps the most confident nodes, not the oldest. Older cached snapshots
+without the new fields still render. The map's five groups (Work, Places, Interests, Skills, Traits) are kinds of
+node for layout and the legend, not the question categories of ADR-0040.
+
+No cross-person data enters the map (invariant 8): every inference uses only this person's facts and insights.
+
 ## ADR-0047 — Invite links hide the code field (2026-09-30)
 
 ADR-0026 showed a code from an invite link in a disabled field with a hint. Nothing there is for the person to read
