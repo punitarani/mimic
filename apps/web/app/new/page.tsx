@@ -3,7 +3,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import { TopBar } from '@/components/brand';
 import { Button, Checkbox, ErrorText, Field, Input } from '@/components/ui';
-import { ApiError, api } from '@/lib/api';
+import { api } from '@/lib/api';
 import { INVITE_PARAM, inviteFromQuery } from '@/lib/invite';
 
 export default function NewMimic() {
@@ -15,8 +15,9 @@ export default function NewMimic() {
         <p className="mt-2 text-muted">
           This is only used to describe you to your mimic. Fields marked * are required.
         </p>
-        {/* The page is prerendered (ADR-0023); reading the query string renders the form on the client. */}
-        <Suspense fallback={<FormSkeleton />}>
+        {/* The page is prerendered (ADR-0023): the static HTML carries the form with no code, and reading the
+            query string on the client fills it in. */}
+        <Suspense fallback={<IntakeForm invite={null} />}>
           <IntakeFromLink />
         </Suspense>
       </main>
@@ -40,8 +41,9 @@ function IntakeForm({ invite }: { invite: string | null }) {
     employer: '',
     link: '',
   });
-  // A code from the link stays locked until the server rejects it; then the person can type another.
+  // A code from the link stays locked until a submit fails; then the person can type another.
   const [inviteLocked, setInviteLocked] = useState(invite !== null);
+  const [rejections, setRejections] = useState(0);
   const inviteRef = useRef<HTMLInputElement>(null);
   const [attest, setAttest] = useState(false);
   const [search, setSearch] = useState(true);
@@ -51,10 +53,10 @@ function IntakeForm({ invite }: { invite: string | null }) {
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setF({ ...f, [k]: e.target.value });
 
-  const unlocked = invite !== null && !inviteLocked;
+  // After each failed submit of a linked code, put the cursor where the fix goes (once the field is enabled).
   useEffect(() => {
-    if (unlocked) inviteRef.current?.focus();
-  }, [unlocked]);
+    if (rejections > 0 && invite !== null) inviteRef.current?.focus();
+  }, [rejections, invite]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -80,7 +82,8 @@ function IntakeForm({ invite }: { invite: string | null }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
       setBusy(false);
-      if (err instanceof ApiError && err.status === 403) setInviteLocked(false);
+      setInviteLocked(false);
+      setRejections((n) => n + 1);
     }
   }
 
@@ -166,31 +169,5 @@ function IntakeForm({ invite }: { invite: string | null }) {
         {busy ? 'Creating…' : 'Continue'}
       </Button>
     </form>
-  );
-}
-
-/** Same shape as the form, so nothing jumps when it renders. */
-function FormSkeleton() {
-  const field = (w: string) => (
-    <div className="space-y-1.5">
-      <div className={`h-4 ${w} rounded bg-line`} />
-      <div className="h-11 rounded-[10px] border border-line bg-raised" />
-    </div>
-  );
-  return (
-    <div
-      role="status"
-      aria-label="Loading"
-      className="mt-8 space-y-5 animate-pulse motion-reduce:animate-none"
-    >
-      {field('w-24')}
-      {field('w-16')}
-      {field('w-20')}
-      <div className="grid gap-5 sm:grid-cols-2">
-        {field('w-24')}
-        {field('w-20')}
-      </div>
-      {field('w-16')}
-    </div>
   );
 }

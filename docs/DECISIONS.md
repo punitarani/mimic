@@ -366,10 +366,14 @@ An invite can be shared as a link instead of a code to type: `/new?invite=CODE`,
 landing page's button carries it to `/new`.
 
 - **The field is filled in and disabled.** The person sees the code and a hint that it came from the link, but
-  can't edit it. Only a rejection from the server (403 on `POST /api/mimics`) unlocks the field and focuses it, so
-  a stale link is recoverable without leaving the page.
+  can't edit it. Any failed submit (an invalid code is a 403 on `POST /api/mimics`, but also a 400 or a 429)
+  unlocks the field and focuses it, so a stale link is recoverable without leaving the page.
 - **Still checked server-side only.** The link changes nothing about `INVITE_CODES` or the route handler. The
   query value is trimmed and otherwise passed through as typed input would be.
+- **Codes in links are low-secrecy.** A code in a URL lands in browser history, the same-origin Referer and the
+  Workers invocation logs (ADR-0023 records URLs, not bodies). `INVITE_CODES` gates a private cohort, not data,
+  and is rotated by a deploy; treat a link as shareable as the code itself.
 - **`/new` stays prerendered** (ADR-0023). Reading the query string happens in a client component under a
-  Suspense boundary, so the static HTML carries a same-shaped skeleton and the form renders on hydration.
+  Suspense boundary whose fallback is the same form with no code, so the static HTML is what it was before, and
+  hydration only fills the field in.
 - Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.

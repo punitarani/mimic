@@ -26,7 +26,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     credentials: 'same-origin',
   });
   const text = await res.text();
-  const json = text ? (JSON.parse(text) as unknown) : null;
+  let json: unknown = null;
+  try {
+    json = text ? (JSON.parse(text) as unknown) : null;
+  } catch {
+    // An edge error page (HTML) rather than our route: report the status instead of a parse error.
+    if (res.ok) throw new ApiError(res.status, 'Unexpected response.');
+  }
   if (!res.ok) {
     const msg = (json as { error?: string } | null)?.error ?? `Request failed (${res.status})`;
     throw new ApiError(res.status, msg);
