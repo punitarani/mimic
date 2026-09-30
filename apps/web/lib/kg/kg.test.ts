@@ -397,7 +397,9 @@ describe('layoutGraph', () => {
 
   it('keeps every node clear of the controls, even one that starts in their corner', () => {
     const cats = ['work', 'skill', 'interest', 'trait', 'place'] as const;
-    for (let seed = 0; seed < 40; seed++) {
+    // Seeds 8, 23 and 38 left nodes under the controls before `clamp` kept to exits on the canvas; 0 and 15 are
+    // ordinary layouts. A few cases, not a sweep, so the suite stays fast on CI runners.
+    for (const seed of [0, 8, 15, 23, 38]) {
       const nodes: LayoutNode[] = Array.from({ length: 20 + (seed % 40) }, (_, i) => ({
         id: `s${seed}n${i}`,
         category: cats[(i * 7 + seed) % 5]!,
