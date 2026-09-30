@@ -20,7 +20,7 @@ import {
 import type { EvalInstance } from './optimize/instances';
 
 /**
- * Jev versus span-01 on the same sealed instances (ADR-0050, docs/CHALLENGER.md). Both run through the same predictor
+ * Jev versus span-01 on the same sealed instances (ADR-0051, docs/CHALLENGER.md). Both run through the same predictor
  * code, prompt and calibration, with no flag and no fallback, so each model's own quality, latency, cost and errors
  * are measured. The verdict applies DECISION_RULE.
  */
@@ -75,7 +75,7 @@ export interface BenchmarkRow {
   costPerRequestUsd: number;
   /**
    * Quality per question type. span-01 answers yes/no questions directly and choice and score questions one option
-   * at a time (ADR-0050), so the types can differ a lot.
+   * at a time (ADR-0051), so the types can differ a lot.
    */
   byType: Record<string, { predictions: number; errors: number; logLoss: number; itemAcc: number }>;
 }
@@ -278,7 +278,7 @@ export function renderMarkdown(meta: BenchmarkMeta, rows: BenchmarkRow[], v: Ver
     }),
     '',
     'span-01 takes only yes/no questions: it answers a choice or score question as one yes/no per option, normalized',
-    '(ADR-0050).',
+    '(ADR-0051).',
     '',
     `## Verdict: ${v.enable ? 'enable span-01' : 'keep Jev'}`,
     '',

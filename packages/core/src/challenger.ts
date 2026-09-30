@@ -4,7 +4,7 @@ import type { CallContext } from './gateway';
 import type { DecisionRequest, DecisionResponse } from './types';
 
 /**
- * Picks the model a decision call runs on (ADR-0050): the challenger's model ID, or null to run the request as it
+ * Picks the model a decision call runs on (ADR-0051): the challenger's model ID, or null to run the request as it
  * is. The Gateway calls it before every `decide`, so call sites never change.
  */
 export type DecisionRouter = (ctx: CallContext, req: DecisionRequest) => Promise<string | null>;

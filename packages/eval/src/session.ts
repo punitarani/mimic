@@ -32,6 +32,11 @@ export const SessionScript = z.object({
   consents: z.record(z.string(), z.boolean()).default({}),
   /** Special-category areas consented for research use. */
   researchConsents: z.record(z.string(), z.boolean()).default({}),
+  /**
+   * Special-category areas confirmed (ADR-0050). A script's consents are choices, so by default every consented
+   * special area is confirmed; pass `{}` to script a person who left intake's pre-ticked boxes alone.
+   */
+  confirmed: z.record(z.string(), z.boolean()).optional(),
   seed: z.string().default('script'),
   /** Fallback for questions the script doesn't cover. `consistent` answers the same prompt the same way. */
   policy: z.enum(['consistent', 'first', 'last']).default('consistent'),
@@ -113,6 +118,8 @@ export interface SessionOptions {
   participantId?: string;
   /** A registered config to create the mimic under, instead of the default (see `configs.ts`). */
   configHash?: string;
+  /** The arm of the active experiment to join, instead of the hash allocation (scripted cohorts, ADR-0045). */
+  arm?: string;
   simulatePersona?: string;
   onTurn?: (t: TurnLog) => void;
 }
@@ -135,11 +142,15 @@ export async function runSession(
         categories: script.categories ?? DEFAULT_SCOPE.categories,
         consents: script.consents,
         researchConsents: script.researchConsents,
+        confirmed: script.confirmed ?? script.consents,
       }),
     },
     // Scripted people are marked so reports can keep them apart from real ones (R10).
     opts.participantId ?? `script:${ulid()}`,
-    opts.configHash ? { configHash: opts.configHash } : {},
+    {
+      ...(opts.configHash ? { configHash: opts.configHash } : {}),
+      ...(opts.arm !== undefined ? { arm: opts.arm } : {}),
+    },
   );
   await engine.drain();
   const { turns } = await continueSession(engine, m.id, script, opts);
@@ -154,7 +165,7 @@ export async function continueSession(
   engine: LocalEngine,
   mimicId: string,
   script: SessionScript,
-  opts: Omit<SessionOptions, 'participantId' | 'configHash'>,
+  opts: Omit<SessionOptions, 'participantId' | 'configHash' | 'arm'>,
 ): Promise<{ turns: TurnLog[] }> {
   const { deps } = engine;
   const m = { id: mimicId };

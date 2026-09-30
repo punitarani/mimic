@@ -30,7 +30,7 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
-/** Built once per request, queue batch or cron run, so flag changes apply without a redeploy (ADR-0050). */
+/** Built once per request, queue batch or cron run, so flag changes apply without a redeploy (ADR-0051). */
 function deps(env: Env) {
   return runtimeEngineDeps(env);
 }
@@ -68,7 +68,7 @@ export default {
   },
 
   async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
-    // One flag read per batch: the deps and the lane check below see the same providers (ADR-0050).
+    // One flag read per batch: the deps and the lane check below see the same providers (ADR-0051).
     const flagged = await flaggedEnv(env);
     const d = engineDeps(flagged);
     const identityLane = isIdentityQueue(batch.queue);

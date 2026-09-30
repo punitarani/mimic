@@ -2,7 +2,7 @@
 
 Respan's `respan/span-01` is being evaluated as a replacement for Jev (`typesafe/jev-1.13`) in served predictions.
 It sits behind the Flagship flag `decisions-model` and ships at `jev`: at that value (or with the flag missing or
-unreadable) every call runs exactly as before. The decision to switch follows the benchmark below (ADR-0050).
+unreadable) every call runs exactly as before. The decision to switch follows the benchmark below (ADR-0051).
 
 ## What span-01 is
 
@@ -46,7 +46,7 @@ The model page is https://openrouter.ai/respan/span-01. Live calls on 2026-09-30
   A budget refusal is not retried.
 - **Recording.** A prediction keeps its config's predictor ID. Its `modelSnapshot` names the model that answered, so
   reports split on it.
-  - To make span-01 permanent, ship a new config (`cfg.default.v8`) with `jev:respan/span-01-20260925@jev-predict.v2`
+  - To make span-01 permanent, ship a new default config (after `cfg.default.v8`) with `jev:respan/span-01-20260925@jev-predict.v2`
     as primary, so predictor IDs say so, then retire the flag.
   - The primary's calibration (`jev-predict.v2`, temperature 4, fitted on Jev) applies to span-01's answers too.
 
@@ -63,6 +63,7 @@ its key, type, code default, the var it overrides, and the values it accepts.
 | --- | --- | --- | --- |
 | `decisions-model` | `jev`, `span-01`, or an OpenRouter Decisions model ID | `jev` | The model Jev's served predictions run on |
 | `budget-usd` | A number above 0 | `BUDGET_USD`, else 1 | Spend cap per mimic (ADR-0035) |
+| `budget-session-share` | A number above 0, at most 1 | `BUDGET_SESSION_SHARE`, else 0.8 | The session's share of the cap |
 | `search-provider` | `exa`, `perplexity`, `none` | `SEARCH_PROVIDER` | People search |
 | `enrich-provider` | `exa`, `parallel`, `none` | `ENRICH_PROVIDER` | Enrichment |
 | `embeddings-provider` | `workers-ai`, `openrouter` | `EMBEDDINGS_PROVIDER` | Embeddings (the same model either way) |
@@ -71,17 +72,23 @@ its key, type, code default, the var it overrides, and the values it accepts.
 - **When a provider flag applies.** Only when its provider's key or binding is deployed; deploy pushes every provider
   key set in Doppler.
 - **Values the code can't use.** They read as the default, with a log line.
-- **Left as env vars:** `BUDGET_SESSION_SHARE`, `VECTOR_BACKEND` (it decides where the vectors are stored),
-  `DEV_MODE`, `EGRESS_RELAY` and every secret.
+- **Left as env vars:** every secret, `DEV_MODE`, `EGRESS_RELAY`, and `VECTOR_BACKEND`. `VECTOR_BACKEND` picks which
+  store holds the vectors: Vectorize in prod, or a D1 table in local dev. Prod's vectors live only in Vectorize, so
+  flipping it at runtime would read and write an empty store, and a redeploy is the right gate for that. The
+  dashboard's `vector-backend` flag is not read, and the check lists it as unused.
 
 ### Checks that the flags are defined and readable
 
 - **`pnpm flags:check`** (`scripts/deploy/flags.mjs` → `packages/db/src/flags-check.ts`) holds the app to the registry.
   - It **fails** when:
     - a flag is missing;
-    - a variation, the default variation or a rule serves a value the code can't use;
+    - the default variation, or a variation a rule serves, is a value the code can't use, or doesn't exist;
     - a flag can't be evaluated through Flagship's evaluate API (the evaluation the Worker binding makes).
-  - It **warns** about flags no code reads, and about flags that serve something other than their setting.
+  - It **warns** about:
+    - flags no code reads;
+    - flags that serve something other than their setting;
+    - an unusable variation nothing serves yet, such as `parallel` under `search-provider` (Parallel has no people
+      search): switching to it would fall back to the setting.
   - `--create-missing` creates a missing flag at its setting's value; this needs Flagship App · Edit.
   - It needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, with Flagship App · Read and Evaluate on `mimic`.
 - **Where it runs:**

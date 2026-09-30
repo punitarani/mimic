@@ -8,6 +8,7 @@ import {
   questionsToSustain,
   type ScoredRow,
 } from '../metrics';
+import { populationOf } from '../participants';
 import type { ConfigRecord, EvalRunRecord, ExperimentRecord } from '../store';
 import { isPredictedKind } from '../types';
 import { type EngineDeps, loadConfig } from './deps';
@@ -49,6 +50,8 @@ export const PENDING_WINDOW_MS = 15 * 60 * 1000;
 
 export interface LabOverview {
   scope: 'consented' | 'all';
+  /** Whose numbers these are: real people only (the default), or scripted and imported people too (ADR-0045). */
+  population: 'real' | 'all';
   mimics: number;
   predictors: PredictorMetrics[];
   calls: CallMetrics[];
@@ -64,14 +67,18 @@ export interface LabOverview {
 
 /**
  * `/lab` (PLAN §10.1, §12). Research metrics only include `consent_research` mimics unless `includeAll` (for local
- * dev and ops) is set.
+ * dev and ops) is set, and only real people unless `population` is `'all'`: scripted sessions and imported panels
+ * test the machinery and never enter an arm's numbers (ADR-0045).
  */
 export async function labOverview(
   deps: EngineDeps,
-  opts: { includeAll?: boolean; experimentId?: string | null } = {},
+  opts: { includeAll?: boolean; experimentId?: string | null; population?: 'real' | 'all' } = {},
 ): Promise<LabOverview> {
   const armExperimentId = opts.experimentId ?? null;
-  const mimics = await deps.store.listMimics(opts.includeAll ? {} : { consentResearch: true });
+  const population = opts.population ?? 'real';
+  const mimics = (await deps.store.listMimics(opts.includeAll ? {} : { consentResearch: true })).filter(
+    (m) => population === 'all' || populationOf(m.participantId) === 'real',
+  );
   const rows: ScoredRow[] = [];
   const failures: Array<{ predictorId: string; role: string }> = [];
   const byArm = new Map<
@@ -183,6 +190,7 @@ export async function labOverview(
   ]);
   return {
     scope: opts.includeAll ? 'all' : 'consented',
+    population,
     mimics: mimics.length,
     predictors: predictorMetrics(rows, failures),
     calls: callMetrics(calls),

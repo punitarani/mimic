@@ -1,5 +1,5 @@
 /**
- * `pnpm flags:check` (ADR-0050): holds a live Flagship app to the flag registry (`FLAG_SPECS`, packages/core).
+ * `pnpm flags:check` (ADR-0051): holds a live Flagship app to the flag registry (`FLAG_SPECS`, packages/core).
  *
  * 1. Defined: every flag the code reads exists, and every variation, default and rule serves a value the code
  *    accepts (`checkFlags`). A missing flag can be created at its default with `--create-missing` (needs Flagship

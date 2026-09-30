@@ -45,7 +45,7 @@ function env(extra: Partial<MimicBindings> = {}): MimicBindings {
   } as MimicBindings;
 }
 
-describe('Flagship flags (ADR-0050)', () => {
+describe('Flagship flags (ADR-0051)', () => {
   it('reads and coerces values, and returns the default when a flag is missing or Flagship throws', async () => {
     const flags = new FlagshipFlags(flagship({ on: 'on', off: 'off', bool: true, n: '2', model: 'x/y' }));
     expect(await flags.boolean('on', false)).toBe(true);
@@ -109,8 +109,16 @@ describe('Flagship flags (ADR-0050)', () => {
     expect(out.SEARCH_PROVIDER).toBe('exa');
     expect(out.ENRICH_PROVIDER).toBe('exa');
     expect(out.BUDGET_USD).toBe('5');
-    // No flag: the session share stays the var.
+    // No budget-session-share flag in this app: the session share stays the var.
     expect(out.BUDGET_SESSION_SHARE).toBe('0.5');
+    const share = await flaggedEnv(
+      env({ BUDGET_SESSION_SHARE: '0.5', FLAGS: flagship({ [FLAG_KEYS.budgetSessionShare]: 0.9 }) }),
+    );
+    expect(share.BUDGET_SESSION_SHARE).toBe('0.9');
+    const tooMuch = await flaggedEnv(
+      env({ BUDGET_SESSION_SHARE: '0.5', FLAGS: flagship({ [FLAG_KEYS.budgetSessionShare]: 1.5 }) }),
+    );
+    expect(tooMuch.BUDGET_SESSION_SHARE).toBe('0.5');
     const bad = await flaggedEnv(env({ BUDGET_USD: '3', FLAGS: flagship({ [FLAG_KEYS.budgetUsd]: -1 }) }));
     expect(bad.BUDGET_USD).toBe('3');
     const d = await runtimeEngineDeps(env({ FLAGS: flagship({ [FLAG_KEYS.budgetUsd]: 4 }) }));
@@ -131,6 +139,7 @@ describe('Flagship flags (ADR-0050)', () => {
     const all = {
       'decisions-model': 'jev',
       'budget-usd': 1,
+      'budget-session-share': 0.8,
       'search-provider': 'exa',
       'enrich-provider': 'exa',
       'embeddings-provider': 'workers-ai',

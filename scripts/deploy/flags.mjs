@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// `pnpm flags:check [--env prod] [--optional] [--create-missing]` (ADR-0050): holds the environment's Flagship app to
+// `pnpm flags:check [--env prod] [--optional] [--create-missing]` (ADR-0051): holds the environment's Flagship app to
 // the flag registry in packages/core. It checks that every flag the code reads is defined with values the code
 // accepts, and that each one evaluates. It runs in CI (the Flags job), in deploy preflight, and by hand.
 //

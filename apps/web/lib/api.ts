@@ -131,6 +131,8 @@ export const api = {
   searchAgain: (id: string, link: string) =>
     call<{ ok: true }>('POST', `/api/mimics/${id}/identity/search`, { link }),
   setScope: (id: string, scope: MimicScope) => call<ScopeChange>('PATCH', `/api/mimics/${id}/scope`, scope),
+  decline: (id: string, questionId: string) =>
+    call<ScopeChange>('POST', `/api/mimics/${id}/decline`, { questionId }),
   setFact: (id: string, factId: string, userState: 'active' | 'removed') =>
     call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
   next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),
@@ -162,7 +164,16 @@ export const api = {
   createConfig: (label: string, config: unknown) =>
     call<{ hash: string }>('POST', '/api/lab/configs', { label, config }),
   saveExperiment: (e: ExperimentRequest) => call<ExperimentRecord>('POST', '/api/lab/experiments', e),
+  setupPreset: (id: string) =>
+    call<{ experiment: ExperimentRecord; created: boolean }>('POST', '/api/lab/experiments/preset', { id }),
 };
+
+/** An experiment preset as `/lab` lists it (ADR-0045). */
+export interface PresetInfo {
+  id: string;
+  name: string;
+  summary: string;
+}
 
 export interface ExperimentRequest {
   id?: string;

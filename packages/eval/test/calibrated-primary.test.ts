@@ -1,6 +1,6 @@
 import {
-  DEFAULT_CONFIG,
   DEFAULT_CONFIG_V6,
+  DEFAULT_CONFIG_V7,
   type PipelineConfig,
   type PredictionRecord,
   registerConfig,
@@ -42,9 +42,9 @@ const entropyOnly = (c: PipelineConfig): PipelineConfig =>
 beforeAll(async () => {
   // One after another: engines in one process share module-level state (such as the item-stats cache).
   v6 = await run(DEFAULT_CONFIG_V6, 'cfg.default.v6');
-  v7 = await run(DEFAULT_CONFIG, 'cfg.default.v7');
+  v7 = await run(DEFAULT_CONFIG_V7, 'cfg.default.v7');
   v6Entropy = await run(entropyOnly(DEFAULT_CONFIG_V6), 'test.v6.entropy');
-  v7Entropy = await run(entropyOnly(DEFAULT_CONFIG), 'test.v7.entropy');
+  v7Entropy = await run(entropyOnly(DEFAULT_CONFIG_V7), 'test.v7.entropy');
 }, 180_000);
 
 afterAll(() => {
@@ -94,7 +94,7 @@ async function scored(r: Run, role: PredictionRecord['role']) {
 
 describe('calibrated primary (cfg.default.v7, ADR-0048)', () => {
   it('asks the same questions as v6, scored the same way, with and without hypotheses', async () => {
-    expect(DEFAULT_CONFIG.predictor.primary).toBe('jev:typesafe/jev-1.13@jev-predict.v2');
+    expect(DEFAULT_CONFIG_V7.predictor.primary).toBe('jev:typesafe/jev-1.13@jev-predict.v2');
     // With hypotheses, the information term is their mutual information and the posterior reads stored rows.
     expect(await expectSameSelection(v6, v7)).toBeGreaterThan(0);
     // Without, it is the primary's own entropy.

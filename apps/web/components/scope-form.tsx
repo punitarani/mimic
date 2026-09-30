@@ -6,8 +6,9 @@ import {
   type MimicScope,
   SELF_ONLY_NOTE,
   SPECIAL_AREAS,
+  type SpecialArea,
 } from '@mimic/core/scope';
-import { setCategory, setConsent, setResearch } from '@/lib/scope-form';
+import { confirmArea, setCategory, setConsent, setResearch, unconfirmed } from '@/lib/scope-form';
 import { Checkbox, cn } from './ui';
 
 /**
@@ -29,11 +30,15 @@ export function ScopeTopics({
 }) {
   const last = value.categories.length === 1;
   const lastId = `${idPrefix}-last`;
+  const pending = new Set<string>(unconfirmed(value));
   return (
     <fieldset className="space-y-5">
       <legend className="text-[15px] font-medium text-graphite">What to ask about</legend>
       <p className="-mt-2 text-[13px] text-muted">
         Turn off anything you&apos;d rather not share.{intake ? ' All topics are enabled by default.' : null}
+        {intake
+          ? " We'll check with you again before asking about political views, religion, sexuality or health."
+          : null}
       </p>
       {CATEGORIES.map((c) => {
         const info = CATEGORY_INFO[c];
@@ -59,16 +64,33 @@ export function ScopeTopics({
                   </p>
                 )}
                 {info.areas.map((a) => (
-                  <Checkbox
-                    key={a}
-                    id={`${idPrefix}-${a}`}
-                    checked={!!value.consents[a]}
-                    disabled={!on}
-                    {...(!on ? { describedBy: lockId } : {})}
-                    onChange={(v) => onChange(setConsent(value, a, v))}
-                    label={`Ask about ${AREA_INFO[a].name.toLowerCase()}`}
-                    hint={AREA_INFO[a].why}
-                  />
+                  <div key={a} className="space-y-2">
+                    <Checkbox
+                      id={`${idPrefix}-${a}`}
+                      checked={!!value.consents[a]}
+                      disabled={!on}
+                      {...(!on ? { describedBy: lockId } : {})}
+                      onChange={(v) => onChange(setConsent(value, a, v))}
+                      label={`Ask about ${AREA_INFO[a].name.toLowerCase()}`}
+                      hint={AREA_INFO[a].why}
+                    />
+                    {/* Left on at intake but never chosen (ADR-0050): not asked about until confirmed. */}
+                    {!intake && on && pending.has(a) && (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-[30px] text-[13px] text-muted">
+                        <span id={`${idPrefix}-${a}-pending`}>
+                          Not confirmed yet, so we won&apos;t ask about it.
+                        </span>
+                        <button
+                          type="button"
+                          aria-describedby={`${idPrefix}-${a}-pending`}
+                          onClick={() => onChange(confirmArea(value, a as SpecialArea, true))}
+                          className="h-8 rounded-[6px] px-2 font-medium text-graphite underline underline-offset-2 hover:bg-g8"
+                        >
+                          Confirm
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ))}
                 <p className="pl-[30px] text-[13px] text-muted">{SELF_ONLY_NOTE}</p>
               </div>

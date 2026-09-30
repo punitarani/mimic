@@ -250,7 +250,7 @@ export async function withModelCall<T extends CallOutcome>(
 
 export interface GatewayDeps extends CallDeps {
   decisions: DecisionProvider;
-  /** Sends some incumbent Jev calls to a challenger model, behind a flag (ADR-0050). None: every call runs as asked. */
+  /** Sends some incumbent Jev calls to a challenger model, behind a flag (ADR-0051). None: every call runs as asked. */
   decisionRouter?: DecisionRouter;
   llm: LlmClient;
   embedder?: Embedder;
@@ -263,7 +263,7 @@ export class Gateway {
   constructor(readonly deps: GatewayDeps) {}
 
   /**
-   * A decision call. When the router picks a challenger (ADR-0050), the challenger answers instead, and any failure of
+   * A decision call. When the router picks a challenger (ADR-0051), the challenger answers instead, and any failure of
    * it (an error after the adapter's own timeout and retries, or an incomplete answer) falls back to the request as
    * asked. Each attempt is its own logged call, and `modelSnapshot` names the model that answered.
    */

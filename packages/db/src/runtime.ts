@@ -31,7 +31,7 @@ export interface MimicBindings extends ProviderEnv {
   AI?: { run(model: string, input: { text: string[] }): Promise<unknown> };
   RL?: RateLimit;
   /**
-   * Cloudflare Flagship: runtime flags and tunables (ADR-0050). Unbound (local tests, or a deploy token without
+   * Cloudflare Flagship: runtime flags and tunables (ADR-0051). Unbound (local tests, or a deploy token without
    * Flagship access), every flag reads its default, which is the behaviour from before the flag.
    */
   FLAGS?: FlagshipBinding;
@@ -44,7 +44,7 @@ export interface MimicBindings extends ProviderEnv {
   INVITE_CODES?: string;
   /**
    * Spend cap per mimic in USD on the standard budget (default 1; ADR-0035). A string, or a JSON number. The
-   * `budget-usd` flag overrides it where Flagship is bound (ADR-0050); this var is the fallback.
+   * `budget-usd` flag overrides it where Flagship is bound (ADR-0051); this var is the fallback.
    */
   BUDGET_USD?: string | number;
   /** Share of the cap the session may spend (0–1, default 0.8); the rest is kept for the mimic page. */
@@ -168,7 +168,7 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
 }
 
 /**
- * `engineDeps` over the flagged environment (ADR-0050): Flagship values over the provider and budget vars. Both apps
+ * `engineDeps` over the flagged environment (ADR-0051): Flagship values over the provider and budget vars. Both apps
  * build their deps through this, once per request, queue batch or cron run, so a flag change applies without a
  * redeploy. Without FLAGS it is `engineDeps` itself.
  */

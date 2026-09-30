@@ -2,6 +2,7 @@ export * from './artifact';
 export * from './belief';
 export * from './data';
 export * from './deps';
+export * from './experiments';
 export * from './identity';
 export * from './jobs';
 export * from './lab';

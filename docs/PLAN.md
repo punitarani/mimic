@@ -641,8 +641,9 @@ money" in scope, workplace scenes are rejected in code and the professional quot
 ### 9.5 Selection
 
 Every strategy scores pooled questions only. Repeat probes are scheduled outside the selector. The default since
-`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; the strategies
-below remain as controls and experiment arms.
+`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; `cfg.default.v8` adds
+category and facet-group balance, the trust ramp and the sensitive sweep (`docs/SELECTION.md` §5a, ADR-0044). The
+strategies below remain as controls and experiment arms.
 
 - **`random`** is the control arm.
 - **`coverage`** takes the facet with the lowest coverage, breaking ties randomly.
@@ -851,7 +852,8 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `POST /api/mimics/:id/identity/confirm` | `{ candidateId \| null }` | Enqueues `identity.enrich` |
 | `POST /api/mimics/:id/identity/search` | `{ link }` | Searches again led by the link; only while a choice is pending (ADR-0029) |
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
-| `PATCH /api/mimics/:id/scope` | `MimicScope` → `{ scope, scopeAt, discarded }` | Categories and consents; narrowing hides what was learned in the withdrawn areas (ADR-0043) |
+| `PATCH /api/mimics/:id/scope` | `MimicScope` → `{ scope, scopeAt, discarded }` | Categories, consents and confirmations; narrowing hides what was learned in the withdrawn areas (ADR-0043, ADR-0050) |
+| `POST /api/mimics/:id/decline` | `{ questionId }` → `{ scope, scopeAt, discarded }` | "Prefer not to say" on the served sensitive question: its sensitive facets are never asked again; 409 for a question on no sensitive facet (ADR-0050) |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
 | `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0036) |
@@ -939,6 +941,9 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
 - **E2 State ablation** (replay). `raw` vs. `structured` vs. `summary` vs. `full`.
 - **E3 Selector** (arms). `random` vs. `entropy`, then `bald`. The primary metric is questions needed to reach fidelity ≥ 0.75, or fidelity at 20 questions.
 - **E4 Reflection** (replay). Off vs. each LLM. Watch correlation and dispersion to catch stereotyping.
+- **E3b Category balance** (arms, ADR-0045). `cfg.default.v8` vs. `cfg.e3b.control` (v8 without M12's balance and
+  sweep), 1:1. Primary metric: fidelity at 20; then questions to sustain 0.75, and R2/R4/R7 per arm. About 64 real
+  people per arm; read with `pnpm eval -- arms` (95% bootstrap intervals). Set up from the preset in `/lab`.
 - **E5 Generator LLM** (arms). Luna vs. DeepSeek vs. GLM, with the same selector.
 
 ---
@@ -1072,8 +1077,9 @@ exercise scores at least 4 of 5.
   special-category export scrub (ADR-0043).
 - **M12** Category balance, the trust ramp, category-aware targets and `cfg.default.v8` (ADR-0044; v7 went to the
   calibrated primary, ADR-0048).
-- **M13** Offline rubric report of v8 against the M10 candidate (pinned to v6; calibration doesn't change which
-  questions are asked, ADR-0048) and a two-arm experiment on real people (ADR-0045).
+- **M13** E3b, ready to start: v8 against `cfg.e3b.control` (v8 with v4's selection, so the arms share the
+  calibrated primary), a `/lab` preset that saves it as a draft, a real-people-only lab, and `pnpm eval -- arms` with
+  bootstrap intervals; a scripted cohort by arm (`pnpm eval -- cohort`) checks the machinery (ADR-0045).
 
 **Rubric (each row scored 1–5 with evidence):**
 
@@ -1096,7 +1102,9 @@ exercise scores at least 4 of 5.
 - **Self-only by design.** The person attests they are modeling themselves, must confirm their own identity, and the UI offers no free search of arbitrary names.
 - **Transparent facts.** Every externally sourced fact shows its source and can be removed.
 - **Separate consents** for app use, web search and research use, plus the categories to ask about and one consent
-  per sensitive area (ADR-0040), ticked by default at intake and each removable (ADR-0049).
+  per sensitive area (ADR-0040), ticked by default at intake and each removable (ADR-0049). A special-category area
+  is asked about only once the person confirms it, and any sensitive question can be skipped with "Prefer not to
+  say" (ADR-0050).
 - **Sensitive domains need their consent.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
   inferred from other answers or web facts, and special-category answers leave research exports unless the person
   separately consents to research on them.

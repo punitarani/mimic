@@ -72,7 +72,7 @@ async function deploy(env) {
   );
 
   step('Worker (queue consumer + cron)');
-  // Plus any other provider key that is set, so a provider flag can pick it at runtime (ADR-0050).
+  // Plus any other provider key that is set, so a provider flag can pick it at runtime (ADR-0051).
   const workerSecretValues = secretPayload(source, [
     ...new Set([...workerSecrets(worker, env, source), ...presentProviderSecrets(source)]),
   ]);

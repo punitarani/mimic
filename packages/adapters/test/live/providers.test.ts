@@ -130,7 +130,7 @@ describe.skipIf(!LIVE)('live providers', () => {
   );
 
   // The production primary with `decisions-model` at span-01, through the real Gateway, router and adapter: span-01
-  // answers a choice, a yes/no and a score question in one request, each option asked as its own yes/no (ADR-0050).
+  // answers a choice, a yes/no and a score question in one request, each option asked as its own yes/no (ADR-0051).
   it('the primary predicts through span-01 when the flag says so, and never falls back', async () => {
     const rows: Array<{ model: string; ok: boolean; error: string | null }> = [];
     const gateway = new Gateway({

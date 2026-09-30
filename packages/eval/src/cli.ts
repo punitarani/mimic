@@ -2,10 +2,18 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { type EvalRunRecord, type PipelineConfig, VOI_SELECTOR } from '@mimic/core';
+import {
+  Category,
+  type EvalRunRecord,
+  type PipelineConfig,
+  VOI_SELECTOR,
+  VOI_SELECTOR_V8,
+} from '@mimic/core';
 import { schema } from '@mimic/db';
 import { sql } from 'drizzle-orm';
+import { armsRun } from './arms';
 import { benchmarkCmd } from './benchmark';
+import { runCohort } from './cohort';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
 import { datasetHash, exportData } from './export';
 import { calibrateGates, sampleDrafts } from './gates';
@@ -13,6 +21,7 @@ import { openLocalEngine } from './local';
 import { diagnoseCmd, evaluateCmd, optimizeCmd } from './optimize/commands';
 import { replay, reproduceOnline } from './replay';
 import { publishReport, renderReport, writeReport } from './report';
+import { POPULATIONS, type Population, rubricRun } from './rubric';
 import { simulateSelection } from './select';
 import { runSession, SessionScript } from './session';
 import { importTwin } from './twin';
@@ -25,7 +34,7 @@ Commands
             --db <path>            SQLite path (default data/session.sqlite)
             --blobs <dir>          directory standing in for R2 (default data/blobs)
             --turns <n>            number of questions (default 30)
-            --config <name>        default | v3 | m10-candidate (default: default)
+            --config <name>        default | v3 | v6 | m10-candidate (default: default)
             --live                 use real providers (costs money); default is offline fakes
             --simulate <persona>   LLM-simulated user for unscripted questions (smoke tests only; never report
                                    metrics from simulated users)
@@ -40,8 +49,19 @@ Commands
             --checkpoints 10,20,30 --split dev|test|all [--targets later|heldout] [--limit N] [--offline]
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
   select    Pool-restricted selection simulation (biased; iteration only)
-            --data <file.sqlite> --selector random|coverage|entropy|bald|voi[,…] --budget 5,10,20 [--split dev]
-            [--limit N] [--no-population]   several selectors run on the same people and report side by side
+            --data <file.sqlite> --selector random|coverage|entropy|bald|voi|voi-v8[,…] --budget 5,10,20
+            [--split dev] [--limit N] [--no-population]   several selectors run on the same people, side by side
+            [--series]   accuracy on the rest after every pick, and questions to sustain 75%
+            [--categories psychology,values,life]   as if only these categories were selected
+  rubric    What the question loop served, by population and config: concreteness, category shares, groups,
+            sensitive coverage and ordering (ADR-0044; no model calls)
+            --data <file.sqlite> [--arm] [--population real,scripted,twin2k]
+  arms      An experiment's arms on the E3 metrics, with 95% bootstrap intervals and each arm against the control
+            (ADR-0045): fidelity at 20, questions to sustain fidelity 0.75. Real people only unless --population all
+            --data <file.sqlite> [--experiment <id>] [--population real|all] [--seed arms]
+  cohort    A scripted cohort through an experiment preset, every persona in every arm (ADR-0045; tests the machinery,
+            never a result). Sets the preset up and starts it in this database only
+            --preset e3b [--people 8] [--turns 32] [--db data/cohort.sqlite] [--blobs data/blobs] [--live]
   import    import twin2k500 --path <twin2k500.jsonl> --out <file.sqlite> [--limit N]
   report    --data <file.sqlite> --run <id> [--to local|preview|prod]   writes report.{json,md}; --to publishes to /lab
   evaluate  Score prediction prompts on sealed instances (docs/OPTIMIZATION.md §5)
@@ -51,7 +71,7 @@ Commands
   diagnose  Failure analysis of stored predictions by the reflection model (one call per person)
             --data … [--role primary|baseline|shadow] [--predictor <id>, required for shadow] [--cases 30]
             [--people 3] [--reflection-model <id>]
-  benchmark Jev vs span-01 on the same sealed instances (ADR-0050, docs/CHALLENGER.md): quality, latency p50/p95,
+  benchmark Jev vs span-01 on the same sealed instances (ADR-0051, docs/CHALLENGER.md): quality, latency p50/p95,
             cost per request, error rate, and the enable/keep verdict; writes benchmark.{md,csv,json}
             --data <a.sqlite>[,<b.sqlite>] [--split test] [--seed benchmark] [--limit N] [--max-targets 40]
             [--incumbent jev:typesafe/jev-1.13@jev-predict.v2] [--challenger <id>] [--max-usd 1] [--offline]
@@ -254,6 +274,8 @@ async function selectCmd(argv: string[]) {
       seed: { type: 'string', default: 'select' },
       offline: { type: 'boolean', default: false },
       'no-population': { type: 'boolean', default: false },
+      series: { type: 'boolean', default: false },
+      categories: { type: 'string' },
     },
   });
   if (!values.data) throw new Error('--data is required');
@@ -265,18 +287,24 @@ async function selectCmd(argv: string[]) {
     entropy: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
     bald: { type: 'bald', k: 4, lambdaCoverage: 0.3 },
     voi: VOI_SELECTOR,
+    'voi-v8': VOI_SELECTOR_V8,
   };
+  const categories = values.categories
+    ? values.categories.split(',').map((c) => Category.parse(c.trim()))
+    : undefined;
   const chosen = values.selector.split(',').map((s) => s.trim());
   for (const s of chosen) if (!selectors[s]) throw new Error(`unknown selector ${s}`);
   const { run } = await simulateSelection(
     engine.deps,
     {
-      name: `select ${chosen.join(' vs ')}`,
+      name: `select ${chosen.join(' vs ')}${categories ? ` (${categories.join(', ')})` : ''}`,
       selectors: chosen.map((label) => ({ label, selector: selectors[label]! })),
       budgets: list(values.budget),
       split: values.split as 'dev' | 'test' | 'all',
       seed: values.seed,
       population: !values['no-population'],
+      series: values.series,
+      ...(categories ? { categories } : {}),
       ...(values.limit ? { limitPeople: Number(values.limit) } : {}),
     },
     await datasetHash(engine.client),
@@ -284,6 +312,106 @@ async function selectCmd(argv: string[]) {
   const files = writeReport(run);
   console.log(renderReport(run));
   console.log(`\nrun ${run.id} → ${files.md}`);
+  engine.close();
+}
+
+async function rubricCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      arm: { type: 'boolean', default: false },
+      population: { type: 'string' },
+      name: { type: 'string' },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
+  const population = values.population?.split(',').map((p) => {
+    const x = p.trim();
+    if (!(POPULATIONS as readonly string[]).includes(x))
+      throw new Error(`unknown population ${x} (${POPULATIONS.join(', ')})`);
+    return x as Population;
+  });
+  const { run } = await rubricRun(
+    engine.deps,
+    {
+      name: values.name ?? 'rubric',
+      byArm: values.arm,
+      ...(population ? { population } : {}),
+    },
+    await datasetHash(engine.client),
+  );
+  const files = writeReport(run);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}`);
+  engine.close();
+}
+
+async function armsCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      experiment: { type: 'string' },
+      population: { type: 'string', default: 'real' },
+      seed: { type: 'string' },
+      name: { type: 'string' },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  if (values.population !== 'real' && values.population !== 'all')
+    throw new Error('--population is real or all');
+  const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
+  const { run, people } = await armsRun(
+    engine.deps,
+    {
+      name: values.name ?? 'arms',
+      population: values.population,
+      ...(values.experiment ? { experimentId: values.experiment } : {}),
+      ...(values.seed ? { seed: values.seed } : {}),
+    },
+    await datasetHash(engine.client),
+  );
+  if (values.population === 'all' && people.some((p) => p.population !== 'real'))
+    console.warn('⚠ Includes scripted or imported people: a check of the machinery, not a result.');
+  const files = writeReport(run);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}`);
+  engine.close();
+}
+
+async function cohortCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      preset: { type: 'string', default: 'e3b' },
+      people: { type: 'string', default: '8' },
+      turns: { type: 'string', default: '32' },
+      db: { type: 'string', default: 'data/cohort.sqlite' },
+      blobs: { type: 'string', default: 'data/blobs' },
+      live: { type: 'boolean', default: false },
+    },
+  });
+  const engine = await openLocalEngine({
+    db: resolve(values.db),
+    blobsDir: resolve(values.blobs),
+    providers: values.live ? 'live' : 'offline',
+  });
+  console.warn(
+    '⚠ Scripted answers: this checks which arm asks what and when. Its fidelity is never a result.',
+  );
+  console.log(`providers: ${values.live ? 'live' : 'offline fakes (zero spend; outputs are arbitrary)'}`);
+  const { experimentId, mimics } = await runCohort(engine, {
+    preset: values.preset,
+    people: Number(values.people),
+    turns: Number(values.turns),
+    onSession: (x) => console.log(`${x.arm.padEnd(8)} ${x.persona.padEnd(24)} ${x.mimicId}`),
+  });
+  console.log(`\nexperiment ${experimentId}: ${mimics.length} sessions written to ${values.db}`);
+  console.log(
+    `next: pnpm eval -- rubric --data ${values.db} --arm; pnpm eval -- arms --data ${values.db} --population all`,
+  );
   engine.close();
 }
 
@@ -362,6 +490,12 @@ async function main() {
   switch (cmd) {
     case 'session':
       return session(rest);
+    case 'rubric':
+      return rubricCmd(rest);
+    case 'arms':
+      return armsCmd(rest);
+    case 'cohort':
+      return cohortCmd(rest);
     case 'gates':
       return gates(rest);
     case 'drafts':

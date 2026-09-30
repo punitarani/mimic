@@ -1,4 +1,4 @@
-import type { LiveFlag } from '@mimic/core';
+import { ALL_FLAGS, type LiveFlag } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import { flagsCheckCli, flagshipApi, renderReport, runFlagsCheck } from '../src/flags-check';
 
@@ -6,6 +6,13 @@ const APP = 'c4598f95-4f82-48c0-a8c5-62588cc2b598';
 
 /** The five flags as the `mimic` app holds them. */
 const good = (): LiveFlag[] => [
+  {
+    key: 'budget-session-share',
+    enabled: true,
+    default_variation: '80',
+    variations: { '75': 0.75, '80': 0.8 },
+    rules: [],
+  },
   { key: 'budget-usd', enabled: true, default_variation: '1', variations: { '1': 1 }, rules: [] },
   {
     key: 'decisions-model',
@@ -73,7 +80,7 @@ function fakeApi(flags: LiveFlag[], opts: { deny?: string[]; denyPost?: boolean;
   return { api: flagshipApi({ accountId: 'acct', token: 't', appId: APP, fetch }), calls, flags };
 }
 
-describe('flags:check (ADR-0050)', () => {
+describe('flags:check (ADR-0051)', () => {
   it('passes a well-formed app, across pages, and evaluates every flag', async () => {
     const { api, calls } = fakeApi(good());
     const r = await runFlagsCheck({ api, appId: APP, settings: { EMBEDDINGS_PROVIDER: 'workers-ai' } });
@@ -81,7 +88,7 @@ describe('flags:check (ADR-0050)', () => {
     expect(r.warnings).toEqual([]);
     expect(r.evaluated['decisions-model']).toEqual({ value: 'jev', reason: 'DEFAULT' });
     expect(calls.filter((c) => c.startsWith('GET /flags'))).toHaveLength(2);
-    expect(calls.filter((c) => c.startsWith('GET /evaluate'))).toHaveLength(5);
+    expect(calls.filter((c) => c.startsWith('GET /evaluate'))).toHaveLength(ALL_FLAGS.length);
     expect(renderReport(APP, r)).toContain('✓ every flag is defined');
   });
 
@@ -122,7 +129,7 @@ describe('flags:check (ADR-0050)', () => {
     expect(renderReport(APP, list)).not.toContain('✓');
     expect(renderReport(APP, list)).toContain('? decisions-model');
     const evalDenied = await runFlagsCheck({ api: fakeApi(good(), { deny: ['/evaluate'] }).api, appId: APP });
-    expect(evalDenied.problems).toHaveLength(5);
+    expect(evalDenied.problems).toHaveLength(ALL_FLAGS.length);
     expect(evalDenied.problems[0]).toContain('Flagship App · Evaluate');
   });
 

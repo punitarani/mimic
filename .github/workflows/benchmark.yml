@@ -1,4 +1,4 @@
-# Jev vs span-01 on the same sealed instances (ADR-0050, docs/CHALLENGER.md), from the Actions tab:
+# Jev vs span-01 on the same sealed instances (ADR-0051, docs/CHALLENGER.md), from the Actions tab:
 # Actions → Benchmark → Run workflow. It decides whether `decisions-model` may move to span-01: the step summary holds
 # the side-by-side table (quality, p50/p95 latency, cost per request, error rate, by question type) and the verdict
 # of DECISION_RULE.

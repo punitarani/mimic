@@ -11,36 +11,60 @@ import {
   planDecision,
 } from '../src';
 
-/** The five flags as the `mimic` app holds them, variations named by label as the dashboard does. */
+/**
+ * The `mimic` app as the dashboard showed it on 2026-09-30: variations named by their labels, values as the code
+ * spells them, plus `vector-backend`, which no code reads.
+ */
 const live = (): LiveFlag[] => [
   {
     key: 'decisions-model',
     enabled: true,
-    default_variation: 'jev',
-    variations: { jev: 'jev', 'span-01': 'span-01' },
+    default_variation: 'Jev',
+    variations: { Jev: 'jev', 'Span-01': 'span-01' },
     rules: [],
   },
-  { key: 'budget-usd', enabled: true, default_variation: 'standard', variations: { standard: 1 }, rules: [] },
+  { key: 'budget-usd', enabled: true, default_variation: '1', variations: { '1': 1 }, rules: [] },
+  {
+    key: 'budget-session-share',
+    enabled: true,
+    default_variation: '80',
+    variations: { '75': 0.75, '80': 0.8, '85': 0.85, '90': 0.9 },
+    rules: [],
+  },
   {
     key: 'search-provider',
     enabled: true,
     default_variation: 'Exa',
-    variations: { Exa: 'exa', Perplexity: 'perplexity' },
+    variations: { Exa: 'exa', Parallel: 'parallel', Perplexity: 'perplexity' },
     rules: [],
   },
-  { key: 'enrich-provider', enabled: true, default_variation: 'Exa', variations: { Exa: 'Exa' }, rules: [] },
+  {
+    key: 'enrich-provider',
+    enabled: true,
+    default_variation: 'Exa',
+    variations: { Exa: 'exa', Parallel: 'parallel' },
+    rules: [],
+  },
   {
     key: 'embeddings-provider',
     enabled: true,
     default_variation: 'OpenRouter',
-    variations: { OpenRouter: 'openrouter', 'Workers AI': 'workers-ai' },
+    variations: { OpenRouter: 'openrouter', 'Cloudflare-Workers-AI': 'workers-ai' },
+    rules: [],
+  },
+  {
+    key: 'vector-backend',
+    enabled: true,
+    default_variation: 'Cloudflare-Vectorize',
+    variations: { 'Cloudflare-Vectorize': 'vectorize' },
     rules: [],
   },
 ];
 
-describe('flag registry (ADR-0050)', () => {
+describe('flag registry (ADR-0051)', () => {
   it('defines each flag once, with a fallback the code accepts and variations it accepts', () => {
     expect(Object.values(FLAG_KEYS).sort()).toEqual([
+      'budget-session-share',
       'budget-usd',
       'decisions-model',
       'embeddings-provider',
@@ -55,37 +79,40 @@ describe('flag registry (ADR-0050)', () => {
     expect(FLAG_SPECS.decisionsModel.fallback).toBe('jev');
   });
 
-  it('a well-formed app passes; a flag over a different setting is a warning, not a problem', () => {
-    const r = checkFlags(live(), { EMBEDDINGS_PROVIDER: 'workers-ai', SEARCH_PROVIDER: 'exa' });
+  it('the app as it stands passes, with warnings for what deserves a look', () => {
+    const r = checkFlags(live(), {
+      EMBEDDINGS_PROVIDER: 'workers-ai',
+      SEARCH_PROVIDER: 'exa',
+      BUDGET_SESSION_SHARE: '0.8',
+    });
     expect(r.problems).toEqual([]);
     expect(r.warnings).toEqual([
+      'search-provider: variation "Parallel" = "parallel" is not a value the code accepts; serving it would fall back to SEARCH_PROVIDER',
       'embeddings-provider: serves "openrouter" over EMBEDDINGS_PROVIDER="workers-ai"',
+      'vector-backend: in the app, but no code reads it',
     ]);
   });
 
-  it('names missing flags, unusable values, dangling variations, and flags nothing reads', () => {
+  it('fails on missing flags, unusable values that are served, and dangling variations', () => {
     const flags = live().filter((f) => f.key !== 'budget-usd');
-    flags[0]!.variations.gpt = 'not a model';
-    flags[1]!.default_variation = 'Nope';
-    flags[2]!.rules = [{ serve_variation: 'Ghost' }];
-    flags.push({
-      key: 'vector-backend',
-      enabled: true,
-      default_variation: 'x',
-      variations: { x: 'x' },
-      rules: [],
-    });
+    const model = flags.find((f) => f.key === 'decisions-model')!;
+    model.variations.gpt = 'not a model';
+    model.rules = [{ serve_variation: 'gpt' }];
+    flags.find((f) => f.key === 'enrich-provider')!.default_variation = 'Nope';
+    flags.find((f) => f.key === 'budget-session-share')!.rules = [{ serve_variation: 'Ghost' }];
     flags.push({ key: 'use-span-01', enabled: false, default_variation: 'off', variations: { off: 'off' } });
     const r = checkFlags(flags);
     expect(r.problems).toEqual([
       'decisions-model: variation "gpt" = "not a model" is not a value the code accepts',
       expect.stringMatching(/^budget-usd: missing \(create it as a number flag/),
-      'search-provider: default variation "Nope" does not exist',
-      'enrich-provider: a rule serves "Ghost", which does not exist',
+      'budget-session-share: a rule serves "Ghost", which does not exist',
+      'enrich-provider: default variation "Nope" does not exist',
     ]);
-    expect(r.warnings).toContain('vector-backend: in the app, but no code reads it');
     expect(r.warnings).toContain('use-span-01: in the app, but no code reads it');
-    expect(r.warnings).toContain('enrich-provider: 1 targeting rule(s) active');
+    expect(r.warnings).toContain('decisions-model: 1 targeting rule(s) active');
+    // A share above 1 is not a share.
+    expect(FLAG_SPECS.budgetSessionShare.parse(1.5)).toBeNull();
+    expect(FLAG_SPECS.budgetSessionShare.parse('0.75')).toBe(0.75);
   });
 
   it('create bodies start at the setting (or the fallback), with the variations the code accepts', () => {
@@ -106,7 +133,7 @@ describe('flag registry (ADR-0050)', () => {
   });
 });
 
-describe('span-01 request plan (ADR-0050)', () => {
+describe('span-01 request plan (ADR-0051)', () => {
   const req = (model: string): DecisionRequest => ({
     model,
     state: { a: 1 },

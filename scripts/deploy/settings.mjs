@@ -60,7 +60,7 @@ export function providerSecrets(vars) {
 
 /**
  * Every provider key that is set in `source`, chosen or not. They are pushed with the worker as well, so a provider
- * flag (ADR-0050) can switch to any provider whose key exists without a redeploy; they are never required.
+ * flag (ADR-0051) can switch to any provider whose key exists without a redeploy; they are never required.
  */
 export function presentProviderSecrets(source) {
   const keys = new Set(Object.values(PROVIDER_KEYS).flatMap((k) => Object.values(k)));

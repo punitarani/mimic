@@ -19,7 +19,11 @@ import {
 } from '../src';
 
 const facets = [...allOntologyFacets().values()];
-const withReligion: MimicScope = { ...DEFAULT_SCOPE, consents: { religion: true, money: true } };
+const withReligion: MimicScope = {
+  ...DEFAULT_SCOPE,
+  consents: { religion: true, money: true },
+  confirmed: { religion: true },
+};
 // Seq 3 asked about religiosity directly; seq 5 about trust; seq 7 was never answered.
 const view = scopeView(withReligion, facets, [
   { id: 'q3', seq: 3, facetIds: ['religiosity'] },

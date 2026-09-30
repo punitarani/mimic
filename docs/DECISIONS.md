@@ -1343,7 +1343,8 @@ and makes concreteness and respect things a gate checks rather than things a pro
   the mimic's ontology.
 - **reserve.v2**: reserve.v1, keys unchanged, plus two concrete items for every new facet (68). Sensitive items ask
   one facet directly and plainly, presume nothing, cover the range (including "not religious" or "no alcohol") and
-  have no "prefer not to say", because the consent is the opt-out. A config picks its set with the optional
+  have no "prefer not to say" option, because the consent is the opt-out (ADR-0050 later added "Prefer not to say"
+  as a button outside the options). A config picks its set with the optional
   `reserve.setId`; configs without it keep reserve.v1 and its fixed order. Later sets serve the items whose facets
   have been asked least first, so a stalled generator still spreads questions.
 - **gen.v3**: gen.v2's belief-driven targets, plus strict concreteness (one specific everyday situation, options that
@@ -1519,6 +1520,63 @@ or do, so the field now isn't rendered while the code is locked.
   can't see the query string; hydration removes it for invite links, so the fields below move up once. Removing
   that shift would mean rendering `/new` per request, which ADR-0023 chose against.
 
+## ADR-0044 — Category balance, the trust ramp, coverage deadlines and `cfg.default.v8` (2026-09-30)
+
+ADR-0042 gave the loop concrete questions and 34 new facets, 11 of them opt-in sensitive, but selection still asked
+where the mimic was least sure. With the anchors (seven of ten on psychology) that kept sessions on psychology and
+life. On offline sessions under the M10 candidate with every consent, psychology took 50% of the first 30 questions
+and work 11%; no person had every facet group touched by question 20, and 20 of 44 consented sensitive facets were
+reached by question 30. With psychology off, one of two people was asked a sensitive question among the first five.
+This ADR adds balance and ordering to the selector and the generator, and makes the result the default.
+
+- **Selector** (`selector.balance`, `selector.trustRamp`; both optional and undefaulted, so v4–v6 score exactly as
+  before and keep their hashes; `docs/SELECTION.md` §5a):
+  - The belief gains category shares against an even split over the categories in scope, and facet-group gaps. Only
+    categories in scope exist, so nothing pulls toward a category the person turned off.
+  - The gap term gives 35% of its weight to the candidate's category shortfall and 25% to its group gap.
+  - Once four adaptive questions are answered: a candidate whose categories are all above 40% is skipped unless every
+    candidate is (the cap), and while a category is below 60% of its even share (15% with four), candidates in it go
+    first (the floor).
+  - Coverage deadlines (`balance.groupsBy` 20, `trustRamp.sweepBy` 30): information chooses freely until the facet
+    groups still untouched, or the consented sensitive facets still unasked, would no longer fit in the questions left
+    (allowing one repeat probe per eight); then only candidates covering one are eligible. This is the shadow-test
+    approach to content constraints in CAT (van der Linden & Reese 1998), applied greedily. It was added after the
+    first live scripted run: with bonuses alone, live hypothesis information (0 to 1) outweighed the balance terms
+    (about 0.1 inside the λ-weighted gap) and the sweep (0.3), so 16 of 20 consented sensitive facets were reached by
+    question 30 and each person missed one group by 20.
+  - The reserve backs coverage: before each selection the engine adds up to three reserve items for needs the pool has
+    nothing for (untouched groups until question 20, unasked consented sensitive facets once the sweep has begun,
+    categories below the floor).
+  - Trust ramp: nothing touching a sensitive facet is served before six answers, enforced by the engine on the pool
+    and the reserve and by the selector with no exception. From ten answers, a candidate touching a consented
+    sensitive facet not yet asked about earns +0.3 (the sweep). Sensitive items later in an instrument are answered
+    more honestly (Tourangeau & Yan 2007); burden is unchanged, so early questions stay short.
+  - Selection diagnostics record `category`, `group` and `sweep`.
+- **Generator targets** (`categoryTargets`, `categoryQuota`): eight targets per refill under balance, in three passes:
+  untouched facet groups (preferring an unasked consented sensitive facet in the group once the sweep is on), then
+  the sweep (least asked areas first), then a category quota weighted `¼ + shortfall` with at least a quarter of the
+  targets. The anchors still waiting count as asked and toward the ramp, since they are served first. gen.v3 gets the
+  quota and, once the ramp is open, the consented sensitive facets.
+- **`cfg.default.v8`** = v7's calibrated primary and shadows (ADR-0048) on ontology v2, reserve.v2, gen.v3, gates.v3,
+  reflect.v2, domain mix core 15 /
+  casual 55 / professional 30, and `VOI_SELECTOR_V8` (v4 weights plus balance `{ category 0.35, group 0.25, cap 0.4 }`
+  and ramp `{ minAnswered 6, sweepFrom 10, sweepBonus 0.3, sweepBy 30 }`, with `groupsBy 20` in balance). v1–v7 hashes stay pinned; `cfg.m10.candidate` is
+  built from v6 so it keeps its hash. v7's calibration changes only what is stored (selection runs on Jev's raw scale,
+  ADR-0048), so comparing the candidate with v8 still isolates the selector. New mimics get v8; existing mimics keep
+  their config.
+- **Measurement.** `pnpm eval -- rubric` reports R1 (generated questions passing `concrete`), R2 (category shares by
+  question 30, groups by 20), R4 (consented sensitive facets by 30) and R7 (sensitive questions in the first five) per
+  population (real, scripted, twin2k) and config, `--arm` per experiment arm. `pnpm eval -- select --series` records
+  accuracy on the rest after every pick and questions to sustain 75%; `--categories` simulates a category turned off.
+- **Evidence** (`docs/reports/m12-rubric.md`; scripted answers throughout, so these test the mechanism, not people).
+  Offline, four people per config with every consent: the M10 candidate kept 0 of 4 within 15–40% per category,
+  touched 32 of 40 groups by question 20 and reached 20 of 44 sensitive facets by 30; v8 kept 4 of 4, 40 of 40 and 44
+  of 44. Live (real generator, gates and Jev), three sessions per run: without deadlines 25 of 28 groups and 16 of 20
+  sensitive facets; with them 28 of 28 and 20 of 20, every generated question concrete, no sensitive question before
+  question 11, and `replay --mode online` matching every state. Run c, on the final v8 build, repeated run b: 28 of 28
+  groups, 20 of 20 sensitive facets, shares within bounds, first sensitive question at 11.
+  Efficiency (R6) needs real answers and is measured by the E3b arm (ADR-0045).
+
 ## ADR-0048 — Learnings from the first prod reports: a calibrated primary (`cfg.default.v7`), an honest optimizer verdict, paired comparisons (2026-09-30)
 
 **Evidence.** After ADR-0041 shipped, Actions → Optimize ran twice on prod. The data was 4 consented people and 265
@@ -1655,8 +1713,125 @@ with the copy "Turn off anything you'd rather not share. All topics are enabled 
   premise that the person chose the area (`gen.v3`, CATEGORIES.md §2), and a default consent weakens that premise.
   Revisit both before an ontology v2 config (or experiment arm) serves sensitive questions, and before opening
   sign-ups beyond invites.
+- **Resolved by ADR-0050** before `cfg.default.v8` shipped: special-category areas now need a confirmation beyond
+  the pre-ticked box, and sensitive questions offer "Prefer not to say".
 
-## ADR-0050 — span-01 as a challenger to Jev, behind a Cloudflare Flagship flag registry (2026-09-30)
+## ADR-0050 — Confirmed consent for special categories, and "Prefer not to say" (2026-09-30)
+
+ADR-0049 made intake start with every sensitive area ticked. It flagged two things to settle before an ontology v2
+config serves sensitive questions, and `cfg.default.v8` (ADR-0044) is such a config: nothing recorded whether a
+consent was the default or the person's choice, and sensitive questions had no "prefer not to say". Both are
+resolved here, reusing the scope machinery so enforcement stays in one function, `facetAllowed`.
+
+- **Confirmed consent for special categories.** `MimicScope` gains `confirmed` (`mimics.confirmed_json`, migration
+  0008). A facet in a special-category area (politics, religion, sexuality, health; GDPR art. 9) is allowed only
+  when its area is both consented and confirmed. An area left pre-ticked is stored as consented but blocked
+  everywhere a facet can reach: prompts, targets, the pool, the reserve and serving. Money in detail is not
+  special-category data, so its consent alone is enough, as before. `normalizeScope` keeps a confirmation only
+  where the consent is on, so withdrawing a consent also withdraws its confirmation. Existing consents read as
+  unconfirmed, which is the conservative choice; only ontology v2 configs have special-category facets.
+- **What counts as confirming.** Any of these three:
+  - Ticking an area yourself, at intake or in Topics and consent (the form tracks it: ticking confirms, unticking
+    clears).
+  - "Ask me" on the one-time card shown in the session once the trust ramp opens (six answers).
+  - "Confirm" next to an area in Topics and consent that says "Not confirmed yet".
+
+  The card lists each unconfirmed area with "Ask me" and "Don't ask", and Continue stays disabled until every area
+  is decided. "Don't ask" withdraws the consent. "Not now" keeps the areas unconfirmed, so they are never asked
+  about, and the card returns on the next visit. Confirming widens the scope and changes no stored data.
+- **"Prefer not to say".** Every served question touching a sensitive facet (money included) carries
+  `sensitive: true`, and the session shows a "Prefer not to say" button next to the answer controls.
+  `POST /api/mimics/:id/decline { questionId }` (`declineQuestion`) adds the question's sensitive facets to
+  `scope.declined` (`mimics.declined_json`). `facetAllowed` blocks declined facets, so:
+  - the question is discarded unanswered and nothing is scored;
+  - pooled questions on those facets are discarded;
+  - those facets are never asked about again.
+
+  The person can undo it in Topics and consent ("You chose not to answer", "Ask again"). Only the current served
+  question can be declined; declining it again is a no-op; a question on no sensitive facet is refused with 409.
+- **Answer options are unchanged.** "Prefer not to say" sits outside the options, so Jev never predicts it, and
+  gen.v3 and reserve.v2 keep their IDs and their "no prefer-not-to-say option" rule.
+- **Replay stays exact where it can.** `setScope` now separates two effects of a narrowing:
+  - Discarding out-of-scope pooled and waiting questions happens on every narrowing.
+  - Stamping `scope_at` (hiding what was learned) happens for a category, consent or confirmation removed, and for
+    a declined facet only when an answered question touches it.
+
+  Declining a question nobody has answered on hides nothing, and every sealed state stays hash-checkable. A
+  request that omits `confirmed` or `declined` keeps the stored values, so an older client can't clear them.
+- **Research exports** read the confirmed and declined columns with the rest of the scope, so the scrub is
+  unchanged. The rubric counts a declined sensitive facet as asked (R4), since the person was asked and chose not
+  to answer.
+- **Evidence.** Offline tests in `packages/eval/test/consent.test.ts`:
+  - a person who left every area pre-ticked gets no special-category question over 32 turns, while money questions
+    appear, and the generator never lists a special-category facet as askable;
+  - confirming politics and health after twelve answers brings questions in those two areas only, and hides
+    nothing;
+  - declining discards the question and never serves the facet again, and can be undone.
+
+  Scripted sessions stand for people who chose, so `runSession` confirms a script's special consents unless the
+  script says otherwise. M12's live runs (all confirmed) are therefore unchanged.
+- **Supersedes** the "no prefer not to say (the consent is the opt-out)" rule of ADR-0042 and CATEGORIES.md §2, and
+  the two revisit items of ADR-0049.
+
+## ADR-0045 — E3b: M12's selection against v4's, on real people (2026-09-30)
+
+M12 (ADR-0044) showed with scripted people that `cfg.default.v8` asks across every category, reaches every facet
+group and every consented sensitive facet, and keeps sensitive questions late. Whether that costs or saves questions
+(R6, efficiency) needs real answers. A scripted answerer has no true preferences to predict, and this environment
+reaches neither real users nor Twin-2K-500. M13 therefore ships the experiment ready to run, plus a readout that
+shows real people only, with intervals.
+
+- **Arms, 1:1 by `hash(mimicId)`.**
+  - `v8`: `cfg.default.v8` (`08956a22…`).
+  - `control`: `cfg.e3b.control` (`834484a3…`), v8 with the selection it had before M12.
+
+  The control drops ADR-0044's balance: category and group terms, cap, floor, group deadline, category targets and
+  quota, and the reserve top-up for groups. It also switches off the sensitive sweep and its deadline (both start at
+  question 1000). Everything else is identical: the calibrated primary, ontology v2, reserve.v2, gen.v3, gates.v3,
+  reflect.v2, the everyday-first mix, the consent confirmation, "Prefer not to say" and the trust ramp. The arms
+  therefore differ only by M12's selection.
+  - *Why not the M10 candidate as control.* It is pinned to v6, whose primary is uncalibrated Jev. Fidelity is
+    computed from the primary's predictions, so calibration would confound the comparison.
+  - *Why keep the ramp in the control.* Holding sensitive questions back is about respect, not efficiency, so it is
+    not what E3b tests.
+- **Metrics** (PLAN §12.7).
+  - Primary: fidelity at 20 answered questions.
+  - Secondary: questions until fidelity reaches 0.75 and stays there (`questionsToSustain`), reported as the median
+    over the people who got there, with the share who did. This metric is censored by how long people stay, which
+    is why it is secondary.
+  - R2, R4 and R7 per arm from `rubric --arm`.
+- **Readout** (`pnpm eval -- arms --data <export>`, report kind `arms`).
+  - Per arm: n, each metric with a 95% percentile bootstrap interval (2,000 resamples, seeded).
+  - Every arm against the control, with the difference's interval, each arm resampled on its own.
+  - A difference whose interval spans 0 is reported as "not significant", never as a win.
+- **Real people only.** Participant populations moved to core (`participants.ts`: real, scripted, twin2k).
+  - `labOverview` counts real people only unless asked for `population: 'all'`, so `/lab`'s arm curves and
+    predictor metrics never mix in scripted sessions or imported panels. `/lab` says so.
+  - `arms` also defaults to real people. With `--population all` it labels the output "not a result".
+- **Sample size.** Assume an SD of about 6 questions to sustain, or about 0.10 in fidelity at 20. Detecting a
+  3-question or a 0.05 difference, two-sided α 0.05 and power 0.8, needs about 64 people per arm:
+  2 · (1.96 + 0.84)² · (σ/δ)² ≈ 63. Both SDs are assumptions: check them at about 20 per arm, and report at the
+  planned size rather than stopping on a peek.
+- **What it can't show.**
+  - Which M12 mechanism helps: it tests the bundle.
+  - Anything about people who decline research consent: only consented people count.
+  - Anything beyond the session: fidelity predicts the person's own next answers.
+  - Better coverage is not better prediction per se. E3b asks whether breadth costs questions, and R2 and R4 already
+    show the breadth.
+- **Setting it up.** `EXPERIMENT_PRESETS.e3b` and `setupPreset` (`packages/core/src/engine/experiments.ts`) register
+  both configs and save a draft experiment, idempotent by name. They never start, stop or change anything.
+  - `/lab` lists the preset with "Set up as a draft" (`POST /api/lab/experiments/preset`).
+  - Starting the draft is the owner's click. Allocation then applies to new mimics only; an existing mimic never
+    changes config.
+- **Scripted cohort.** `pnpm eval -- cohort --preset e3b` sets the preset up and starts it in a local database only,
+  then runs each persona once in every arm through an internal `arm` option on `createMimic`. The arms therefore see
+  the same people. It checks which arm asks what and when; its fidelity is never a result.
+- **Evidence** (`docs/reports/m13-e3b.md`): the offline cohort by arm, labelled scripted. For live evidence, M12's
+  scripted runs a, b and c (v8) and M10's live runs (the M10 candidate: v4's selection on ontology v2) stand in for
+  the pair, so no money is spent on another scripted comparison.
+
+
+## ADR-0051 — span-01 as a challenger to Jev, behind a Cloudflare Flagship flag registry (2026-09-30)
 
 Respan's `respan/span-01` runs on the same OpenRouter Decisions API as Jev, at $0.02/M input tokens against Jev's
 $0.042/M. It is added as a challenger behind the Flagship string flag `decisions-model` (`jev` | `span-01`). At
@@ -1696,23 +1871,23 @@ $0.042/M. It is added as a challenger behind the Flagship string flag `decisions
   default, the var it overrides, and a parser for the values it accepts. Runtime reads and the checks all use it.
   - **Runtime.** Core sees a `FlagReader`; `packages/db/src/flags.ts` wraps the binding. Every read has a default
     that equals the behaviour before the flag.
-  - **`pnpm flags:check`** holds the live app to the registry. It fails on a missing flag, on any variation, default
-    or rule serving a value the code can't use, and on a flag that doesn't evaluate through Flagship's evaluate API.
-    It warns about flags nothing reads, and about flags that override their setting.
+  - **`pnpm flags:check`** holds the live app to the registry. It fails on a missing flag, on a default or rule-served
+    variation the code can't use, and on a flag that doesn't evaluate through Flagship's evaluate API. It warns about
+    flags nothing reads, flags that override their setting, and unusable variations nothing serves yet.
   - **Where it runs:** in the Flags workflow on every PR, every push and daily, and in deploy preflight.
   - **After deploy**, `/api/health` evaluates every flag through the Worker's own binding, and the smoke test fails
     on an error.
   - **Token.** The check needs only Flagship App · Read and Evaluate. The app ID is pinned in `wrangler.jsonc`, so
     the deploy needs no Flagship permission to find it. Preview binds no app.
-- **Migrated to flags:** `budget-usd`, `search-provider`, `enrich-provider` and `embeddings-provider`, which read
-  Flagship over their vars (`flaggedEnv`).
+- **Migrated to flags:** `budget-usd`, `budget-session-share`, `search-provider`, `enrich-provider` and
+  `embeddings-provider`, which read Flagship over their vars (`flaggedEnv`).
   - A flag overrides only when its value parses, differs from the var, and names a provider whose key or binding is
     deployed. Otherwise the var stands, and the reason is logged once.
   - Deploy pushes every provider key set in Doppler, so a provider flag can actually switch.
   - The vars stay as the fallback.
-- **Left as env vars:** secrets, `BUDGET_SESSION_SHARE` (no flag was made for it), and infrastructure:
-  `VECTOR_BACKEND` (which store holds the vectors; flipping it at runtime would split the data), `DEV_MODE` and
-  `EGRESS_RELAY`. The dashboard's `vector-backend` flag is not read, and the check warns about it.
+- **Left as env vars:** secrets, and infrastructure: `DEV_MODE`, `EGRESS_RELAY` and `VECTOR_BACKEND`.
+  `VECTOR_BACKEND` picks which store holds the vectors, and prod's live only in Vectorize, so flipping it at runtime
+  would read and write an empty store. The dashboard's `vector-backend` flag is not read, and the check warns about it.
 - **Benchmark.** `pnpm eval -- benchmark` (and the Benchmark workflow, after merge) runs the production primary and
   the same predictor on span-01 over the same sealed instances.
   - It reports quality overall and by question type, p50/p95 latency per request, cost per request and error rate,

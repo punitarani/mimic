@@ -1,8 +1,20 @@
-import { type BeliefState, COVERAGE_TARGET, overExposed } from './belief';
+import {
+  BEHIND_SHORTFALL,
+  type BeliefState,
+  COVERAGE_TARGET,
+  deadlinePressed,
+  EXPOSURE_MIN_ADAPTIVE,
+  overExposed,
+  rampOpen,
+  sweeps,
+  touchesSensitive,
+  unsweptFacets,
+  untouchedGroups,
+} from './belief';
 import type { PipelineConfig } from './config';
 import { entropy, meanDist, normalizedEntropy, optionKeys, P_FLOOR } from './distribution';
 import { canonicalJson, sha256Hex } from './hash';
-import type { Distribution, PersonState, PredictionResult, Predictor, Question } from './types';
+import type { Category, Distribution, PersonState, PredictionResult, Predictor, Question } from './types';
 
 export interface SelectContext {
   pool: Question[];
@@ -26,6 +38,10 @@ export interface SelectContext {
   population?: (q: Question) => number | null;
   /** Session target, for the fatigue term. */
   sessionTarget?: number;
+  /** The seq the chosen question will be served at, for coverage deadlines (ADR-0044). */
+  seq?: number;
+  /** How often repeat probes take a slot (`cfg.repeats.every`), so deadlines leave room for them. */
+  repeatsEvery?: number;
 }
 
 export interface Selection {
@@ -247,6 +263,11 @@ export function burdenOf(
 export interface VoiParts {
   info: number;
   gap: number;
+  /** With `balance` (ADR-0044): the candidate's category shortfall and facet-group gap, both inside `gap`. */
+  category?: number;
+  group?: number;
+  /** With `trustRamp`: 1 when the candidate sweeps a consented sensitive facet not yet asked about. */
+  sweep?: number;
   conflict: number;
   weakness: number;
   population: number;
@@ -286,7 +307,22 @@ export class VoiSelector implements Selector {
       facets.length ? facets.reduce((s, f) => s + pick(f), 0) / facets.length : 0;
     const facetGap = b ? meanOf((f) => 1 - f.coverage) : 1 - ctx.coverage(q);
     const domainGap = b ? b.domains[q.domain].shortfall : 0;
-    const gap = b ? 0.5 * facetGap + 0.5 * domainGap : facetGap;
+    let gap = b ? 0.5 * facetGap + 0.5 * domainGap : facetGap;
+    const balance = b ? this.cfg.balance : undefined;
+    let category: number | undefined;
+    let group: number | undefined;
+    if (b && balance) {
+      // Category shortfall and facet-group gap take their share of the gap term (ADR-0044). Only categories and
+      // groups in scope exist in the belief, so nothing pulls toward what the person turned off.
+      const cats = [...new Set(facets.map((f) => f.category))];
+      const groups = [...new Set(facets.map((f) => f.group))];
+      const avg = (xs: number[]) => (xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : 0);
+      category = avg(cats.map((c) => b.categories[c]?.shortfall ?? 0));
+      group = avg(groups.map((g) => b.groups[g]?.gap ?? 0));
+      gap =
+        (1 - balance.category - balance.group) * gap + balance.category * category + balance.group * group;
+    }
+    const sweep = b && this.cfg.trustRamp ? (sweeps(b, this.cfg.trustRamp, q) ? 1 : 0) : undefined;
     const conflict = meanOf((f) => f.conflict);
     const weakness = b ? 0.5 * meanOf((f) => f.weakness) + 0.5 * b.domains[q.domain].weakness : 0;
     const pop = this.cfg.piPopulation > 0 ? (ctx.population?.(q) ?? null) : null;
@@ -300,17 +336,87 @@ export class VoiSelector implements Selector {
       this.cfg.gammaWeakness * weakness +
       this.cfg.piPopulation * population -
       this.cfg.muRedundancy * redundancy -
-      this.cfg.nuBurden * burden;
-    return { info, gap, conflict, weakness, population, redundancy, burden, score };
+      this.cfg.nuBurden * burden +
+      (sweep ? (this.cfg.trustRamp?.sweepBonus ?? 0) : 0);
+    return {
+      info,
+      gap,
+      ...(category !== undefined ? { category } : {}),
+      ...(group !== undefined ? { group } : {}),
+      ...(sweep !== undefined ? { sweep } : {}),
+      conflict,
+      weakness,
+      population,
+      redundancy,
+      burden,
+      score,
+    };
   }
 
-  /** Exposure control: candidates whose facets already dominate the adaptive questions, unless all do. */
-  private eligible(ctx: SelectContext): boolean[] {
+  /**
+   * Exposure control: candidates whose facets already dominate the adaptive questions, unless all do. With `balance`,
+   * the same for candidates whose categories all exceed the cap, and while a category is below BEHIND_SHORTFALL of its
+   * even share, only candidates in it if there are any. With `trustRamp`, sensitive candidates before the ramp opens,
+   * with no exception (the engine never offers only those; ADR-0044). When a coverage deadline would otherwise be
+   * missed (`deadlinePressed`), only candidates that cover an untouched group or an unswept sensitive facet.
+   */
+  eligible(ctx: SelectContext): boolean[] {
     const b = ctx.belief;
     const flags = ctx.pool.map(() => true);
     if (!b) return flags;
+    // The ramp first: exposure, the cap and the floor choose among the candidates it allows, so none of them can
+    // narrow the pool to held-back candidates only and leave nothing eligible.
+    const ramp = this.cfg.trustRamp;
+    const allowed = ctx.pool.map((q) => !ramp || rampOpen(b, ramp) || !touchesSensitive(b, q));
     const over = ctx.pool.map((q) => q.facetIds.some((f) => overExposed(b, f, this.cfg.exposureCap)));
-    return over.every(Boolean) ? flags : over.map((o) => !o);
+    let ok = allowed;
+    const fresh = ok.map((o, i) => o && !over[i]);
+    if (fresh.some(Boolean)) ok = fresh;
+    const cap = this.cfg.balance?.cap;
+    if (cap !== undefined && b.person.nAdaptive >= EXPOSURE_MIN_ADAPTIVE) {
+      const catsOf = (q: Question) => [
+        ...new Set(q.facetIds.map((f) => b.facets[f]?.category).filter((c): c is Category => !!c)),
+      ];
+      const full = ctx.pool.map((q) => {
+        const cats = catsOf(q);
+        return cats.length > 0 && cats.every((c) => (b.categories[c]?.share ?? 0) > cap);
+      });
+      const kept = ok.map((o, i) => o && !full[i]);
+      if (kept.some(Boolean)) ok = kept;
+      // The floor: while a category is far behind its even share, a candidate in it goes first (the engine tops the
+      // pool up from the reserve so one exists).
+      const behind = new Set(
+        Object.values(b.categories)
+          .filter((c) => c.shortfall >= BEHIND_SHORTFALL)
+          .map((c) => c.category),
+      );
+      if (behind.size) {
+        const lifts = ok.map((o, i) => o && catsOf(ctx.pool[i]!).some((c) => behind.has(c)));
+        if (lifts.some(Boolean)) ok = lifts;
+      }
+    }
+    // Coverage deadlines take precedence over exposure, the cap and the floor, never over the ramp.
+    const seq = ctx.seq ?? b.person.nAnswered + 1;
+    const pressing: Array<(q: Question) => boolean> = [];
+    const groupsBy = this.cfg.balance?.groupsBy;
+    if (groupsBy !== undefined) {
+      const open = untouchedGroups(b);
+      if (deadlinePressed(open.size, seq, groupsBy, ctx.repeatsEvery))
+        pressing.push((q) => q.facetIds.some((f) => open.has(b.facets[f]?.group ?? '')));
+    }
+    if (ramp && rampOpen(b, ramp)) {
+      const open = unsweptFacets(b);
+      if (deadlinePressed(open.size, seq, ramp.sweepBy, ctx.repeatsEvery))
+        pressing.push((q) => q.facetIds.some((f) => open.has(f)));
+    }
+    if (pressing.length) {
+      const due = ctx.pool.map((q, i) => allowed[i]! && pressing.some((meets) => meets(q)));
+      if (due.some(Boolean)) {
+        const both = due.map((d, i) => d && ok[i]!);
+        return both.some(Boolean) ? both : due;
+      }
+    }
+    return ok;
   }
 
   async select(ctx: SelectContext): Promise<Selection> {
@@ -350,7 +456,14 @@ export class VoiSelector implements Selector {
       }
     });
     if (best < 0 || !bestParts) {
-      const i = Math.floor(ctx.rng() * ctx.pool.length);
+      // Every prediction failed: a random pick, never one the trust ramp holds back while another is allowed.
+      const b = ctx.belief;
+      const ramp = this.cfg.trustRamp;
+      const all = ctx.pool.map((_, i) => i);
+      const allowed =
+        b && ramp && !rampOpen(b, ramp) ? all.filter((i) => !touchesSensitive(b, ctx.pool[i]!)) : all;
+      const from = allowed.length ? allowed : all;
+      const i = from[Math.floor(ctx.rng() * from.length)]!;
       return {
         question: ctx.pool[i]!,
         primary: primaryPreds[i]!,
@@ -374,6 +487,9 @@ export class VoiSelector implements Selector {
         population: parts.population,
         redundancy: parts.redundancy,
         burden: parts.burden,
+        ...(parts.category !== undefined ? { category: parts.category } : {}),
+        ...(parts.group !== undefined ? { group: parts.group } : {}),
+        ...(parts.sweep !== undefined ? { sweep: parts.sweep } : {}),
       },
     };
     if (hypStates.length)

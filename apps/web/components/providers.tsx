@@ -54,8 +54,8 @@ export function Providers({ children }: { children: ReactNode }) {
       persistOptions={{
         persister,
         maxAge: 7 * 24 * 3600 * 1000,
-        // v2: the snapshot carries the person's scope (ADR-0043); older cached snapshots don't.
-        buster: 'v2',
+        // v3: the snapshot names declined facets and says whether sensitive questions can come up (ADR-0050); older cached snapshots don't.
+        buster: 'v3',
         dehydrateOptions: {
           shouldDehydrateQuery: (q) => q.state.status === 'success' && PERSISTED.has(String(q.queryKey[0])),
         },

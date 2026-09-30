@@ -1,0 +1,8 @@
+{
+  "intake": { "name": "Tom Becker", "location": "Berlin, DE", "occupation": "Accountant" },
+  "consentResearch": true,
+  "categories": ["psychology", "values", "life"],
+  "consents": { "religion": true, "sexuality": true },
+  "seed": "m12-accountant",
+  "policy": "consistent"
+}

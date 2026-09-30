@@ -105,7 +105,7 @@ const req = (model = JEV_MODEL): DecisionRequest => ({
 });
 const ctx = { purpose: 'predict.primary', mimicId: 'm1', configHash: 'c1' };
 
-describe('the decisions-model flag (ADR-0050)', () => {
+describe('the decisions-model flag (ADR-0051)', () => {
   it('flag at jev (or unset): identical to a gateway without a router', async () => {
     for (const flags of [null, NO_FLAGS, new StaticFlags({ [FLAG_KEYS.decisionsModel]: 'jev' })]) {
       const { g, log, seen } = gateway(flags);
@@ -240,7 +240,7 @@ describe('the decisions-model flag (ADR-0050)', () => {
   });
 });
 
-describe('call sites are unchanged (ADR-0050)', () => {
+describe('call sites are unchanged (ADR-0051)', () => {
   const question: Question = {
     id: 'q1',
     mimicId: 'm1',

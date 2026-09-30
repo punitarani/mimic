@@ -1,4 +1,4 @@
-import { labOverview } from '@mimic/core';
+import { EXPERIMENT_PRESETS, labOverview } from '@mimic/core';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
@@ -44,8 +44,9 @@ export default async function Lab({
             <h1 className="font-serif text-3xl tracking-tight">Lab</h1>
             <p className="mt-1 text-[14px] text-muted">
               {o.scope === 'consented'
-                ? 'Research metrics from mimics whose owners consented to research use.'
-                : 'All mimics, including those without research consent (ops and local dev only).'}
+                ? 'Research metrics from real people who consented to research use.'
+                : 'All real people, including those without research consent (ops and local dev only).'}{' '}
+              Scripted sessions and imported panels are never counted here.
             </p>
           </div>
           <nav className="flex gap-2 text-[14px]">
@@ -134,7 +135,7 @@ export default async function Lab({
 
         <Section
           title="Experiment arms"
-          note="Fidelity after k answered questions, averaged over the arm's mimics that got that far. E3's primary metrics: questions until fidelity reaches ≥ 0.75 and stays there, and fidelity at 20 questions."
+          note="Real people only. Fidelity after k answered questions, averaged over the arm's mimics that got that far. E3's primary metrics: questions until fidelity reaches ≥ 0.75 and stays there, and fidelity at 20 questions. Read a difference with its interval: pnpm eval -- arms on an export."
         >
           <nav className="mb-4 flex flex-wrap gap-2 text-[13px]">
             {[{ id: 'all', name: 'All mimics by arm' }, ...o.experiments].map((e) => {
@@ -194,7 +195,15 @@ export default async function Lab({
           title="Configs and experiments"
           note="Configs are immutable; experiments allocate new mimics by hash(mimicId)."
         >
-          <ExperimentsPanel configs={o.configs} experiments={o.experiments} />
+          <ExperimentsPanel
+            configs={o.configs}
+            experiments={o.experiments}
+            presets={Object.entries(EXPERIMENT_PRESETS).map(([id, p]) => ({
+              id,
+              name: p.name,
+              summary: p.summary,
+            }))}
+          />
         </Section>
 
         <Section title="Cost and latency per call type" note="From model_calls, last 30 days.">

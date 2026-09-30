@@ -84,7 +84,7 @@ describe('Jev decisions (PLAN §5.1)', () => {
     expect(res.answers.q_c).toMatchObject({ type: 'score', score: 2.53, confidence: 0.6 });
   });
 
-  it('span-01 gets the request it takes, and its answers come back as asked (ADR-0050)', async () => {
+  it('span-01 gets the request it takes, and its answers come back as asked (ADR-0051)', async () => {
     const asked = fixture('span-decisions.asked.json') as DecisionRequest;
     const plan = planDecision(asked);
     // The exact request span-01 accepted live: the state as JSON text, each option a yes/no question.

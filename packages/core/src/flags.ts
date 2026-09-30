@@ -1,7 +1,7 @@
-import { DECISION_MODELS, DEFAULT_BUDGET_USD } from './config';
+import { DECISION_MODELS, DEFAULT_BUDGET_USD, DEFAULT_SESSION_SHARE } from './config';
 
 /**
- * Runtime feature flags and tunables (ADR-0050). The host evaluates them (Cloudflare Flagship in deployed envs,
+ * Runtime feature flags and tunables (ADR-0051). The host evaluates them (Cloudflare Flagship in deployed envs,
  * `packages/db/src/flags.ts`); core sees only this interface, so it never imports Cloudflare. Every read names its
  * default, and a read that fails returns it: a missing flag, an unbound flag service or an outage all mean the
  * behaviour the code had before the flag existed.
@@ -76,7 +76,12 @@ export class StaticFlags implements FlagReader {
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The Worker vars a flag overrides (`flaggedEnv`); the var stays the fallback. */
-export type FlaggedSetting = 'SEARCH_PROVIDER' | 'ENRICH_PROVIDER' | 'EMBEDDINGS_PROVIDER' | 'BUDGET_USD';
+export type FlaggedSetting =
+  | 'SEARCH_PROVIDER'
+  | 'ENRICH_PROVIDER'
+  | 'EMBEDDINGS_PROVIDER'
+  | 'BUDGET_USD'
+  | 'BUDGET_SESSION_SHARE';
 
 export interface FlagSpec {
   key: string;
@@ -148,7 +153,7 @@ export const FLAG_SPECS = {
     key: 'decisions-model',
     kind: 'string',
     description:
-      'The model Jev decision calls for served predictions run on: jev (the default: unchanged), span-01, or an OpenRouter Decisions model ID (ADR-0050).',
+      'The model Jev decision calls for served predictions run on: jev (the default: unchanged), span-01, or an OpenRouter Decisions model ID (ADR-0051).',
     fallback: 'jev',
     parse: (raw) => (typeof raw === 'string' && decisionModelOf(raw) ? raw : null),
     variations: Object.fromEntries(Object.keys(DECISION_MODELS).map((v) => [v, v])),
@@ -165,6 +170,20 @@ export const FLAG_SPECS = {
       return Number.isFinite(n) && n > 0 ? n : null;
     },
     variations: { standard: DEFAULT_BUDGET_USD },
+  },
+  budgetSessionShare: {
+    key: 'budget-session-share',
+    kind: 'number',
+    description:
+      'Share of the cap the learning session may spend, above 0 and at most 1; the rest is kept for the mimic page (ADR-0035). Over the BUDGET_SESSION_SHARE var.',
+    fallback: DEFAULT_SESSION_SHARE,
+    setting: 'BUDGET_SESSION_SHARE',
+    parse: (raw) => {
+      const n =
+        typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : Number.NaN;
+      return Number.isFinite(n) && n > 0 && n <= 1 ? n : null;
+    },
+    variations: { standard: DEFAULT_SESSION_SHARE },
   },
   searchProvider: provider(
     'search-provider',
@@ -239,20 +258,25 @@ export function checkFlags(
       );
       continue;
     }
+    // A variation the code can't use is a problem when it is served (the default, or a rule's), and a warning
+    // otherwise: nothing serves it yet, but switching to it would fall back to the default.
+    const served = new Set([f.default_variation, ...(f.rules ?? []).flatMap((r) => r.serve_variation ?? [])]);
     for (const [name, value] of Object.entries(f.variations)) {
-      if (spec.parse(value) === null)
-        problems.push(`${spec.key}: variation "${name}" = ${show(value)} is not a value the code accepts`);
+      if (spec.parse(value) !== null) continue;
+      const what = `${spec.key}: variation "${name}" = ${show(value)} is not a value the code accepts`;
+      if (served.has(name)) problems.push(what);
+      else warnings.push(`${what}; serving it would fall back to ${spec.setting ?? show(spec.fallback)}`);
     }
     if (!Object.hasOwn(f.variations, f.default_variation))
       problems.push(`${spec.key}: default variation "${f.default_variation}" does not exist`);
     for (const r of f.rules ?? [])
       if (r.serve_variation !== undefined && !Object.hasOwn(f.variations, r.serve_variation))
         problems.push(`${spec.key}: a rule serves "${r.serve_variation}", which does not exist`);
-    const served = spec.parse(f.variations[f.default_variation]);
-    if (spec.setting && served !== null && settings[spec.setting] !== undefined) {
+    const serving = spec.parse(f.variations[f.default_variation]);
+    if (spec.setting && serving !== null && settings[spec.setting] !== undefined) {
       const current = spec.parse(settings[spec.setting]);
-      if (current !== null && current !== served)
-        warnings.push(`${spec.key}: serves ${show(served)} over ${spec.setting}=${show(current)}`);
+      if (current !== null && current !== serving)
+        warnings.push(`${spec.key}: serves ${show(serving)} over ${spec.setting}=${show(current)}`);
     }
     if (!f.enabled) warnings.push(`${spec.key}: disabled, so it always serves its default variation`);
     if (f.rules?.length) warnings.push(`${spec.key}: ${f.rules.length} targeting rule(s) active`);

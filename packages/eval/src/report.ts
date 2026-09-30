@@ -3,6 +3,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
+import { type ArmsReport, renderArms } from './arms';
+import { type RubricGroup, renderRubric } from './rubric';
 import { remoteFlags, WORKER_DIR } from './wrangler';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -81,6 +83,10 @@ export function renderReport(run: EvalRunRecord): string {
     lines.push(...renderEvaluate(m));
   } else if (spec.kind === 'optimize') {
     lines.push(...renderOptimize(m));
+  } else if (spec.kind === 'rubric') {
+    lines.push(...renderRubric((m.groups as RubricGroup[]) ?? []));
+  } else if (spec.kind === 'arms') {
+    if (m.report) lines.push(...renderArms(m.report as ArmsReport));
   } else if (spec.kind === 'select') {
     lines.push(
       '## Pool-restricted selection (biased; iteration only)',
@@ -93,8 +99,40 @@ export function renderReport(run: EvalRunRecord): string {
       ),
       '',
     );
+    if (Array.isArray(m.sustained)) lines.push(...renderSeries(m));
   }
   return lines.join('\n');
+}
+
+/** `select --series` (ADR-0044): questions to sustained accuracy on the rest, and accuracy after every pick. */
+function renderSeries(m: Record<string, unknown>): string[] {
+  const sustained = m.sustained as Array<{
+    selector: string;
+    people: number;
+    reached: number;
+    meanQuestions: number | null;
+  }>;
+  const series = (m.series as Array<{ selector: string; k: number; accuracy: number | null }>) ?? [];
+  const selectors = sustained.map((x) => x.selector);
+  const ks = [...new Set(series.map((p) => p.k))].sort((a, b) => a - b);
+  const at = (sel: string, k: number) => series.find((p) => p.selector === sel && p.k === k)?.accuracy;
+  return [
+    `### Questions to sustain ${pct(m.target)} accuracy on the rest`,
+    '',
+    '| Selector | People | Reached | Mean questions (people who reached it) |',
+    '| --- | --- | --- | --- |',
+    ...sustained.map(
+      (x) =>
+        `| ${x.selector} | ${x.people} | ${x.reached} | ${x.meanQuestions === null ? '—' : x.meanQuestions.toFixed(1)} |`,
+    ),
+    '',
+    '### Accuracy on the rest after each pick',
+    '',
+    `| Picks | ${selectors.join(' | ')} |`,
+    `| --- | ${selectors.map(() => '---').join(' | ')} |`,
+    ...ks.map((k) => `| ${k} | ${selectors.map((s) => pct(at(s, k))).join(' | ')} |`),
+    '',
+  ];
 }
 
 export function writeReport(run: EvalRunRecord, dir = 'data/reports'): { json: string; md: string } {

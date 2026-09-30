@@ -481,7 +481,7 @@ describe('smoke', () => {
     );
   });
 
-  it("fails when a flag doesn't evaluate through the Worker's binding (ADR-0050)", async () => {
+  it("fails when a flag doesn't evaluate through the Worker's binding (ADR-0051)", async () => {
     const flags = {
       bound: true,
       ok: false,
@@ -514,7 +514,7 @@ describe('smoke', () => {
   });
 });
 
-describe('flags (ADR-0050)', () => {
+describe('flags (ADR-0051)', () => {
   const APP = 'c4598f95-4f82-48c0-a8c5-62588cc2b598';
 
   it('both Workers bind the Flagship app mimic in prod, and nothing in preview', () => {

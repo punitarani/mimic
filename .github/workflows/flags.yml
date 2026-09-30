@@ -1,4 +1,4 @@
-# Holds the prod Flagship app to the flag registry (ADR-0050, docs/CHALLENGER.md): every flag the code reads is
+# Holds the prod Flagship app to the flag registry (ADR-0051, docs/CHALLENGER.md): every flag the code reads is
 # defined, every variation is a value the code accepts, and each flag evaluates. On every PR and push to main, and
 # daily, since flags change in the dashboard without a commit. Deploy preflight runs the same check before CD ships.
 #

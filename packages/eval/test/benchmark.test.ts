@@ -64,7 +64,7 @@ function pair(chal: (i: number) => Partial<EvalRecord>) {
 }
 const failed = (v: ReturnType<typeof decide>) => v.checks.filter((c) => !c.pass).map((c) => c.name);
 
-describe('benchmark (ADR-0050)', () => {
+describe('benchmark (ADR-0051)', () => {
   it('compares the production primary with the same predictor on span-01', () => {
     expect(INCUMBENT).toBe(DEFAULT_CONFIG.predictor.primary);
     expect(CHALLENGER).toBe(`jev:${SPAN_MODEL}@jev-predict.v2`);

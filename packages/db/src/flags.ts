@@ -12,7 +12,7 @@ import {
 export type FlagshipBinding = Pick<Flagship, 'get' | 'getStringDetails' | 'getNumberDetails'>;
 
 /**
- * Flags from Cloudflare Flagship (ADR-0050). Values are read untyped and coerced (`coerceFlag`), so a flag made in the
+ * Flags from Cloudflare Flagship (ADR-0051). Values are read untyped and coerced (`coerceFlag`), so a flag made in the
  * dashboard as a string reads the same as a typed one. Flagship returns the default for a missing flag but may still
  * throw on an unexpected failure; that is caught here, so a read always settles.
  */
@@ -54,7 +54,7 @@ function warnOnce(message: string): void {
   console.warn(message);
 }
 
-/** The vars the flags override (ADR-0050), and what a provider needs deployed before a flag may pick it. */
+/** The vars the flags override (ADR-0051), and what a provider needs deployed before a flag may pick it. */
 export type FlaggedVars = Partial<Record<FlaggedSetting, string | number>> & {
   EXA_API_KEY?: string;
   PERPLEXITY_API_KEY?: string;
@@ -75,7 +75,7 @@ const NEEDS: Record<string, (env: FlaggedVars) => boolean> = {
 const SETTING_SPECS: FlagSpec[] = ALL_FLAGS.filter((s) => s.setting);
 
 /**
- * The environment with each flag's value over its var (ADR-0050). A flag overrides only when its value parses, differs
+ * The environment with each flag's value over its var (ADR-0051). A flag overrides only when its value parses, differs
  * from the var, and (for a provider) names one whose key or binding is deployed; otherwise the var stands and the
  * reason is logged once. Without FLAGS the environment is returned as is.
  */
@@ -109,7 +109,7 @@ export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
   return out;
 }
 
-/** One flag as the Worker's binding resolves it, for `/api/health` (ADR-0050). */
+/** One flag as the Worker's binding resolves it, for `/api/health` (ADR-0051). */
 export interface FlagHealth {
   value: unknown;
   reason?: string;

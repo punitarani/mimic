@@ -3,7 +3,7 @@
 import type { ConfigRecord, ExperimentRecord } from '@mimic/core';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { ApiError, api, type ExperimentRequest } from '@/lib/api';
+import { ApiError, api, type ExperimentRequest, type PresetInfo } from '@/lib/api';
 import { Button, ErrorText, Input, Textarea } from './ui';
 
 type Arm = ExperimentRecord['arms'][number];
@@ -196,6 +196,35 @@ function NewExperiment({ configs }: { configs: ConfigRecord[] }) {
   );
 }
 
+/**
+ * Ready-made experiments (ADR-0045). Setting one up registers its configs and saves a draft; it starts only when
+ * someone presses Start on the draft.
+ */
+function Preset({ preset, existing }: { preset: PresetInfo; existing: ExperimentRecord | undefined }) {
+  const { busy, error, run } = useAction();
+  return (
+    <li className="space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium">{preset.name}</span>
+        {existing ? (
+          <span className="text-muted">Set up · {existing.status}</span>
+        ) : (
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => run(() => api.setupPreset(preset.id))}
+          >
+            Set up as a draft
+          </Button>
+        )}
+      </div>
+      <p className="text-muted">{preset.summary}</p>
+      {error ? <ErrorText>{error}</ErrorText> : null}
+    </li>
+  );
+}
+
 function ExperimentRow({ e, configs }: { e: ExperimentRecord; configs: ConfigRecord[] }) {
   const { busy, error, run } = useAction();
   const setStatus = (status: ExperimentRecord['status']) =>
@@ -229,13 +258,25 @@ function ExperimentRow({ e, configs }: { e: ExperimentRecord; configs: ConfigRec
 export function ExperimentsPanel({
   configs,
   experiments,
+  presets = [],
 }: {
   configs: ConfigRecord[];
   experiments: ExperimentRecord[];
+  presets?: PresetInfo[];
 }) {
   return (
     <div className="grid gap-8 lg:grid-cols-2">
       <div className="space-y-6">
+        {presets.length ? (
+          <div>
+            <h3 className="mb-2 text-[14px] font-medium">Presets</h3>
+            <ul className="space-y-3 text-[13px]">
+              {presets.map((p) => (
+                <Preset key={p.id} preset={p} existing={experiments.find((e) => e.name === p.name)} />
+              ))}
+            </ul>
+          </div>
+        ) : null}
         <div>
           <h3 className="mb-2 text-[14px] font-medium">Experiments</h3>
           {experiments.length === 0 ? (

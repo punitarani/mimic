@@ -92,6 +92,61 @@ facets over the exposure cap are listed as ones to avoid.
 
 Population statistics never enter the generator prompt (PLAN §3.8).
 
+## 5a. Categories, the trust ramp, the sensitive sweep and coverage deadlines (`cfg.default.v8`, ADR-0044)
+
+Value of information alone asks where the mimic is least sure, which after the anchors (seven of ten on psychology)
+kept sessions on psychology and life: offline, the M10 candidate gave psychology 50% of the first 30 questions and
+work 11%, and reached 20 of 44 consented sensitive facets by question 30. v7 adds three things, all optional config
+fields (`selector.balance`, `selector.trustRamp`), so older configs score exactly as before.
+
+**Balance.** The belief gains each category's share of the anchor and adaptive questions (answered or waiting; a
+question touching two categories counts half to each) against an even split over the categories in scope, and each
+facet group's gap (1 untouched, ½ after one question, 0 after two). Only categories and groups in scope exist, so
+nothing pulls toward a category the person turned off. The gap term becomes
+
+```
+gap(q) = (1 − c − g) · (½ facetGap + ½ domainGap) + c · categoryShortfall(q) + g · groupGap(q)     c 0.35, g 0.25
+```
+
+and two eligibility rules bound the shares once four adaptive questions are answered: a candidate whose categories are
+all above the **cap** (40%) is skipped unless every candidate is; while a category is below 60% of its even share (15%
+with four), candidates in it go first.
+
+**Coverage deadlines.** A bonus can't guarantee coverage: live hypothesis information runs from 0 to 1 while the
+balance terms, inside the λ-weighted gap, are worth about 0.1. So two deadlines work like content constraints in the
+shadow-test approach to CAT (van der Linden & Reese 1998): information chooses freely until the things still to cover
+would no longer fit in the questions left, counting a repeat probe for every eight, and from then on only candidates
+that cover one are eligible. Every facet group in scope is touched by question 20 (`balance.groupsBy`) and every
+consented sensitive facet is asked about by question 30 (`trustRamp.sweepBy`). Deadlines outrank exposure, the cap and
+the floor, never the ramp.
+
+**The reserve backs coverage.** The selector can only choose from the pool, so before each selection the engine adds
+up to three reserve items (reserve.v2: hand-written, concrete, sensitive items plainly worded) for needs the pool has
+nothing for: facet groups not yet touched (until question 20), consented sensitive facets not yet asked about (once the
+sweep has begun), and categories below the floor. A generator that missed its targets, or whose drafts the gates
+rejected, can't leave a gap.
+
+**Trust ramp.** No question touching a sensitive facet is served before six anchor and adaptive answers. The engine
+removes such candidates from the pool (and the reserve) before selection, and the selector excludes them with no
+exception. Anchors come first and are never sensitive, so the ramp matters when a person turns psychology off and only
+three anchors are seeded. Sensitive items late in an instrument, after rapport and less intrusive items, are answered
+more honestly (Tourangeau & Yan 2007).
+
+**Sweep.** From ten answers, a candidate touching a consented sensitive facet no answered question has touched earns
++0.3, so each consented area is asked about while leaving room for information. Burden is unchanged: prompt length ×
+fatigue and streaks, so early questions stay short.
+
+**Generation.** Under balance, a refill has eight targets in three passes: one facet from each facet group nothing has
+touched (preferring an unasked consented sensitive facet in it once the sweep has begun), then unasked consented
+sensitive facets, the least asked areas first, then a category quota (`¼ + shortfall` per category, largest remainder)
+with at least a quarter of the targets. The anchors still waiting count as asked and as answers for the ramp, because
+they are served before anything the batch writes. gen.v3 gets the category quota and, once the ramp is open, the list
+of sensitive facets it may ask about.
+
+Offline mechanism checks (scripted answers, fakes that tag what they are told; not results) are in
+`packages/eval/test/balance.test.ts` and ADR-0044. `pnpm eval -- rubric` reports the same rows on any data file, split
+into real, scripted and imported people.
+
 ## 6. Persona posterior: the loop within a person
 
 Persona hypotheses (`hyp.v1`, refreshed after each reflection) are K readings of the person that differ on the facets
@@ -163,7 +218,14 @@ Across people:
 - `pnpm eval -- select --selector entropy,voi --budget 5,10,20` runs each selector on the same export and reports
   accuracy on the held-back pool per budget, side by side (still the biased, pool-restricted simulation of ADR-0018;
   iteration only). `--no-population` runs `voi` without item statistics.
-- Online: E3 arms `entropy` vs `voi` on questions-to-sustained-fidelity and fidelity at 20 (PLAN §12.7).
+- `--series` records accuracy on the rest after every pick and reports questions to sustain 75% per selector;
+  `--categories psychology,values,life` simulates a person with one category off (ADR-0044).
+- `pnpm eval -- rubric --data x.sqlite` reports concreteness, category shares, groups reached, sensitive coverage and
+  ordering by population (real, scripted, imported) and config; `--arm` splits by experiment arm.
+- Online: E3 arms `entropy` vs `voi` on questions-to-sustained-fidelity and fidelity at 20 (PLAN §12.7), and E3b
+  `cfg.e3b.control` (v8 with v4's `voi` plus the trust ramp) vs `cfg.default.v8` (ADR-0045). `pnpm eval -- arms`
+  reads an export with 95% bootstrap intervals, real people only; `pnpm eval -- cohort --preset e3b` runs scripted
+  personas through both arms to check the machinery.
 - `latencyHints` is a state ablation for replay (E2).
 
 ## 11. What changes in code

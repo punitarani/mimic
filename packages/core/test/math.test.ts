@@ -6,10 +6,14 @@ import {
   computeFidelity,
   configHash,
   DEFAULT_CONFIG,
+  DEFAULT_CONFIG_LABEL,
   DEFAULT_CONFIG_V3,
   DEFAULT_CONFIG_V4,
   DEFAULT_CONFIG_V5,
   DEFAULT_CONFIG_V6,
+  DEFAULT_CONFIG_V7,
+  E3B_CONTROL_CONFIG,
+  E3B_CONTROL_LABEL,
   entropy,
   expectedCalibrationError,
   gateFailures,
@@ -155,21 +159,45 @@ describe('hashing and config (PLAN §7.1)', () => {
             )
           : v;
     const shuffled = reverseKeys(DEFAULT_CONFIG) as PipelineConfig;
-    expect(Object.keys(shuffled)[0]).toBe('embedding');
+    expect(Object.keys(shuffled)[0]).toBe(Object.keys(DEFAULT_CONFIG).at(-1));
     expect(configHash(shuffled)).toBe(configHash(DEFAULT_CONFIG));
     const changed: PipelineConfig = { ...DEFAULT_CONFIG, reveal: 'never' };
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v7 and its predecessors (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v8 and its predecessors (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
+    // v8 (ADR-0044): v7's calibrated primary and shadows on ontology v2 with reserve.v2, gen.v3, gates.v3, reflect.v2,
+    // an everyday-first domain mix and the balanced, ramped selector.
+    expect(DEFAULT_CONFIG_LABEL).toBe('cfg.default.v8');
+    expect(DEFAULT_CONFIG.predictor).toEqual(DEFAULT_CONFIG_V7.predictor);
+    expect(DEFAULT_CONFIG.selector).toEqual({
+      ...DEFAULT_CONFIG_V7.selector,
+      balance: { category: 0.35, group: 0.25, cap: 0.4, groupsBy: 20 },
+      trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3, sweepBy: 30 },
+    });
+    expect(DEFAULT_CONFIG.ontologyVersion).toBe('v2');
+    expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v3');
+    expect(configHash(DEFAULT_CONFIG)).toBe(
+      '08956a2222de74c94bb21e6ace0a7a2c69e4d441a41e0cbe4be5a26d638ac44f',
+    );
+    // The E3b control (ADR-0045): v8 with v4's selection plus the trust ramp; the sweep and its deadline are off.
+    expect(E3B_CONTROL_LABEL).toBe('cfg.e3b.control');
+    expect({ ...E3B_CONTROL_CONFIG, selector: DEFAULT_CONFIG.selector }).toEqual(DEFAULT_CONFIG);
+    expect(E3B_CONTROL_CONFIG.selector).toEqual({
+      ...DEFAULT_CONFIG_V7.selector,
+      trustRamp: { minAnswered: 6, sweepFrom: 1000, sweepBonus: 0, sweepBy: 1000 },
+    });
+    expect(configHash(E3B_CONTROL_CONFIG)).toBe(
+      '834484a36b3fac1ada698299a19ede3a0ec2eff308b24627e1495f8e3dd25dd9',
+    );
     // v7 (ADR-0048): v6 with the calibrated primary and without the reasoning-off Qwen control; nothing else changes.
-    expect(DEFAULT_CONFIG.predictor).toEqual({
+    expect(DEFAULT_CONFIG_V7.predictor).toEqual({
       primary: 'jev:typesafe/jev-1.13@jev-predict.v2',
       shadows: DEFAULT_CONFIG_V4.predictor.shadows.map((s) => `${s}@predict.v2`),
     });
-    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V6.predictor }).toEqual(DEFAULT_CONFIG_V6);
-    expect(configHash(DEFAULT_CONFIG)).toBe(
+    expect({ ...DEFAULT_CONFIG_V7, predictor: DEFAULT_CONFIG_V6.predictor }).toEqual(DEFAULT_CONFIG_V6);
+    expect(configHash(DEFAULT_CONFIG_V7)).toBe(
       '23db631f6895e863b4ee690fefa3e1903d160f5b8b045c9ee725f2096e156d15',
     );
     // v6 (ADR-0041): every LLM shadow on predict.v2, with v5's reasoning-off Qwen kept as a control.
@@ -190,9 +218,9 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(DEFAULT_CONFIG_V4)).toBe(
       '9783a40b1abf03d36281002a627336edfec98930f993cb62f542a206916460c3',
     );
-    expect(DEFAULT_CONFIG.selector.type).toBe('voi');
-    expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v2');
-    expect(DEFAULT_CONFIG.stateBuilder.latencyHints).toBe(true);
+    expect(DEFAULT_CONFIG_V6.selector.type).toBe('voi');
+    expect(DEFAULT_CONFIG_V6.generator.promptVersion).toBe('gen.v2');
+    expect(DEFAULT_CONFIG_V6.stateBuilder.latencyHints).toBe(true);
     // v3 (ADR-0025) must keep its hash even though the schema gained optional fields (ADR-0027).
     expect(configHash(DEFAULT_CONFIG_V3)).toBe(
       '076c57200e027d35b7a23582003c1161501b635469800fd1189c369d97160993',

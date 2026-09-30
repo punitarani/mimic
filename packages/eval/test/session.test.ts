@@ -173,7 +173,7 @@ describe('scripted 30-turn session (offline fakes)', () => {
     expect(insights.length).toBeGreaterThan(0);
     for (const i of insights) {
       expect(i.evidenceSeqs.length).toBeGreaterThan(0);
-      expect(i.promptVersion).toBe('reflect.v1');
+      expect(i.promptVersion).toBe('reflect.v2');
       expect(i.model).toContain('@fake');
     }
     const traits = await store.listTraits(mimicId);

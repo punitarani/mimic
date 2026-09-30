@@ -4,7 +4,7 @@ import { deps, handle, ok } from '@/lib/server';
 
 /**
  * M0 health check: reads D1, writes R2 and enqueues a no-op job the worker consumes. It also evaluates every
- * registry flag through the FLAGS binding (ADR-0050), so the post-deploy smoke test proves this Worker can read each
+ * registry flag through the FLAGS binding (ADR-0051), so the post-deploy smoke test proves this Worker can read each
  * one; `flags.ok` is false when one errors or serves a value the code can't use.
  */
 export const GET = handle(async () => {

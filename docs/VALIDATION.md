@@ -442,3 +442,52 @@ probe.
   - DeepSeek went to Wafer every time, at the same cost either way.
   - So the enum is not what slowed GLM or raised DeepSeek's cost in the backfill.
 
+
+## M12: category balance, trust ramp, coverage deadlines and cfg.default.v8 (ADR-0044)
+
+Nothing below comes from real people, and nothing is a measure of prediction accuracy.
+
+- **Offline fakes (tests, deterministic).** `packages/core/test/balance.test.ts`: category shares and group gaps,
+  quota and targets, the v4 regression (no new parts without the new fields), cap, floor, ramp (at 5 and 6 answers,
+  applied before every other rule), sweep, and both coverage deadlines. `packages/eval/test/balance.test.ts`: three
+  32-turn sessions under v8 keep every category within 15–40%, reach every consented sensitive facet by question 30
+  and every facet group by 20, ask nothing sensitive in the first five even with psychology off (three anchors),
+  record the balance terms, count the waiting anchors in the first quota, count answers as the belief does, and stay
+  labelled scripted after a research export. The same mechanism across four people per config is in
+  `docs/reports/m12-rubric.md` (M10 candidate vs v8).
+- **Live scripted sessions** (a scripted answerer; live gen.v3, gates.v3 and Jev; about $0.14 a session):
+  `docs/reports/m12-rubric.md`, runs a (no deadlines), b (deadlines) and c (final v8, resumed after a container
+  restart). Every generated question passed the concrete gate and, by hand, described a specific situation.
+  Scripted, so a check of the machinery, not a result.
+- **Replay.** `replay --mode online` matched every state of the run-b sessions (90 of 90) and of a local dev export.
+- **Confirmed consent and "Prefer not to say" (ADR-0050, offline fakes).** `packages/eval/test/consent.test.ts`:
+  a person who left every area pre-ticked gets no special-category question in 32 turns while money questions
+  appear; confirming politics and health brings those two areas only and hides nothing; a declined question is
+  discarded unanswered, its facet is never served again, and "Ask again" restores it. Truth tables in
+  `packages/core/test/scope.test.ts`, form reducers in `apps/web/lib/scope-form.test.ts`. The live runs above
+  confirmed every area by script, so the confirmation changes none of their questions.
+- **Not measured:** efficiency on real people (R6). It is the E3b arm's job (ADR-0045).
+
+## M13: E3b, M12's selection against v4's (ADR-0045)
+
+Nothing below comes from real people.
+
+- **Offline fakes (tests, deterministic).**
+  - `packages/eval/test/e3b.test.ts`:
+    - the preset registers both configs and saves one draft, idempotently, and never starts it;
+    - a scripted cohort runs every persona in both arms under its arm config;
+    - v8's selections carry the balance terms and the control's carry none;
+    - neither arm asks anything sensitive before answer 7;
+    - `/lab` leaves scripted people out unless asked;
+    - `arms` reads the cohort with intervals and labels it;
+    - `rubric --arm` splits it.
+  - `packages/eval/test/arms.test.ts`: seeded bootstrap intervals, "significant" and "not significant", fidelity at 20
+    and questions to sustain from a series.
+  - The control config's hash is pinned in `packages/core/test/math.test.ts`.
+- **Offline cohort** (8 personas × 2 arms × 32 turns): `docs/reports/m13-e3b.md`. The control kept 0 of 5 people
+  within 15–40% per category and reached 32 of 44 consented sensitive facets; v8 kept 5 of 5 and reached 44 of 44.
+  Scripted, so a check of the machinery, not a result.
+- **Browser:** `scripts/browser/lab-preset.mjs` against `pnpm dev` (the preset sets E3b up as a draft; `/lab` says
+  it counts real people only).
+- **Not measured:** efficiency on real people (R6). The arm is ready as a draft in `/lab`, and starting it is the
+  owner's decision (sample size in ADR-0045).

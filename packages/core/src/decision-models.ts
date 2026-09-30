@@ -1,7 +1,7 @@
 import type { DecisionAnswer, DecisionQuestion, DecisionRequest, DecisionResponse } from './types';
 
 /**
- * What a Decisions API model accepts beyond the common contract (ADR-0050). Jev takes any JSON state and all three
+ * What a Decisions API model accepts beyond the common contract (ADR-0051). Jev takes any JSON state and all three
  * question types. Respan's span-01 is a behaviour scorer: it takes a string state (or a message conversation) and
  * only yes/no (`noul`) questions, and answers anything else with HTTP 400. Both limits were found by live calls on
  * 2026-09-30; the model page's generic example shows choice and score questions it does not accept.
@@ -82,7 +82,7 @@ function combined(q: Exclude<DecisionQuestion, { type: 'noul' }>, probs: number[
 }
 
 /**
- * The request a model can take, and the mapping back (ADR-0050). For a model without limits (Jev) the request is
+ * The request a model can take, and the mapping back (ADR-0051). For a model without limits (Jev) the request is
  * the one asked and the response is returned untouched.
  */
 export function planDecision(req: DecisionRequest): DecisionPlan {

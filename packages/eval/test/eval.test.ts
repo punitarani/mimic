@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { curateSoul, draftSoul, SoulCuration, VOI_SELECTOR } from '@mimic/core';
+import { curateSoul, draftSoul, SoulCuration, VOI_SELECTOR, VOI_SELECTOR_V8 } from '@mimic/core';
 import { schema } from '@mimic/db';
 import type { MemoryBlobs } from '@mimic/db/local';
 import { sql } from 'drizzle-orm';
@@ -8,7 +8,7 @@ import { datasetHash, scrubExport } from '../src/export';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 import { HELDOUT_PREFIX, replay, reproduceOnline } from '../src/replay';
 import { renderReport } from '../src/report';
-import { simulateSelection } from '../src/select';
+import { type SeriesPoint, simulateSelection } from '../src/select';
 import { runSession, SessionScript } from '../src/session';
 import { importTwin, parseBlocks } from '../src/twin';
 
@@ -130,6 +130,55 @@ describe('replay (M7)', () => {
     }
     expect(renderReport(r.run)).toContain('| voi | 6 |');
   }, 60_000);
+
+  it('records accuracy after every pick, questions to sustain, and a person with fewer categories (ADR-0044)', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'series-cohort' });
+    await cohort(2, 26);
+    const spec = {
+      name: 's',
+      selectors: [
+        { label: 'voi', selector: VOI_SELECTOR },
+        { label: 'voi-v8', selector: VOI_SELECTOR_V8 },
+      ],
+      budgets: [3, 6],
+      split: 'all' as const,
+      seed: 's',
+      series: true,
+    };
+    const r = await simulateSelection(engine.deps, spec, 'hash');
+    const series = r.run.metrics!.series as SeriesPoint[];
+    expect(series.filter((p) => p.selector === 'voi').map((p) => p.k)).toEqual([1, 2, 3, 4, 5, 6]);
+    for (const p of series) expect(p.accuracy).toBeGreaterThan(0);
+    // The budgets are read off the series, so both views agree.
+    for (const x of r.results) {
+      expect(x.people).toBe(1);
+      expect(x.accuracy).toBeCloseTo(
+        series.find((p) => p.selector === x.selector && p.k === x.budget)!.accuracy!,
+        12,
+      );
+    }
+    expect((r.run.metrics!.sustained as Array<{ selector: string }>).map((x) => x.selector)).toEqual([
+      'voi',
+      'voi-v8',
+    ]);
+    const md = renderReport(r.run);
+    expect(md).toContain('Questions to sustain 75.0% accuracy on the rest');
+    expect(md).toContain('| 6 |');
+
+    // A budget past someone's pool doesn't drop them from the budgets they do reach.
+    const long = await simulateSelection(engine.deps, { ...spec, budgets: [3, 500] }, 'hash');
+    expect(long.results.find((x) => x.selector === 'voi' && x.budget === 3)!.people).toBe(1);
+    expect(long.results.find((x) => x.selector === 'voi' && x.budget === 500)!.people).toBe(0);
+
+    // As if the person had turned "Work and money" off: no work question is picked or predicted.
+    const narrow = await simulateSelection(
+      engine.deps,
+      { ...spec, categories: ['psychology', 'values', 'life'] },
+      'hash',
+    );
+    expect(narrow.run.spec).toMatchObject({ categories: ['psychology', 'values', 'life'] });
+    expect(narrow.results.some((x) => x.people > 0)).toBe(true);
+  }, 120_000);
 
   it('keeps the dataset hash when eval runs are recorded, and changes it when the data changes', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
