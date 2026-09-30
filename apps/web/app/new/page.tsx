@@ -5,9 +5,9 @@ import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import { AutocompleteInput } from '@/components/autocomplete';
 import { CreditsLink, TopBar } from '@/components/brand';
 import { Button, Checkbox, ErrorText, Field, fieldLabelId, Input } from '@/components/ui';
-import { api } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
 import { loadOccupations, loadPlaces } from '@/lib/autocomplete';
-import { INVITE_PARAM, inviteFromQuery } from '@/lib/invite';
+import { INVITE_PARAM, inviteFromQuery, inviteRejected } from '@/lib/invite';
 
 export default function NewMimic() {
   return (
@@ -48,7 +48,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
     employer: '',
     link: '',
   });
-  // A code from the link stays hidden until a submit fails; then the field appears so the person can type another.
+  // A code from the link stays hidden until the server rejects it; then the field appears so the person can type another.
   const [inviteLocked, setInviteLocked] = useState(invite !== null);
   const [rejections, setRejections] = useState(0);
   const inviteRef = useRef<HTMLInputElement>(null);
@@ -60,10 +60,10 @@ function IntakeForm({ invite }: { invite: string | null }) {
   const setValue = (k: keyof typeof f) => (v: string) => setF((prev) => ({ ...prev, [k]: v }));
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setValue(k)(e.target.value);
 
-  // After each failed submit of a linked code, put the cursor where the fix goes (once the field is shown).
+  // After each rejection of a linked code, put the cursor where the fix goes (once the field is shown).
   useEffect(() => {
-    if (rejections > 0 && invite !== null) inviteRef.current?.focus();
-  }, [rejections, invite]);
+    if (rejections > 0 && !inviteLocked && invite !== null) inviteRef.current?.focus();
+  }, [rejections, inviteLocked, invite]);
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -89,15 +89,24 @@ function IntakeForm({ invite }: { invite: string | null }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
       setBusy(false);
-      setInviteLocked(false);
-      setRejections((n) => n + 1);
+      if (err instanceof ApiError && inviteRejected(err.status, err.message)) {
+        setInviteLocked(false);
+        setRejections((n) => n + 1);
+      }
     }
   }
 
   return (
     <form onSubmit={submit} className="mt-8 space-y-5" noValidate>
       {inviteLocked ? null : (
-        <Field label="Invite code" htmlFor="invite" required>
+        <Field
+          label="Invite code"
+          htmlFor="invite"
+          required
+          hint={
+            invite !== null ? 'This code came from your invite link. Check it or enter another.' : undefined
+          }
+        >
           <Input
             ref={inviteRef}
             id="invite"

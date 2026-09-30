@@ -766,7 +766,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | Route | Purpose |
 |---|---|
 | `/` | One sentence on what Mimic does, and one button: "Build your mimic". |
-| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and hides the field (ADR-0042). Location and occupation suggest as you type (ADR-0030). |
+| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and hides the field (ADR-0047). Location and occupation suggest as you type (ADR-0030). |
 | `/m/[id]/identity` | Search progress, "Is one of these you?", then fact review with remove toggles. "Skip" is always available. |
 | `/m/[id]` | The session. |
 | `/m/[id]/mimic` | Talk to your mimic (§9.11): ask it, or teach it an answer; download `SOUL.md` and `mimic.json`; delete the mimic. |
@@ -842,7 +842,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
-**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and hides the field, and shows it only if a submit fails (ADR-0026, ADR-0042). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
+**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and hides the field, and shows it only if the server rejects the code (ADR-0026, ADR-0047). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
 **Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: `BUDGET_USD` (default $1) for configs on the standard budget, else the config's own `session.budgetUsd`. Session work (serving, shadows, refills, hypotheses) stops at `BUDGET_SESSION_SHARE` of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and SOUL.md (ADR-0035).
 
