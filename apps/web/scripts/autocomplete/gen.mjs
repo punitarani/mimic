@@ -4,7 +4,7 @@
  *
  *   public/autocomplete/places.v1.json       countries, states/provinces and cities
  *   public/autocomplete/occupations.v1.json  job titles
- *   lib/autocomplete-sources.json            the attribution the form shows
+ *   lib/autocomplete-sources.json            the attribution `/credits` shows
  *
  * Sources:
  *   - Countries and subdivisions: @countrystatecity/countries (dr5hn, ODbL-1.0).
@@ -360,6 +360,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     o = JSON.parse(readFileSync(join(OUT, 'occupations.v1.json'), 'utf8'));
     console.log('occupations.v1.json: kept (pass --onet to rebuild)');
   }
-  // The attribution the form renders, from the same strings as the data files.
+  // The attribution `/credits` renders, from the same strings as the data files.
   writeFileSync(SOURCES, `${JSON.stringify({ places: p.sources, occupations: o.sources }, null, 2)}\n`);
 }
