@@ -125,6 +125,20 @@ export const PipelineConfig = z.object({
 export type PipelineConfig = z.infer<typeof PipelineConfig>;
 
 export const JEV_MODEL = 'typesafe/jev-1.13';
+/**
+ * Respan Span-01 on the same OpenRouter Decisions API, pinned to its dated snapshot: the challenger to Jev behind the
+ * `decisions-model` flag (variant `span-01`), off by default (ADR-0051).
+ */
+export const SPAN_MODEL = 'respan/span-01-20260925';
+
+/**
+ * The `decisions-model` flag's variants and the pinned model each serves (ADR-0051). A variant names a model here
+ * rather than in the flag, so changing what `span-01` means is a reviewed code change, not a dashboard edit.
+ */
+export const DECISION_MODELS: Readonly<Record<string, string>> = {
+  jev: JEV_MODEL,
+  'span-01': SPAN_MODEL,
+};
 export const LLM = {
   luna: 'openai/gpt-6-luna',
   deepseek: 'deepseek/deepseek-v4.1-flash',
@@ -335,8 +349,11 @@ export function spendCaps(cfg: PipelineConfig, limits: SpendLimits = {}): SpendC
   return { totalUsd, sessionUsd: totalUsd * (limits.sessionShare ?? DEFAULT_SESSION_SHARE) };
 }
 
-/** The same ranges deploy preflight checks (scripts/deploy/settings.mjs); a test keeps the two in step. */
-const SpendEnv = z.object({
+/**
+ * The same ranges deploy preflight checks (scripts/deploy/settings.mjs); a test keeps the two in step. The budget
+ * flags (`FLAG_SPECS`, ADR-0051) parse with these too.
+ */
+export const SpendEnv = z.object({
   BUDGET_USD: z.coerce.number().positive(),
   BUDGET_SESSION_SHARE: z.coerce.number().gt(0).max(1),
 });

@@ -119,6 +119,9 @@
       ],
       "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "mimic-blobs-prod" }],
       "kv_namespaces": [{ "binding": "CACHE", "id": "REPLACE_ME_PROD_KV_ID" }],
+      // Runtime flags and tunables (ADR-0051, docs/CHALLENGER.md): the Flagship app `mimic`. Preview binds none, so every
+      // flag reads its code default there. `pnpm flags:check` holds this app to the registry in packages/core.
+      "flagship": [{ "binding": "FLAGS", "app_id": "c4598f95-4f82-48c0-a8c5-62588cc2b598" }],
       "vectorize": [{ "binding": "VEC", "index_name": "mimic-qa-prod" }],
       "ai": { "binding": "AI" },
       "queues": {

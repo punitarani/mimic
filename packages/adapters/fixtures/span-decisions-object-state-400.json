@@ -1,0 +1,1 @@
+{"error":{"message":"Respan state must be a string or an object with only input (a message array) and output (a message), where each message has a string content and a role of system, user, assistant or tool, and the output role is assistant","code":400}}

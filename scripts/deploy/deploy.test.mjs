@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { accessApp, adminEmails, ensureAccess, LAB_PATHS } from './access.mjs';
+import { environmentFlagsApp, flagsAppId, flagsCheckArgs } from './flags.mjs';
 import {
   cloudflare,
   parseJsonc,
@@ -23,7 +24,7 @@ import {
   workerSecrets,
 } from './preflight.mjs';
 import { deployConfig, ensureResources, resourceSpec } from './resources.mjs';
-import { resolveSettings } from './settings.mjs';
+import { presentProviderSecrets, resolveSettings } from './settings.mjs';
 import { smoke } from './smoke.mjs';
 
 const web = readConfig(WEB_CONFIG);
@@ -35,7 +36,15 @@ const quiet = () => {};
  * use (401, as Cloudflare answers); `zones` are the zones the token can see.
  */
 function fakeCloudflare({ zeroTrust = true, deny = [], zones = ['punitarani.com'] } = {}) {
-  const state = { d1: [], kv: [], r2: [], queues: [], indexes: new Map(), apps: [], policies: new Map() };
+  const state = {
+    d1: [],
+    kv: [],
+    r2: [],
+    queues: [],
+    indexes: new Map(),
+    apps: [],
+    policies: new Map(),
+  };
   const calls = [];
   let n = 0;
   const id = (p) => `${p}-${++n}`;
@@ -436,6 +445,7 @@ describe('smoke', () => {
       labStatus,
       labLocation = 'https://team.cloudflareaccess.com/cdn-cgi/access/login',
       card = 'https://mimic.punitarani.com/share-card.png?v=1',
+      health = { ok: true },
     ) =>
     async (url) => {
       const path = new URL(url).pathname;
@@ -445,7 +455,7 @@ describe('smoke', () => {
         });
       if (path === '/share-card.png')
         return new Response(new Uint8Array(8), { headers: { 'content-type': 'image/png' } });
-      if (path === '/api/health') return Response.json({ ok: true });
+      if (path === '/api/health') return Response.json(health);
       return new Response(null, { status: labStatus, headers: { location: labLocation } });
     };
 
@@ -471,10 +481,78 @@ describe('smoke', () => {
     );
   });
 
+  it("fails when a flag doesn't evaluate through the Worker's binding (ADR-0051)", async () => {
+    const flags = {
+      bound: true,
+      ok: false,
+      flags: {
+        'decisions-model': { value: 'jev', reason: 'DEFAULT', ok: true },
+        'budget-usd': { value: 1, reason: 'ERROR', errorCode: 'FLAG_NOT_FOUND', ok: false },
+      },
+    };
+    await assert.rejects(
+      smoke('https://mimic.punitarani.com', {
+        fetchImpl: site(302, undefined, undefined, { ok: true, flags }),
+        attempts: 1,
+        log: quiet,
+      }),
+      /flags don't evaluate: budget-usd \(FLAG_NOT_FOUND\)/,
+    );
+    const healthy = { ok: true, flags: { ...flags, ok: true, flags: {} } };
+    await smoke('https://mimic.punitarani.com', {
+      fetchImpl: site(302, undefined, undefined, healthy),
+      attempts: 1,
+      log: quiet,
+    });
+  });
+
   it('retries while a new custom domain comes up', async () => {
     let calls = 0;
     const flaky = async (url, init) =>
       ++calls <= 3 ? new Response('', { status: 522 }) : site(302)(url, init);
     await smoke('https://mimic.punitarani.com', { fetchImpl: flaky, attempts: 3, delayMs: 1, log: quiet });
+  });
+});
+
+describe('flags (ADR-0051)', () => {
+  const APP = 'c4598f95-4f82-48c0-a8c5-62588cc2b598';
+
+  it('both Workers bind the Flagship app mimic in prod, and nothing in preview', () => {
+    for (const c of [web, worker]) {
+      assert.deepEqual(c.env.prod.flagship, [{ binding: 'FLAGS', app_id: APP }]);
+      assert.equal(c.env.preview.flagship, undefined);
+      assert.equal(c.flagship, undefined, 'local dev and tests bind no flags');
+    }
+    assert.equal(environmentFlagsApp('prod'), APP);
+    assert.equal(environmentFlagsApp('preview'), null);
+  });
+
+  it('refuses Workers bound to different apps', () => {
+    const other = structuredClone(web);
+    other.env.prod.flagship[0].app_id = 'other';
+    assert.throws(() => environmentFlagsApp('prod', other, worker), /bind the same one/);
+    assert.equal(flagsAppId(other, 'prod'), 'other');
+  });
+
+  it('passes the pinned app through a deploy config untouched', () => {
+    const out = deployConfig(worker, 'prod', { d1Id: 'D1', kvId: 'KV' });
+    assert.deepEqual(out.env.prod.flagship, [{ binding: 'FLAGS', app_id: APP }]);
+  });
+
+  it('checks prod with the resolved settings, and has nothing to check in preview', () => {
+    const args = flagsCheckArgs('prod', { EMBEDDINGS_PROVIDER: 'openrouter' }, { optional: true });
+    assert.ok(args[2].endsWith('packages/db/src/flags-check.cli.ts'));
+    assert.equal(args[args.indexOf('--app') + 1], APP);
+    assert.equal(JSON.parse(args[args.indexOf('--settings') + 1]).EMBEDDINGS_PROVIDER, 'openrouter');
+    assert.ok(args.includes('--optional'));
+    assert.ok(!args.includes('--create-missing'));
+    assert.equal(flagsCheckArgs('preview', {}), null);
+  });
+
+  it('pushes every provider key that is set, so a provider flag can switch at runtime', () => {
+    assert.deepEqual(
+      presentProviderSecrets({ EXA_API_KEY: 'x', PARALLEL_API_KEY: ' ', PERPLEXITY_API_KEY: 'p' }),
+      ['EXA_API_KEY', 'PERPLEXITY_API_KEY'],
+    );
   });
 });

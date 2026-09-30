@@ -33,6 +33,7 @@ import {
 } from './lib.mjs';
 import { customDomain, preflight, siteUrl, workerSecrets } from './preflight.mjs';
 import { prepareConfigs } from './resources.mjs';
+import { presentProviderSecrets } from './settings.mjs';
 import { smoke } from './smoke.mjs';
 
 async function deploy(env) {
@@ -71,7 +72,10 @@ async function deploy(env) {
   );
 
   step('Worker (queue consumer + cron)');
-  const workerSecretValues = secretPayload(source, workerSecrets(worker, env, source));
+  // Plus any other provider key that is set, so a provider flag can pick it at runtime (ADR-0051).
+  const workerSecretValues = secretPayload(source, [
+    ...new Set([...workerSecrets(worker, env, source), ...presentProviderSecrets(source)]),
+  ]);
   console.log(`  with secrets: ${Object.keys(workerSecretValues).join(', ')}`);
   await withSecretsFile(workerSecretValues, (file) =>
     run(

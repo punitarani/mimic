@@ -2,11 +2,16 @@
 // a cent. Keys come from the environment; in the Claude Code remote env the outbound proxy injects them.
 import {
   DEFAULT_CONFIG,
+  decisionChallenger,
+  FLAG_KEYS,
   Gateway,
   LlmPredictor,
+  makePredictor,
   type PersonState,
   parsePredictorId,
   type Question,
+  SPAN_MODEL,
+  StaticFlags,
   ulid,
 } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
@@ -123,6 +128,65 @@ describe.skipIf(!LIVE)('live providers', () => {
     },
     90_000,
   );
+
+  // The production primary with `decisions-model` at span-01, through the real Gateway, router and adapter: span-01
+  // answers a choice, a yes/no and a score question in one request, each option asked as its own yes/no (ADR-0051).
+  it('the primary predicts through span-01 when the flag says so, and never falls back', async () => {
+    const rows: Array<{ model: string; ok: boolean; error: string | null }> = [];
+    const gateway = new Gateway({
+      decisions: new JevDecisions(or),
+      decisionRouter: decisionChallenger(new StaticFlags({ [FLAG_KEYS.decisionsModel]: 'span-01' })),
+      llm: new OpenRouterChat(or),
+      log: { write: async (r) => void rows.push({ model: r.model, ok: r.ok, error: r.error }) },
+      clock: Date.now,
+      newId: ulid,
+    });
+    const state: PersonState = {
+      identity: { occupation: 'Nurse' },
+      traits: [],
+      insights: [],
+      evidence: [
+        {
+          seq: 1,
+          q: 'Plan trips in detail or go with the flow?',
+          type: 'choice',
+          options: ['Plan', 'Flow'],
+          answer: 'Plan',
+        },
+      ],
+      meta: { evidenceSeqMax: 1, stateHash: 'live', builder: 'full', tokens: 60 },
+    };
+    const q = (type: Question['type'], labels: string[]): Question => ({
+      id: ulid(),
+      mimicId: 'live',
+      seq: 2,
+      kind: 'adaptive',
+      type,
+      domain: 'casual',
+      prompt: 'How do you like your weekends?',
+      options: labels.map((label, i) => ({
+        key: type === 'noul' ? (i ? 'no' : 'yes') : String(type === 'score' ? i : 'abc'[i]),
+        label,
+      })),
+      facetIds: [],
+      provenance: { generator: 'live', configHash: 'live', promptVersion: 'live' },
+    });
+    const qs = [
+      q('choice', ['Planned', 'Spontaneous', 'At home']),
+      q('noul', ['Yes', 'No']),
+      q('score', ['1', '2', '3', '4', '5']),
+    ];
+    const rs = await makePredictor(gateway, DEFAULT_CONFIG.predictor.primary, {
+      purpose: 'predict.primary',
+      mimicId: 'live',
+    }).predict(state, qs);
+    expect(rows).toEqual([{ model: SPAN_MODEL, ok: true, error: null }]);
+    for (const r of rs) {
+      expect(r.ok).toBe(true);
+      expect(r.modelSnapshot).toBe(SPAN_MODEL);
+      expect(Object.values(r.dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 6);
+    }
+  }, 60_000);
 
   it('embeddings return 768-d vectors', async () => {
     const r = await new OpenRouterEmbedder('baai/bge-base-en-v1.5', or).embed(['hello']);

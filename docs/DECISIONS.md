@@ -1829,3 +1829,75 @@ shows real people only, with intervals.
 - **Evidence** (`docs/reports/m13-e3b.md`): the offline cohort by arm, labelled scripted. For live evidence, M12's
   scripted runs a, b and c (v8) and M10's live runs (the M10 candidate: v4's selection on ontology v2) stand in for
   the pair, so no money is spent on another scripted comparison.
+
+
+## ADR-0051 — span-01 as a challenger to Jev, behind a Cloudflare Flagship flag registry (2026-09-30)
+
+Respan's `respan/span-01` runs on the same OpenRouter Decisions API as Jev, at $0.02/M input tokens against Jev's
+$0.042/M. It is added as a challenger behind the Flagship string flag `decisions-model` (`jev` | `span-01`). At
+`jev`, the default, every call runs exactly as before. Runbook: `docs/CHALLENGER.md`.
+
+- **Swappable in the Gateway.** `Gateway.decide` asks a `DecisionRouter` (`decisionChallenger`,
+  `packages/core/src/challenger.ts`) which model to use, so no call site changes.
+  - It reroutes only requests for the incumbent `typesafe/jev-1.13`, and only for served predictions
+    (`CHALLENGER_PURPOSES`).
+  - Gates, trait reads and identity stay on Jev, whose probabilities their thresholds were tuned on (ADR-0015,
+    ADR-0042).
+  - A predictor that names its own model (a shadow, backfill or eval) is never rerouted, because the model is part
+    of its stored ID.
+- **span-01 is not a drop-in; an adapter makes it one.** Live calls showed limits the model page doesn't state:
+  - span-01 takes only a string state and only yes/no (`noul`) questions, and answers anything else with HTTP 400.
+  - `planDecision` (`packages/core/src/decision-models.ts`) sends such a model the state as JSON text, and each
+    choice option or score level as its own yes/no question. It normalizes the answers into a distribution
+    (one-vs-rest) and hands back answers keyed and typed as asked.
+  - The trace records the request actually sent (invariant 5), and Jev's requests pass through untouched.
+  - One-vs-rest is an approximation and roughly doubles the input tokens, so the benchmark reports quality by
+    question type and cost per request.
+- **Fallback, logged.** The span-01 call uses the same adapter, timeout and retries as Jev. If it fails (an error, a
+  timeout, or a question unanswered or mistyped), the same request goes to Jev. Each attempt is its own
+  `model_calls` row, and a budget refusal is not retried. A rejected answer was still billed, so its failed row keeps
+  the provider's usage and cost, which count against the budget (`RejectedResponseError`).
+- **Versioning (invariant 4).** A rerouted prediction keeps its config's predictor ID. Its `modelSnapshot` names the
+  model that answered, so reports split on it.
+  - The flag is for the trial and rollout.
+  - To make span-01 permanent, ship a config with `jev:respan/span-01-20260925@…` as primary, so predictor IDs and
+    config hashes say so.
+  - `SPAN_MODEL` pins the dated snapshot. A `decisions-model` value serves only a model registered and pinned in
+    `DECISION_MODELS`; anything else leaves Jev in place, so a dashboard edit can't serve an unreviewed model.
+  - The option-splitting wording is `NOUL_SPLIT` (`noul-split.v1`), versioned like a prompt, with the recorded
+    fixture pinning its text.
+  - Flags that hold for the whole environment (budgets, providers) are evaluated with one fixed targeting key, so
+    every request reads them alike.
+- **Flagship over env vars.** Flagship toggles at runtime without a redeploy, rolls out by percentage on a stable key
+  (the mimic ID, so each person keeps one model), and rolls back in seconds. Env vars need a Doppler change and a CD
+  run for each of those.
+  - It was chosen because its setup is one binding with a pinned app ID. It is in public beta, with pricing
+    unannounced.
+- **One registry, checked.** `FLAG_SPECS` (`packages/core/src/flags.ts`) defines each flag once: key, type, code
+  default, the var it overrides, and a parser for the values it accepts. Runtime reads and the checks all use it.
+  - **Runtime.** Core sees a `FlagReader`; `packages/db/src/flags.ts` wraps the binding. Every read has a default
+    that equals the behaviour before the flag.
+  - **`pnpm flags:check`** holds the live app to the registry. It fails on a missing flag, on a default or rule-served
+    variation the code can't use, and on a flag that doesn't evaluate through Flagship's evaluate API. It warns about
+    flags nothing reads, flags that override their setting, and unusable variations nothing serves yet.
+  - **Where it runs:** in the Flags workflow on every PR, every push and daily, and in deploy preflight.
+  - **After deploy**, `/api/health` evaluates every flag through the Worker's own binding (reason and error code
+    only; the endpoint is public), and the smoke test fails on an error.
+  - **Token.** The check needs only Flagship App · Read and Evaluate. The app ID is pinned in `wrangler.jsonc`, so
+    the deploy needs no Flagship permission to find it. Preview binds no app.
+- **Migrated to flags:** `budget-usd`, `budget-session-share`, `search-provider`, `enrich-provider` and
+  `embeddings-provider`, which read Flagship over their vars (`flaggedEnv`).
+  - A flag overrides only when its value parses, differs from the var, and names a provider whose key or binding is
+    deployed. Otherwise the var stands, and the reason is logged once.
+  - Deploy pushes every provider key set in Doppler, so a provider flag can actually switch.
+  - The vars stay as the fallback.
+- **Left as env vars:** secrets, and infrastructure: `DEV_MODE`, `EGRESS_RELAY` and `VECTOR_BACKEND`.
+  `VECTOR_BACKEND` picks which store holds the vectors, and prod's live only in Vectorize, so flipping it at runtime
+  would read and write an empty store. The dashboard's `vector-backend` flag is not read, and the check warns about it.
+- **Benchmark.** `pnpm eval -- benchmark` (and the Benchmark workflow, after merge) runs the production primary and
+  the same predictor on span-01 over the same sealed instances.
+  - It reports quality overall and by question type, p50/p95 latency per request, cost per request and error rate,
+    as Markdown, CSV and JSON.
+  - It applies `DECISION_RULE`: switch only if the paired log-loss interval is below 0, with accuracy no more than
+    1 point lower, errors no more than 1 point higher, and latency and cost within 1.5×, on at least 200 predictions
+    from at least 5 people.

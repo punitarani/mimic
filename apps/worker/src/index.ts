@@ -11,10 +11,12 @@ import {
 } from '@mimic/core';
 import {
   engineDeps,
+  flaggedEnv,
   isIdentityQueue,
   type MimicBindings,
   queueFor,
   runsOnIdentityLane,
+  runtimeEngineDeps,
 } from '@mimic/db/runtime';
 
 export interface Env extends MimicBindings {
@@ -28,15 +30,16 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+/** Built once per request, queue batch or cron run, so flag changes apply without a redeploy (ADR-0051). */
 function deps(env: Env) {
-  return engineDeps(env);
+  return runtimeEngineDeps(env);
 }
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     if (url.pathname === '/health') {
-      const d = deps(env);
+      const d = await deps(env);
       const id = ulid();
       const cfgs = await d.store.listConfigs();
       await d.blobs.put(`health/${id}.json`, JSON.stringify({ at: d.clock() }));
@@ -58,14 +61,16 @@ export default {
     }
     const m = url.pathname.match(/^\/health\/job\/(.+)$/);
     if (m) {
-      const job = await deps(env).store.getJob(decodeURIComponent(m[1]!));
+      const job = await (await deps(env)).store.getJob(decodeURIComponent(m[1]!));
       return json({ job });
     }
     return json({ error: 'not found' }, 404);
   },
 
   async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
-    const d = deps(env);
+    // One flag read per batch: the deps and the lane check below see the same providers (ADR-0051).
+    const flagged = await flaggedEnv(env);
+    const d = engineDeps(flagged);
     const identityLane = isIdentityQueue(batch.queue);
     await Promise.all(
       batch.messages.map(async (msg) => {
@@ -77,7 +82,7 @@ export default {
         }
         // A job too slow for the identity lane (Parallel enrichment) moves to the shared queue (ADR-0034). Straight
         // to JOBS: routing it again would send it back here.
-        if (identityLane && !runsOnIdentityLane(parsed.data, env)) {
+        if (identityLane && !runsOnIdentityLane(parsed.data, flagged)) {
           await env.JOBS.send(parsed.data);
           msg.ack();
           return;
@@ -101,7 +106,7 @@ export default {
    * (session-end safety net).
    */
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
-    const d = deps(env);
+    const d = await deps(env);
     const requeued = await requeueStaleJobs(d);
     if (requeued) console.log(`requeued ${requeued} stale jobs`);
     const recent = (await d.store.listMimics({})).filter((m) => m.updatedAt > Date.now() - 24 * 3600 * 1000);

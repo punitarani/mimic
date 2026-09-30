@@ -4,6 +4,7 @@
 // ADMIN_EMAILS parses, and the Cloudflare token is active. A gap fails here in seconds, with its name, instead of
 // halfway through a rollout.
 import { adminEmails } from './access.mjs';
+import { checkFlags } from './flags.mjs';
 import {
   CloudflareError,
   cloudflareFromEnv,
@@ -189,6 +190,8 @@ export async function preflight(env, source = process.env) {
   const gaps = await checkPermissions(cf, { domain: customDomain(web, env) });
   if (gaps.length) throw new Error(`preflight failed: Cloudflare API token\n  - ${gaps.join('\n  - ')}`);
   console.log('  token can use every resource, Access and the zone');
+  // Every flag the code reads is defined and evaluates, before a deploy ships code that reads it (ADR-0051).
+  await checkFlags(env, source);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

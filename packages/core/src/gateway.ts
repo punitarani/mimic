@@ -1,3 +1,5 @@
+import { type DecisionRouter, unansweredQuestions } from './challenger';
+import { planDecision } from './decision-models';
 import type {
   ChatRequest,
   ChatResponse,
@@ -162,6 +164,21 @@ interface CallOutcome {
   raw: unknown;
 }
 
+/**
+ * A response the provider returned (and billed) that the caller rejects, such as a challenger's incomplete answer
+ * (ADR-0051). `withModelCall` logs it as a failed call that still carries the response's usage and cost, and charges
+ * that cost to the mimic's budget.
+ */
+export class RejectedResponseError extends Error {
+  constructor(
+    message: string,
+    readonly outcome: CallOutcome,
+  ) {
+    super(message);
+    this.name = 'RejectedResponseError';
+  }
+}
+
 export function traceKey(id: string, createdAt: number): string {
   return `traces/${new Date(createdAt).toISOString().slice(0, 10)}/${id}.json`;
 }
@@ -229,25 +246,37 @@ export async function withModelCall<T extends CallOutcome>(
     return out;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    // A rejected response was still answered and billed: its usage and cost are logged and charged.
+    const paid = err instanceof RejectedResponseError ? err.outcome : null;
     await deps.log.write(
       {
         ...base,
-        modelSnapshot: null,
-        inputTokens: 0,
-        outputTokens: 0,
-        costUsd: 0,
-        latencyMs: deps.clock() - started,
+        modelSnapshot: paid?.modelSnapshot ?? null,
+        inputTokens: paid?.usage.inputTokens ?? 0,
+        outputTokens: paid?.usage.outputTokens ?? 0,
+        costUsd: paid?.usage.costUsd ?? 0,
+        latencyMs: paid?.latencyMs ?? deps.clock() - started,
+        ...(paid ? { attempts: paid.attempts ?? 1 } : {}),
         ok: false,
         error: message.slice(0, 1000),
       },
-      { ...trace, request: redact(request), error: message },
+      {
+        ...trace,
+        request: redact(request),
+        ...(paid ? { response: redact(paid.raw) } : {}),
+        error: message,
+      },
     );
+    if (paid && ctx.mimicId && deps.budget && paid.usage.costUsd > 0)
+      await deps.budget.add(ctx.mimicId, paid.usage.costUsd);
     throw err;
   }
 }
 
 export interface GatewayDeps extends CallDeps {
   decisions: DecisionProvider;
+  /** Sends some incumbent Jev calls to a challenger model, behind a flag (ADR-0051). None: every call runs as asked. */
+  decisionRouter?: DecisionRouter;
   llm: LlmClient;
   embedder?: Embedder;
   search?: PeopleSearch;
@@ -258,12 +287,55 @@ export interface GatewayDeps extends CallDeps {
 export class Gateway {
   constructor(readonly deps: GatewayDeps) {}
 
-  decide(ctx: CallContext, req: DecisionRequest): Promise<DecisionResponse> {
+  /**
+   * A decision call. When the router picks a challenger (ADR-0051), the challenger answers instead, and any failure of
+   * it (an error after the adapter's own timeout and retries, or an incomplete answer) falls back to the request as
+   * asked. Each attempt is its own logged call, and `modelSnapshot` names the model that answered.
+   */
+  async decide(ctx: CallContext, req: DecisionRequest): Promise<DecisionResponse> {
+    const challenger = await this.challengerFor(ctx, req);
+    if (!challenger) return this.decideOnce(ctx, req);
+    try {
+      return await this.decideOnce(ctx, { ...req, model: challenger }, true);
+    } catch (e) {
+      // The budget guard refuses the incumbent just the same; anything else is the challenger's failure.
+      if (e instanceof BudgetExceededError) throw e;
+      return this.decideOnce(ctx, req);
+    }
+  }
+
+  private async challengerFor(ctx: CallContext, req: DecisionRequest): Promise<string | null> {
+    if (!this.deps.decisionRouter) return null;
+    try {
+      return await this.deps.decisionRouter(ctx, req);
+    } catch (e) {
+      // A flag that can't be read is off.
+      console.warn('decision router failed; using the requested model', e);
+      return null;
+    }
+  }
+
+  /**
+   * One logged call. A model with request limits (`planDecision`: span-01 takes a string state and yes/no questions)
+   * gets the request it can take, which is what the trace records; its answers come back keyed and typed as asked.
+   */
+  private decideOnce(ctx: CallContext, req: DecisionRequest, complete = false): Promise<DecisionResponse> {
+    const plan = planDecision(req);
     return withModelCall(
       this.deps,
       { ...ctx, provider: this.deps.decisions.provider, model: req.model },
-      req,
-      () => this.deps.decisions.decide(req),
+      plan.request,
+      async () => {
+        const res = plan.answer(await this.deps.decisions.decide(plan.request));
+        const missing = complete ? unansweredQuestions(req, res) : [];
+        // Thrown with the response, so the failed row keeps the cost the provider charged for it.
+        if (missing.length)
+          throw new RejectedResponseError(
+            `${req.model} left ${missing.length} of ${Object.keys(req.questions).length} questions unanswered (${missing.slice(0, 5).join(', ')})`,
+            res,
+          );
+        return res;
+      },
     );
   }
 

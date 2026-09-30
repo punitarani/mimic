@@ -1,6 +1,6 @@
 import 'server-only';
 import { BudgetExceededError, type EngineDeps, EngineError, type MimicRecord, ulid } from '@mimic/core';
-import { engineDeps, type MimicBindings } from '@mimic/db/runtime';
+import { type MimicBindings, runtimeEngineDeps } from '@mimic/db/runtime';
 import { getCloudflareContext, initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 import { cookies, headers } from 'next/headers';
 import { after, NextResponse } from 'next/server';
@@ -35,7 +35,7 @@ export async function env(): Promise<CloudflareEnv> {
 export async function deps(): Promise<{ deps: EngineDeps; env: CloudflareEnv; serverTiming: () => string }> {
   const e = await env();
   const timings: Array<[string, number]> = [];
-  const d = engineDeps(e as MimicBindings, {
+  const d = await runtimeEngineDeps(e as MimicBindings, {
     defer: (task) =>
       after(() =>
         task().catch((err: unknown) => {

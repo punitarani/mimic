@@ -12,7 +12,7 @@ The command runs `scripts/deploy/deploy.mjs`. Every step is idempotent, so a re-
 
 | Step | What it does |
 | --- | --- |
-| Preflight | Checks that every name below is set, that the settings are valid and their providers' keys are present, that `APP_URL` is the custom domain, and that the Cloudflare token is active and can use every resource, Access and the zone (read-only probes that name each missing permission). It prints names only, never values. |
+| Preflight | Checks that every name below is set, that the settings are valid and their providers' keys are present, that `APP_URL` is the custom domain, and that the Cloudflare token is active and can use every resource, Access and the zone (read-only probes that name each missing permission). It prints names only, never values. Then `pnpm flags:check`: every flag the code reads is defined in the Flagship app `mimic` and evaluates to a value the code accepts (ADR-0051). |
 | Resources | Finds or creates D1 `mimic-prod`, KV `mimic-cache-prod`, R2 `mimic-blobs-prod`, queues `mimic-jobs-prod`, `mimic-identity-prod` and `mimic-jobs-prod-dlq`, and Vectorize `mimic-qa-prod` (768-d cosine, metadata indexes `mimicId` and `kind`). It writes `apps/*/wrangler.deploy.jsonc` with the real IDs and the settings; that file is gitignored. |
 | Migrations | `wrangler d1 migrations apply DB --remote`, run before any code that expects the new schema. |
 | Worker | Deploys `mimic-worker-prod` (the queue consumer and cron) with its secrets via `--secrets-file`: `OPENROUTER_API_KEY` plus the chosen providers' keys. |
@@ -39,6 +39,9 @@ These are the only manual steps.
      - Queues: Edit
      - Vectorize: Edit
      - Access: Apps and Policies: Edit
+     - Flagship App · Read and Evaluate on the app `mimic` (ADR-0051). The flags check in preflight and in the Flags
+       workflow uses them. Edit is not needed: flags are made in the dashboard, or with `pnpm flags:check
+       --create-missing` from a token that has it.
    - Zone `punitarani.com` (or all zones):
      - Workers Routes: Edit. A Custom Domain needs only this and Workers Scripts; Cloudflare creates the DNS record
        and certificate itself.
@@ -71,6 +74,11 @@ Settings (optional; each unset one keeps its default: the provider settings in `
 | `BUDGET_USD` | A number of US dollars above 0 | `1` | — (the spend cap per mimic on the standard budget; ADR-0035) |
 | `BUDGET_SESSION_SHARE` | A number above 0, at most 1 | `0.8` | — (the session's share of the cap; the rest is for the mimic page) |
 
+In prod, the Flagship flags `search-provider`, `enrich-provider`, `embeddings-provider`, `budget-usd` and
+`budget-session-share` override these at runtime, with no redeploy (ADR-0051, docs/CHALLENGER.md). The settings stay
+as the fallback. A provider flag takes effect only if that provider's key was deployed, so every provider key set in
+Doppler is pushed, chosen or not. `VECTOR_BACKEND` has no flag: it picks where the vectors are stored.
+
 Fixtures and the hash embedder are for tests only, so preflight refuses them. Doppler's own metadata
 (`DOPPLER_CONFIG`, `DOPPLER_ENVIRONMENT`, `DOPPLER_PROJECT`) and any other synced names are ignored. A value moves
 through GitHub → the step's environment → the Workers and is never printed; GitHub masks it in logs anyway.
@@ -90,6 +98,7 @@ doppler run -- pnpm deploy:preflight             # the preflight checks only
 doppler run -- pnpm deploy:config --env prod     # write wrangler.deploy.jsonc without deploying
 doppler run --config stg -- pnpm deploy:preview  # preview, from a Doppler config of your choice
 doppler run -- pnpm backfill --predictor llm:<vendor>/<model> --env prod [--yes]  # new predictor (ADR-0024, ADR-0037)
+doppler run -- pnpm flags:check                  # the Flagship app against the flag registry (also CI's Flags workflow)
 ```
 
 To backfill a new predictor on prod without local credentials, open Actions → Backfill → Run workflow. It runs the

@@ -98,7 +98,7 @@ export async function ensureResources(cf, spec, log = console.log) {
 
 /**
  * The checked-in config with this environment's resource IDs (in place of the REPLACE_ME_<ENV>_* placeholders) and,
- * when given, its resolved vars.
+ * when given, its resolved vars. The Flagship app ID is pinned in the config (ADR-0051), so it passes through.
  */
 export function deployConfig(config, env, ids, vars) {
   const out = structuredClone(config);
