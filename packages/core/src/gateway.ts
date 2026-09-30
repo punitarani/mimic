@@ -1,3 +1,4 @@
+import { type DecisionRouter, unansweredQuestions } from './challenger';
 import type {
   ChatRequest,
   ChatResponse,
@@ -248,6 +249,8 @@ export async function withModelCall<T extends CallOutcome>(
 
 export interface GatewayDeps extends CallDeps {
   decisions: DecisionProvider;
+  /** Sends some incumbent Jev calls to a challenger model, behind a flag (ADR-0050). None: every call runs as asked. */
+  decisionRouter?: DecisionRouter;
   llm: LlmClient;
   embedder?: Embedder;
   search?: PeopleSearch;
@@ -258,12 +261,48 @@ export interface GatewayDeps extends CallDeps {
 export class Gateway {
   constructor(readonly deps: GatewayDeps) {}
 
-  decide(ctx: CallContext, req: DecisionRequest): Promise<DecisionResponse> {
+  /**
+   * A decision call. When the router picks a challenger (ADR-0050), the challenger answers instead, and any failure of
+   * it (an error after the adapter's own timeout and retries, or an incomplete answer) falls back to the request as
+   * asked. Each attempt is its own logged call, and `modelSnapshot` names the model that answered.
+   */
+  async decide(ctx: CallContext, req: DecisionRequest): Promise<DecisionResponse> {
+    const challenger = await this.challengerFor(ctx, req);
+    if (!challenger) return this.decideOnce(ctx, req);
+    try {
+      return await this.decideOnce(ctx, { ...req, model: challenger }, true);
+    } catch (e) {
+      // The budget guard refuses the incumbent just the same; anything else is the challenger's failure.
+      if (e instanceof BudgetExceededError) throw e;
+      return this.decideOnce(ctx, req);
+    }
+  }
+
+  private async challengerFor(ctx: CallContext, req: DecisionRequest): Promise<string | null> {
+    if (!this.deps.decisionRouter) return null;
+    try {
+      return await this.deps.decisionRouter(ctx, req);
+    } catch (e) {
+      // A flag that can't be read is off.
+      console.warn('decision router failed; using the requested model', e);
+      return null;
+    }
+  }
+
+  private decideOnce(ctx: CallContext, req: DecisionRequest, complete = false): Promise<DecisionResponse> {
     return withModelCall(
       this.deps,
       { ...ctx, provider: this.deps.decisions.provider, model: req.model },
       req,
-      () => this.deps.decisions.decide(req),
+      async () => {
+        const res = await this.deps.decisions.decide(req);
+        const missing = complete ? unansweredQuestions(req, res) : [];
+        if (missing.length)
+          throw new Error(
+            `${req.model} left ${missing.length} of ${Object.keys(req.questions).length} questions unanswered (${missing.slice(0, 5).join(', ')})`,
+          );
+        return res;
+      },
     );
   }
 

@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { type EvalRunRecord, type PipelineConfig, VOI_SELECTOR } from '@mimic/core';
 import { schema } from '@mimic/db';
 import { sql } from 'drizzle-orm';
+import { benchmarkCmd } from './benchmark';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
 import { datasetHash, exportData } from './export';
 import { calibrateGates, sampleDrafts } from './gates';
@@ -50,6 +51,10 @@ Commands
   diagnose  Failure analysis of stored predictions by the reflection model (one call per person)
             --data … [--role primary|baseline|shadow] [--predictor <id>, required for shadow] [--cases 30]
             [--people 3] [--reflection-model <id>]
+  benchmark Jev vs span-01 on the same sealed instances (ADR-0050, docs/CHALLENGER.md): quality, latency p50/p95,
+            cost per request, error rate, and the enable/keep verdict; writes benchmark.{md,csv,json}
+            --data <a.sqlite>[,<b.sqlite>] [--split test] [--seed benchmark] [--limit N] [--max-targets 40]
+            [--incumbent jev:typesafe/jev-1.13@jev-predict.v2] [--challenger <id>] [--max-usd 1] [--offline]
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
             --data … --predictor jev:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
             [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]
@@ -374,6 +379,8 @@ async function main() {
       return evaluateCmd(rest);
     case 'diagnose':
       return diagnoseCmd(rest);
+    case 'benchmark':
+      return benchmarkCmd(rest);
     case 'optimize':
       return optimizeCmd(rest);
     default:

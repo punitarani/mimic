@@ -177,6 +177,21 @@ export async function checkPermissions(cf, { domain = null } = {}) {
   return problems;
 }
 
+/**
+ * Flagship is optional (ADR-0050): without it the deploy drops the FLAGS binding and every flag reads its default.
+ * Returns a warning when the token can't use it, else null.
+ */
+export async function checkFlagship(cf) {
+  try {
+    await cf.get('/flagship/apps');
+    return null;
+  } catch (e) {
+    return denied(e)
+      ? "the token can't use Flagship (add Account · Flagship · Edit): this deploy ships without runtime flags, so every flag reads its default"
+      : `Flagship: ${e.message}; this deploy may ship without runtime flags`;
+  }
+}
+
 export async function preflight(env, source = process.env) {
   const web = readConfig(WEB_CONFIG);
   const worker = readConfig(WORKER_CONFIG);
@@ -189,6 +204,8 @@ export async function preflight(env, source = process.env) {
   const gaps = await checkPermissions(cf, { domain: customDomain(web, env) });
   if (gaps.length) throw new Error(`preflight failed: Cloudflare API token\n  - ${gaps.join('\n  - ')}`);
   console.log('  token can use every resource, Access and the zone');
+  const flagship = await checkFlagship(cf);
+  console.log(flagship ? `  warning: ${flagship}` : '  token can use Flagship');
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

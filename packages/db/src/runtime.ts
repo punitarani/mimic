@@ -1,5 +1,6 @@
 import { makeProviders, type ProviderEnv } from '@mimic/adapters';
 import {
+  decisionChallenger,
   EMBEDDING_MODEL,
   type EngineDeps,
   Gateway,
@@ -12,8 +13,11 @@ import {
 } from '@mimic/core';
 import { CfKv, R2Blobs, SqlVectors, StoreBudget, StoreCallLog, VectorizeVectors } from './bindings';
 import { retryer } from './busy';
+import { type FlagshipBinding, flaggedEnv, flagsFor } from './flags';
 import { d1Db } from './index';
 import { DrizzleStore } from './store';
+
+export { flaggedEnv } from './flags';
 
 /** Bindings shared by apps/web and apps/worker (PLAN §6.5). */
 export interface MimicBindings extends ProviderEnv {
@@ -26,6 +30,11 @@ export interface MimicBindings extends ProviderEnv {
   VEC?: VectorizeIndex;
   AI?: { run(model: string, input: { text: string[] }): Promise<unknown> };
   RL?: RateLimit;
+  /**
+   * Cloudflare Flagship: runtime flags and tunables (ADR-0050). Unbound (local tests, or a deploy token without
+   * Flagship access), every flag reads its default, which is the behaviour from before the flag.
+   */
+  FLAGS?: FlagshipBinding;
   /** 'vectorize' (default when VEC is bound) | 'sql' (local dev; ADR-0003). */
   VECTOR_BACKEND?: string;
   /** '1' in local dev (.dev.vars): enables dev-only behavior such as the local D1 lock retry (ADR-0014). */
@@ -33,9 +42,12 @@ export interface MimicBindings extends ProviderEnv {
   SESSION_SECRET?: string;
   ADMIN_EMAILS?: string;
   INVITE_CODES?: string;
-  /** Spend cap per mimic in USD on the standard budget (default 1; ADR-0035). A string, or a JSON number. */
+  /**
+   * Spend cap per mimic in USD on the standard budget (default 1; ADR-0035). A string, or a JSON number. The
+   * `budget-usd` flag overrides it where Flagship is bound (ADR-0050); this var seeds the flag and backs it up.
+   */
   BUDGET_USD?: string | number;
-  /** Share of the cap the session may spend (0–1, default 0.8); the rest is kept for the mimic page. */
+  /** Share of the cap the session may spend (0–1, default 0.8); the `budget-session-share` flag overrides it. */
   BUDGET_SESSION_SHARE?: string | number;
 }
 
@@ -133,6 +145,8 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
   const spend = overrides.spend ?? spendLimitsFor(env);
   const gateway = new Gateway({
     ...providers,
+    // Unbound FLAGS means no router at all: decision calls run exactly as asked.
+    ...(env.FLAGS ? { decisionRouter: decisionChallenger(flagsFor(env)) } : {}),
     log: new StoreCallLog(store, blobs),
     budget: new StoreBudget(store, spend),
     clock,
@@ -151,4 +165,16 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
     ...overrides,
     spend,
   };
+}
+
+/**
+ * `engineDeps` over the flagged environment (ADR-0050): Flagship values over the provider and budget vars. Both apps
+ * build their deps through this, once per request, queue batch or cron run, so a flag change applies without a
+ * redeploy. Without FLAGS it is `engineDeps` itself.
+ */
+export async function runtimeEngineDeps(
+  env: MimicBindings,
+  overrides: Partial<EngineDeps> = {},
+): Promise<EngineDeps> {
+  return engineDeps(await flaggedEnv(env), overrides);
 }

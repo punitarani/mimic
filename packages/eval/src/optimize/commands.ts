@@ -49,7 +49,7 @@ interface Loaded {
 }
 
 /** Loads instances from one or more data files (a prod export, a Twin-2K-500 import, …). */
-async function loadData(
+export async function loadData(
   data: string,
   opts: { split: 'dev' | 'test' | 'all'; k: number; limitPeople?: number; maxTargets?: number; seed: string },
 ): Promise<Loaded> {
@@ -107,7 +107,7 @@ async function recordRun(
 }
 
 /** A positive number option (workflow inputs arrive as strings). */
-function positive(name: string, v: string | undefined, integer = true): number {
+export function positive(name: string, v: string | undefined, integer = true): number {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0 || (integer && !Number.isInteger(n)))
     throw new Error(`--${name} must be a positive ${integer ? 'integer' : 'number'}`);
@@ -148,7 +148,7 @@ const COMMON = {
   out: { type: 'string' },
 } as const;
 
-function loadOptsOf(v: {
+export function loadOptsOf(v: {
   split?: string;
   k?: string;
   limit?: string;

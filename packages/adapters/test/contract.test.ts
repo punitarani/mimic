@@ -80,6 +80,33 @@ describe('Jev decisions (PLAN §5.1)', () => {
     expect(res.answers.q_c).toMatchObject({ type: 'score', score: 2.53, confidence: 0.6 });
   });
 
+  it('span-01 runs on the same client and response shape (ADR-0050)', async () => {
+    const { fetch, calls } = replay({ json: fixture('span-decisions.json') });
+    const res = await new JevDecisions({ fetch, apiKey: 'k' }).decide({
+      model: 'respan/span-01-20260925',
+      state: { a: 1 },
+      questions: { q_b: { type: 'noul', instructions: 'x', criteria: { true: 'y', false: 'n' } } },
+    });
+    expect(calls[0]!.url).toBe('https://openrouter.ai/api/alpha/decisions');
+    expect(calls[0]!.body).toMatchObject({ model: 'respan/span-01-20260925' });
+    expect(res.modelSnapshot).toBe('respan/span-01-20260925');
+    expect(res.usage).toEqual({ inputTokens: 556, outputTokens: 0, costUsd: 1.112e-5 });
+    expect(res.answers.q_b).toEqual({ type: 'noul', p: 0.22 });
+    expect(res.answers.q_c).toMatchObject({ type: 'score', score: 1.18 });
+  });
+
+  it('a span-01 blocked by the account’s allowed providers fails at once, without retries', async () => {
+    const { fetch, calls } = replay({ status: 404, json: fixture('span-decisions-provider-blocked.json') });
+    const err = await new JevDecisions({ fetch })
+      .decide({ model: 'respan/span-01-20260925', state: {}, questions: {} })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).status).toBe(404);
+    expect((err as HttpError).message).toContain('No allowed providers');
+    expect(isTransientError(err)).toBe(false);
+    expect(calls).toHaveLength(1);
+  });
+
   it('maps answers onto our Distribution keys (noul → yes/no, score → "0".."4")', async () => {
     const { fetch } = replay({ json: fixture('jev-decisions.json') });
     const res = await new JevDecisions({ fetch }).decide({ model: 'm', state: {}, questions: {} });

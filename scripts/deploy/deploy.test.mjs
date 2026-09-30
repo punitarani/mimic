@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { accessApp, adminEmails, ensureAccess, LAB_PATHS } from './access.mjs';
+import { ensureFlags, flagCatalog, flagsAppName } from './flags.mjs';
 import {
   cloudflare,
   parseJsonc,
@@ -14,6 +15,7 @@ import {
   withSecretsFile,
 } from './lib.mjs';
 import {
+  checkFlagship,
   checkNames,
   checkPermissions,
   customDomain,
@@ -23,7 +25,7 @@ import {
   workerSecrets,
 } from './preflight.mjs';
 import { deployConfig, ensureResources, resourceSpec } from './resources.mjs';
-import { resolveSettings } from './settings.mjs';
+import { presentProviderSecrets, resolveSettings } from './settings.mjs';
 import { smoke } from './smoke.mjs';
 
 const web = readConfig(WEB_CONFIG);
@@ -35,7 +37,17 @@ const quiet = () => {};
  * use (401, as Cloudflare answers); `zones` are the zones the token can see.
  */
 function fakeCloudflare({ zeroTrust = true, deny = [], zones = ['punitarani.com'] } = {}) {
-  const state = { d1: [], kv: [], r2: [], queues: [], indexes: new Map(), apps: [], policies: new Map() };
+  const state = {
+    d1: [],
+    kv: [],
+    r2: [],
+    queues: [],
+    indexes: new Map(),
+    apps: [],
+    policies: new Map(),
+    flagApps: [],
+    flags: new Map(),
+  };
   const calls = [];
   let n = 0;
   const id = (p) => `${p}-${++n}`;
@@ -122,6 +134,21 @@ function fakeCloudflare({ zeroTrust = true, deny = [], zones = ['punitarani.com'
     if (path === '/vectorize/v2/indexes' && method === 'POST') {
       state.indexes.set(body.name, { config: body.config, metadata: [] });
       return reply(200, { name: body.name });
+    }
+    const flagsOf = path.match(/^\/flagship\/apps\/([^/]+)\/flags$/);
+    if (path === '/flagship/apps' && method === 'GET') return reply(200, state.flagApps);
+    if (path === '/flagship/apps' && method === 'POST') {
+      const a = { id: id('fapp'), name: body.name };
+      state.flagApps.push(a);
+      state.flags.set(a.id, []);
+      return reply(200, a);
+    }
+    if (flagsOf && method === 'GET') return reply(200, state.flags.get(flagsOf[1]) ?? []);
+    if (flagsOf && method === 'POST') {
+      const list = state.flags.get(flagsOf[1]);
+      if (list.some((f) => f.key === body.key)) return reply(409, null);
+      list.push(body);
+      return reply(200, body);
     }
     if (path.startsWith('/access/') && !zeroTrust) return reply(403, null);
     if (path === '/access/apps' && method === 'GET')
@@ -476,5 +503,93 @@ describe('smoke', () => {
     const flaky = async (url, init) =>
       ++calls <= 3 ? new Response('', { status: 522 }) : site(302)(url, init);
     await smoke('https://mimic.punitarani.com', { fetchImpl: flaky, attempts: 3, delayMs: 1, log: quiet });
+  });
+});
+
+describe('flags (ADR-0050)', () => {
+  it("both apps bind the environment's Flagship app as FLAGS", () => {
+    for (const c of [web, worker])
+      for (const env of ['preview', 'prod'])
+        assert.deepEqual(c.env[env].flagship, [
+          { binding: 'FLAGS', app_id: `REPLACE_ME_${env.toUpperCase()}_FLAGS_APP_ID` },
+        ]);
+  });
+
+  it('creates the app and every flag at its default once, and never overwrites a flag', async () => {
+    const { cf, state, calls } = fakeCloudflare();
+    const appId = await ensureFlags(cf, 'prod', {}, quiet);
+    assert.deepEqual(state.flagApps, [{ id: appId, name: 'mimic' }]);
+    const flags = state.flags.get(appId);
+    assert.deepEqual(
+      flags.map((f) => f.key),
+      flagCatalog().map((f) => f.key),
+    );
+    const challenger = flags.find((f) => f.key === 'decisions-model');
+    assert.equal(challenger.variations[challenger.default_variation], 'jev', 'Jev stays the default');
+    assert.deepEqual(challenger.rules, []);
+    // Someone switches it in the dashboard; the next deploy leaves it switched.
+    challenger.default_variation = 'span-01';
+    const posts = calls.filter((c) => c.startsWith('POST')).length;
+    assert.equal(await ensureFlags(cf, 'prod', {}, quiet), appId);
+    assert.equal(calls.filter((c) => c.startsWith('POST')).length, posts, 'a second run creates nothing');
+    assert.equal(challenger.default_variation, 'span-01');
+  });
+
+  it('finds the prod app made in the dashboard, and adds only the flags it lacks', async () => {
+    const { cf, state } = fakeCloudflare();
+    state.flagApps.push({ id: 'c4598f95', name: 'mimic' });
+    state.flags.set('c4598f95', [
+      { key: 'decisions-model', default_variation: 'jev', variations: { jev: 'jev', 'span-01': 'span-01' } },
+    ]);
+    assert.equal(await ensureFlags(cf, 'prod', {}, quiet), 'c4598f95');
+    const keys = state.flags.get('c4598f95').map((f) => f.key);
+    assert.equal(keys.filter((k) => k === 'decisions-model').length, 1);
+    assert.deepEqual(
+      [...keys].sort(),
+      flagCatalog()
+        .map((f) => f.key)
+        .sort(),
+    );
+    assert.equal(flagsAppName('preview'), 'mimic-preview');
+  });
+
+  it("seeds the provider and budget flags from the environment's settings", () => {
+    const value = (cat, key) => {
+      const f = cat.find((x) => x.key === key);
+      return f.variations[f.default_variation];
+    };
+    const prod = resolveSettings(worker, 'prod', { BUDGET_USD: '2.5', BUDGET_SESSION_SHARE: '0.6' }).vars;
+    const seeded = flagCatalog(prod);
+    assert.equal(value(seeded, 'budget-usd'), 2.5);
+    assert.equal(value(seeded, 'budget-session-share'), 0.6);
+    assert.equal(value(seeded, 'embeddings-provider'), 'workers-ai');
+    assert.equal(value(seeded, 'search-provider'), 'exa');
+    assert.equal(value(flagCatalog({}), 'budget-usd'), 1);
+    assert.equal(value(flagCatalog({}), 'budget-session-share'), 0.8);
+    assert.equal(
+      flagCatalog().find((f) => f.key === 'vector-backend'),
+      undefined,
+      'the vector backend is infrastructure',
+    );
+  });
+
+  it('pushes every provider key that is set, so a provider flag can switch at runtime', () => {
+    assert.deepEqual(
+      presentProviderSecrets({ EXA_API_KEY: 'x', PARALLEL_API_KEY: ' ', PERPLEXITY_API_KEY: 'p' }),
+      ['EXA_API_KEY', 'PERPLEXITY_API_KEY'],
+    );
+  });
+
+  it('without Flagship access, warns and ships without the FLAGS binding', async () => {
+    const { cf, state } = fakeCloudflare({ deny: ['/flagship'] });
+    assert.match(await checkFlagship(cf), /Account · Flagship · Edit/);
+    assert.equal(await ensureFlags(cf, 'prod', {}, quiet), null);
+    assert.equal(state.flagApps.length, 0);
+    const out = deployConfig(worker, 'prod', { d1Id: 'D1', kvId: 'KV', flagsAppId: null });
+    assert.equal(out.env.prod.flagship, undefined);
+    const bound = deployConfig(worker, 'prod', { d1Id: 'D1', kvId: 'KV', flagsAppId: 'F1' });
+    assert.deepEqual(bound.env.prod.flagship, [{ binding: 'FLAGS', app_id: 'F1' }]);
+    assert.equal(worker.env.prod.flagship[0].app_id, 'REPLACE_ME_PROD_FLAGS_APP_ID', 'original untouched');
+    assert.equal(await checkFlagship(fakeCloudflare().cf), null);
   });
 });

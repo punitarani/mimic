@@ -100,6 +100,11 @@ export const PipelineConfig = z.object({
 export type PipelineConfig = z.infer<typeof PipelineConfig>;
 
 export const JEV_MODEL = 'typesafe/jev-1.13';
+/**
+ * Respan Span-01 on the same OpenRouter Decisions API, pinned to its dated snapshot: the challenger to Jev behind the
+ * `decisions-model` flag (variant `span-01`), off by default (ADR-0050).
+ */
+export const SPAN_MODEL = 'respan/span-01-20260925';
 export const LLM = {
   luna: 'openai/gpt-6-luna',
   deepseek: 'deepseek/deepseek-v4.1-flash',
