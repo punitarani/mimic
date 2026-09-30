@@ -3,18 +3,17 @@ import { withScheme } from '@mimic/core/links';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import { AutocompleteInput } from '@/components/autocomplete';
-import { TopBar } from '@/components/brand';
+import { CreditsLink, TopBar } from '@/components/brand';
 import { Button, Checkbox, ErrorText, Field, fieldLabelId, Input } from '@/components/ui';
 import { api } from '@/lib/api';
 import { loadOccupations, loadPlaces } from '@/lib/autocomplete';
-import sources from '@/lib/autocomplete-sources.json';
 import { INVITE_PARAM, inviteFromQuery } from '@/lib/invite';
 
 export default function NewMimic() {
   return (
-    <div className="min-h-dvh">
+    <div className="flex min-h-dvh flex-col">
       <TopBar />
-      <main className="mx-auto w-full max-w-xl px-4 pb-16 pt-6 sm:px-6">
+      <main className="mx-auto w-full max-w-xl flex-1 px-4 pb-16 pt-6 sm:px-6">
         <h1 className="font-serif text-3xl tracking-tight">Tell us who you are</h1>
         <p className="mt-2 text-muted">
           This is only used to describe you to your mimic. Fields marked * are required.
@@ -25,6 +24,10 @@ export default function NewMimic() {
           <IntakeFromLink />
         </Suspense>
       </main>
+      {/* The suggestions show licensed data, and invite links land here without passing the home page's footer. */}
+      <footer className="mx-auto w-full max-w-xl px-4 pb-8 text-[13px] text-muted sm:px-6">
+        <CreditsLink />
+      </footer>
     </div>
   );
 }
@@ -185,7 +188,6 @@ function IntakeForm({ invite }: { invite: string | null }) {
       >
         {busy ? 'Creating…' : 'Continue'}
       </Button>
-      <p className="text-xs text-muted">{[...sources.places, ...sources.occupations].join(' ')}</p>
     </form>
   );
 }

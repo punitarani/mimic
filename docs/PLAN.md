@@ -792,6 +792,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | `/m/[id]` | The session. |
 | `/m/[id]/mimic` | Talk to your mimic (§9.11): ask it, or teach it an answer; download `SOUL.md` and `mimic.json`; delete the mimic. |
 | `/m/[id]/soul` | Curate `SOUL.md` (§8.3): write or rewrite the inferred sections; set boundaries, whether agents may speak as you, your own words and voice samples; include or hide sections and items; reword statements; preview, copy and download (full or core). `/m/[id]/persona` redirects here. |
+| `/credits` | The attribution the autocomplete data's licenses require (ADR-0030), linked from the footers of `/` and `/new`. |
 | `/lab` | Admin only. |
 
 **Session layout.** On desktop, the model panel sits on the left (about 40%) and the question on the right. On mobile, the question fills the screen, and a compact fidelity chip at the top opens the panel as a bottom sheet.
