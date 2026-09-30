@@ -13,7 +13,14 @@ import {
   WORKER_CONFIG,
   withSecretsFile,
 } from './lib.mjs';
-import { checkNames, customDomain, requiredNames, verifyToken, workerSecrets } from './preflight.mjs';
+import {
+  checkNames,
+  checkPermissions,
+  customDomain,
+  requiredNames,
+  verifyToken,
+  workerSecrets,
+} from './preflight.mjs';
 import { deployConfig, ensureResources, resourceSpec } from './resources.mjs';
 import { resolveSettings } from './settings.mjs';
 import { smoke } from './smoke.mjs';
@@ -22,8 +29,11 @@ const web = readConfig(WEB_CONFIG);
 const worker = readConfig(WORKER_CONFIG);
 const quiet = () => {};
 
-/** An in-memory Cloudflare account behind a fetch. Records every call. */
-function fakeCloudflare({ zeroTrust = true } = {}) {
+/**
+ * An in-memory Cloudflare account behind a fetch. Records every call. `deny` lists path prefixes the token may not
+ * use (401, as Cloudflare answers); `zones` are the zones the token can see.
+ */
+function fakeCloudflare({ zeroTrust = true, deny = [], zones = ['punitarani.com'] } = {}) {
   const state = { d1: [], kv: [], r2: [], queues: [], indexes: new Map(), apps: [], policies: new Map() };
   const calls = [];
   let n = 0;
@@ -53,6 +63,14 @@ function fakeCloudflare({ zeroTrust = true } = {}) {
     const policies = path.match(/^\/access\/apps\/([^/]+)\/policies$/);
     const policy = path.match(/^\/access\/apps\/([^/]+)\/policies\/([^/]+)$/);
     if (path === '/tokens/verify') return reply(200, { status: 'active' });
+    if (deny.some((d) => path.startsWith(d))) return reply(401, null);
+    if (path === '/zones')
+      return reply(
+        200,
+        zones.filter((z) => z === u.searchParams.get('name')).map((name) => ({ name })),
+      );
+    if (path === '/workers/scripts' || (path === '/r2/buckets' && method === 'GET')) return reply(200, []);
+    if (path === '/vectorize/v2/indexes' && method === 'GET') return reply(200, []);
     if (path === '/d1/database' && method === 'GET')
       return reply(
         200,
@@ -337,7 +355,36 @@ describe('preflight', () => {
 
   it('accepts an active Cloudflare token', async () => {
     const { cf } = fakeCloudflare();
-    await verifyToken(cf);
+    assert.equal(await verifyToken(cf), 'account');
+  });
+
+  it('passes a token with every permission, reading only', async () => {
+    const { cf, calls } = fakeCloudflare();
+    assert.deepEqual(await checkPermissions(cf, { domain: 'mimic.punitarani.com' }), []);
+    assert.ok(
+      calls.every((c) => c.startsWith('GET ')),
+      'probes never write',
+    );
+  });
+
+  it('names each permission the token lacks', async () => {
+    // The first live CD run: the token verified, then D1 answered 401.
+    const { cf } = fakeCloudflare({ deny: ['/d1/', '/access/'], zones: [] });
+    assert.deepEqual(await checkPermissions(cf, { domain: 'mimic.punitarani.com' }), [
+      "the token can't use D1 on CLOUDFLARE_ACCOUNT_ID (add Account · D1 · Edit)",
+      "the token can't manage Access: add Account · Access: Apps and Policies · Edit, and turn on Zero Trust for " +
+        'the account once (it picks a team name)',
+      "the token can't see the zone punitarani.com, which serves mimic.punitarani.com: add Zone · Workers Routes · " +
+        'Edit and Zone · DNS · Edit for punitarani.com (the zone must be on this account)',
+    ]);
+  });
+
+  it('points at the account ID when the token can use nothing on it', async () => {
+    const all = ['/workers/', '/d1/', '/storage/', '/r2/', '/queues', '/vectorize/'];
+    const { cf } = fakeCloudflare({ deny: all });
+    const problems = await checkPermissions(cf, { domain: 'mimic.punitarani.com' });
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /check that it is the token's account/);
   });
 });
 
