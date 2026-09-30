@@ -53,7 +53,8 @@ export async function predictPlayground(
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
   if (m.spendUsd >= cfg.session.budgetUsd) throw new EngineError('budget', 'Budget reached');
-  const v = validateDraft({ ...input, domain: 'casual', facetIds: ['__pg'] }, new Set(['__pg']));
+  const { rationale: _wantsRationale, ...question } = input;
+  const v = validateDraft({ ...question, domain: 'casual', facetIds: ['__pg'] }, new Set(['__pg']));
   if ('error' in v) throw new EngineError('invalid', `Invalid question: ${v.error}`);
   const loaded = await loadMimicData(deps, m);
   const seq = loaded.questions.reduce((a, q) => Math.max(a, q.seq ?? 0), 0) + 1;

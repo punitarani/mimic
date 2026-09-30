@@ -77,3 +77,19 @@ Playwright against `pnpm dev` (14 answered questions, keyboard only):
 - Finding: for first questions the sealed state equals the context-only state (same hash), yet Jev returned
   slightly different distributions for the primary and baseline calls. Jev is not bit-for-bit deterministic across
   calls, so M7 replay compares within a tolerance.
+
+## M6 Mimic artifact and playground
+
+- Tests (`packages/eval/test/artifact.test.ts`):
+  - Export validates against `mimic/1` (zod; JSON Schema published at `docs/schemas/mimic-1.schema.json`), and
+    snapshots are immutable and versioned.
+  - Hard delete: before deletion the mimic's ID appears in 50+ rows; afterwards no row in any table, no blob (states,
+    snapshots, search payloads, model-call traces) and no KV key (hypotheses, search cache) mentions it, while
+    another person's mimic is untouched.
+  - Playground: questions and answers are stored as `kind = playground` with sealed primary and baseline
+    predictions, scored, excluded from fidelity and from later states, and kept in the export.
+- The test caught a real bug: the playground's "generated sentence" flag collided with the draft schema's
+  `rationale` field, so asking with a rationale failed. Fixed.
+- Browser, live providers: 6 answers → Stop here → scenario → DeepSeek drafts a typed question → Jev predicts
+  61% / 39% → generated first-person sentence, labeled → the person answers → download `mimic.json` (`mimic/1`, v2,
+  playground evidence included) → delete → `GET /api/mimics/:id` returns 404.

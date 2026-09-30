@@ -1,0 +1,309 @@
+{
+  "title": "mimic/1 — a portable mimic snapshot (PLAN §8.1)",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "mimic/1"
+    },
+    "mimicId": {
+      "type": "string"
+    },
+    "version": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "createdAt": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "seqUpTo": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "subject": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "occupation": {
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["displayName", "location", "occupation"],
+      "additionalProperties": false
+    },
+    "facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "predicate": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["intake", "search", "answer", "reflection"]
+          },
+          "url": {
+            "type": ["string", "null"]
+          },
+          "confidence": {
+            "type": "number"
+          }
+        },
+        "required": ["predicate", "object", "source", "url", "confidence"],
+        "additionalProperties": false
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["anchor", "adaptive", "repeat", "playground"]
+          },
+          "type": {
+            "type": "string",
+            "enum": ["choice", "noul", "score"]
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "optionKeys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "answer": {
+            "type": "string"
+          },
+          "why": {
+            "type": ["string", "null"]
+          }
+        },
+        "required": ["seq", "kind", "type", "prompt", "options", "optionKeys", "answer", "why"],
+        "additionalProperties": false
+      }
+    },
+    "traits": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "facet": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string",
+            "enum": ["jev", "psychometric"]
+          },
+          "mean": {
+            "type": "number"
+          },
+          "dist": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "n": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": ["facet", "method", "mean", "dist", "confidence", "n"],
+        "additionalProperties": false
+      }
+    },
+    "insights": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "facets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          }
+        },
+        "required": ["text", "facets", "evidence"],
+        "additionalProperties": false
+      }
+    },
+    "kg": {
+      "type": "object",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": ["id", "type", "label"],
+            "additionalProperties": false
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "src": {
+                "type": "string"
+              },
+              "dst": {
+                "type": "string"
+              },
+              "predicate": {
+                "type": "string"
+              },
+              "weight": {
+                "type": "number"
+              }
+            },
+            "required": ["src", "dst", "predicate", "weight"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["nodes", "edges"],
+      "additionalProperties": false
+    },
+    "fidelity": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "fidelity": {
+              "type": "number"
+            },
+            "ci": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false,
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "acc": {
+              "type": "number"
+            },
+            "accBaseline": {
+              "type": ["number", "null"]
+            },
+            "selfConsistency": {
+              "type": "number"
+            },
+            "n": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": ["fidelity", "ci", "acc", "accBaseline", "selfConsistency", "n"],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pipeline": {
+      "type": "object",
+      "properties": {
+        "configHash": {
+          "type": "string"
+        },
+        "config": {},
+        "models": {
+          "type": "object",
+          "properties": {
+            "primary": {
+              "type": ["string", "null"]
+            }
+          },
+          "required": ["primary"],
+          "additionalProperties": false
+        }
+      },
+      "required": ["configHash", "config", "models"],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schema",
+    "mimicId",
+    "version",
+    "createdAt",
+    "seqUpTo",
+    "subject",
+    "facts",
+    "evidence",
+    "traits",
+    "insights",
+    "kg",
+    "fidelity",
+    "pipeline"
+  ],
+  "additionalProperties": false
+}
