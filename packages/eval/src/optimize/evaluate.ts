@@ -88,17 +88,23 @@ export function withComponent(parent: Candidate, id: ComponentId, text: string, 
   return { ...parent, label, prompt, hash: `${parent.model}:${promptHash(prompt).slice(0, 16)}` };
 }
 
-/** The components that differ from the base version, for reports and for registering a winner. */
-export function changedComponents(c: Candidate): Partial<Record<ComponentId, string>> {
-  const base = resolvePredictPrompt(c.baseVersion, c.kind);
+/**
+ * The components that differ from a registered version: the candidate's base version by default (reports, candidate
+ * JSON), or the incumbent for a `PREDICT_PROMPTS` entry, whose overrides are merged over the incumbent.
+ */
+export function changedComponents(
+  c: Candidate,
+  against: string = c.baseVersion,
+): Partial<Record<ComponentId, string>> {
+  const base = resolvePredictPrompt(against, c.kind);
   const out: Partial<Record<ComponentId, string>> = {};
   for (const id of COMPONENT_IDS)
     if (c.prompt.components[id] !== base.components[id]) out[id] = c.prompt.components[id];
   return out;
 }
 
-export function changedHarness(c: Candidate): Partial<PredictHarness> {
-  const base = resolvePredictPrompt(c.baseVersion, c.kind).harness;
+export function changedHarness(c: Candidate, against: string = c.baseVersion): Partial<PredictHarness> {
+  const base = resolvePredictPrompt(against, c.kind).harness;
   const out: Partial<PredictHarness> = {};
   for (const k of Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>)
     if (c.prompt.harness[k] !== base[k]) Object.assign(out, { [k]: c.prompt.harness[k] });
@@ -333,10 +339,7 @@ export async function evaluateCandidate(
   }
   const groups: EvalInstance[][] = [];
   if (c.kind === 'jev') {
-    const byState = new Map<string, EvalInstance[]>();
-    for (const i of todo)
-      byState.set(i.state.meta.stateHash, [...(byState.get(i.state.meta.stateHash) ?? []), i]);
-    for (const g of byState.values())
+    for (const g of groupBy(todo, (i) => i.state.meta.stateHash).values())
       for (let j = 0; j < g.length; j += JEV_CHUNK) groups.push(g.slice(j, j + JEV_CHUNK));
   } else for (const i of todo) groups.push([i]);
 
@@ -427,9 +430,14 @@ export interface Breakdown {
   byType: Record<string, Metrics>;
 }
 
-function groupBy<T>(xs: T[], f: (x: T) => string): Map<string, T[]> {
+export function groupBy<T>(xs: T[], f: (x: T) => string): Map<string, T[]> {
   const m = new Map<string, T[]>();
-  for (const x of xs) m.set(f(x), [...(m.get(f(x)) ?? []), x]);
+  for (const x of xs) {
+    const k = f(x);
+    const g = m.get(k);
+    if (g) g.push(x);
+    else m.set(k, [x]);
+  }
   return m;
 }
 
@@ -598,7 +606,9 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
     for (const p of inst.stored) {
       if (!p.ok || (p.role !== 'primary' && p.role !== 'shadow')) continue;
       const k = p.role === 'primary' ? `${p.predictorId} (primary)` : p.predictorId;
-      byPredictor.set(k, [...(byPredictor.get(k) ?? []), { inst, dist: p.dist }]);
+      const list = byPredictor.get(k);
+      if (list) list.push({ inst, dist: p.dist });
+      else byPredictor.set(k, [{ inst, dist: p.dist }]);
       if (p.role === 'primary') primary.set(inst.id, p.dist);
     }
   const split = (ps: Pair[]) =>

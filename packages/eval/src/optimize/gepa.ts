@@ -233,8 +233,9 @@ export async function optimize(
   let state: OptimizeState;
   if (existsSync(statePath)) {
     state = JSON.parse(readFileSync(statePath, 'utf8')) as OptimizeState;
-    if (state.pool[0]?.candidate.hash !== seedCandidate.hash)
-      throw new Error(`${statePath} belongs to another seed`);
+    // A run that stopped before the seed was scored has an empty pool; its saved spec still names the seed.
+    const savedSeed = state.pool[0]?.candidate.hash ?? resolveCandidate(state.spec.seed).hash;
+    if (savedSeed !== seedCandidate.hash) throw new Error(`${statePath} belongs to another seed`);
     state.spec = {
       ...state.spec,
       maxMetricCalls: spec.maxMetricCalls,
@@ -283,20 +284,29 @@ export async function optimize(
   const evaluate: Evaluate = async (c, xs, opts = {}) => {
     const m = opts.meter ?? meter;
     const cached = new Set(xs.filter((i) => cache.has(`${c.hash}|${i.id}`)).map((i) => i.id));
-    const recs = await evaluateCandidate(c, xs, {
-      gateway: deps.gateway,
-      meter: m,
-      cache,
-      fresh: opts.fresh ?? false,
-      concurrency: run.concurrency,
-      purpose: 'eval.optimize',
-    });
-    if (m !== meter) {
-      meter.usd += m.usd;
-      meter.predictions += m.predictions;
+    try {
+      return await evaluateCandidate(c, xs, {
+        gateway: deps.gateway,
+        meter: m,
+        cache,
+        fresh: opts.fresh ?? false,
+        concurrency: run.concurrency,
+        purpose: 'eval.optimize',
+      });
+    } finally {
+      if (m !== meter) {
+        meter.usd += m.usd;
+        meter.predictions += m.predictions;
+      }
+      // Also on a BudgetStop: records already paid for are kept, so a resumed run doesn't buy them again.
+      if (!opts.fresh)
+        persist(
+          xs
+            .filter((i) => !cached.has(i.id))
+            .map((i) => cache.get(`${c.hash}|${i.id}`))
+            .filter((r): r is EvalRecord => !!r),
+        );
     }
-    if (!opts.fresh) persist(recs.filter((r) => !cached.has(r.instanceId)));
-    return recs;
   };
   const corpus = leakCorpus(instances);
   deps.log(
@@ -437,6 +447,10 @@ export async function optimize(
   }
   save();
   deps.log(`stopped: ${state.stopReason}`);
+  if (!state.pool.length)
+    throw new Error(
+      `stopped before the seed was scored on validation (${state.stopReason}); raise the caps and resume with --run-dir ${deps.runDir}`,
+    );
   const result = await finish(deps, state, cache, val, holdout, evaluate);
   save();
   return result;
@@ -527,12 +541,15 @@ async function finish(
 export function variantSnippet(r: OptimizeResult, runId: string): string | null {
   if (!r.suggestedVersion) return null;
   const v = r.suggestedVersion;
+  const c = r.best.candidate;
+  // A registered variant overrides the incumbent, not the seed's base variant, so diff against the incumbent.
+  const incumbent = DEFAULT_PROMPT_VERSION[c.kind];
   return `  '${v}': {
     id: '${v}',
-    kind: '${r.best.candidate.kind}',
+    kind: '${c.kind}',
     title: ${JSON.stringify(`Optimized by ${r.state.spec.name}`)},
-    components: ${JSON.stringify(r.bestInput.components, null, 2).replace(/\n/g, '\n    ')},
-    harness: ${JSON.stringify(r.bestInput.harness)},
+    components: ${JSON.stringify(changedComponents(c, incumbent), null, 2).replace(/\n/g, '\n    ')},
+    harness: ${JSON.stringify(changedHarness(c, incumbent))},
     source: ${JSON.stringify(`mimic-eval optimize run ${runId}`)},
   },`;
 }

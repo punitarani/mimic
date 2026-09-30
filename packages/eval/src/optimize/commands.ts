@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   COMPONENT_IDS,
@@ -21,6 +21,7 @@ import {
   calibrationFits,
   type EvalRecord,
   evaluateCandidate,
+  groupBy,
   Meter,
   noiseSd,
   pairedDelta,
@@ -194,8 +195,7 @@ export async function evaluateCmd(argv: string[]) {
   let run: EvalRunRecord;
   if (stored) {
     const recs = storedRecords(loaded.instances);
-    const groups = new Map<string, EvalRecord[]>();
-    for (const r of recs) groups.set(r.candidate, [...(groups.get(r.candidate) ?? []), r]);
+    const groups = groupBy(recs, (r) => r.candidate);
     const predictors = [...groups.entries()]
       .sort(([a], [b]) => roleOrder(a) - roleOrder(b) || a.localeCompare(b))
       .map(([key, rs]) => ({ predictor: key.split('|')[0]!, role: key.split('|')[1]!, ...breakdown(rs) }));
@@ -328,7 +328,14 @@ export async function diagnoseCmd(argv: string[]) {
     recs.filter((r) => !worst.includes(r)),
     seededRng(values.seed),
   ).slice(0, n - worst.length);
-  const engine = await openLocalEngine({ db: ':memory:', providers: values.offline ? 'offline' : 'live' });
+  const out = resolve(values.out ?? `data/diagnose/${ulid()}.md`);
+  mkdirSync(dirname(out), { recursive: true });
+  // The call is logged next to the report (invariant 5), like evaluate and optimize do in their run directories.
+  const engine = await openLocalEngine({
+    db: join(dirname(out), 'calls.sqlite'),
+    blobsDir: join(dirname(out), 'traces'),
+    providers: values.offline ? 'offline' : 'live',
+  });
   try {
     const { markdown, costUsd } = await diagnose(
       engine.deps.gateway,
@@ -337,8 +344,6 @@ export async function diagnoseCmd(argv: string[]) {
       byId,
       [...worst, ...rest],
     );
-    const out = resolve(values.out ?? `data/diagnose/${ulid()}.md`);
-    mkdirSync(join(out, '..'), { recursive: true });
     writeFileSync(
       out,
       `# Diagnosis: ${values.predictor} (${values.role}, ${values.split})\n\n${recs.length} stored predictions; ${worst.length + rest.length} cases shown to ${values['reflection-model']} ($${costUsd.toFixed(4)}).\n\n${markdown}\n`,

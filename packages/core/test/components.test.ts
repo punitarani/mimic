@@ -128,6 +128,8 @@ describe('prediction prompt components (ADR-0026)', () => {
     expect(promptVersionOf('llm:vendor/model@predict.v1')).toBe('predict.v1');
     expect(() => assertPredictorId('llm:vendor/model@nope.v9')).toThrow(/Unknown prediction prompt/);
     expect(() => assertPredictorId('llm:vendor/model@jev-predict.v1')).toThrow(/for jev predictors/);
+    expect(() => assertPredictorId('llm:vendor/model@predict.v1')).toThrow(/names the incumbent/);
+    expect(() => assertPredictorId('jev:typesafe/jev-1.13')).not.toThrow();
     const gw = {} as Gateway;
     expect(makePredictor(gw, 'llm:vendor/model@predict.v1', { purpose: 't' }).id).toBe('llm:vendor/model');
   });

@@ -111,9 +111,19 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
       const train = items.filter((e) => !isHeld(e.questionId)).slice(0, opts.k);
       if (train.length < opts.k) continue;
       const trainSeqs = new Set(train.map((e) => e.seq));
+      const beforeSeq = train.at(-1)!.seq + 1;
+      // Derived data as it stood when question `beforeSeq` was served, sealed below it (ADR-0017), as in replay:
+      // traits and insights computed from later answers (held-out targets included) must not reach the state.
+      const next = loaded.questions.find((q) => q.seq === beforeSeq);
+      const asOf = await loadMimicDataAt(
+        deps,
+        m,
+        next?.stateAt ?? next?.servedAt ?? Number.MAX_SAFE_INTEGER,
+        beforeSeq,
+      );
       const state = buildState(
-        { ...loaded.data, evidence: loaded.data.evidence.filter((e) => trainSeqs.has(e.seq)) },
-        stateOptions(cfg, train.at(-1)!.seq + 1),
+        { ...asOf.data, evidence: asOf.data.evidence.filter((e) => trainSeqs.has(e.seq)) },
+        stateOptions(cfg, beforeSeq),
       );
       let targets = items.filter((e) => isHeld(e.questionId));
       targets = shuffle(targets, seededRng(`targets:${opts.seed}:${m.id}`)).slice(

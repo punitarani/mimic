@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   DEFAULT_PROMPT_VERSION,
   fill,
+  INCUMBENT_HARNESS,
   type PredictPrompt,
   promptHash,
   resolvePredictPrompt,
@@ -104,7 +105,8 @@ const LlmProbs = z.union([
   z.record(z.string(), z.number()),
 ]);
 
-export const LLM_PREDICTOR_MAX_TOKENS = 3000;
+/** The incumbent LLM predictor's output cap (a prompt variant may set its own `harness.maxTokens`). */
+export const LLM_PREDICTOR_MAX_TOKENS = INCUMBENT_HARNESS.maxTokens;
 
 const REASONED_SCHEMA = {
   type: 'object',
@@ -230,8 +232,14 @@ export function promptVersionOf(predictorId: string): string {
   return spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind];
 }
 
-/** Throws unless the ID parses and names a registered prompt version of the right kind. */
+/**
+ * Throws unless the ID parses and names a registered prompt version of the right kind. The incumbent is spelled
+ * without a suffix: `llm:<model>@predict.v1` is the same predictor as `llm:<model>` but would be stored under a
+ * second ID, duplicating its shadows and splitting its metrics.
+ */
 export function assertPredictorId(id: string): void {
   const spec = parsePredictorId(id);
+  if (spec.promptVersion === DEFAULT_PROMPT_VERSION[spec.kind])
+    throw new Error(`${id} names the incumbent prompt; use ${spec.kind}:${spec.model}`);
   resolvePredictPrompt(spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind], spec.kind);
 }

@@ -1,12 +1,12 @@
 import { z } from 'zod';
 import { argmax } from '../distribution';
 import { generateRationale, scenarioToQuestion, validateDraft } from '../learning';
-import { JevPredictor } from '../predictors';
+import { makePredictor, promptVersionOf } from '../predictors';
 import type { PredictionRecord, QuestionRecord } from '../store';
 import type { Distribution } from '../types';
 import { contextState, loadMimicDataAt, STATE_SETTLE_MS, sealedState, stateBlobKey } from './data';
 import { ctxFor, type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
-import { JEV_PROMPT_VERSION, type PublicQuestion, toPublic } from './session';
+import { type PublicQuestion, toPublic } from './session';
 
 export const ScenarioInput = z.object({ scenario: z.string().trim().min(8).max(1000) });
 
@@ -78,12 +78,13 @@ export async function predictPlayground(
     stateAt: null,
   };
   await deps.store.insertQuestions([q]);
-  const model = cfg.predictor.primary.replace(/^jev:/, '');
+  // The primary may name a prompt variant (`jev:<model>@<version>`, ADR-0026); the baseline uses the same prompt.
+  const primarySpec = cfg.predictor.primary;
   const state = await sealedState(deps, loaded, cfg, seq, [q]);
   const base = contextState(loaded, cfg);
   const [[primary], [baseline]] = await Promise.all([
-    new JevPredictor(deps.gateway, model, ctxFor(m, 'playground.predict')).predict(state, [q]),
-    new JevPredictor(deps.gateway, model, ctxFor(m, 'playground.baseline')).predict(base, [q]),
+    makePredictor(deps.gateway, primarySpec, ctxFor(m, 'playground.predict')).predict(state, [q]),
+    makePredictor(deps.gateway, primarySpec, ctxFor(m, 'playground.baseline')).predict(base, [q]),
   ]);
   if (!primary?.ok) throw new EngineError('conflict', 'The mimic could not predict this one. Try again.');
   const rec = (
@@ -94,14 +95,14 @@ export async function predictPlayground(
     id: deps.newId(),
     questionId: q.id,
     mimicId: m.id,
-    predictorId: cfg.predictor.primary,
+    predictorId: primarySpec,
     role,
     dist: r.dist,
     confidence: r.confidence ?? null,
     stateHash: s.meta.stateHash,
     evidenceSeqMax: s.meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: JEV_PROMPT_VERSION,
+    promptVersion: promptVersionOf(primarySpec),
     modelSnapshot: r.modelSnapshot,
     costUsd: r.costUsd,
     latencyMs: r.latencyMs,
