@@ -9,6 +9,7 @@ import {
   DEFAULT_CONFIG_V3,
   DEFAULT_CONFIG_V4,
   DEFAULT_CONFIG_V5,
+  DEFAULT_CONFIG_V6,
   entropy,
   expectedCalibrationError,
   gateFailures,
@@ -160,16 +161,24 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v6 and its predecessors (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v7 and its predecessors (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
-    // v6 (ADR-0041): every LLM shadow on predict.v2, with v5's reasoning-off Qwen kept as a control; nothing else
-    // changes. Calibrated Jev is derived from the stored primary, not a second Jev call.
-    expect(DEFAULT_CONFIG.predictor.shadows).toEqual([
+    // v7 (ADR-0048): v6 with the calibrated primary and without the reasoning-off Qwen control; nothing else changes.
+    expect(DEFAULT_CONFIG.predictor).toEqual({
+      primary: 'jev:typesafe/jev-1.13@jev-predict.v2',
+      shadows: DEFAULT_CONFIG_V4.predictor.shadows.map((s) => `${s}@predict.v2`),
+    });
+    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V6.predictor }).toEqual(DEFAULT_CONFIG_V6);
+    expect(configHash(DEFAULT_CONFIG)).toBe(
+      '23db631f6895e863b4ee690fefa3e1903d160f5b8b045c9ee725f2096e156d15',
+    );
+    // v6 (ADR-0041): every LLM shadow on predict.v2, with v5's reasoning-off Qwen kept as a control.
+    expect(DEFAULT_CONFIG_V6.predictor.shadows).toEqual([
       ...DEFAULT_CONFIG_V4.predictor.shadows.map((s) => `${s}@predict.v2`),
       'llm:qwen/qwen3.8-flash@predict.v1-direct',
     ]);
-    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V5.predictor }).toEqual(DEFAULT_CONFIG_V5);
-    expect(configHash(DEFAULT_CONFIG)).toBe(
+    expect({ ...DEFAULT_CONFIG_V6, predictor: DEFAULT_CONFIG_V5.predictor }).toEqual(DEFAULT_CONFIG_V5);
+    expect(configHash(DEFAULT_CONFIG_V6)).toBe(
       '34eb32689f85b1e3b050b2827a575ad8b38b1ec2dd33822fb43698e2da248dd9',
     );
     // v5 (ADR-0038) is v4 with Qwen3.8 Flash's shadow run with reasoning off.

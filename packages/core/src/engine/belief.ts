@@ -1,10 +1,22 @@
 import { type BeliefAnswer, type BeliefState, buildBelief } from '../belief';
 import type { PipelineConfig } from '../config';
-import { repeatAgreement } from '../scoring';
+import { calibrationTemperatureOf, rawScale } from '../predictors';
+import { repeatAgreement, scorePrediction } from '../scoring';
 import type { AnswerRecord, InsightRecord, MimicRecord, QuestionRecord, ScoredPredictionRow } from '../store';
 import { type Facet, isScoredKind } from '../types';
 import type { LoadedMimic } from './data';
 import type { EngineDeps } from './deps';
+
+/**
+ * A scored primary's item accuracy on its predictor's raw scale: re-scored with calibration undone when the primary
+ * is calibrated (ADR-0048), the stored score otherwise.
+ */
+export function rawItemAcc(r: ScoredPredictionRow, answer: string | undefined): number {
+  if (answer === undefined || calibrationTemperatureOf(r.prediction.predictorId) === 1)
+    return r.score.itemAcc;
+  return scorePrediction(r.question.type, rawScale(r.prediction.predictorId, r.prediction.dist), answer)
+    .itemAcc;
+}
 
 export interface BeliefSources {
   /** Every insight, including superseded ones (contradictions raise a facet's conflict). */
@@ -62,11 +74,14 @@ export function beliefFromLoaded(
 ): BeliefState {
   const beforeSeq = opts.beforeSeq ?? Number.MAX_SAFE_INTEGER;
   const qById = new Map(loaded.questions.map((q) => [q.id, q]));
-  const accByQ = new Map(sources.scored.map((r) => [r.question.id, r.score.itemAcc]));
+  const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
+  // The weakness term reads the primary's accuracy on its raw scale, the one it was tuned on (ADR-0048).
+  const accByQ = new Map(
+    sources.scored.map((r) => [r.question.id, rawItemAcc(r, answerByQ.get(r.question.id)?.value)]),
+  );
   // Answers the scope hides (a withdrawn category) never count toward any belief (ADR-0040).
   const visible = loaded.answers.filter((a) => !loaded.scope.hiddenQuestionIds.has(a.questionId));
   const answers = beliefAnswers(visible, qById, accByQ, beforeSeq);
-  const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
   const served = loaded.questions
     .filter((q) => q.status === 'served' && isScoredKind(q.kind) && !loaded.scope.hiddenQuestionIds.has(q.id))
     .map((q) => ({ type: q.type, domain: q.domain, facetIds: q.facetIds }));

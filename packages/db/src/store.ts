@@ -1153,6 +1153,8 @@ export class DrizzleStore implements Store {
         questionId: s.predictions.questionId,
         role: s.predictions.role,
         fallback: s.predictions.fallback,
+        predictorId: s.predictions.predictorId,
+        distJson: s.predictions.distJson,
         itemAcc: s.scores.itemAcc,
         logLoss: s.scores.logLoss,
         kind: s.questions.kind,
@@ -1184,6 +1186,8 @@ export class DrizzleStore implements Store {
         questionId: r.questionId,
         role: r.role as 'primary' | 'baseline',
         fallback: r.fallback,
+        predictorId: r.predictorId,
+        dist: parse(Dist, r.distJson, {}),
         itemAcc: r.itemAcc,
         logLoss: r.logLoss,
         question: {

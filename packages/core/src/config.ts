@@ -196,7 +196,7 @@ export const DEFAULT_CONFIG_V5: PipelineConfig = {
  * primary for free rather than by a second Jev call. Older mimics keep their config; `pnpm backfill` adds the new
  * shadows to questions already served.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V6: PipelineConfig = {
   ...DEFAULT_CONFIG_V5,
   predictor: {
     ...DEFAULT_CONFIG_V5.predictor,
@@ -210,7 +210,23 @@ export const DEFAULT_CONFIG: PipelineConfig = {
     ],
   },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v6';
+
+/**
+ * `cfg.default.v7` (ADR-0048): v6 with the primary calibrated (`jev-predict.v2`, temperature 4) and without the
+ * reasoning-off Qwen control. On the held-out people calibration cut the primary's log loss from 1.80 to 1.12 with
+ * accuracy unchanged; selection keeps Jev's raw scale, so the questions asked are chosen as before. The control showed
+ * reasoning makes Qwen more accurate and reliable, which answers its question. Everything else is v6.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V6,
+  predictor: {
+    primary: `jev:${JEV_MODEL}@jev-predict.v2`,
+    shadows: DEFAULT_CONFIG_V6.predictor.shadows.filter(
+      (s) => s !== `llm:${LLM.qwenFlash}@predict.v1-direct`,
+    ),
+  },
+};
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v7';
 
 /**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never

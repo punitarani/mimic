@@ -1453,7 +1453,8 @@ exports. This ADR closes them in code, adds the consent UI, and proves both with
   `docs/screenshots/m11-*.png`). Offline cohorts use fakes and scripted answers: they test mechanisms, not people.
 
 Not done here: the trust ramp (no sensitive question in the first five) and a sweep that reaches every consented
-sensitive facet by question 30 are selection changes and come with `cfg.default.v7` (ADR-0044).
+sensitive facet by question 30 are selection changes and come with `cfg.default.v8` (ADR-0044; v7 is the calibrated
+primary, ADR-0048).
 
 ## ADR-0046 — "Your map" as a knowledge network (2026-09-30)
 
@@ -1517,3 +1518,116 @@ or do, so the field now isn't rendered while the code is locked.
 - **Prerendered HTML is unchanged.** The Suspense fallback (ADR-0023) still renders the field, since the static page
   can't see the query string; hydration removes it for invite links, so the fields below move up once. Removing
   that shift would mean rendering `/new` per request, which ADR-0023 chose against.
+
+## ADR-0048 — Learnings from the first prod reports: a calibrated primary (`cfg.default.v7`), an honest optimizer verdict, paired comparisons (2026-09-30)
+
+**Evidence.** After ADR-0041 shipped, Actions → Optimize ran twice on prod. The data was 4 consented people and 265
+scored questions: 2 dev people and 2 test people. The first run was a GEPA search on Jev's templates. The second was
+a free report taken once the `predict.v2` backfill had finished. The numbers are from real people, but with four of
+them, a top-1 difference under about 3 points, or a log-loss difference under about 0.03, is noise.
+
+- **Calibration is the one clear win.**
+  - At T = 4 the primary's held-out log loss went from 1.804 to 1.124, ECE from 0.267 to 0.098, and item accuracy
+    from 57.7% to 57.9%.
+  - Over all people, accuracy on score questions went from 73.8% to 74.6%.
+  - Both test people improved on their own: 1.61 → 1.03 and 1.96 → 1.20.
+  - A refit on four people puts T at 5.3 (test log loss 1.112 against 1.124). That isn't worth a new version.
+- **`predict.v2` is a reliability fix, not an accuracy change.** I paired v2 and v1 by hand on the 232 questions of
+  the three fully backfilled people:
+
+  | Model | Log loss (v2 vs v1) | Top-1 (v2 vs v1) |
+  | --- | --- | --- |
+  | DeepSeek | 1.064 vs 1.068 | 50.4% vs 48.7% |
+  | MiMo Flash | 1.042 vs 1.053 | 50.0% vs 48.7% |
+  | GLM | 1.050 vs 1.049 | 49.1% vs 49.6% |
+  | Luna | 1.088 vs 1.091 | 47.0% vs 48.7% |
+
+  Failures across the four fell from 11 to 4.
+- **The key enum didn't make GLM slower or DeepSeek costlier.** In the backfill, GLM's p50 went from 1.5 s to 6.5 s
+  and DeepSeek's cost per prediction rose 34%. A live probe of 12 calls each, with and without the enum, ruled the
+  enum out:
+  - GLM took 1.4 s with it and 13.4 s without. Each call went to Wafer or Together, and Wafer was the slow one.
+  - DeepSeek went to Wafer every time, at the same cost either way.
+
+  The likely cause is the backfill itself: a burst of about 1,500 calls in random order. Live calls are made one
+  question after another on a state that has just grown by one line, so they get prompt-cache hits the backfill
+  doesn't. The enum stays on for every model.
+- **Reasoning helps Qwen, but Qwen is still the weakest model.** Reasoning on (`predict.v2`) against off
+  (`predict.v1-direct`), on the same people:
+  - top-1 44.1% vs 41.3%;
+  - failures 3% vs 21%;
+  - log loss 1.22 vs 1.15. With reasoning on it is overconfident (fitted T ≈ 2.5), and failures scored as uniform
+    flatter the reasoning-off arm.
+  - twice the cost, and 17.5 s vs 2.8 s.
+
+  MiMo, DeepSeek and GLM beat Qwen on every measure under either setting.
+- **The GEPA run's gain didn't replicate.** It cost $1.03 for 30 iterations. Validation improved by 0.052 nats (CI
+  0.009 to 0.102). On the holdout the gain was 0.006 (CI −0.012 to 0.023), and item accuracy fell 3.8 points.
+  - With two training people split by question, the search fits them. It still printed "Improved", because the old
+    rule only required the holdout not to be worse by more than the noise margin.
+  - 9 of the 30 iterations were wasted on replies over the 120-word limit, even after the repair turn.
+- **Where the mimic learns.**
+  - On choice questions, predictors beat the context-only baseline by 6–10 points of top-1.
+  - On yes/no questions there is no gain, and several models do worse than the baseline.
+  - On scale questions the gain is 1–3 points.
+  - People repeat their own answers 84–92% of the time, which bounds accuracy.
+- **An unpaired report misleads while a backfill runs.** The first report was taken two minutes into the backfill.
+  It compared `predict.v2` on 99–156 early (harder) questions with v1 on all 265, and made v2 look 0.05–0.08 nats
+  worse.
+
+**Decisions.**
+
+- **`cfg.default.v7`** is v6 with the primary `jev:typesafe/jev-1.13@jev-predict.v2`, and without the reasoning-off
+  Qwen control.
+  - *Calibration changes what is stored and shown, not which question is asked.* VOI's information term is the
+    mutual information between hypothesis predictions, which T = 4 shrinks about tenfold (0.53 → 0.05 for a clean
+    two-way split). Selecting on calibrated predictions would quietly shift selection toward the coverage terms, whose
+    weights were tuned on Jev's raw scale.
+  - *Stored rows are the calibrated predictor's own output.* The primary, the baseline and the hypothesis rows carry
+    `jev:typesafe/jev-1.13@jev-predict.v2` and its prompt version, so a row's ID always says which scale it is on,
+    and the baseline's lift compares like with like.
+  - *Selection runs on the raw scale.* `selectionView` gives the selector and the hypothesis explorer the same
+    templates at T = 1, one Jev call per candidate batch as before. The chosen question's prediction from that call
+    is rescaled into the stored primary, so there is no second call.
+  - *Everything selection reads from storage goes back to the raw scale.* `rawScale(predictorId, dist)` inverts the
+    predictor's registered temperature (`uncalibrate`, exact to the P_FLOOR clip). Three readers use it: the
+    hypothesis posterior's likelihoods (`loadHypothesisSet`), the belief state's weakness term (`rawItemAcc`), and
+    the cross-person `item_stats` (`runStatsRefresh`), so v6 and v7 people pool on one scale.
+  - *Tests pin the invariance.* The same scripted person under v6 and v7 gets identical questions and identical
+    selection diagnostics, under both the hypothesis regime and entropy-only selection (k = 0), and v7's stored
+    primary, baseline and hypothesis rows are v6's rescaled at T = 4. Calibrating what selection sees, the weakness
+    input or the posterior's likelihoods each fails it. A second test checks that `item_stats` from v7 rows equal
+    those from v6 rows.
+  - *The reasoning-off Qwen control is retired,* since its question is answered. Qwen stays on `predict.v2` like the
+    other four; dropping Qwen altogether is a research-scope call left open. Retiring the control saves about
+    $0.0004 a question.
+  - *T stays 4.*
+  - *Numbering.* M12's config becomes `cfg.default.v8` (ADR-0044). The M10 candidate is pinned to v6, so a new
+    default changes neither its hash nor what it measures. M13 compares it with v8; since calibration doesn't change
+    which questions are asked, that comparison is unaffected by v7.
+- **The optimizer's verdict requires replication** (`judge`).
+  - "Improved" needs the validation gain above the noise margin with its 90% CI above zero, plus a holdout paired
+    gain above zero with 90% confidence on at least 20 holdout questions (`MIN_HOLDOUT`), and holdout item accuracy
+    not lower with 90% confidence.
+  - A validation gain without that is "Unconfirmed" and gets no suggested version.
+  - The holdout section reports the paired accuracy change.
+  - A test replays the first run's numbers, and they now come out "Unconfirmed".
+- **`optimize.reflect.v2`.**
+  - The WORD LIMIT line gives the hard limit, a target 15% below it, and the current text's word count.
+  - A reply over the limit gets a repair turn saying how many words to cut.
+- **Paired comparisons in the stored report.** For every pair of predictors on the same model (prompt versions,
+  calibration, reasoning settings), the report shows the change in log loss and item accuracy with 90% CIs on the
+  questions both answered. Versions sort in numeric order (v2 before v10), and a predictor counts once per question.
+- **What the stored report treats as the primary.**
+  - A primary the LLM fallback served (Jev failed, PLAN §16) is reported under its own role, `fallback`. It is never
+    the configured primary's row, never derives a calibrated row, and never enters a pair or a calibration fit.
+  - Calibration fits are per primary ID, since a v7 primary is already calibrated and a v6 one is not. A temperature
+    fitted on a calibrated predictor is labelled as on top of its own, and log-linear pools are fitted per primary.
+  - `diagnose` without `--predictor` reads every primary (each config version's), and a shadow needs `--predictor`.
+- **Unchanged:** the key enum, the per-model caps, and the optimizer's budgets.
+
+**Spend.** The backfill cost about $0.85, the optimize run $1.03 and the probes about $0.03: roughly $1.9 of the $5,
+plus about $0.70 of earlier smoke tests.
+
+**Next.** The limit is how few real people there are, not the search. Re-run the optimizer once there are six or more
+dev people, so the split is by person and validation measures new people.

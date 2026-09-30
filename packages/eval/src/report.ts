@@ -283,6 +283,24 @@ function renderEvaluate(m: M): string[] {
       '',
     );
   }
+  const paired = m.paired as Array<M> | undefined;
+  if (paired?.length) {
+    const ci = (d: M, scale: number, digits: number) =>
+      `${signed(d.mean, digits, scale)} (${signed(d.ciLow, digits, scale)} to ${signed(d.ciHigh, digits, scale)})`;
+    out.push(
+      '## Paired comparisons (same model, same questions)',
+      '',
+      'Each change on the questions both predictors answered, with a 90% CI. A CI that spans 0 is noise at this size.',
+      '',
+      '| Model | From → to | n | Δ log loss | Δ item accuracy (points) | Failed |',
+      '| --- | --- | --- | --- | --- | --- |',
+      ...paired.map(
+        (x) =>
+          `| \`${String(x.model)}\` | \`${String(x.from)}\` → \`${String(x.to)}\` | ${String(x.n)} | ${ci(x.logLoss as M, 1, 4)} | ${ci(x.itemAcc as M, 100, 1)} | ${String(x.failedFrom)} → ${String(x.failedTo)} |`,
+      ),
+      '',
+    );
+  }
   const fits = m.fits as Array<M> | undefined;
   if (fits?.length) {
     out.push(
@@ -348,6 +366,7 @@ function renderOptimize(m: M): string[] {
   }
   if (holdout) {
     const hd = holdout.delta as M;
+    const ad = holdout.accuracyDelta as M | undefined;
     out.push(
       '## Holdout (test-split people, evaluated once after selection)',
       '',
@@ -357,6 +376,11 @@ function renderOptimize(m: M): string[] {
       ]),
       '',
       `Paired Δ score: ${signed(hd.mean, 4, 1)} nats per question, 90% CI ${f4(hd.ciLow)} to ${f4(hd.ciHigh)}, n = ${String(hd.n)}.`,
+      ...(ad
+        ? [
+            `Paired Δ item accuracy: ${signed(ad.mean)} points, 90% CI ${signed(ad.ciLow)} to ${signed(ad.ciHigh)}.`,
+          ]
+        : []),
       '',
     );
   }

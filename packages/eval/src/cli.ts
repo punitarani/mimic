@@ -47,8 +47,9 @@ Commands
             --data <a.sqlite>[,<b.sqlite>] --from stored        stored online predictions, calibration fits; no calls
             --data … --predictor <id>[,<id>] [--candidate <cand.json>[,…]] [--repeat] [--max-usd 2]
             [--split dev|test|all] [--k 30] [--limit N] [--max-targets 40] [--publish local|preview|prod]
-  diagnose  Failure analysis of a stored predictor by the reflection model (one call)
-            --data … --predictor <id> [--role primary|shadow] [--cases 40] [--reflection-model <id>]
+  diagnose  Failure analysis of stored predictions by the reflection model (one call per person)
+            --data … [--role primary|baseline|shadow] [--predictor <id>, required for shadow] [--cases 30]
+            [--people 3] [--reflection-model <id>]
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
             --data … --predictor jev:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
             [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]

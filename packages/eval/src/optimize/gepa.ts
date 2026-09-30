@@ -105,7 +105,9 @@ export interface OptimizeResult {
     logLossDelta: PairedDelta;
     byPerson: Record<string, PairedDelta>;
   };
-  holdout: { seed: Metrics; best: Metrics; delta: PairedDelta } | null;
+  /** `accuracyDelta` is the paired item-accuracy change (absent in results from before ADR-0048). */
+  holdout: { seed: Metrics; best: Metrics; delta: PairedDelta; accuracyDelta?: PairedDelta } | null;
+  /** True only when the validation gain beats noise and replicates on the holdout (ADR-0048). */
   improved: boolean;
   verdict: string;
   suggestedVersion: string | null;
@@ -562,29 +564,25 @@ async function finish(
     try {
       const s = await evaluate(seed.candidate, holdout, { meter: new Meter() });
       const b = await evaluate(best.candidate, holdout, { meter: new Meter() });
-      holdoutOut = { seed: metricsOf(s), best: metricsOf(b), delta: pairedDelta(s, b, 'value', 'holdout') };
+      holdoutOut = {
+        seed: metricsOf(s),
+        best: metricsOf(b),
+        delta: pairedDelta(s, b, 'value', 'holdout'),
+        accuracyDelta: pairedDelta(s, b, 'itemAcc', 'holdout-acc'),
+      };
     } catch (e) {
       if (!(e instanceof OutageStop)) throw e;
       holdoutError = e.message;
     }
   }
   const margin = state.noise?.valMargin ?? 0;
-  const improved =
-    best !== seed &&
-    !holdoutError &&
-    delta.mean > margin &&
-    delta.ciLow > 0 &&
-    (!holdoutOut || holdoutOut.delta.mean >= -margin);
-  const verdict =
-    best === seed
-      ? 'No candidate beat the seed on validation.'
-      : holdoutError
-        ? `Undecided: the holdout check hit a ${holdoutError}; resume with the same --run-dir to finish it.`
-        : improved
-          ? `Improved: validation score +${delta.mean.toFixed(4)} nats per question (90% CI ${delta.ciLow.toFixed(4)} to ${delta.ciHigh.toFixed(4)}), above the noise margin ${margin.toFixed(4)}${holdoutOut ? `; holdout ${holdoutOut.delta.mean >= 0 ? '+' : ''}${holdoutOut.delta.mean.toFixed(4)}` : '; no test-split people to hold out'}.`
-          : holdoutOut && holdoutOut.delta.mean < -margin
-            ? `Not shipped: it lost on the holdout (${holdoutOut.delta.mean.toFixed(4)} nats per question) despite a validation gain of +${delta.mean.toFixed(4)}.`
-            : `Not shipped: the best candidate's gain (+${delta.mean.toFixed(4)}, CI ${delta.ciLow.toFixed(4)} to ${delta.ciHigh.toFixed(4)}) is within noise (margin ${margin.toFixed(4)}).`;
+  const { improved, verdict } = judge({
+    sameAsSeed: best === seed,
+    holdoutError,
+    val: delta,
+    margin,
+    holdout: holdoutOut,
+  });
   const base = best.candidate.baseVersion;
   const bestInput: CandidateInput = {
     label: best.candidate.label,
@@ -610,6 +608,57 @@ async function finish(
     suggestedVersion: improved ? nextVersion(best.candidate.kind) : null,
     bestInput,
   };
+}
+
+/** Holdout questions below which a paired bootstrap interval is too coarse to confirm a gain. */
+export const MIN_HOLDOUT = 20;
+
+/**
+ * The verdict on a run (ADR-0048). "Improved" needs a validation gain above the noise margin with a 90% CI above zero,
+ * and a replication on at least MIN_HOLDOUT holdout questions: its paired gain above zero with 90% confidence, and
+ * item accuracy not lower with 90% confidence. Anything short of that is "Unconfirmed", with the reason, and gets no
+ * suggested version.
+ */
+export function judge(x: {
+  sameAsSeed: boolean;
+  holdoutError: string | null;
+  val: PairedDelta;
+  margin: number;
+  holdout: OptimizeResult['holdout'];
+}): { improved: boolean; verdict: string } {
+  const valGain = !x.sameAsSeed && x.val.mean > x.margin && x.val.ciLow > 0;
+  const h = x.holdout;
+  const acc = h?.accuracyDelta;
+  // An improvement has to replicate on people the search never saw: with a handful of training people a validation
+  // gain can be fitting them.
+  const enough = !!h && h.delta.n >= MIN_HOLDOUT;
+  const replicated = enough && h.delta.ciLow > 0;
+  const accuracyHeld = !acc || acc.ciHigh >= 0;
+  const improved = valGain && !x.holdoutError && replicated && accuracyHeld;
+  const f4 = (v: number) => v.toFixed(4);
+  const pts = (v: number) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}`;
+  const valText = `validation score +${f4(x.val.mean)} nats per question (90% CI ${f4(x.val.ciLow)} to ${f4(x.val.ciHigh)}), above the noise margin ${f4(x.margin)}`;
+  const holdoutText = h
+    ? `holdout ${h.delta.mean >= 0 ? '+' : ''}${f4(h.delta.mean)} (90% CI ${f4(h.delta.ciLow)} to ${f4(h.delta.ciHigh)})${acc ? `, item accuracy ${pts(acc.mean)} points` : ''}`
+    : '';
+  let verdict: string;
+  if (x.sameAsSeed) verdict = 'No candidate beat the seed on validation.';
+  else if (x.holdoutError)
+    verdict = `Undecided: the holdout check hit a ${x.holdoutError}; resume with the same --run-dir to finish it.`;
+  else if (!valGain)
+    verdict = `Not shipped: the best candidate's gain (+${f4(x.val.mean)}, CI ${f4(x.val.ciLow)} to ${f4(x.val.ciHigh)}) is within noise (margin ${f4(x.margin)}).`;
+  else if (!h)
+    verdict = `Unconfirmed: ${valText}, but there are no test-split people to confirm it on. Not registered.`;
+  else if (h.delta.mean < -x.margin)
+    verdict = `Not shipped: it lost on the holdout (${f4(h.delta.mean)} nats per question) despite a validation gain of +${f4(x.val.mean)}.`;
+  else if (improved) verdict = `Improved: ${valText}; confirmed on the holdout: ${holdoutText}.`;
+  else if (!enough)
+    verdict = `Unconfirmed: ${valText}, but the holdout has only ${h.delta.n} questions (at least ${MIN_HOLDOUT} are needed to confirm it). Not registered.`;
+  else if (!replicated)
+    verdict = `Unconfirmed: ${valText}, but it did not replicate on the holdout: ${holdoutText}. Not registered: the gain may fit the training people only.`;
+  else
+    verdict = `Unconfirmed: ${valText}, and the holdout gain replicated (${holdoutText}), but holdout item accuracy fell (90% CI ${pts(acc!.ciLow)} to ${pts(acc!.ciHigh)} points). Not registered.`;
+  return { improved, verdict };
 }
 
 /** A ready-to-paste `PREDICT_PROMPTS` entry for a winner (packages/core/src/components.ts). */

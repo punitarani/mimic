@@ -9,9 +9,9 @@ reported; see ADR-0028 and "What is built" below. M12 (re-derivation) and M13 (g
 | --- | --- | --- |
 | Prompt components and registered variants | `packages/core/src/components.ts`, `docs/prompts/variants/` | `predict.system`, `predict.user`, `state.evidence.line`, `jev.instructions`, `jev.choice`, `jev.noul.true`, `jev.noul.false`; harness: reasoning effort or budget, max tokens, `probs`/`reasoned` schema, Jev state as JSON or text, calibration temperature; per-model harness overrides (ADR-0041) |
 | Variant predictor IDs | `parsePredictorId`, `makePredictor`, `pnpm backfill` | `llm:<model>@<version>`, `jev:<model>@<version>`; unsuffixed IDs unchanged |
-| `mimic-eval evaluate` | `packages/eval/src/optimize/` | `--from stored` (free: per predictor, split, person and type; self-consistency; temperature, shrinkage and pooling fits) or live candidates with paired deltas and `--repeat` for the noise floor |
-| `mimic-eval diagnose` | same | One reflection-model call over the costliest misses of a stored predictor; local only |
-| `mimic-eval optimize` | same | GEPA loop: Pareto sampling, minibatch reflection, noise-margin acceptance, leakage lint, spend and call caps, resume, holdout check, verdict, `PREDICT_PROMPTS` snippet |
+| `mimic-eval evaluate` | `packages/eval/src/optimize/` | `--from stored` (free: per predictor, split, person and type; paired comparisons of each model's versions on shared questions; self-consistency; temperature, shrinkage and pooling fits) or live candidates with paired deltas and `--repeat` for the noise floor |
+| `mimic-eval diagnose` | same | One reflection-model call per person (up to `--people`) over a stored predictor's costliest misses; local only |
+| `mimic-eval optimize` | same | GEPA loop: Pareto sampling, minibatch reflection, noise-margin acceptance, leakage lint, spend and call caps, resume, holdout check, verdict ("Improved" only when the gain replicates on the holdout, ADR-0048), `PREDICT_PROMPTS` snippet |
 | Actions → Optimize | `.github/workflows/optimize.yml` | Export prod (scrubbed), optional Twin-2K-500, free report, optional capped run; publishes to `/lab` |
 
 Decisions taken for v1 are in §14 and ADR-0028. Deviations from the proposal below: cache hits are not logged as
@@ -48,10 +48,10 @@ variant's shared harness and other `modelHarness` entries are carried over, so o
 | `predict.v2` | Reasoning and caps per model: a low effort for GPT-6 Luna, DeepSeek and GLM; a 1,024-token budget for MiMo Flash and Qwen Flash, which take no effort level; caps at about twice the largest measured completion. The answer's keys are an enum of the options, with labels re-keyed as a fallback. Runs only on the five models it lists | ADR-0041: Qwen truncated on long states under the old 3,000 cap; medium effort bought nothing measurable; Qwen and GLM sometimes keyed a scale by its labels |
 | `jev-predict.v2` | Jev's distribution softened by a calibration temperature of 4 (same top pick; accuracy on score questions can move) | ADR-0041: fitted on the prod dev person, held-out log loss 1.804 → 1.124 and ECE 0.267 → 0.098 |
 
-`cfg.default.v6` runs every LLM shadow on `predict.v2`, plus `predict.v1-direct` for Qwen (reasoning off, ADR-0038) as a control; the primary is unchanged. `jev-predict.v2` is not a shadow
-(that would be a second identical Jev call): `evaluate --from stored` derives it from the stored primary as rows with
-the role `derived`, for free. It also seeds Actions → Optimize, and it is the version to name when calibration is
-promoted to primary.
+`cfg.default.v6` runs every LLM shadow on `predict.v2`, plus `predict.v1-direct` for Qwen (reasoning off, ADR-0038) as
+a control. `cfg.default.v7` makes `jev-predict.v2` the primary and retires the control (ADR-0048). For primaries still
+on `jev-predict.v1`, `evaluate --from stored` derives calibrated Jev from the stored answers as rows with the role
+`derived`, for free. `jev-predict.v2` also seeds Actions → Optimize.
 
 > Scope: how to turn the two real sessions we have (50–90 questions each) plus Twin-2K-500 into an honest eval loop,
 > and how to run DSPy/GEPA-style reflective optimization over the prompts and the harness without breaking the
@@ -376,11 +376,13 @@ reflection model reasons about the mechanism rather than skimming 3K tokens of e
 
 ### 5.5 `mimic-eval diagnose`: reflective evals without optimizing anything
 
-The same reflective dataset, sent once to the reflection model with a "cluster and explain" prompt instead of a
+The same reflective dataset, sent to the reflection model once per person (invariant 8: no prompt mixes people) with a "cluster and explain" prompt instead of a
 "rewrite" prompt, gives a failure analysis per predictor: which question types and facets it misses, whether it
 ignores the "why", whether score items collapse to the middle, whether it over-weights identity facts. Output is
 markdown under `data/evals/<run>/diagnose.md`, publishable with `report --to`. This is the deliverable for "run evals
-GEPA-style" and it is useful on day one with the stored predictions alone.
+GEPA-style" and it is useful on day one with the stored predictions alone. Without `--predictor` it reads every
+predictor that filled `--role` (for `primary`, each config version's primary, never an LLM fallback; ADR-0048);
+`--role shadow` needs `--predictor`.
 
 ---
 

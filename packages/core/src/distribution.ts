@@ -77,3 +77,13 @@ export function temperatureScale(dist: Distribution, t: number): Distribution {
     keys,
   );
 }
+
+/**
+ * The inverse of `temperatureScale(·, t)`: p ∝ q^t. Exact, except that a probability `temperatureScale` floored at
+ * P_FLOOR comes back as about P_FLOOR, so scores differ by under 1e-4 (ADR-0048).
+ */
+export function uncalibrate(dist: Distribution, t: number): Distribution {
+  if (t === 1) return dist;
+  const keys = Object.keys(dist);
+  return normalizeDist(Object.fromEntries(keys.map((k) => [k, dist[k]! ** t])), keys);
+}
