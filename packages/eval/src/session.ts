@@ -111,6 +111,8 @@ async function simulated(engine: LocalEngine, persona: string, q: PublicQuestion
 export interface SessionOptions {
   turns: number;
   participantId?: string;
+  /** A registered config to create the mimic under, instead of the default (see `configs.ts`). */
+  configHash?: string;
   simulatePersona?: string;
   onTurn?: (t: TurnLog) => void;
 }
@@ -137,6 +139,7 @@ export async function runSession(
     },
     // Scripted people are marked so reports can keep them apart from real ones (R10).
     opts.participantId ?? `script:${ulid()}`,
+    opts.configHash ? { configHash: opts.configHash } : {},
   );
   await engine.drain();
   const { turns } = await continueSession(engine, m.id, script, opts);
@@ -151,7 +154,7 @@ export async function continueSession(
   engine: LocalEngine,
   mimicId: string,
   script: SessionScript,
-  opts: Omit<SessionOptions, 'participantId'>,
+  opts: Omit<SessionOptions, 'participantId' | 'configHash'>,
 ): Promise<{ turns: TurnLog[] }> {
   const { deps } = engine;
   const m = { id: mimicId };

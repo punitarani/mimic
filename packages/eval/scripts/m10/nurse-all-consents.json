@@ -1,0 +1,7 @@
+{
+  "intake": { "name": "Ana Costa", "location": "Lisbon, PT", "occupation": "Nurse" },
+  "consentResearch": false,
+  "consents": { "politics": true, "religion": true, "sexuality": true, "health": true, "money": true },
+  "seed": "m10-nurse",
+  "policy": "consistent"
+}

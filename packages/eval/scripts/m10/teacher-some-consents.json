@@ -1,0 +1,7 @@
+{
+  "intake": { "name": "Priya Nair", "location": "Toronto, CA", "occupation": "Teacher" },
+  "consentResearch": false,
+  "consents": { "politics": true, "health": true },
+  "seed": "m10-teacher",
+  "policy": "consistent"
+}

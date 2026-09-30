@@ -1,0 +1,1100 @@
+{
+  "version": "v2",
+  "groups": [
+    "Personality",
+    "Decisions",
+    "Emotion and motivation",
+    "Values and morality",
+    "Beliefs and worldview",
+    "Social and communication",
+    "Relationships and intimacy",
+    "Everyday and health",
+    "Work",
+    "Money"
+  ],
+  "facets": [
+    {
+      "id": "openness",
+      "group": "Personality",
+      "name": "openness",
+      "low": "Prefers the familiar",
+      "high": "Seeks novelty and ideas",
+      "labels": [
+        "Strongly prefers the familiar",
+        "Leans toward the familiar",
+        "Balanced",
+        "Leans toward novelty and ideas",
+        "Strongly seeks novelty and ideas"
+      ],
+      "category": "psychology",
+      "source": "Goldberg 1992, Big-Five factor markers; IPIP public-domain items (ipip.ori.org)"
+    },
+    {
+      "id": "conscientiousness",
+      "group": "Personality",
+      "name": "conscientiousness",
+      "low": "Flexible, spontaneous",
+      "high": "Organized, disciplined",
+      "labels": [
+        "Very flexible and spontaneous",
+        "Leans flexible",
+        "Balanced",
+        "Leans organized",
+        "Very organized and disciplined"
+      ],
+      "category": "psychology",
+      "source": "Goldberg 1992, Big-Five factor markers; IPIP public-domain items (ipip.ori.org)"
+    },
+    {
+      "id": "extraversion",
+      "group": "Personality",
+      "name": "extraversion",
+      "low": "Reserved",
+      "high": "Outgoing",
+      "labels": [
+        "Very reserved",
+        "Leans reserved",
+        "Balanced",
+        "Leans outgoing",
+        "Very outgoing"
+      ],
+      "category": "psychology",
+      "source": "Goldberg 1992, Big-Five factor markers; IPIP public-domain items (ipip.ori.org)"
+    },
+    {
+      "id": "agreeableness",
+      "group": "Personality",
+      "name": "agreeableness",
+      "low": "Challenging",
+      "high": "Accommodating",
+      "labels": [
+        "Very challenging",
+        "Leans challenging",
+        "Balanced",
+        "Leans accommodating",
+        "Very accommodating"
+      ],
+      "category": "psychology",
+      "source": "Goldberg 1992, Big-Five factor markers; IPIP public-domain items (ipip.ori.org)"
+    },
+    {
+      "id": "emotional_stability",
+      "group": "Personality",
+      "name": "emotional stability",
+      "low": "Easily stressed",
+      "high": "Even-keeled",
+      "labels": [
+        "Very easily stressed",
+        "Leans easily stressed",
+        "Balanced",
+        "Leans even-keeled",
+        "Very even-keeled"
+      ],
+      "category": "psychology",
+      "source": "Goldberg 1992, Big-Five factor markers; IPIP public-domain items (ipip.ori.org)"
+    },
+    {
+      "id": "risk_tolerance",
+      "group": "Decisions",
+      "name": "risk tolerance",
+      "low": "Avoids risk",
+      "high": "Seeks risk",
+      "labels": [
+        "Strongly avoids risk",
+        "Leans cautious",
+        "Balanced",
+        "Leans toward risk",
+        "Strongly seeks risk"
+      ],
+      "category": "psychology",
+      "source": "Dohmen et al. 2011, general risk question; Falk et al. 2018, Global Preference Survey"
+    },
+    {
+      "id": "patience",
+      "group": "Decisions",
+      "name": "patience",
+      "low": "Wants it now",
+      "high": "Waits for more later",
+      "labels": [
+        "Strongly wants it now",
+        "Leans toward now",
+        "Balanced",
+        "Leans toward waiting for more",
+        "Strongly prefers waiting for more later"
+      ],
+      "category": "psychology",
+      "source": "Frederick, Loewenstein & O'Donoghue 2002, time preference; Falk et al. 2018"
+    },
+    {
+      "id": "loss_aversion",
+      "group": "Decisions",
+      "name": "loss aversion",
+      "low": "Losses and gains weigh the same",
+      "high": "Losses loom larger",
+      "labels": [
+        "Losses and gains weigh the same",
+        "Losses weigh slightly more",
+        "Losses weigh somewhat more",
+        "Losses weigh clearly more",
+        "Losses loom much larger than gains"
+      ],
+      "category": "psychology",
+      "source": "Kahneman & Tversky 1979, prospect theory; Gächter, Johnson & Herrmann 2022"
+    },
+    {
+      "id": "ambiguity_tolerance",
+      "group": "Decisions",
+      "name": "ambiguity tolerance",
+      "low": "Needs certainty",
+      "high": "Comfortable with unknowns",
+      "labels": [
+        "Strongly needs certainty",
+        "Leans toward certainty",
+        "Balanced",
+        "Leans comfortable with unknowns",
+        "Very comfortable with unknowns"
+      ],
+      "category": "psychology",
+      "source": "Ellsberg 1961; Budner 1962, intolerance of ambiguity"
+    },
+    {
+      "id": "maximizing",
+      "group": "Decisions",
+      "name": "maximizing",
+      "low": "Good enough is fine",
+      "high": "Must find the best",
+      "labels": [
+        "Good enough is always fine",
+        "Leans toward good enough",
+        "Balanced",
+        "Leans toward finding the best",
+        "Must always find the best"
+      ],
+      "category": "psychology",
+      "source": "Schwartz et al. 2002, Maximization Scale"
+    },
+    {
+      "id": "deliberation",
+      "group": "Decisions",
+      "name": "deliberation",
+      "low": "Goes with gut",
+      "high": "Thinks it through",
+      "labels": [
+        "Always goes with gut",
+        "Leans toward gut",
+        "Balanced",
+        "Leans toward thinking it through",
+        "Always thinks it through"
+      ],
+      "category": "psychology",
+      "source": "Epstein et al. 1996, Rational-Experiential Inventory; Frederick 2005, Cognitive Reflection Test"
+    },
+    {
+      "id": "emotion_regulation",
+      "group": "Emotion and motivation",
+      "name": "emotion regulation",
+      "low": "Holds feelings in or dwells on them",
+      "high": "Reframes and moves on",
+      "labels": [
+        "Usually holds feelings in or dwells on them",
+        "Leans toward holding in or dwelling",
+        "Balanced",
+        "Leans toward reframing",
+        "Usually reframes and moves on"
+      ],
+      "category": "psychology",
+      "source": "Gross & John 2003, Emotion Regulation Questionnaire (reappraisal vs. suppression)"
+    },
+    {
+      "id": "emotional_expressiveness",
+      "group": "Emotion and motivation",
+      "name": "emotional expressiveness",
+      "low": "Keeps feelings private",
+      "high": "Shows feelings openly",
+      "labels": [
+        "Keeps feelings very private",
+        "Leans private",
+        "Balanced",
+        "Leans open",
+        "Shows feelings very openly"
+      ],
+      "category": "psychology",
+      "source": "Gross & John 1997, Berkeley Expressivity Questionnaire"
+    },
+    {
+      "id": "punishment_sensitivity",
+      "group": "Emotion and motivation",
+      "name": "sensitivity to setbacks",
+      "low": "Shrugs off what could go wrong",
+      "high": "Alert to what could go wrong",
+      "labels": [
+        "Shrugs off setbacks and threats",
+        "Leans unbothered",
+        "Balanced",
+        "Leans alert to setbacks",
+        "Very alert to what could go wrong"
+      ],
+      "category": "psychology",
+      "source": "Carver & White 1994, BIS/BAS scales (behavioural inhibition)"
+    },
+    {
+      "id": "reward_sensitivity",
+      "group": "Emotion and motivation",
+      "name": "reward drive",
+      "low": "Unmoved by rewards and thrills",
+      "high": "Driven by rewards and thrills",
+      "labels": [
+        "Rarely moved by rewards or thrills",
+        "Leans unmoved",
+        "Balanced",
+        "Leans reward-driven",
+        "Strongly driven by rewards and thrills"
+      ],
+      "category": "psychology",
+      "source": "Carver & White 1994, BIS/BAS scales (reward responsiveness, drive, fun seeking)"
+    },
+    {
+      "id": "need_for_cognition",
+      "group": "Emotion and motivation",
+      "name": "need for cognition",
+      "low": "Avoids effortful thinking",
+      "high": "Enjoys hard problems",
+      "labels": [
+        "Avoids effortful thinking",
+        "Leans toward easy options",
+        "Balanced",
+        "Leans toward hard problems",
+        "Seeks out hard problems"
+      ],
+      "category": "psychology",
+      "source": "Cacioppo & Petty 1982, Need for Cognition Scale"
+    },
+    {
+      "id": "growth_mindset",
+      "group": "Emotion and motivation",
+      "name": "growth mindset",
+      "low": "Abilities are fixed",
+      "high": "Abilities can grow",
+      "labels": [
+        "Sees abilities as fixed",
+        "Leans fixed",
+        "Balanced",
+        "Leans toward growth",
+        "Sees abilities as able to grow"
+      ],
+      "category": "psychology",
+      "source": "Dweck 1999, Self-theories; Dweck, Chiu & Hong 1995, implicit theories"
+    },
+    {
+      "id": "self_control",
+      "group": "Emotion and motivation",
+      "name": "self-control",
+      "low": "Gives in to impulses",
+      "high": "Resists temptation",
+      "labels": [
+        "Usually gives in to impulses",
+        "Leans toward giving in",
+        "Balanced",
+        "Leans toward resisting",
+        "Reliably resists temptation"
+      ],
+      "category": "psychology",
+      "source": "Tangney, Baumeister & Boone 2004, Brief Self-Control Scale"
+    },
+    {
+      "id": "openness_to_change",
+      "group": "Values and morality",
+      "name": "openness to change",
+      "low": "Tradition and stability",
+      "high": "Independence and stimulation",
+      "labels": [
+        "Strongly values tradition and stability",
+        "Leans toward tradition and stability",
+        "Balanced",
+        "Leans toward independence and stimulation",
+        "Strongly values independence and stimulation"
+      ],
+      "category": "values",
+      "source": "Schwartz 1992, theory of basic human values; Schwartz et al. 2012, refined theory"
+    },
+    {
+      "id": "self_enhancement",
+      "group": "Values and morality",
+      "name": "self-enhancement",
+      "low": "Modest ambitions",
+      "high": "Achievement and status",
+      "labels": [
+        "Very modest ambitions",
+        "Leans modest",
+        "Balanced",
+        "Leans toward achievement and status",
+        "Strongly driven by achievement and status"
+      ],
+      "category": "values",
+      "source": "Schwartz 1992, theory of basic human values; Schwartz et al. 2012, refined theory"
+    },
+    {
+      "id": "conservation",
+      "group": "Values and morality",
+      "name": "conservation",
+      "low": "Questions rules",
+      "high": "Values order and security",
+      "labels": [
+        "Strongly questions rules",
+        "Leans toward questioning rules",
+        "Balanced",
+        "Leans toward order and security",
+        "Strongly values order and security"
+      ],
+      "category": "values",
+      "source": "Schwartz 1992, theory of basic human values; Schwartz et al. 2012, refined theory"
+    },
+    {
+      "id": "self_transcendence",
+      "group": "Values and morality",
+      "name": "self-transcendence",
+      "low": "Focus on self",
+      "high": "Focus on others' welfare",
+      "labels": [
+        "Strongly focused on self",
+        "Leans toward self",
+        "Balanced",
+        "Leans toward others' welfare",
+        "Strongly focused on others' welfare"
+      ],
+      "category": "values",
+      "source": "Schwartz 1992, theory of basic human values; Schwartz et al. 2012, refined theory"
+    },
+    {
+      "id": "care_harm",
+      "group": "Values and morality",
+      "name": "care",
+      "low": "Harm is a cost to weigh",
+      "high": "Preventing harm comes first",
+      "labels": [
+        "Treats harm as one cost among others",
+        "Leans pragmatic about harm",
+        "Balanced",
+        "Leans toward preventing harm",
+        "Puts preventing harm first"
+      ],
+      "category": "values",
+      "source": "Graham et al. 2011, Moral Foundations Questionnaire; Atari et al. 2023, MFQ-2 (care)"
+    },
+    {
+      "id": "fairness_cheating",
+      "group": "Values and morality",
+      "name": "fairness",
+      "low": "Winning matters more than fair play",
+      "high": "Fair play comes first",
+      "labels": [
+        "Winning matters more than fair play",
+        "Leans toward winning",
+        "Balanced",
+        "Leans toward fair play",
+        "Fair play comes first"
+      ],
+      "category": "values",
+      "source": "Graham et al. 2011, Moral Foundations Questionnaire; Atari et al. 2023, MFQ-2 (fairness, proportionality)"
+    },
+    {
+      "id": "loyalty_betrayal",
+      "group": "Values and morality",
+      "name": "loyalty",
+      "low": "Loyal to principles, not people or groups",
+      "high": "Stands by their people",
+      "labels": [
+        "Loyal to principles over people",
+        "Leans toward principles",
+        "Balanced",
+        "Leans toward their people",
+        "Stands by their people"
+      ],
+      "category": "values",
+      "source": "Graham et al. 2011, Moral Foundations Questionnaire; Atari et al. 2023, MFQ-2 (loyalty)"
+    },
+    {
+      "id": "authority_subversion",
+      "group": "Values and morality",
+      "name": "respect for authority",
+      "low": "Questions authority and tradition",
+      "high": "Respects authority and tradition",
+      "labels": [
+        "Readily questions authority and tradition",
+        "Leans questioning",
+        "Balanced",
+        "Leans respectful",
+        "Strongly respects authority and tradition"
+      ],
+      "category": "values",
+      "source": "Graham et al. 2011, Moral Foundations Questionnaire; Atari et al. 2023, MFQ-2 (authority)"
+    },
+    {
+      "id": "liberty_oppression",
+      "group": "Values and morality",
+      "name": "liberty",
+      "low": "Accepts limits for the common good",
+      "high": "Resists limits on freedom",
+      "labels": [
+        "Readily accepts limits for the common good",
+        "Leans toward accepting limits",
+        "Balanced",
+        "Leans toward resisting limits",
+        "Strongly resists limits on freedom"
+      ],
+      "category": "values",
+      "source": "Iyer et al. 2012, liberty foundation"
+    },
+    {
+      "id": "honesty_humility",
+      "group": "Values and morality",
+      "name": "honesty",
+      "low": "Shades the truth for an advantage",
+      "high": "Honest even at a cost",
+      "labels": [
+        "Shades the truth for an advantage",
+        "Leans toward advantage",
+        "Balanced",
+        "Leans toward honesty",
+        "Honest even at a cost"
+      ],
+      "category": "values",
+      "source": "Ashton & Lee 2007, HEXACO honesty-humility; Fischbacher & Föllmi-Heusi 2013, lying in private"
+    },
+    {
+      "id": "norm_compliance",
+      "group": "Values and morality",
+      "name": "rule following",
+      "low": "Bends rules when unobserved",
+      "high": "Follows rules even when unobserved",
+      "labels": [
+        "Readily bends rules when unobserved",
+        "Leans toward bending",
+        "Balanced",
+        "Leans toward following",
+        "Follows rules even when unobserved"
+      ],
+      "category": "values",
+      "source": "Kimbrough & Vostroknutov 2016, rule-following task"
+    },
+    {
+      "id": "locus_of_control",
+      "group": "Beliefs and worldview",
+      "name": "locus of control",
+      "low": "Outcomes come from luck and others",
+      "high": "Outcomes come from own actions",
+      "labels": [
+        "Credits luck and others for outcomes",
+        "Leans toward luck and others",
+        "Balanced",
+        "Leans toward own actions",
+        "Credits own actions for outcomes"
+      ],
+      "category": "values",
+      "source": "Rotter 1966, internal-external control; Levenson 1981"
+    },
+    {
+      "id": "optimism",
+      "group": "Beliefs and worldview",
+      "name": "optimism",
+      "low": "Expects the worst",
+      "high": "Expects the best",
+      "labels": [
+        "Expects the worst",
+        "Leans pessimistic",
+        "Balanced",
+        "Leans optimistic",
+        "Expects the best"
+      ],
+      "category": "values",
+      "source": "Scheier, Carver & Bridges 1994, Life Orientation Test-Revised"
+    },
+    {
+      "id": "just_world",
+      "group": "Beliefs and worldview",
+      "name": "belief in a just world",
+      "low": "The world is often unfair",
+      "high": "People get what they deserve",
+      "labels": [
+        "Sees the world as often unfair",
+        "Leans toward unfair",
+        "Balanced",
+        "Leans toward just",
+        "Believes people get what they deserve"
+      ],
+      "category": "values",
+      "source": "Lipkus 1991, Global Belief in a Just World Scale; Dalbert 1999"
+    },
+    {
+      "id": "political_leaning",
+      "group": "Beliefs and worldview",
+      "name": "political leaning",
+      "low": "Left or progressive",
+      "high": "Right or conservative",
+      "labels": [
+        "Clearly left or progressive",
+        "Centre-left",
+        "Centre",
+        "Centre-right",
+        "Clearly right or conservative"
+      ],
+      "category": "values",
+      "source": "European Social Survey left-right self-placement; Jost 2006",
+      "sensitive": "politics"
+    },
+    {
+      "id": "political_engagement",
+      "group": "Beliefs and worldview",
+      "name": "political engagement",
+      "low": "Stays out of politics",
+      "high": "Actively involved in politics",
+      "labels": [
+        "Stays out of politics",
+        "Votes, little more",
+        "Follows and votes",
+        "Discusses and campaigns now and then",
+        "Actively involved"
+      ],
+      "category": "values",
+      "source": "Verba, Schlozman & Brady 1995, civic participation; ANES participation items",
+      "sensitive": "politics"
+    },
+    {
+      "id": "religiosity",
+      "group": "Beliefs and worldview",
+      "name": "religiosity",
+      "low": "Not religious",
+      "high": "Deeply religious",
+      "labels": [
+        "Not religious",
+        "Slightly religious",
+        "Moderately religious",
+        "Quite religious",
+        "Deeply religious"
+      ],
+      "category": "values",
+      "source": "Koenig & Büssing 2010, Duke University Religion Index (DUREL)",
+      "sensitive": "religion"
+    },
+    {
+      "id": "spirituality",
+      "group": "Beliefs and worldview",
+      "name": "spirituality",
+      "low": "Secular, natural explanations",
+      "high": "Sense of something greater",
+      "labels": [
+        "Firmly secular",
+        "Leans secular",
+        "Open or unsure",
+        "Leans spiritual",
+        "Strong sense of something greater"
+      ],
+      "category": "values",
+      "source": "Piedmont 1999, Spiritual Transcendence Scale; Underwood & Teresi 2002",
+      "sensitive": "religion"
+    },
+    {
+      "id": "trust",
+      "group": "Social and communication",
+      "name": "trust",
+      "low": "Wary of others",
+      "high": "Trusts by default",
+      "labels": [
+        "Very wary of others",
+        "Leans wary",
+        "Balanced",
+        "Leans trusting",
+        "Trusts by default"
+      ],
+      "category": "life",
+      "source": "Berg, Dickhaut & McCabe 1995, trust game; Falk et al. 2018"
+    },
+    {
+      "id": "reciprocity",
+      "group": "Social and communication",
+      "name": "reciprocity",
+      "low": "Transactional",
+      "high": "Strongly fair and reciprocal",
+      "labels": [
+        "Very transactional",
+        "Leans transactional",
+        "Balanced",
+        "Leans fair and reciprocal",
+        "Strongly fair and reciprocal"
+      ],
+      "category": "life",
+      "source": "Fehr & Gächter 2000, fairness and retaliation; Falk et al. 2018"
+    },
+    {
+      "id": "conformity",
+      "group": "Social and communication",
+      "name": "conformity",
+      "low": "Goes own way",
+      "high": "Follows the group",
+      "labels": [
+        "Strongly goes own way",
+        "Leans toward own way",
+        "Balanced",
+        "Leans toward the group",
+        "Strongly follows the group"
+      ],
+      "category": "life",
+      "source": "Asch 1956; Cialdini & Goldstein 2004, social influence"
+    },
+    {
+      "id": "conflict_directness",
+      "group": "Social and communication",
+      "name": "conflict directness",
+      "low": "Avoids conflict",
+      "high": "Addresses it head-on",
+      "labels": [
+        "Strongly avoids conflict",
+        "Leans toward avoiding conflict",
+        "Balanced",
+        "Leans toward addressing it",
+        "Addresses conflict head-on"
+      ],
+      "category": "life",
+      "source": "Thomas & Kilmann 1974, conflict mode instrument"
+    },
+    {
+      "id": "directness",
+      "group": "Social and communication",
+      "name": "directness",
+      "low": "Diplomatic, indirect",
+      "high": "Blunt",
+      "labels": [
+        "Very diplomatic and indirect",
+        "Leans diplomatic",
+        "Balanced",
+        "Leans blunt",
+        "Very blunt"
+      ],
+      "category": "life",
+      "source": "Norton 1978, Communicator Style Measure"
+    },
+    {
+      "id": "formality",
+      "group": "Social and communication",
+      "name": "formality",
+      "low": "Casual",
+      "high": "Formal",
+      "labels": [
+        "Very casual",
+        "Leans casual",
+        "Balanced",
+        "Leans formal",
+        "Very formal"
+      ],
+      "category": "life",
+      "source": "Norton 1978, Communicator Style Measure"
+    },
+    {
+      "id": "verbosity",
+      "group": "Social and communication",
+      "name": "verbosity",
+      "low": "Brief",
+      "high": "Detailed",
+      "labels": [
+        "Very brief",
+        "Leans brief",
+        "Balanced",
+        "Leans detailed",
+        "Very detailed"
+      ],
+      "category": "life",
+      "source": "Norton 1978, Communicator Style Measure"
+    },
+    {
+      "id": "humor",
+      "group": "Social and communication",
+      "name": "humor",
+      "low": "Serious",
+      "high": "Playful",
+      "labels": [
+        "Very serious",
+        "Leans serious",
+        "Balanced",
+        "Leans playful",
+        "Very playful"
+      ],
+      "category": "life",
+      "source": "Norton 1978, Communicator Style Measure; Martin et al. 2003, Humor Styles Questionnaire"
+    },
+    {
+      "id": "attachment_anxiety",
+      "group": "Relationships and intimacy",
+      "name": "attachment anxiety",
+      "low": "Secure about closeness",
+      "high": "Worries about being let down or left",
+      "labels": [
+        "Secure about closeness",
+        "Leans secure",
+        "Balanced",
+        "Leans worried",
+        "Often worries about being left"
+      ],
+      "category": "life",
+      "source": "Wei et al. 2007, ECR-S (anxiety); Fraley, Waller & Brennan 2000"
+    },
+    {
+      "id": "attachment_avoidance",
+      "group": "Relationships and intimacy",
+      "name": "attachment avoidance",
+      "low": "Comfortable depending on others",
+      "high": "Keeps others at a distance",
+      "labels": [
+        "Comfortable depending on others",
+        "Leans toward closeness",
+        "Balanced",
+        "Leans toward distance",
+        "Keeps others at a distance"
+      ],
+      "category": "life",
+      "source": "Wei et al. 2007, ECR-S (avoidance); Fraley, Waller & Brennan 2000"
+    },
+    {
+      "id": "social_comparison",
+      "group": "Relationships and intimacy",
+      "name": "social comparison",
+      "low": "Rarely compares with others",
+      "high": "Often compares with others",
+      "labels": [
+        "Rarely compares with others",
+        "Leans away from comparing",
+        "Balanced",
+        "Leans toward comparing",
+        "Often compares with others"
+      ],
+      "category": "life",
+      "source": "Gibbons & Buunk 1999, Iowa-Netherlands Comparison Orientation Measure"
+    },
+    {
+      "id": "forgiveness",
+      "group": "Relationships and intimacy",
+      "name": "forgiveness",
+      "low": "Holds grudges",
+      "high": "Forgives readily",
+      "labels": [
+        "Holds grudges",
+        "Leans toward grudges",
+        "Balanced",
+        "Leans forgiving",
+        "Forgives readily"
+      ],
+      "category": "life",
+      "source": "McCullough et al. 1998, TRIM inventory"
+    },
+    {
+      "id": "sociosexuality",
+      "group": "Relationships and intimacy",
+      "name": "sociosexuality",
+      "low": "Sex only with commitment",
+      "high": "Comfortable with casual sex",
+      "labels": [
+        "Only within a committed relationship",
+        "Mostly with commitment",
+        "Balanced",
+        "Leans open to casual",
+        "Comfortable with casual sex"
+      ],
+      "category": "life",
+      "source": "Penke & Asendorpf 2008, Revised Sociosexual Orientation Inventory",
+      "sensitive": "sexuality"
+    },
+    {
+      "id": "relationship_exclusivity",
+      "group": "Relationships and intimacy",
+      "name": "relationship exclusivity",
+      "low": "Wants an exclusive relationship",
+      "high": "Open to non-exclusive relationships",
+      "labels": [
+        "Wants an exclusive relationship",
+        "Leans exclusive",
+        "Open either way",
+        "Leans open to non-exclusive",
+        "Prefers non-exclusive"
+      ],
+      "category": "life",
+      "source": "Conley et al. 2013, attitudes toward consensual non-monogamy",
+      "sensitive": "sexuality"
+    },
+    {
+      "id": "routine",
+      "group": "Everyday and health",
+      "name": "routine",
+      "low": "Spontaneous days",
+      "high": "Structured routines",
+      "labels": [
+        "Very spontaneous days",
+        "Leans spontaneous",
+        "Balanced",
+        "Leans toward routines",
+        "Very structured routines"
+      ],
+      "category": "life",
+      "source": "Ersche et al. 2017, Creature of Habit Scale"
+    },
+    {
+      "id": "social_energy",
+      "group": "Everyday and health",
+      "name": "social energy",
+      "low": "Recharges alone",
+      "high": "Recharges with people",
+      "labels": [
+        "Strongly recharges alone",
+        "Leans toward recharging alone",
+        "Balanced",
+        "Leans toward recharging with people",
+        "Strongly recharges with people"
+      ],
+      "category": "life",
+      "source": "Eysenck 1967; IPIP gregariousness"
+    },
+    {
+      "id": "taste_novelty",
+      "group": "Everyday and health",
+      "name": "taste novelty",
+      "low": "Sticks with favorites",
+      "high": "Tries new things",
+      "labels": [
+        "Always sticks with favorites",
+        "Leans toward favorites",
+        "Balanced",
+        "Leans toward new things",
+        "Always tries new things"
+      ],
+      "category": "life",
+      "source": "Steenkamp & Baumgartner 1992, exploratory buying; Pliner & Hobden 1992, food neophobia"
+    },
+    {
+      "id": "health_vigilance",
+      "group": "Everyday and health",
+      "name": "health vigilance",
+      "low": "Relaxed about health",
+      "high": "Closely tracks health",
+      "labels": [
+        "Very relaxed about health",
+        "Leans relaxed",
+        "Balanced",
+        "Leans watchful",
+        "Closely tracks health"
+      ],
+      "category": "life",
+      "source": "Wallston, Wallston & DeVellis 1978, Multidimensional Health Locus of Control; Gould 1988, health consciousness",
+      "sensitive": "health"
+    },
+    {
+      "id": "body_image",
+      "group": "Everyday and health",
+      "name": "body image",
+      "low": "Critical of own body",
+      "high": "Appreciates own body",
+      "labels": [
+        "Mostly critical of own body",
+        "Leans critical",
+        "Mixed",
+        "Leans appreciative",
+        "Appreciates own body"
+      ],
+      "category": "life",
+      "source": "Tylka & Wood-Barcalow 2015, Body Appreciation Scale-2",
+      "sensitive": "health"
+    },
+    {
+      "id": "substance_use",
+      "group": "Everyday and health",
+      "name": "alcohol and substances",
+      "low": "Abstains or rarely uses",
+      "high": "Uses often",
+      "labels": [
+        "Abstains",
+        "Rarely",
+        "Now and then, in moderation",
+        "Regularly",
+        "Often and freely"
+      ],
+      "category": "life",
+      "source": "Bush et al. 1998, AUDIT-C",
+      "sensitive": "health"
+    },
+    {
+      "id": "autonomy",
+      "group": "Work",
+      "name": "autonomy",
+      "low": "Prefers direction",
+      "high": "Prefers full ownership",
+      "labels": [
+        "Strongly prefers direction",
+        "Leans toward direction",
+        "Balanced",
+        "Leans toward ownership",
+        "Strongly prefers full ownership"
+      ],
+      "category": "work",
+      "source": "Hackman & Oldham 1976, job characteristics model"
+    },
+    {
+      "id": "planning",
+      "group": "Work",
+      "name": "planning",
+      "low": "Improvises",
+      "high": "Plans ahead",
+      "labels": [
+        "Always improvises",
+        "Leans toward improvising",
+        "Balanced",
+        "Leans toward planning",
+        "Always plans ahead"
+      ],
+      "category": "work",
+      "source": "Lynch et al. 2010, propensity to plan"
+    },
+    {
+      "id": "detail_orientation",
+      "group": "Work",
+      "name": "detail orientation",
+      "low": "Big picture",
+      "high": "Details",
+      "labels": [
+        "Strongly big-picture",
+        "Leans big-picture",
+        "Balanced",
+        "Leans detail-oriented",
+        "Strongly detail-oriented"
+      ],
+      "category": "work",
+      "source": "Costa & McCrae 1992, NEO-PI-R order facet"
+    },
+    {
+      "id": "collaboration",
+      "group": "Work",
+      "name": "collaboration",
+      "low": "Works alone",
+      "high": "Works with others",
+      "labels": [
+        "Strongly prefers working alone",
+        "Leans toward working alone",
+        "Balanced",
+        "Leans toward working with others",
+        "Strongly prefers working with others"
+      ],
+      "category": "work",
+      "source": "Wagner 1995, individualism and collectivism in groups"
+    },
+    {
+      "id": "leadership_drive",
+      "group": "Work",
+      "name": "leadership drive",
+      "low": "Prefers to contribute",
+      "high": "Prefers to lead",
+      "labels": [
+        "Strongly prefers to contribute",
+        "Leans toward contributing",
+        "Balanced",
+        "Leans toward leading",
+        "Strongly prefers to lead"
+      ],
+      "category": "work",
+      "source": "Chan & Drasgow 2001, motivation to lead"
+    },
+    {
+      "id": "speed_vs_quality",
+      "group": "Work",
+      "name": "speed vs. quality",
+      "low": "Polish first",
+      "high": "Ship fast",
+      "labels": [
+        "Always polishes first",
+        "Leans toward polish",
+        "Balanced",
+        "Leans toward shipping fast",
+        "Always ships fast"
+      ],
+      "category": "work",
+      "source": "Förster, Higgins & Bianco 2003, speed and accuracy in task performance"
+    },
+    {
+      "id": "spending_style",
+      "group": "Money",
+      "name": "spending style",
+      "low": "Frugal",
+      "high": "Indulgent",
+      "labels": [
+        "Very frugal",
+        "Leans frugal",
+        "Balanced",
+        "Leans indulgent",
+        "Very indulgent"
+      ],
+      "category": "work",
+      "source": "Rick, Cryder & Loewenstein 2008, Tightwad-Spendthrift Scale"
+    },
+    {
+      "id": "mental_accounting",
+      "group": "Money",
+      "name": "mental accounting",
+      "low": "All money is the same money",
+      "high": "Keeps money in separate pots",
+      "labels": [
+        "Treats all money the same",
+        "Leans toward one pot",
+        "Balanced",
+        "Leans toward separate pots",
+        "Keeps money in separate pots"
+      ],
+      "category": "work",
+      "source": "Thaler 1999, mental accounting; Heath & Soll 1996, mental budgeting"
+    },
+    {
+      "id": "materialism",
+      "group": "Money",
+      "name": "materialism",
+      "low": "Experiences over possessions",
+      "high": "Possessions matter",
+      "labels": [
+        "Strongly prefers experiences",
+        "Leans toward experiences",
+        "Balanced",
+        "Leans toward possessions",
+        "Possessions matter a lot"
+      ],
+      "category": "work",
+      "source": "Richins & Dawson 1992, Material Values Scale; Van Boven & Gilovich 2003"
+    },
+    {
+      "id": "financial_security",
+      "group": "Money",
+      "name": "financial security",
+      "low": "Money is a constant worry",
+      "high": "Financially secure",
+      "labels": [
+        "Money is a constant worry",
+        "Often stretched",
+        "Getting by",
+        "Mostly comfortable",
+        "Financially secure"
+      ],
+      "category": "work",
+      "source": "CFPB 2015, Financial Well-Being Scale; Netemeyer et al. 2018",
+      "sensitive": "money"
+    },
+    {
+      "id": "debt_attitude",
+      "group": "Money",
+      "name": "attitude to debt",
+      "low": "Avoids debt",
+      "high": "Comfortable borrowing",
+      "labels": [
+        "Avoids debt at almost any cost",
+        "Leans against borrowing",
+        "Balanced",
+        "Leans comfortable borrowing",
+        "Comfortable borrowing"
+      ],
+      "category": "work",
+      "source": "Lea, Webley & Walker 1995, psychology of consumer debt; Almenberg et al. 2021",
+      "sensitive": "money"
+    }
+  ]
+}

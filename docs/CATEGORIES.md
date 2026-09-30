@@ -33,8 +33,21 @@ professional one can measure a psychology facet.
 every ontology version (it moves to the Money group in v2). Occupation facets, generated per person from their
 occupation, are always "Work and money"; none are generated when that category is deselected.
 
-Ontology v2 (ADR-0041) adds facets to every category and the sensitive facets below; its table is in
-`docs/ontology/v2.json` and its research anchors in `docs/ontology/v2.sources.md`.
+### Facets by category (ontology v2)
+
+Ontology v2 (ADR-0042) keeps every v1 facet, regroups them into ten groups that each sit in one category (so
+`spending_style` moves to Money), and adds 34 facets, 11 of them sensitive. The full table is in
+`docs/ontology/v2.json` and every facet's research anchor in `docs/ontology/v2.sources.md`.
+
+| Category | Groups | Facets (sensitive ones marked *) |
+| --- | --- | --- |
+| Personality and psychology (18) | Personality, Decisions, Emotion and motivation | openness, conscientiousness, extraversion, agreeableness, emotional_stability, risk_tolerance, patience, loss_aversion, ambiguity_tolerance, maximizing, deliberation, emotion_regulation, emotional_expressiveness, punishment_sensitivity, reward_sensitivity, need_for_cognition, growth_mindset, self_control |
+| Values, beliefs and politics (18) | Values and morality, Beliefs and worldview | openness_to_change, self_enhancement, conservation, self_transcendence, care_harm, fairness_cheating, loyalty_betrayal, authority_subversion, liberty_oppression, honesty_humility, norm_compliance, locus_of_control, optimism, just_world, political_leaning*, political_engagement*, religiosity*, spirituality* |
+| Relationships, sexuality and life (20) | Social and communication, Relationships and intimacy, Everyday and health | trust, reciprocity, conformity, conflict_directness, directness, formality, verbosity, humor, attachment_anxiety, attachment_avoidance, social_comparison, forgiveness, sociosexuality*, relationship_exclusivity*, routine, social_energy, taste_novelty, health_vigilance*, body_image*, substance_use* |
+| Work and money (11) | Work, Money | autonomy, planning, detail_orientation, collaboration, leadership_drive, speed_vs_quality, spending_style, mental_accounting, materialism, financial_security*, debt_attitude* |
+
+**Workplace scenes follow "Work and money".** Without it, generators get no professional quota, a professional draft
+is rejected in code, and professional reserve items are skipped, whatever facet they measure (ADR-0042).
 
 ## 2. Sensitive areas
 
@@ -59,17 +72,19 @@ categories that apply here). Money in detail is sensitive by our policy but not 
 - **Only direct, consented questions populate a sensitive facet.** Nothing about politics, religion, sexuality, health
   or detailed finances is inferred from other answers, from web search or from enrichment. The reflector is told
   so, and code enforces it: an insight may name a sensitive facet only when it cites an answer to a question that
-  asked about that facet directly, and a sensitive trait is read only once such an answer exists (ADR-0042).
+  asked about that facet directly, and a sensitive trait is read only once such an answer exists (ADR-0043).
 - **Never from the web.** Identity search and enrichment never ask for special-category fields, and a lexicon drops
   any fact from search or enrichment that reveals one (`specialAreaOfFact` in `packages/core/src/scope.ts`). It errs
   toward dropping; professional facts (an employer, a job title, a school) are kept for health, because working in
   health care says nothing about the person's own health.
 - **Respectful wording.** Sensitive questions are asked plainly, never presuming a belief, identity, condition or
-  orientation, with options covering the range. The `demeaning` Jev gate rejects loaded or demeaning drafts; the
-  `sensitive` gate stays as a backstop against drafts that touch a sensitive topic without being tagged with a
-  consented sensitive facet (ADR-0041).
+  orientation, with options covering the range and no "prefer not to say" (the consent is the opt-out). Under
+  gates.v3 the `demeaning` Jev gate rejects loaded or demeaning drafts, and the `sensitive` gate asks each draft only
+  about the areas it is not tagged with: a draft must be tagged with a facet of every sensitive area it touches, and
+  its tags are already limited to consented areas, so an untagged or mis-tagged sensitive question never reaches the
+  pool (ADR-0042).
 - **Later in the session.** No sensitive question is served among the first five, and none before the person has
-  answered a few ordinary ones (the trust ramp, ADR-0043).
+  answered a few ordinary ones (the trust ramp, ADR-0044).
 
 ## 3. The consent model
 
@@ -104,7 +119,7 @@ Stored on the mimic (`mimics.categories_json`, `consents_json`, `research_consen
 - For each special-category area a person has not consented to research use of, the export drops: questions
   touching that area's facets with their answers, predictions and scores; trait estimates and history for those
   facets; insights naming those facets or citing those answers; reflection facts citing those answers; knowledge
-  graph facet nodes and edges for those facets (ADR-0042).
+  graph facet nodes and edges for those facets (ADR-0043).
 - Money in detail follows plain research consent.
 - Aggregate item statistics (`item_stats`) count rows touching a special-category facet only from people who
   consented to research use of that area.
@@ -128,7 +143,8 @@ The facet list every stage uses comes from one place, `facetsFor`, which is scop
 | Reflector | Scoped facet list; insights and facts touching a blocked facet or a hidden answer dropped; sensitive tags need a direct question | M9 / M11 |
 | Hypotheses and belief | Scoped facets; hidden answers never count | M9 |
 | Occupation facets | Generated only with "Work and money" selected | M9 |
-| Gates | `sensitive` backstop and `demeaning` check by consent (gates.v3) | M10 |
+| Gates | gates.v3: `sensitive` asks about every area the draft is not tagged with; `demeaning` and `concrete` on every draft | M10 |
+| Workplace scenes | None without "Work and money": professional quota zero, professional drafts and reserve items rejected | M10 |
 | Web search and enrichment | Special-category facts dropped before they are stored | M11 |
 | Views and `mimic.json` | Scoped facets, insights, facts and graph nodes only | M9 / M11 |
 | Item statistics | Special-category rows only with research consent for the area | M11 |

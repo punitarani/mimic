@@ -4,7 +4,7 @@ import type { PipelineConfig } from '../config';
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
-import { RESERVE_V1 } from '../ontology';
+import { getReserveSet, reserveSetId } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
 import { LlmPredictor, makePredictor, promptVersionOf } from '../predictors';
 import { pickRepeat } from '../repeats';
@@ -277,7 +277,7 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
     await deferred(deps, () => deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq }));
   }
   if (pool.length === 0) {
-    pool = await addReserve(deps, m, questions, loaded.scope.blocked);
+    pool = await addReserve(deps, m, cfg, questions, loaded.scope.blocked);
     if (pool.length === 0) return { status: 'waiting', progress };
   }
   return serveWithPredictions(deps, m, cfg, loaded, stateAt, seq, null, pool, progress, rng);
@@ -295,34 +295,55 @@ async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
 
 const RESERVE_BATCH = 3;
 
+/**
+ * Reserve items for an empty pool (ADR-0006), from the config's set (ADR-0042), inside the person's scope. reserve.v1
+ * keeps its fixed order; later sets put items whose facets have been asked least first, so a stalled generator
+ * still spreads questions across what the person agreed to be asked about.
+ */
 async function addReserve(
   deps: EngineDeps,
   m: MimicRecord,
+  cfg: PipelineConfig,
   questions: QuestionRecord[],
   blocked: ReadonlySet<string>,
 ): Promise<QuestionRecord[]> {
+  const setId = reserveSetId(cfg);
   const used = new Set(questions.map((q) => q.itemKey).filter(Boolean));
   const now = deps.clock();
-  const recs: QuestionRecord[] = RESERVE_V1.filter((r) => !used.has(r.itemKey) && questionAllowed(r, blocked))
-    .slice(0, RESERVE_BATCH)
-    .map((item, i) => ({
-      id: deps.newId(),
-      mimicId: m.id,
-      seq: null,
-      kind: 'adaptive',
-      type: item.type,
-      domain: item.domain,
-      prompt: item.prompt,
-      options: item.options,
-      facetIds: item.facetIds,
-      itemKey: item.itemKey,
-      provenance: { generator: 'reserve.v1', configHash: m.configHash, promptVersion: 'reserve.v1' },
-      status: 'pooled',
-      quality: null,
-      createdAt: now + i,
-      servedAt: null,
-      stateAt: null,
-    }));
+  // Without "Work and money", no workplace scenes either (ADR-0042).
+  const professional = m.scope.categories.includes('work');
+  let items = getReserveSet(setId).filter(
+    (r) =>
+      !used.has(r.itemKey) && questionAllowed(r, blocked) && (professional || r.domain !== 'professional'),
+  );
+  if (setId !== 'reserve.v1') {
+    const asked = new Map<string, number>();
+    for (const q of questions)
+      if (q.seq !== null) for (const f of q.facetIds) asked.set(f, (asked.get(f) ?? 0) + 1);
+    const load = (r: { facetIds: string[] }) => Math.max(...r.facetIds.map((f) => asked.get(f) ?? 0));
+    items = items
+      .map((r, i) => ({ r, i, l: load(r) }))
+      .sort((a, b) => a.l - b.l || a.i - b.i)
+      .map((x) => x.r);
+  }
+  const recs: QuestionRecord[] = items.slice(0, RESERVE_BATCH).map((item, i) => ({
+    id: deps.newId(),
+    mimicId: m.id,
+    seq: null,
+    kind: 'adaptive',
+    type: item.type,
+    domain: item.domain,
+    prompt: item.prompt,
+    options: item.options,
+    facetIds: item.facetIds,
+    itemKey: item.itemKey,
+    provenance: { generator: setId, configHash: m.configHash, promptVersion: setId },
+    status: 'pooled',
+    quality: null,
+    createdAt: now + i,
+    servedAt: null,
+    stateAt: null,
+  }));
   if (recs.length) await deps.store.insertQuestions(recs);
   return recs;
 }

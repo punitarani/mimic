@@ -1,5 +1,5 @@
 import type { FidelityResult } from '../fidelity';
-import { FACET_GROUPS } from '../ontology';
+import { getFacetGroups } from '../ontology';
 import { facetCoverage } from '../selectors';
 import { toStateEvidence } from '../state-builder';
 import type { IdentityState, MimicStatus } from '../store';
@@ -163,7 +163,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       ciHigh: f.ciHigh,
     })),
     facets: uiFacets,
-    groups: [...FACET_GROUPS],
+    groups: getFacetGroups(cfg.ontologyVersion),
     insights,
     kg: {
       nodes: nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),

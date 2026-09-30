@@ -24,7 +24,41 @@ function randomDist(keys: string[], seed: string): Record<string, number> {
   return Object.fromEntries(keys.map((k, i) => [k, raw[i]! / sum]));
 }
 
-const GOOD_GATES: Record<string, number> = { ambiguous: 0.1, sensitive: 0.02, leading: 0.1, quick: 0.95 };
+const GOOD_GATES: Record<string, number> = {
+  ambiguous: 0.1,
+  sensitive: 0.02,
+  leading: 0.1,
+  quick: 0.95,
+  concrete: 0.9,
+  demeaning: 0.03,
+};
+
+/** Self-rating openers the `concrete` gate rejects (ADR-0042). */
+const SELF_RATING =
+  /how well does this describe you|how much do you agree|rate yourself|do you consider yourself/i;
+/** Loaded wording the `demeaning` gate rejects. */
+const LOADED = /\b(admit|weakness|abnormal|shameful)\b/i;
+/** Topic words per sensitive area, and how the `sensitive` gate names the area. */
+const AREA_TOPICS: Array<[string, RegExp]> = [
+  ['health', /\b(doctor|diet|illness|medication)\b/i],
+  ['sexuality', /\b(sex|sexual|intimate)\b/i],
+  ['religion', /\b(pray|church|religious|faith)\b/i],
+  ['politics', /\b(vote|voted|voting|election|political)\b/i],
+  ['detailed personal finances', /\b(debt|salary|savings)\b/i],
+];
+
+/**
+ * Offline stand-in for the gates: good by default, but it fails a self-rating on `concrete`, loaded wording on
+ * `demeaning`, and a prompt on `sensitive` when it touches an area the gate asks about.
+ */
+function fakeGate(key: string, instructions: string, prompt: string | undefined): number | undefined {
+  if (prompt === undefined) return GOOD_GATES[key];
+  if (key === 'concrete') return SELF_RATING.test(prompt) ? 0.1 : 0.9;
+  if (key === 'demeaning') return LOADED.test(prompt) ? 0.9 : 0.03;
+  if (key === 'sensitive')
+    return AREA_TOPICS.some(([area, re]) => instructions.includes(area) && re.test(prompt)) ? 0.9 : 0.02;
+  return GOOD_GATES[key];
+}
 
 export class FakeDecisions implements DecisionProvider {
   readonly provider = 'fake-decisions';
@@ -33,11 +67,13 @@ export class FakeDecisions implements DecisionProvider {
   async decide(req: DecisionRequest): Promise<DecisionResponse> {
     this.calls++;
     const stateSeed = sha256Hex(JSON.stringify(req.state));
+    const gatePrompt = (req.state as { question?: { prompt?: unknown } }).question?.prompt;
     const answers: Record<string, DecisionAnswer> = {};
     for (const [key, q] of Object.entries(req.questions)) {
       const seed = `${stateSeed}:${key}`;
       if (q.type === 'noul') {
-        answers[key] = { type: 'noul', p: GOOD_GATES[key] ?? 0.15 + 0.7 * unit(seed) };
+        const gate = fakeGate(key, q.instructions, typeof gatePrompt === 'string' ? gatePrompt : undefined);
+        answers[key] = { type: 'noul', p: gate ?? 0.15 + 0.7 * unit(seed) };
       } else if (q.type === 'choice') {
         const probabilities = randomDist(Object.keys(q.criteria), seed);
         const choice = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0]![0];
@@ -94,6 +130,65 @@ const SCENARIOS = [
   'Your routine gets disrupted by travel. How do you feel?',
   'Writing a message to a new client: formal or casual?',
 ];
+
+/**
+ * Drafts a gen.v3 batch appends. A self-rating (fails `concrete`); an untagged religious question (fails `sensitive`);
+ * a political question (rejected as out of scope without consent); a loaded religion question (rejected without
+ * consent, fails `demeaning` with it).
+ */
+export const ROGUE_PROMPTS = {
+  selfRating: 'How well does this describe you? "I plan my week ahead."',
+  untagged: 'Would you pray before making a big decision?',
+  political: 'In a close national election, which party would you vote for?',
+  loaded: 'Can you admit that religious faith is a weakness?',
+} as const;
+
+function ROGUE_DRAFTS(target: string) {
+  const scale = ['Very inaccurate', 'Inaccurate', 'Neither', 'Accurate', 'Very accurate'];
+  return [
+    {
+      type: 'score',
+      domain: 'core',
+      prompt: ROGUE_PROMPTS.selfRating,
+      options: scale.map((label, j) => ({ key: String(j), label })),
+      facetIds: [target],
+      rationale: 'fake rogue',
+    },
+    {
+      type: 'noul',
+      domain: 'casual',
+      prompt: ROGUE_PROMPTS.untagged,
+      options: [
+        { key: 'yes', label: 'Yes' },
+        { key: 'no', label: 'No' },
+      ],
+      facetIds: [target],
+      rationale: 'fake rogue',
+    },
+    {
+      type: 'score',
+      domain: 'core',
+      prompt: ROGUE_PROMPTS.political,
+      options: ['Clearly left', 'Centre-left', 'Centre', 'Centre-right', 'Clearly right'].map((label, j) => ({
+        key: String(j),
+        label,
+      })),
+      facetIds: ['political_leaning'],
+      rationale: 'fake rogue',
+    },
+    {
+      type: 'noul',
+      domain: 'core',
+      prompt: ROGUE_PROMPTS.loaded,
+      options: [
+        { key: 'yes', label: 'Yes' },
+        { key: 'no', label: 'No' },
+      ],
+      facetIds: ['religiosity'],
+      rationale: 'fake rogue',
+    },
+  ];
+}
 
 function userText(req: ChatRequest): string {
   return req.messages.find((m) => m.role === 'user')?.content ?? '';
@@ -179,6 +274,8 @@ export class FakeLlm implements LlmClient {
         rationale: 'fake',
       });
     }
+    // gen.v3 batches also carry drafts the pipeline must never pool (ADR-0042), so tests see each guard work.
+    if (user.includes('Category quota:')) questions.push(...ROGUE_DRAFTS(targets[0]!));
     return { questions };
   }
 
