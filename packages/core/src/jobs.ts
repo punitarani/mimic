@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+const BackfillOptions = z.object({
+  /** Predictions per minute for this predictor (default BACKFILL_PER_MINUTE). */
+  perMinute: z.number().positive().max(600).optional(),
+  /** Also redo this predictor's shadows whose call failed (never ones where the model's output was unusable). */
+  retryFailed: z.boolean().optional(),
+});
+
 export const Job = z.discriminatedUnion('type', [
   z.object({ type: z.literal('noop'), id: z.string() }),
   z.object({ type: z.literal('identity.search'), mimicId: z.string() }),
@@ -14,18 +21,33 @@ export const Job = z.discriminatedUnion('type', [
   z.object({ type: z.literal('learn.answer'), mimicId: z.string(), seq: z.number().int() }),
   z.object({ type: z.literal('hypotheses.refresh'), mimicId: z.string(), seqUpTo: z.number().int() }),
   z.object({ type: z.literal('snapshot.write'), mimicId: z.string(), seqUpTo: z.number().int() }),
-  /** Backfill (ADR-0024): fans out one `backfill.mimic` per mimic. `runId` makes each run its own job. */
+  /**
+   * Backfill (ADR-0024, ADR-0027): enqueues a paced `backfill.shadow` for every (consented) mimic's missing
+   * predictions. `runId` makes each run its own job. The optional fields aren't in the key, so a job requeued from
+   * the ledger falls back to their conservative defaults.
+   */
   z.object({
     type: z.literal('backfill.predictor'),
     runId: z.string(),
     predictorId: z.string(),
     consentedOnly: z.boolean(),
+    ...BackfillOptions.shape,
   }),
-  /** Enqueues `predict.shadow` for the mimic's served questions the predictor hasn't predicted yet. */
+  /** The same for one mimic, starting `offsetSeconds` from now (the CLI staggers several named mimics). */
   z.object({
     type: z.literal('backfill.mimic'),
     runId: z.string(),
     mimicId: z.string(),
+    predictorId: z.string(),
+    ...BackfillOptions.shape,
+    offsetSeconds: z.number().int().min(0).optional(),
+  }),
+  /** One backfilled prediction, on the primary's sealed state (like `predict.shadow`, but outside the budget). */
+  z.object({
+    type: z.literal('backfill.shadow'),
+    runId: z.string(),
+    mimicId: z.string(),
+    questionId: z.string(),
     predictorId: z.string(),
   }),
 ]);
@@ -55,6 +77,8 @@ export function jobKey(job: Job): string {
       return `backfill.predictor:${job.runId}:${job.consentedOnly ? 1 : 0}:${job.predictorId}`;
     case 'backfill.mimic':
       return `backfill.mimic:${job.runId}:${job.mimicId}:${job.predictorId}`;
+    case 'backfill.shadow':
+      return `backfill.shadow:${job.runId}:${job.mimicId}:${job.questionId}:${job.predictorId}`;
   }
 }
 
@@ -88,6 +112,15 @@ export function jobFromKey(key: string): Job | null {
       break;
     case 'backfill.mimic':
       job = { type, runId: parts[0], mimicId: parts[1], predictorId: parts.slice(2).join(':') };
+      break;
+    case 'backfill.shadow':
+      job = {
+        type,
+        runId: parts[0],
+        mimicId: parts[1],
+        questionId: parts[2],
+        predictorId: parts.slice(3).join(':'),
+      };
       break;
   }
   const r = Job.safeParse(job);

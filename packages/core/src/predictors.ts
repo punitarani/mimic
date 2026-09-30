@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { parsePredictorId } from './config';
 import { normalizeDist, optionKeys } from './distribution';
-import type { CallContext, Gateway } from './gateway';
+import { type CallContext, type Gateway, isTransientError } from './gateway';
 import { answerToDistribution, confidenceOf, predictionQuestion } from './jev';
 import { PROMPTS } from './prompts';
 import { renderStateText, stateForProvider } from './state-builder';
@@ -54,7 +54,7 @@ export class JevPredictor implements Predictor {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return qs.map(() => failed(msg, 0, this.model, 0));
+      return qs.map(() => callFailed(e, msg, this.model));
     }
   }
 }
@@ -65,6 +65,28 @@ const LlmProbs = z.union([
 ]);
 
 export const LLM_PREDICTOR_MAX_TOKENS = 3000;
+
+/**
+ * Errors that mean the model answered but its answer was unusable. They are the model's own failures, so they are
+ * stored and never retried (retrying until one parses would flatter the model). Any other failed prediction is a
+ * failed call, which the backfill may redo (`--retry-failed`, ADR-0027). scripts/backfill.mjs mirrors this list.
+ */
+export const OUTPUT_FAILURE = {
+  invalidJson: 'invalid JSON output',
+  uncovered: 'output does not cover every option',
+  /** Prefix: reasoning used up max_tokens before the JSON was written (finish_reason 'length'). */
+  truncated: 'output cut off at max_tokens',
+} as const;
+
+export function isOutputFailure(error: string | null | undefined): boolean {
+  if (!error) return false;
+  return (
+    error === OUTPUT_FAILURE.invalidJson ||
+    error === OUTPUT_FAILURE.uncovered ||
+    error.startsWith(OUTPUT_FAILURE.truncated) ||
+    error.startsWith('missing answer for ') // Jev: the batch came back without this question
+  );
+}
 
 /** LLM shadow predictor (PLAN §9.6, prompt predict.v1). One chat call per question, run in parallel. */
 export class LlmPredictor implements Predictor {
@@ -103,7 +125,13 @@ export class LlmPredictor implements Predictor {
       });
       const base = { costUsd: res.usage.costUsd, latencyMs: res.latencyMs, modelSnapshot: res.modelSnapshot };
       const parsed = LlmProbs.safeParse(parseJsonLoose(res.content));
-      if (!parsed.success) return { ...base, dist: {}, ok: false, error: 'invalid JSON output' };
+      if (!parsed.success) {
+        const error =
+          res.finishReason === 'length'
+            ? `${OUTPUT_FAILURE.truncated} (${LLM_PREDICTOR_MAX_TOKENS}; ${res.usage.outputTokens} output tokens)`
+            : OUTPUT_FAILURE.invalidJson;
+        return { ...base, dist: {}, ok: false, error };
+      }
       const raw: Record<string, number> =
         'probs' in parsed.data && Array.isArray(parsed.data.probs)
           ? Object.fromEntries(parsed.data.probs.map((x) => [x.key, x.p]))
@@ -111,17 +139,22 @@ export class LlmPredictor implements Predictor {
       const covered = keys.filter((k) => typeof raw[k] === 'number' && raw[k]! >= 0);
       const sum = covered.reduce((a, k) => a + raw[k]!, 0);
       if (covered.length < keys.length || !(sum > 0)) {
-        return { ...base, dist: {}, ok: false, error: 'output does not cover every option' };
+        return { ...base, dist: {}, ok: false, error: OUTPUT_FAILURE.uncovered };
       }
       return { ...base, dist: normalizeDist(raw, keys), ok: true };
     } catch (e) {
-      return failed(e instanceof Error ? e.message : String(e), 0, this.model, 0);
+      return callFailed(e, e instanceof Error ? e.message : String(e), this.model);
     }
   }
 }
 
 function failed(error: string, latencyMs: number, modelSnapshot: string, costUsd: number): PredictionResult {
   return { dist: {}, costUsd, latencyMs, modelSnapshot, ok: false, error };
+}
+
+/** The provider call threw, so there is no model output to judge. */
+function callFailed(e: unknown, error: string, model: string): PredictionResult {
+  return { ...failed(error, 0, model, 0), retryable: isTransientError(e) };
 }
 
 /** Parses JSON from model output, tolerating code fences and surrounding prose. */

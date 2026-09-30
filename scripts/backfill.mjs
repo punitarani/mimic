@@ -1,13 +1,19 @@
 #!/usr/bin/env node
-// `pnpm backfill --predictor <id>[,<id>...] [--env local|preview|prod] [--consented] [--mimic <id>]... [--yes]`
+// `pnpm backfill --predictor <id>[,<id>...] [--env local|preview|prod] [--consented] [--mimic <id>]...
+//                [--rate <per-minute>] [--retry-failed] [--yes]`
 //
 // Adds predictors (usually new shadow models) to questions that were served before they existed (ADR-0024). Each
-// prediction runs on the sealed state blob the primary used, through the same `predict.shadow` job as a live shadow,
-// so it is sealed (PLAN §3.1), logged through the gateway, and scored against the answer.
+// prediction runs on the sealed state blob the primary used, like a live shadow, so it is sealed (PLAN §3.1), logged
+// through the gateway (as `predict.backfill`, outside the mimic's session budget), and scored against the answer.
 //
-// A dry run by default: checks the model, counts the missing predictions per mimic, and estimates cost from what
-// this predictor has cost so far (never a hardcoded price). `--yes` enqueues one job per predictor; the worker fans it out per
-// mimic. Re-running is safe and shows what's left: the count falls to 0 as the queue drains.
+// A dry run by default: checks the model, reports how this predictor has done so far (failures split into unusable
+// output, which is the model's, and failed calls, which aren't), counts the missing predictions per mimic, and
+// estimates cost and duration from what this predictor has cost so far (never a hardcoded price). `--yes` enqueues
+// one job per predictor (or per named mimic); the worker spaces the predictions `--rate` a minute (ADR-0027) so they
+// see the load a live shadow sees. Re-running is safe and shows what's left: the count falls to 0 as the queue drains.
+//
+//   --retry-failed  also redo this predictor's failed calls (timeouts, rate limits, provider errors, the budget
+//                   guard), which were stored as failures before ADR-0027. Unusable output is kept: it is the model's.
 //
 //   local           the `pnpm dev` worker (POST /__jobs) and the local D1
 //   preview, prod   the Cloudflare Queues and D1 HTTP APIs; needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
@@ -21,16 +27,30 @@ const ENVS = ['local', 'preview', 'prod'];
 export const PREDICTOR_ID = /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 const MIMIC_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const LOCAL_WORKER = 'http://127.0.0.1:8787';
+/** BACKFILL_PER_MINUTE in packages/core/src/engine/jobs.ts. */
+export const DEFAULT_RATE = 30;
+/** PENDING_WINDOW_MS in packages/core/src/engine/lab.ts: newer questions are left to the live shadows. */
+export const PENDING_WINDOW_MS = 15 * 60 * 1000;
 
 export function parseBackfillArgs(argv) {
-  const out = { predictors: [], env: 'local', consented: false, mimics: [], yes: false };
+  const out = {
+    predictors: [],
+    env: 'local',
+    consented: false,
+    mimics: [],
+    rate: DEFAULT_RATE,
+    retryFailed: false,
+    yes: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     // Repeatable, or comma- or space-separated (as the Actions workflow passes a list).
     if (a === '--predictor') out.predictors.push(...(argv[++i] ?? '').split(/[\s,]+/).filter(Boolean));
     else if (a === '--env') out.env = argv[++i];
     else if (a === '--mimic') out.mimics.push(argv[++i]);
+    else if (a === '--rate') out.rate = Number(argv[++i]);
     else if (a === '--consented') out.consented = true;
+    else if (a === '--retry-failed') out.retryFailed = true;
     else if (a === '--yes') out.yes = true;
     else throw new Error(`unknown argument: ${a}`);
   }
@@ -39,22 +59,33 @@ export function parseBackfillArgs(argv) {
   out.predictors = [...new Set(out.predictors)];
   if (!ENVS.includes(out.env)) throw new Error(`--env must be one of ${ENVS.join(', ')}`);
   for (const m of out.mimics) if (!MIMIC_ID.test(m ?? '')) throw new Error(`--mimic ${m} is not a mimic ID`);
+  out.mimics = [...new Set(out.mimics)];
+  if (!(out.rate > 0 && out.rate <= 600))
+    throw new Error('--rate must be a number of predictions a minute, 1–600');
   return out;
 }
 
+// Mirrors isOutputFailure / isFailedCall in packages/core (predictors.ts, engine/jobs.ts): a failed prediction whose
+// output was unusable is the model's failure and stands; any other failed shadow is a failed call, which may be redone.
+const OUTPUT_FAILURE = `COALESCE(p.error IN ('invalid JSON output', 'output does not cover every option')
+  OR p.error LIKE 'output cut off at max_tokens%' OR p.error LIKE 'missing answer for %', 0)`;
+const FAILED_CALL = `(p.role = 'shadow' AND p.ok = 0 AND NOT ${OUTPUT_FAILURE})`;
+
 /**
- * Served anchor and adaptive questions with a primary (so a sealed state) and no prediction from this predictor, per
- * mimic. The same rule as `enqueueMissingPredictions` in packages/core/src/engine/jobs.ts.
+ * Served anchor and adaptive questions with a primary (so a sealed state) and no prediction from this predictor (a
+ * failed call counts as none with `retryFailed`), per mimic. Questions served in the last PENDING_WINDOW_MS are left
+ * to the live path. The same rule as `missingPredictions` in packages/core/src/engine/jobs.ts.
  */
-export function missingQuery({ predictor, consented, mimics }) {
-  const params = [predictor, ...mimics];
+export function missingQuery({ predictor, consented, mimics, retryFailed }, now = Date.now()) {
+  const params = [predictor, now - PENDING_WINDOW_MS, ...mimics];
   const sql = [
     'SELECT q.mimic_id AS mimic, COUNT(*) AS missing FROM questions q JOIN mimics m ON m.id = q.mimic_id',
-    "WHERE q.seq IS NOT NULL AND q.served_at IS NOT NULL AND q.kind IN ('anchor', 'adaptive')",
+    "WHERE q.seq IS NOT NULL AND q.served_at IS NOT NULL AND q.served_at < ?2 AND q.kind IN ('anchor', 'adaptive')",
     "AND EXISTS (SELECT 1 FROM predictions p WHERE p.question_id = q.id AND p.role = 'primary')",
-    'AND NOT EXISTS (SELECT 1 FROM predictions p WHERE p.question_id = q.id AND p.predictor_id = ?1)',
+    'AND NOT EXISTS (SELECT 1 FROM predictions p WHERE p.question_id = q.id AND p.predictor_id = ?1',
+    retryFailed ? `AND NOT ${FAILED_CALL})` : ')',
     consented ? 'AND m.consent_research = 1' : '',
-    mimics.length ? `AND q.mimic_id IN (${mimics.map((_, i) => `?${i + 2}`).join(', ')})` : '',
+    mimics.length ? `AND q.mimic_id IN (${mimics.map((_, i) => `?${i + 3}`).join(', ')})` : '',
     'GROUP BY q.mimic_id ORDER BY q.mimic_id',
   ]
     .filter(Boolean)
@@ -62,24 +93,68 @@ export function missingQuery({ predictor, consented, mimics }) {
   return { sql, params };
 }
 
-/** What this predictor has cost per prediction so far (from provider usage.cost), if it has run at all. */
-export function costQuery(predictor) {
+/**
+ * How this predictor has done so far, in this environment: predictions, the two kinds of failure, and what the
+ * charged ones cost (provider usage.cost). Unusable outputs are charged too, so they count toward the estimate.
+ */
+export function statsQuery(predictor) {
   return {
-    sql: 'SELECT COUNT(*) AS n, AVG(cost_usd) AS avg FROM predictions WHERE predictor_id = ?1 AND ok = 1',
+    sql: [
+      'SELECT COUNT(*) AS n, COALESCE(SUM(p.ok), 0) AS ok,',
+      `COALESCE(SUM(CASE WHEN p.ok = 0 AND ${OUTPUT_FAILURE} THEN 1 ELSE 0 END), 0) AS unusable,`,
+      `COALESCE(SUM(CASE WHEN ${FAILED_CALL} THEN 1 ELSE 0 END), 0) AS failed_calls,`,
+      `SUM(CASE WHEN p.ok = 1 OR ${OUTPUT_FAILURE} THEN 1 ELSE 0 END) AS charged,`,
+      `AVG(CASE WHEN p.ok = 1 OR ${OUTPUT_FAILURE} THEN p.cost_usd END) AS avg_cost`,
+      'FROM predictions p WHERE p.predictor_id = ?1',
+    ].join(' '),
     params: [predictor],
   };
 }
 
-/** For `wrangler d1 execute --command`, which takes no parameters. Only validated IDs reach here. */
-export function inlineParams(sql, params) {
-  return sql.replace(/\?(\d+)/g, (_, n) => `'${String(params[Number(n) - 1]).replaceAll("'", "''")}'`);
+/** The most common failure messages (truncated, since HTTP errors carry response bodies). */
+export function errorsQuery(predictor) {
+  return {
+    sql: [
+      "SELECT substr(COALESCE(p.error, '(none)'), 1, 60) AS error, COUNT(*) AS n,",
+      `MAX(CASE WHEN ${OUTPUT_FAILURE} THEN 1 ELSE 0 END) AS unusable`,
+      'FROM predictions p WHERE p.predictor_id = ?1 AND p.ok = 0 GROUP BY 1 ORDER BY n DESC LIMIT 4',
+    ].join(' '),
+    params: [predictor],
+  };
 }
 
-/** The jobs to publish: one per named mimic, or one that fans out over every (consented) mimic. */
-export function backfillJobs({ predictor, consented, mimics }, runId) {
-  if (mimics.length)
-    return mimics.map((mimicId) => ({ type: 'backfill.mimic', runId, mimicId, predictorId: predictor }));
-  return [{ type: 'backfill.predictor', runId, predictorId: predictor, consentedOnly: consented }];
+/** For `wrangler d1 execute --command`, which takes no parameters. Only validated IDs and numbers reach here. */
+export function inlineParams(sql, params) {
+  return sql.replace(/\?(\d+)/g, (_, n) => {
+    const v = params[Number(n) - 1];
+    if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+    return `'${String(v).replaceAll("'", "''")}'`;
+  });
+}
+
+/**
+ * The jobs to publish for one predictor. With no named mimics, one job that paces every (consented) mimic as one
+ * stream. With named mimics, one job each for those with something missing, staggered so they form one stream too.
+ */
+export function backfillJobs({ predictor, consented, mimics, rate, retryFailed }, rows, runId) {
+  const opts = { perMinute: rate, ...(retryFailed ? { retryFailed: true } : {}) };
+  if (!mimics.length)
+    return [{ type: 'backfill.predictor', runId, predictorId: predictor, consentedOnly: consented, ...opts }];
+  const jobs = [];
+  let before = 0;
+  for (const r of rows) {
+    const offsetSeconds = Math.round((before * 60) / rate);
+    jobs.push({
+      type: 'backfill.mimic',
+      runId,
+      mimicId: r.mimic,
+      predictorId: predictor,
+      ...opts,
+      offsetSeconds,
+    });
+    before += Number(r.missing);
+  }
+  return jobs;
 }
 
 /** An LLM shadow must exist on OpenRouter and support structured outputs (predict.v1 is a JSON-schema call). */
@@ -89,7 +164,7 @@ export async function checkModel(predictor, fetchImpl = fetch) {
     predictor.slice(predictor.indexOf(':') + 1),
   ];
   if (kind !== 'llm') return `${model} (Jev decisions API)`;
-  const res = await fetchImpl('https://openrouter.ai/api/v1/models');
+  const res = await fetchImpl('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`OpenRouter model list: ${res.status}`);
   const found = ((await res.json()).data ?? []).find((m) => m.id === model);
   if (!found) throw new Error(`${model} is not an OpenRouter model (check the slug)`);
@@ -189,11 +264,18 @@ export function remoteTarget(env, cf, workerConfig = readConfig(WORKER_CONFIG)) 
 }
 
 const usd = (x) => (x === 0 ? '$0' : `$${x < 0.01 ? x.toPrecision(2) : x.toFixed(2)}`);
+const pct = (x, n) => `${((100 * x) / (n || 1)).toFixed(1)}%`;
+const duration = (minutes) =>
+  minutes < 1
+    ? 'under a minute'
+    : minutes < 90
+      ? `about ${Math.ceil(minutes)} min`
+      : `about ${(minutes / 60).toFixed(1)} h`;
 
 /** Plans (and with --yes enqueues) each predictor in turn. Every model is checked before anything is enqueued. */
-export async function backfill(opts, target, { fetchImpl = fetch, log = console.log, runId } = {}) {
+export async function backfill(opts, target, { fetchImpl = fetch, log = console.log, runId, now } = {}) {
   const scope = opts.mimics.length
-    ? `${opts.mimics.length} named mimic(s)`
+    ? `${opts.mimics.length} named mimic(s)${opts.consented ? ', consented only' : ''}`
     : opts.consented
       ? 'consented mimics only'
       : 'every mimic';
@@ -207,31 +289,50 @@ export async function backfill(opts, target, { fetchImpl = fetch, log = console.
     const one = { ...opts, predictor };
     log(`Backfill ${predictor} on ${target.name} (${scope})`);
     log(`  model: ${models[i]}`);
-    const rows = await target.query(missingQuery(one));
-    const n = rows.reduce((s, r) => s + Number(r.missing), 0);
-    missing += n;
-    log(`  missing: ${n} prediction(s) across ${rows.length} mimic(s)`);
-    const [cost] = await target.query(costQuery(predictor));
-    if (cost && Number(cost.n) > 0) {
-      const avg = Number(cost.avg);
-      const estimate = n ? `, so about ${usd(avg * n)} for these` : '';
-      log(`  cost: ${usd(avg)} per prediction over ${cost.n} so far${estimate}`);
+
+    const [stats] = await target.query(statsQuery(predictor));
+    const n = Number(stats?.n ?? 0);
+    if (n) {
+      const failed = n - Number(stats.ok);
+      log(`  so far: ${n} prediction(s), ${failed} failed (${pct(failed, n)})`);
+      if (failed) {
+        log(`    unusable output (the model's; kept): ${stats.unusable}`);
+        log(
+          `    failed calls (not the model's): ${stats.failed_calls}${Number(stats.failed_calls) > 0 && !opts.retryFailed ? ', redo with --retry-failed' : ''}`,
+        );
+        for (const e of await target.query(errorsQuery(predictor)))
+          log(`      ${String(e.n).padStart(5)} × ${e.error}`);
+      }
+    }
+
+    const rows = await target.query(missingQuery(one, now));
+    const count = rows.reduce((s, r) => s + Number(r.missing), 0);
+    missing += count;
+    const what = opts.retryFailed ? 'missing or failed call(s)' : 'missing';
+    log(`  ${what}: ${count} prediction(s) across ${rows.length} mimic(s), served over 15 min ago`);
+    if (Number(stats?.charged) > 0) {
+      const avg = Number(stats.avg_cost);
+      const estimate = count ? `, so about ${usd(avg * count)} for these` : '';
+      log(`  cost: ${usd(avg)} per prediction over ${stats.charged} so far${estimate}`);
     } else {
       log(
         '  cost: no predictions from this model yet, so no estimate (it is charged per call, from usage.cost)',
       );
     }
-    if (!n) {
+    if (!count) {
       log('  nothing to backfill');
-    } else if (opts.yes) {
-      const jobs = backfillJobs(one, id);
+      continue;
+    }
+    log(`  pace: ${opts.rate} a minute, ${duration(count / opts.rate)}`);
+    if (opts.yes) {
+      const jobs = backfillJobs(one, rows, id);
       for (const job of jobs) await target.publish(job);
       enqueued += jobs.length;
-      log(`  enqueued ${jobs.length} ${jobs[0].type} job(s) (run ${id}); the worker fans out per mimic`);
+      log(`  enqueued ${jobs.length} ${jobs[0].type} job(s) (run ${id})`);
     }
   }
   if (missing && !opts.yes) log('Dry run: nothing enqueued. Re-run with --yes to enqueue.');
-  if (enqueued) log('Re-run without --yes to watch the missing counts fall to 0.');
+  if (enqueued) log('Re-run without --yes to watch the counts fall to 0.');
   return { missing, enqueued };
 }
 

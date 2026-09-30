@@ -288,6 +288,11 @@ export interface Store {
   }): Promise<boolean>;
   // predictions & answers
   insertPredictions(recs: PredictionRecord[]): Promise<void>;
+  /**
+   * Atomically inserts `recs` and deletes the predictions `removeIds`, but only those that are failed shadows (the
+   * backfill redoing a failed call, ADR-0027). Primary and baseline predictions are never deleted.
+   */
+  replaceFailedShadows(removeIds: string[], recs: PredictionRecord[]): Promise<void>;
   listPredictions(filter: {
     mimicId?: string;
     questionId?: string;

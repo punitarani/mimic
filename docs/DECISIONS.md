@@ -377,3 +377,71 @@ landing page's button carries it to `/new`.
   Suspense boundary whose fallback is the same form with no code, so the static HTML is what it was before, and
   hydration only fills the field in.
 - Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
+
+## ADR-0027 — Backfill accuracy: failed calls are retried, not scored as the model failing; paced runs (2026-09-30)
+
+After the ADR-0025 backfill, the lab showed Qwen3.8 Flash with 142 failed predictions (78%) and a p50 of 35 s, and
+MiMo V2.6 Flash at 7.8 s. Some of that is the models, and some was how the backfill ran and what it recorded.
+
+**What was the model.** Live `predict.v1` calls, sent one at a time on 8 sealed states from an offline session,
+measured:
+
+| Model | Latency | Result |
+| --- | --- | --- |
+| Qwen3.8 Flash (`effort: low`, 3000 max tokens) | 21–67 s | 3 of 8 spent all 3000 tokens on reasoning and returned no content (`finish_reason: length`) |
+| Qwen3.8 Flash (`effort: low`, 8000 max tokens) | 18–104 s | 7 of 7 valid, with up to 4.5K reasoning tokens; plus one HTTP 429 from Alibaba |
+| Qwen3.8 Flash (`effort: none`) | 1.7–2.7 s | 8 of 8 valid, no reasoning tokens |
+| MiMo V2.6 Flash | 3–11 s | one of 8 was "Provider returned an empty response", in a 200 |
+| GLM 5.3 Flash | 1–3.5 s | 8 of 8 valid |
+
+So Qwen's latency is real at `effort: low`: its provider doesn't cap reasoning at that effort. Its failures were
+mostly the 3000-token cap, recorded as "invalid JSON output". Whether to run it with more tokens, with reasoning
+off (a different predictor), or not at all is a separate decision; this ADR doesn't change the predictor.
+
+**What was the backfill.**
+
+1. **Failed calls were stored as the model failing, forever.** A timeout, a 429 or a provider error made
+   `LlmPredictor` return a failed prediction, and `runShadow` stored it and marked the job done. Neither the queue
+   nor a backfill re-run would retry it: the missing rule counted any row, and the ledger key had no run ID. The
+   budget guard did the same: a backfill on a mimic near its $0.50 session cap stored "Budget exceeded" failures.
+2. **Latency counted retries.** Adapters timed a call from before the first attempt, so a success after a 429 or a
+   90 s timeout included the failed attempt and the backoff.
+3. **No pacing.** Each run enqueued every prediction at once. Queues then ran up to 10 per batch and scaled out
+   consumers, which is what draws rate limits and slower answers. It also queued ahead of live sessions' jobs. A
+   batch of 10 could also exceed the six connections a Worker invocation may have waiting for response headers, and
+   the wait would count as latency.
+
+**Decisions.**
+
+- **A failed call is thrown, not stored** (`PredictionResult.retryable`, `isTransientError`). Timeouts, network
+  errors, transient HTTP statuses (408, 425, 429, 5xx, 524, 529) and malformed provider responses are retryable; a
+  200 whose body is an OpenRouter `error` becomes an `HttpError`. The queue retries with backoff. If every attempt
+  fails, the question stays missing: the cron's missing-shadow repair (live) or a re-run (backfill) fills it later
+  on the same sealed state. The invariant monitor counts it as incomplete meanwhile, which is accurate. This
+  applies to live shadows too. The budget guard and other 4xx statuses are not retryable and are stored as before.
+- **Only unusable output is the model's failure**: invalid JSON, options not covered, and now `output cut off at
+  max_tokens (…)` when `finish_reason` is `length` (`OUTPUT_FAILURE`, `isOutputFailure`). These are stored and
+  never retried, since retrying until one parses would flatter the model.
+- **Latency is the attempt that answered** (`requestJson` returns `latencyMs` and `attempts`), for chat, Jev and
+  embeddings. Earlier attempts and backoff are retry overhead. Their calls are still in `model_calls`.
+- **Backfill predictions are their own job, `backfill.shadow`**, keyed by run ID, and are logged as
+  `predict.backfill`. `backfill.predictor` now enqueues them directly for every (consented) mimic, spaced `60 /
+  perMinute` seconds apart as one stream (default 30 a minute per predictor, `--rate`), via `delaySeconds`.
+  `backfill.mimic` does the same for one mimic from `offsetSeconds`; the CLI uses it for `--mimic`, staggering
+  mimics after each other. A run enqueues at most 5,000 predictions and delays at most 12 h; the rest wait for a
+  re-run. Questions served in the last 15 minutes (`PENDING_WINDOW_MS`) are left to the live shadows, so a
+  backfill never races a live shadow for the same predictor.
+- **Backfills are outside the session budget** (`CallContext.budgeted: false`): neither refused by it nor charged
+  to `mimics.spend_usd`, so a research backfill can't block a person's session or inflate an arm's spend. The cost
+  is still on each prediction and in `model_calls`.
+- **`--retry-failed`** redoes this predictor's failed calls: failed shadows whose error isn't an output failure,
+  such as those stored before this ADR or refused by the budget. `Store.replaceFailedShadows` swaps each one for
+  its new prediction atomically, and deletes only failed shadow rows, never primary or baseline ones.
+- **Queue batches run at most 5 jobs at once**, below the Worker's six-connection limit.
+- **The dry run explains failures.** It splits them into unusable output and failed calls, lists the most common
+  messages, and estimates cost from every charged prediction, unusable output included. It gives the duration at
+  the chosen rate. `packages/eval/test/backfill.test.ts` runs the CLI's SQL against the real schema and checks it
+  against the engine's rule.
+
+Backfill options (`perMinute`, `retryFailed`, `offsetSeconds`) are not in the job keys, so a job the cron requeues
+from the ledger falls back to the defaults: the default pace, no retries of failed calls.

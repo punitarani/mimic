@@ -133,6 +133,19 @@ describe('budget guard', () => {
     await expect(g.decide({ purpose: 'x', mimicId: 'm1' }, req)).rejects.toBeInstanceOf(BudgetExceededError);
   });
 
+  it('neither guards nor charges calls marked unbudgeted (a backfill), but still logs their cost', async () => {
+    const budget = new MemBudget(1, 0.5);
+    const { g, log } = gateway({ budget });
+    await g.decide({ purpose: 'predict.backfill', mimicId: 'm1', budgeted: false }, req);
+    expect(budget.spend).toBe(1);
+    expect(log.rows[0]).toMatchObject({
+      purpose: 'predict.backfill',
+      mimicId: 'm1',
+      costUsd: 0.001,
+      ok: true,
+    });
+  });
+
   it('does not guard calls that belong to no mimic', async () => {
     const budget = new MemBudget(1, 0.5);
     const { g } = gateway({ budget });

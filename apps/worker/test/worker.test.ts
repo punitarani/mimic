@@ -35,6 +35,18 @@ describe('queue consumer', () => {
     expect(row?.status).toBe('done');
   });
 
+  it('runs every message of a batch larger than its concurrency', async () => {
+    const ids = Array.from({ length: 12 }, (_, i) => `n${i}`);
+    const batch = createMessageBatch(
+      'mimic-jobs',
+      ids.map((id) => ({ id, timestamp: new Date(), attempts: 1, body: { type: 'noop', id } })),
+    );
+    const ctx = createExecutionContext();
+    await worker.queue(batch, env, ctx);
+    const result = await getQueueResult(batch, ctx);
+    expect(result.explicitAcks.sort()).toEqual([...ids].sort());
+  });
+
   it('acks malformed messages instead of retrying forever', async () => {
     const batch = createMessageBatch('mimic-jobs', [
       { id: 'bad', timestamp: new Date(), attempts: 1, body: { type: 'nope' } },

@@ -19,6 +19,11 @@ export interface CallContext {
   mimicId?: string | null;
   configHash?: string | null;
   jobKey?: string | null;
+  /**
+   * false: operator research work (a backfill) that is neither refused by nor charged to the mimic's session budget.
+   * The call is still logged with its cost. Default true.
+   */
+  budgeted?: boolean;
 }
 
 export interface ModelCallRecord {
@@ -73,6 +78,22 @@ export class BudgetExceededError extends Error {
   }
 }
 
+/** HTTP statuses worth retrying: timeouts, rate limits and upstream/provider errors. */
+export const TRANSIENT_HTTP_STATUS: ReadonlySet<number> = new Set([
+  408, 425, 429, 500, 502, 503, 504, 524, 529,
+]);
+
+/**
+ * Whether a failed provider call may succeed if retried later: timeouts, network errors, transient statuses and
+ * malformed provider responses are; the budget guard and other HTTP statuses (bad request, unknown model) are not.
+ */
+export function isTransientError(e: unknown): boolean {
+  if (e instanceof BudgetExceededError) return false;
+  const status = (e as { status?: unknown } | null)?.status;
+  if (typeof status === 'number') return TRANSIENT_HTTP_STATUS.has(status);
+  return true;
+}
+
 export interface CallDeps {
   log: CallLog;
   budget?: BudgetLedger;
@@ -111,8 +132,9 @@ export async function withModelCall<T extends CallOutcome>(
   request: unknown,
   fn: () => Promise<T>,
 ): Promise<T> {
-  if (ctx.mimicId && deps.budget) {
-    const b = await deps.budget.get(ctx.mimicId);
+  const budget = ctx.mimicId && ctx.budgeted !== false ? deps.budget : undefined;
+  if (ctx.mimicId && budget) {
+    const b = await budget.get(ctx.mimicId);
     if (b && b.spendUsd >= b.budgetUsd) throw new BudgetExceededError(ctx.mimicId, b.spendUsd, b.budgetUsd);
   }
   const id = deps.newId();
@@ -145,8 +167,7 @@ export async function withModelCall<T extends CallOutcome>(
       },
       { ...trace, request: redact(request), response: redact(out.raw) },
     );
-    if (ctx.mimicId && deps.budget && out.usage.costUsd > 0)
-      await deps.budget.add(ctx.mimicId, out.usage.costUsd);
+    if (ctx.mimicId && budget && out.usage.costUsd > 0) await budget.add(ctx.mimicId, out.usage.costUsd);
     return out;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

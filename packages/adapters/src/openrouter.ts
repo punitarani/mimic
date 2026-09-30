@@ -10,7 +10,7 @@ import type {
   LlmClient,
 } from '@mimic/core';
 import { z } from 'zod';
-import { authHeader, type HttpOptions, requestJson } from './http';
+import { authHeader, HttpError, type HttpOptions, requestJson } from './http';
 
 export const OPENROUTER_BASE = 'https://openrouter.ai';
 
@@ -45,13 +45,24 @@ const ChatResponseSchema = z
     choices: z
       .array(
         z
-          .object({ message: z.object({ content: z.string().nullable().optional() }).passthrough() })
+          .object({
+            message: z.object({ content: z.string().nullable().optional() }).passthrough(),
+            finish_reason: z.string().nullable().optional(),
+          })
           .passthrough(),
       )
       .min(1),
     usage: Usage.optional(),
   })
   .passthrough();
+
+/**
+ * OpenRouter can answer 200 with an error body instead of a completion (the provider failed after the response
+ * started, e.g. "Provider returned an empty response").
+ */
+const ErrorBody = z.object({
+  error: z.object({ message: z.string().optional(), code: z.union([z.number(), z.string()]).optional() }),
+});
 
 /** OpenRouter chat completions: JSON schema, reasoning effort, cost from `usage.cost`. Never sends temperature. */
 export class OpenRouterChat implements LlmClient {
@@ -84,31 +95,35 @@ export class OpenRouterChat implements LlmClient {
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
-    const started = Date.now();
-    const { json } = await requestJson(
-      { timeoutMs: 90_000, ...this.opts },
-      `${this.opts.baseUrl ?? OPENROUTER_BASE}/api/v1/chat/completions`,
-      {
-        headers: {
-          ...authHeader('authorization', this.opts.apiKey, 'Bearer '),
-          'x-title': this.opts.appName ?? 'Mimic',
-        },
-        body: this.buildBody(req),
+    const url = `${this.opts.baseUrl ?? OPENROUTER_BASE}/api/v1/chat/completions`;
+    const { json, latencyMs } = await requestJson({ timeoutMs: 90_000, ...this.opts }, url, {
+      headers: {
+        ...authHeader('authorization', this.opts.apiKey, 'Bearer '),
+        'x-title': this.opts.appName ?? 'Mimic',
       },
-    );
+      body: this.buildBody(req),
+    });
+    const failed = ErrorBody.safeParse(json);
+    if (failed.success && !(json as { choices?: unknown }).choices) {
+      const { code, message } = failed.data.error;
+      // A numeric code is an HTTP status; anything else is the provider failing mid-response (retryable).
+      throw new HttpError(typeof code === 'number' ? code : 502, message ?? JSON.stringify(json), url);
+    }
     const r = ChatResponseSchema.parse(json);
     const usage = r.usage ?? {};
+    const choice = r.choices[0]!;
     return {
-      content: r.choices[0]!.message.content ?? '',
+      content: choice.message.content ?? '',
       // OpenRouter does not return dated chat snapshots; the serving provider matters (quantization), so record it.
       modelSnapshot: r.provider ? `${r.model}@${r.provider}` : r.model,
       ...(r.provider ? { provider: r.provider } : {}),
+      ...(choice.finish_reason ? { finishReason: choice.finish_reason } : {}),
       usage: {
         inputTokens: usage.prompt_tokens ?? usage.input_tokens ?? 0,
         outputTokens: usage.completion_tokens ?? usage.output_tokens ?? 0,
         costUsd: usage.cost ?? 0,
       },
-      latencyMs: Date.now() - started,
+      latencyMs,
       raw: json,
     };
   }
@@ -174,8 +189,7 @@ export class JevDecisions implements DecisionProvider {
   constructor(private readonly opts: OpenRouterOptions = {}) {}
 
   async decide(req: DecisionRequest): Promise<DecisionResponse> {
-    const started = Date.now();
-    const { json } = await requestJson(
+    const { json, latencyMs } = await requestJson(
       { timeoutMs: 15_000, ...this.opts },
       `${this.opts.baseUrl ?? OPENROUTER_BASE}/api/alpha/decisions`,
       {
@@ -195,7 +209,7 @@ export class JevDecisions implements DecisionProvider {
         outputTokens: r.usage.output_tokens,
         costUsd: r.usage.cost ?? 0,
       },
-      latencyMs: Date.now() - started,
+      latencyMs,
       raw: json,
     };
   }
@@ -221,8 +235,7 @@ export class OpenRouterEmbedder implements Embedder {
   ) {}
 
   async embed(texts: string[]): Promise<EmbedResult> {
-    const started = Date.now();
-    const { json } = await requestJson(
+    const { json, latencyMs } = await requestJson(
       { timeoutMs: 20_000, ...this.opts },
       `${this.opts.baseUrl ?? OPENROUTER_BASE}/api/v1/embeddings`,
       {
@@ -236,7 +249,7 @@ export class OpenRouterEmbedder implements Embedder {
       vectors: sorted.map((d) => d.embedding),
       model: this.model,
       usage: { inputTokens: r.usage?.prompt_tokens ?? 0, outputTokens: 0, costUsd: r.usage?.cost ?? 0 },
-      latencyMs: Date.now() - started,
+      latencyMs,
     };
   }
 }

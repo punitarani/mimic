@@ -108,6 +108,11 @@ export interface PredictionResult {
   modelSnapshot: string;
   ok: boolean;
   error?: string;
+  /**
+   * The call itself failed (timeout, network, a transient HTTP status), so the model never answered. A queued
+   * prediction retries instead of storing this as the model's failure (ADR-0027).
+   */
+  retryable?: boolean;
 }
 
 export interface Predictor {
@@ -173,7 +178,10 @@ export interface ChatResponse {
   content: string;
   modelSnapshot: string;
   provider?: string;
+  /** Why generation stopped, as the provider reports it: 'stop', 'length' (hit maxTokens), ... */
+  finishReason?: string;
   usage: Usage;
+  /** The attempt that returned this response, excluding earlier failed attempts and retry backoff. */
   latencyMs: number;
   raw: unknown;
 }

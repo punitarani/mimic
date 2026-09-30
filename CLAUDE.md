@@ -22,7 +22,7 @@ pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Worke
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
 pnpm eval -- <export|replay|select|import|report|session> ...
-pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--yes]   # run new predictors over served questions (ADR-0024)
+pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--rate n] [--retry-failed] [--yes]   # new predictors on served questions (ADR-0024, ADR-0027)
 ```
 
 `pnpm dev` serves the web app on http://localhost:3000 and the worker on http://localhost:8787. It copies

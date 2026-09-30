@@ -381,6 +381,26 @@ export class DrizzleStore implements Store {
   async insertPredictions(recs: PredictionRecord[]) {
     await this.insertChunked(s.predictions, recs.map(fromPrediction));
   }
+  async replaceFailedShadows(removeIds: string[], recs: PredictionRecord[]) {
+    const stmts: BatchItem<'sqlite'>[] = [];
+    for (const part of chunk(removeIds, 2)) {
+      stmts.push(
+        this.db
+          .delete(s.predictions)
+          .where(
+            and(
+              inArray(s.predictions.id, part),
+              eq(s.predictions.role, 'shadow'),
+              eq(s.predictions.ok, false),
+            ),
+          ),
+      );
+    }
+    for (const part of chunk(recs.map(fromPrediction), 19)) {
+      stmts.push(this.db.insert(s.predictions).values(part));
+    }
+    if (stmts.length) await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
   async listPredictions(filter: { mimicId?: string; questionId?: string; roles?: PredictionRole[] }) {
     const conds = [];
     if (filter.mimicId) conds.push(eq(s.predictions.mimicId, filter.mimicId));

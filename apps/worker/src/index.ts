@@ -18,6 +18,20 @@ export interface Env extends MimicBindings {
 /** Shadows normally land within seconds; older gaps are lost enqueues (PENDING_WINDOW_MS in the lab is 15 min). */
 const SHADOW_GRACE_MS = 10 * 60 * 1000;
 
+/**
+ * Jobs a batch runs at once. An invocation can have only six connections waiting for response headers and queues
+ * the rest, and a provider call stuck in that queue would count the wait as the model's latency.
+ */
+const BATCH_CONCURRENCY = 5;
+
+async function eachLimit<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>) {
+  let next = 0;
+  const lane = async () => {
+    while (next < items.length) await fn(items[next++]!);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
@@ -60,26 +74,24 @@ export default {
 
   async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
     const d = deps(env);
-    await Promise.all(
-      batch.messages.map(async (msg) => {
-        const parsed = Job.safeParse(msg.body);
-        if (!parsed.success) {
-          console.error('Dropping malformed job', parsed.error.message);
-          msg.ack();
-          return;
-        }
-        try {
-          const outcome = await runJob(d, parsed.data);
-          console.log(`job ${jobKey(parsed.data)} ${outcome}`);
-          msg.ack();
-        } catch (e) {
-          const permanent = e instanceof EngineError && (e.code === 'not_found' || e.code === 'invalid');
-          console.error(`job ${jobKey(parsed.data)} failed (attempt ${msg.attempts})`, e);
-          if (permanent || msg.attempts >= MAX_JOB_ATTEMPTS) msg.ack();
-          else msg.retry({ delaySeconds: Math.min(300, 5 * 3 ** (msg.attempts - 1)) });
-        }
-      }),
-    );
+    await eachLimit(batch.messages, BATCH_CONCURRENCY, async (msg) => {
+      const parsed = Job.safeParse(msg.body);
+      if (!parsed.success) {
+        console.error('Dropping malformed job', parsed.error.message);
+        msg.ack();
+        return;
+      }
+      try {
+        const outcome = await runJob(d, parsed.data);
+        console.log(`job ${jobKey(parsed.data)} ${outcome}`);
+        msg.ack();
+      } catch (e) {
+        const permanent = e instanceof EngineError && (e.code === 'not_found' || e.code === 'invalid');
+        console.error(`job ${jobKey(parsed.data)} failed (attempt ${msg.attempts})`, e);
+        if (permanent || msg.attempts >= MAX_JOB_ATTEMPTS) msg.ack();
+        else msg.retry({ delaySeconds: Math.min(300, 5 * 3 ** (msg.attempts - 1)) });
+      }
+    });
   },
 
   /**
