@@ -28,9 +28,16 @@ try {
     'Work and money',
   ])
     assert.equal(await topics.getByLabel(name).isChecked(), true, `${name} starts on`);
-  for (const name of ['Ask about political views', 'Ask about health and body'])
-    assert.equal(await topics.getByLabel(name).isChecked(), false, `${name} starts off`);
-  log('every category on and every sensitive area off by default');
+  for (const name of [
+    'Ask about political views',
+    'Ask about religion and worldview',
+    'Ask about sexuality and intimate relationships',
+    'Ask about health and body',
+    'Ask about money in detail',
+  ])
+    assert.equal(await topics.getByLabel(name).isChecked(), true, `${name} starts on`);
+  await topics.getByText('All topics are enabled by default.').waitFor();
+  log('every category and every sensitive area on by default (ADR-0049)');
 
   // Keyboard only: Tab into the fieldset, Space toggles, a disabled area is skipped.
   await page.getByLabel('Personality and psychology').focus();
@@ -52,11 +59,15 @@ try {
   assert.ok(lock?.includes('scope-work-lock'), 'a disabled area says why');
   log('keyboard: Tab reaches each category, Space toggles, disabled areas are skipped and described');
 
+  // Turn two areas off by keyboard; political views and religion stay on.
   await page.getByLabel('Personality and psychology').focus();
-  await tabTo('scope-politics');
+  await tabTo('scope-sexuality');
   await page.keyboard.press('Space');
   await tabTo('scope-health');
   await page.keyboard.press('Space');
+  assert.equal(await page.getByLabel('Ask about sexuality and intimate relationships').isChecked(), false);
+  assert.equal(await page.getByLabel('Ask about health and body').isChecked(), false);
+  assert.equal(await page.getByLabel('Ask about religion and worldview').isChecked(), true);
   await page.getByLabel(/Use my answers, without my name/).check();
   const research = page.getByRole('group', { name: 'Research use of sensitive answers' });
   await research.waitFor();
@@ -97,6 +108,12 @@ try {
   await dialog.waitFor();
   assert.equal(await dialog.getByLabel('Work and money').isChecked(), false);
   assert.equal(await dialog.getByLabel('Ask about political views').isChecked(), true);
+  assert.equal(await dialog.getByLabel('Ask about health and body').isChecked(), false);
+  assert.equal(
+    await dialog.getByText('All topics are enabled by default.').count(),
+    0,
+    'the intake default line is not shown in the dialog',
+  );
   assert.equal(
     await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
     true,
@@ -151,7 +168,7 @@ try {
   await mobile.goto(`${BASE}/new?invite=mimic-dev`);
   const mTopics = mobile.getByRole('group', { name: 'What to ask about' });
   await mTopics.waitFor();
-  await mTopics.getByLabel('Ask about religion and worldview').check();
+  await mTopics.getByLabel('Ask about religion and worldview').uncheck();
   await mTopics.scrollIntoViewIfNeeded();
   await shot(mobile, 'intake-scope-mobile', { fullPage: true });
   await phone.close();

@@ -1688,3 +1688,27 @@ plus about $0.70 of earlier smoke tests.
 
 **Next.** The limit is how few real people there are, not the search. Re-run the optimizer once there are six or more
 dev people, so the split is by person and validation measures new people.
+
+## ADR-0049 — Intake starts with every topic on (2026-09-30)
+
+ADR-0040 had intake start with the four categories on and the five sensitive areas off, each ticked only by choice.
+Intake now starts from `INTAKE_SCOPE` (`packages/core/src/scope.ts`): every category and every sensitive area ticked,
+with the copy "Turn off anything you'd rather not share. All topics are enabled by default."
+
+- **Only the form's starting point changes.** Each area still has its own checkbox, reason and self-only note, and
+  the person can turn any of it off at intake or later from the session menu. The sensitive-facet rules in
+  `docs/CATEGORIES.md` still hold: only direct questions under a given consent populate a sensitive facet.
+- **Absent still means no.** `DEFAULT_SCOPE` keeps no sensitive consents, so an API call without a scope and mimics
+  created before ADR-0040 are unchanged.
+- **Research use stays opt-in.** Special-category answers still leave research exports unless the person ticks each
+  area under research consent. Money in detail follows plain research consent, as before, so with money now ticked
+  by default, a person who gives research consent shares those answers unless they untick money.
+- **Shared form, intake-only line.** The session's Topics and consent dialog reuses the form but not the "enabled by
+  default" sentence, which is only true at intake. `scripts/browser/scope.mjs` now checks that every area starts on
+  and turns two off by keyboard.
+- **Trade-off.** A box left ticked is weaker evidence of consent than one the person ticks; GDPR art. 9 data
+  (politics, religion, sexuality, health) generally needs an affirmative act, and the stored scope does not record
+  whether a consent was the default or a choice. Sensitive questions also offer no "prefer not to say", on the
+  premise that the person chose the area (`gen.v3`, CATEGORIES.md §2), and a default consent weakens that premise.
+  Revisit both before an ontology v2 config (or experiment arm) serves sensitive questions, and before opening
+  sign-ups beyond invites.
