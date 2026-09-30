@@ -1390,3 +1390,19 @@ and makes concreteness and respect things a gate checks rather than things a pro
   ADR-0041) on ontology v2 with reserve.v2, gen.v3, gates.v3, reflect.v2 and domain mix core 15 / casual 55 /
   professional 30. The default config is unchanged until ADR-0044. Offline fakes append rogue drafts to every gen.v3 batch (a self-rating, an untagged
   religious question, a political one, a loaded one) so tests show each guard work.
+
+## ADR-0047 — Invite links hide the code field (2026-09-30)
+
+ADR-0026 showed a code from an invite link in a disabled field with a hint. Nothing there is for the person to read
+or do, so the field now isn't rendered while the code is locked.
+
+- **Hidden, not disabled.** The code from `?invite=` is still sent with the form and still checked only by
+  `POST /api/mimics`.
+- **Shown only when the code is the problem.** A 403, or a 400 whose message names `inviteCode`
+  (`inviteRejected`, `lib/invite.ts`), shows the field, filled with the linked code, with a hint that it came from
+  the link, and focuses it. Any other failure (a 400 about another field, a 429, a server or network error) keeps
+  it hidden, so focus isn't pulled away from the error that needs fixing. This narrows ADR-0026's "any failed
+  submit unlocks".
+- **Prerendered HTML is unchanged.** The Suspense fallback (ADR-0023) still renders the field, since the static page
+  can't see the query string; hydration removes it for invite links, so the fields below move up once. Removing
+  that shift would mean rendering `/new` per request, which ADR-0023 chose against.
