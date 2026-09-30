@@ -72,6 +72,13 @@ Fixtures and the hash embedder are for tests only, so preflight refuses them. Do
 (`DOPPLER_CONFIG`, `DOPPLER_ENVIRONMENT`, `DOPPLER_PROJECT`) and any other synced names are ignored. A value moves
 through GitHub → the step's environment → the Workers and is never printed; GitHub masks it in logs anyway.
 
+## Observability
+
+Both Workers keep logs and automatic traces (ADR-0023). Find them in the Cloudflare dashboard under Workers &
+Pages → `mimic-web-prod` or `mimic-worker-prod` → Observability. A trace follows one request, queue batch or cron
+run through its D1, KV, R2, queue and outbound fetch calls. Every invocation is sampled; to sample less, lower
+`head_sampling_rate` in the `observability` block of each `wrangler.jsonc`.
+
 ## Other commands
 
 ```

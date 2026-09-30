@@ -9,7 +9,12 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat"],
-  "observability": { "enabled": true },
+  // Logs and automatic traces for every queue batch and cron run (see apps/web/wrangler.jsonc).
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  },
   "triggers": { "crons": ["*/30 * * * *"] },
   "d1_databases": [
     {

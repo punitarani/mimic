@@ -8,7 +8,15 @@
   "compatibility_date": "2026-08-15",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
-  "observability": { "enabled": true },
+  // Workers Observability (dashboard → Workers → Observability): persisted logs, plus automatic traces. Traces are
+  // spans for each request, D1 query, KV/R2 operation, queue send and outbound fetch (headers and bodies are not
+  // recorded). Every invocation is sampled; lower head_sampling_rate if traffic grows. Model and search calls keep
+  // their own redacted traces in model_calls and R2 (invariant 5).
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true, "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 1 }
+  },
   "d1_databases": [
     {
       "binding": "DB",

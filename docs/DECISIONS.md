@@ -273,3 +273,30 @@ scripts and `db:migrate:{preview,prod}` are gone.
   - A smoke test checks the landing page, `/api/health` and the Access redirect on `/lab`.
   - Deploys are serialised and never cancelled mid-flight.
 - **Only prod is deployed continuously.** Preview is deployed by hand from any Doppler config.
+
+## ADR-0023 — Workers observability and caching (2026-09-30)
+
+- **Traces and logs.** Both Workers persist logs (with invocation logs) and automatic traces, at a head sampling
+  rate of 1. That is the top-level `observability` block in each `wrangler.jsonc`, which preview and prod inherit.
+  - A trace has spans for each request, queue batch and cron run, and each D1, KV, R2, queue and outbound fetch call
+    inside it.
+  - Headers and bodies aren't recorded, so provider keys never reach it.
+  - The app's own model and search traces stay in `model_calls` and R2 (invariant 5).
+  - View them in the dashboard under Workers → Observability. Lower the rate if traffic grows.
+- **Page caching.** Nearly every page is per-person and `force-dynamic`, and those keep
+  `private, no-store`. The few prerendered pages (`/new`, the icon) use OpenNext's static-assets incremental
+  cache with cache interception, so they are served from the Worker's assets without loading the Next server
+  (`x-opennext-cache: HIT`). Nothing uses ISR or `revalidateTag`, so there is no R2/KV incremental cache, tag cache
+  or revalidation queue.
+- **Static assets.** `apps/web/public/_headers` marks the content-hashed `/_next/static/*` as
+  `public, max-age=31536000, immutable`. The Workers default is `max-age=0, must-revalidate`, which cost a
+  revalidation request per file on each load.
+- **App data** keeps its existing caches:
+  - configs by hash in each isolate;
+  - question vectors;
+  - identity search results in KV with a TTL;
+  - BALD hypotheses in KV.
+
+  Nothing on the prediction path is cached across requests, because sealed states must be built from the database
+  (invariant 1). A process-wide "config already stored" memo was considered and rejected. Deps are built per request,
+  and in tests and the eval CLI one process talks to several databases, so the memo would skip real inserts.

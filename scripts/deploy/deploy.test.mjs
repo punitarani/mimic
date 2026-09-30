@@ -200,6 +200,16 @@ describe('config', () => {
     ]);
   });
 
+  it('keeps logs and traces on for both Workers, in every environment', () => {
+    for (const c of [web, worker]) {
+      // Top-level observability is inherited by env.preview and env.prod unless they override it.
+      for (const env of ['preview', 'prod']) assert.equal(c.env[env].observability, undefined);
+      assert.equal(c.observability.enabled, true);
+      assert.equal(c.observability.logs.enabled, true);
+      assert.equal(c.observability.traces.enabled, true);
+    }
+  });
+
   it('serves prod only on the custom domain, with workers.dev and preview URLs off', () => {
     assert.equal(customDomain(web, 'prod'), 'mimic.punitarani.com');
     for (const c of [web, worker]) {
