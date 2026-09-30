@@ -43,7 +43,7 @@ describe('model call logging and budget guard on the real schema', () => {
         decide: async () => ({
           modelSnapshot: 'snap',
           answers: {},
-          usage: { inputTokens: 100, outputTokens: 0, costUsd: 0.3 },
+          usage: { inputTokens: 100, outputTokens: 0, costUsd: 0.45 },
           latencyMs: 3,
           raw: { authorization: 'Bearer secret' },
         }),
@@ -59,11 +59,11 @@ describe('model call logging and budget guard on the real schema', () => {
     await g.decide({ purpose: 'test', mimicId: 'm1', configHash: hash }, req);
     const calls = await store.listModelCalls({ mimicId: 'm1' });
     expect(calls).toHaveLength(2);
-    expect(calls[0]).toMatchObject({ purpose: 'test', costUsd: 0.3, ok: true, configHash: hash });
+    expect(calls[0]).toMatchObject({ purpose: 'test', costUsd: 0.45, ok: true, configHash: hash });
     const trace = JSON.parse((await blobs.get(calls[0]!.r2TraceKey))!);
     expect(trace.response.authorization).toBe('[redacted]');
-    expect((await store.getMimic('m1'))!.spendUsd).toBeCloseTo(0.6);
-    // $0.60 ≥ the $0.50 cap in cfg.default.v1
+    expect((await store.getMimic('m1'))!.spendUsd).toBeCloseTo(0.9);
+    // $0.90 ≥ $0.80, the session's share of the standard $1 cap, which an unlisted purpose is held to (ADR-0035)
     await expect(g.decide({ purpose: 'test', mimicId: 'm1' }, req)).rejects.toBeInstanceOf(
       BudgetExceededError,
     );
@@ -71,16 +71,16 @@ describe('model call logging and budget guard on the real schema', () => {
     close();
   });
 
-  it("caps at BUDGET_USD instead of the config's budget when it is set (ADR-0034)", async () => {
+  it('reports the standard caps, or BUDGET_USD and BUDGET_SESSION_SHARE when set (ADR-0035)', async () => {
     const { store, close } = await openLocalDb(':memory:');
     const hash = configHash(DEFAULT_CONFIG);
     await store.putConfig({ hash, json: JSON.stringify(DEFAULT_CONFIG), label: 'default', createdAt: 1 });
     await store.insertMimic({ ...mimic('m1', hash), spendUsd: 0.6 });
-    expect(await new StoreBudget(store).get('m1')).toEqual({ spendUsd: 0.6, budgetUsd: 0.5 });
-    expect(await new StoreBudget(store, { budgetUsd: 0.75 }).get('m1')).toEqual({
-      spendUsd: 0.6,
-      budgetUsd: 0.75,
-    });
+    const std = await new StoreBudget(store).get('m1');
+    expect(std).toMatchObject({ spendUsd: 0.6, budgetUsd: 1 });
+    expect(std!.sessionUsd).toBeCloseTo(0.8, 10);
+    const raised = await new StoreBudget(store, { budgetUsd: 2, sessionShare: 0.5 }).get('m1');
+    expect(raised).toEqual({ spendUsd: 0.6, budgetUsd: 2, sessionUsd: 1 });
     close();
   });
 });

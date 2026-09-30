@@ -360,7 +360,7 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
-/** ADR-0035: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds SOUL.md. */
+/** ADR-0036: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds SOUL.md. */
 export const soulDrafts = sqliteTable(
   'soul_drafts',
   {
@@ -377,7 +377,7 @@ export const soulDrafts = sqliteTable(
   (t) => [index('soul_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
 );
 
-/** ADR-0035: the person's choices for SOUL.md (sections, hidden items, edits, their own words). */
+/** ADR-0036: the person's choices for SOUL.md (sections, hidden items, edits, their own words). */
 export const soulCurations = sqliteTable('soul_curations', {
   mimicId: text('mimic_id').primaryKey(),
   json: text('json').notNull(),

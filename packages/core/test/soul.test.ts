@@ -111,7 +111,7 @@ function fakeGateway(content: unknown) {
   return { g, rows, sent };
 }
 
-describe('SOUL.md (ADR-0035)', () => {
+describe('SOUL.md (ADR-0036)', () => {
   it('opens as a person model, not an identity, and renders the deterministic sections without a draft', () => {
     const v = build({ draft: null });
     const md = v.markdown;

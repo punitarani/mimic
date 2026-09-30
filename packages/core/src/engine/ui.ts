@@ -38,10 +38,11 @@ export interface UiSnapshot {
     arm: string | null;
     createdAt: number;
     spendUsd: number;
-    /** The whole cap: asking, teaching and SOUL.md work until spend reaches it (ADR-0034). */
+    /**
+     * The whole cap: asking, teaching and SOUL.md work until spend reaches it. The session stops earlier, at its
+     * share, and says so through `/next` (ADR-0035).
+     */
     budgetUsd: number;
-    /** The session's share of the cap; it stops serving questions here. */
-    sessionBudgetUsd: number;
     snapshotVersion: number;
   };
   /** `basics`: the anchor battery size; the panel shows "Learning the basics" until that many are answered. */
@@ -78,7 +79,6 @@ export const KG_MAX_NODES = 60;
 export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiSnapshot> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  const caps = capsFor(deps, cfg);
   const [loaded, fid, kg, facets] = await Promise.all([
     loadMimicData(deps, m),
     deps.store.listFidelity(m.id),
@@ -144,8 +144,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       arm: m.arm,
       createdAt: m.createdAt,
       spendUsd: m.spendUsd,
-      budgetUsd: caps.totalUsd,
-      sessionBudgetUsd: caps.sessionUsd,
+      budgetUsd: capsFor(deps, cfg).totalUsd,
       snapshotVersion: m.snapshotVersion,
     },
     progress: {

@@ -162,51 +162,71 @@ export const DEFAULT_CONFIG: PipelineConfig = {
 export const DEFAULT_CONFIG_LABEL = 'cfg.default.v4';
 
 /**
- * Runtime spend limits (ADR-0034). Deploy settings, not pipeline config: they change what a mimic may spend, never
+ * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never
  * what a prediction sees, so changing them keeps every config hash.
  */
 export interface SpendLimits {
-  /** Total cap per mimic in USD; overrides the config's `session.budgetUsd`. */
+  /** Total cap per mimic in USD for configs on the standard budget; default DEFAULT_BUDGET_USD. */
   budgetUsd?: number;
   /** Share of the cap the learning session may spend; the rest is kept for the mimic page. */
   sessionShare?: number;
 }
 
+/** The standard cap per mimic when `BUDGET_USD` is unset. */
+export const DEFAULT_BUDGET_USD = 1;
 export const DEFAULT_SESSION_SHARE = 0.8;
+/**
+ * The budget every `cfg.default.*` config carries, from before ADR-0035. A config with it is on the standard budget,
+ * which the deploy sets; a config that names any other budget (an experiment arm, say) keeps its own.
+ */
+export const STANDARD_CONFIG_BUDGET_USD = 0.5;
 
 export interface SpendCaps {
   /** Nothing is spent past this: the gateway refuses every call for the mimic. */
   totalUsd: number;
-  /** The session stops serving questions here, keeping the rest for asking, teaching and SOUL.md. */
+  /** The session stops here, keeping the rest for asking, teaching and SOUL.md. */
   sessionUsd: number;
 }
 
 export function spendCaps(cfg: PipelineConfig, limits: SpendLimits = {}): SpendCaps {
-  const totalUsd = limits.budgetUsd ?? cfg.session.budgetUsd;
+  const own = cfg.session.budgetUsd;
+  const totalUsd = own === STANDARD_CONFIG_BUDGET_USD ? (limits.budgetUsd ?? DEFAULT_BUDGET_USD) : own;
   return { totalUsd, sessionUsd: totalUsd * (limits.sessionShare ?? DEFAULT_SESSION_SHARE) };
 }
 
+/** The same ranges deploy preflight checks (scripts/deploy/settings.mjs); a test keeps the two in step. */
 const SpendEnv = z.object({
   BUDGET_USD: z.coerce.number().positive(),
   BUDGET_SESSION_SHARE: z.coerce.number().gt(0).max(1),
 });
 
 /**
- * `BUDGET_USD` and `BUDGET_SESSION_SHARE` from a Worker's vars. An unset or invalid value is left out, so its default
- * applies; deploy preflight refuses invalid values before they get here (scripts/deploy/settings.mjs).
+ * `BUDGET_USD` and `BUDGET_SESSION_SHARE` from a Worker's vars, which may be strings or JSON numbers. An unset value
+ * keeps its default; an invalid one does too and is named in `problems` so the caller can log it (preflight refuses
+ * invalid values before a deploy, so this is for hand-set vars).
  */
-export function parseSpendLimits(env: { BUDGET_USD?: string; BUDGET_SESSION_SHARE?: string }): SpendLimits {
-  const read = <K extends keyof typeof SpendEnv.shape>(k: K) => {
-    const raw = env[k]?.trim();
-    if (!raw) return undefined;
-    const r = SpendEnv.shape[k].safeParse(raw);
-    return r.success ? r.data : undefined;
+export function parseSpendLimits(env: { BUDGET_USD?: unknown; BUDGET_SESSION_SHARE?: unknown }): {
+  limits: SpendLimits;
+  problems: string[];
+} {
+  const problems: string[] = [];
+  const read = (k: keyof typeof SpendEnv.shape) => {
+    const raw = env[k];
+    const text = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw.trim() : '';
+    if (raw === undefined || raw === null || text === '') return undefined;
+    const r = SpendEnv.shape[k].safeParse(text);
+    if (r.success) return r.data;
+    problems.push(`${k} is not valid; using the default`);
+    return undefined;
   };
   const budgetUsd = read('BUDGET_USD');
   const sessionShare = read('BUDGET_SESSION_SHARE');
   return {
-    ...(budgetUsd !== undefined ? { budgetUsd } : {}),
-    ...(sessionShare !== undefined ? { sessionShare } : {}),
+    limits: {
+      ...(budgetUsd !== undefined ? { budgetUsd } : {}),
+      ...(sessionShare !== undefined ? { sessionShare } : {}),
+    },
+    problems,
   };
 }
 

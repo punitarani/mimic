@@ -17,8 +17,9 @@ export const SETTINGS = {
   VECTOR_BACKEND: ['vectorize', 'sql'],
   EMBEDDINGS_PROVIDER: ['workers-ai', 'openrouter'],
   SEARCH_PROVIDER: ['exa', 'perplexity', 'none'],
-  ENRICH_PROVIDER: ['parallel', 'none'],
-  // Spend caps (ADR-0034): the total per mimic in USD, and the share of it the learning session may spend.
+  ENRICH_PROVIDER: ['exa', 'parallel', 'none'],
+  // Spend caps (ADR-0035): the total per mimic in USD, and the share of it the learning session may spend. Defaults
+  // live in code; the ranges match `parseSpendLimits` in packages/core/src/config.ts (a test keeps them in step).
   BUDGET_USD: number('a number of US dollars above 0', (n) => n > 0),
   BUDGET_SESSION_SHARE: number('a number above 0 and at most 1', (n) => n > 0 && n <= 1),
 };
@@ -31,7 +32,7 @@ function settingProblem(allowed, value) {
 /** The key each provider choice needs (packages/adapters/src/factory.ts). */
 const PROVIDER_KEYS = {
   SEARCH_PROVIDER: { exa: 'EXA_API_KEY', perplexity: 'PERPLEXITY_API_KEY' },
-  ENRICH_PROVIDER: { parallel: 'PARALLEL_API_KEY' },
+  ENRICH_PROVIDER: { exa: 'EXA_API_KEY', parallel: 'PARALLEL_API_KEY' },
 };
 
 /**

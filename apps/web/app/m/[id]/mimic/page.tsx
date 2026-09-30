@@ -41,7 +41,7 @@ export default function MimicPage() {
   );
 }
 
-/** SOUL.md (ADR-0035): a portable portrait for any agent, curated on its own page. */
+/** SOUL.md (ADR-0036): a portable portrait for any agent, curated on its own page. */
 function Persona({ id }: { id: string }) {
   return (
     <section aria-labelledby="persona-h" className="space-y-3">

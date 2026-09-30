@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { answerToDistribution, predictionQuestion } from '@mimic/core';
+import { answerToDistribution, type ProviderCallRunner, predictionQuestion } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
+  ExaEnricher,
   ExaPeopleSearch,
+  exaCandidate,
   type FetchLike,
   JevDecisions,
   OpenAiDecisionsStub,
@@ -12,6 +14,7 @@ import {
   ParallelEnricher,
   relayUrl,
   requestJson,
+  schemaFacts,
 } from '../src';
 
 const fixture = (name: string): unknown =>
@@ -246,17 +249,174 @@ describe('Exa people search', () => {
   });
 });
 
+/** A pass-through runner that records the model each provider call is logged under (the gateway's job). */
+function runner() {
+  const models: string[] = [];
+  const run: ProviderCallRunner = (model, _request, call) => {
+    models.push(model);
+    return call();
+  };
+  return { run, models };
+}
+
+const exaPage = (over: Record<string, unknown>) => ({
+  requestId: 'x',
+  results: [{ id: 'u', title: 'Avery Quinn', url: 'https://avery.example.dev', text: 'Avery', ...over }],
+  costDollars: { total: 0.001 },
+});
+
+describe('Exa enrichment', () => {
+  const subject = { name: 'Avery Quinn', location: 'San Francisco' };
+
+  it('maps a profile with a person entity to sourced facts in one logged call', async () => {
+    const { fetch, calls } = replay({ json: fixture('exa-contents.json') });
+    const url = 'https://www.linkedin.com/in/avery-quinn-example';
+    const { run, models } = runner();
+    const r = await new ExaEnricher({ fetch, apiKey: 'exa' }).enrich({ ...subject, url }, run);
+    expect(models).toEqual(['exa:contents']);
+    expect(calls[0]!.url).toBe('https://api.exa.ai/contents');
+    expect(calls[0]!.body).toMatchObject({ urls: [url] });
+    expect(r.costUsd).toBe(0.001);
+    expect(r.facts.map((f) => [f.predicate, f.object])).toEqual([
+      ['jobTitle', 'Senior Software Engineer'],
+      ['worksAt', 'Northwind Labs'],
+      ['workedAt', 'Contoso'],
+      ['educatedAt', 'Example State University'], // the school alone, one KG organization
+      ['livesIn', 'San Francisco, California, United States'],
+    ]);
+    expect(r.facts.every((f) => f.sourceUrl === url && f.confidence === 0.85)).toBe(true);
+  });
+
+  it('logs the schema summary as its own call, only for a page with no person entity', async () => {
+    const { fetch, calls } = replay(
+      { json: fixture('exa-contents-page.json') },
+      { json: fixture('exa-contents-summary.json') },
+    );
+    const url = 'https://avery.example.dev';
+    const { run, models } = runner();
+    const r = await new ExaEnricher({ fetch }).enrich({ ...subject, url }, run);
+    expect(models).toEqual(['exa:contents', 'exa:summary']);
+    expect(calls[1]!.body).toMatchObject({ urls: [url], summary: { schema: { type: 'object' } } });
+    expect(r.costUsd).toBe(0.002);
+    expect(r.facts).toContainEqual({
+      predicate: 'worksAt',
+      object: 'Northwind Labs',
+      confidence: 0.6,
+      sourceUrl: url,
+    });
+    expect(r.facts).toContainEqual({
+      predicate: 'hasInterest',
+      object: 'Bouldering',
+      confidence: 0.6,
+      sourceUrl: url,
+    });
+  });
+
+  it('makes no second call when Exa could not read the page', async () => {
+    const { fetch, calls } = replay({ json: { requestId: 'x', results: [], costDollars: { total: 0 } } });
+    const { run } = runner();
+    const r = await new ExaEnricher({ fetch }).enrich({ ...subject, url: 'https://avery.example.dev' }, run);
+    expect(calls).toHaveLength(1);
+    expect(r.facts).toEqual([]);
+  });
+
+  it('does not summarize a LinkedIn page that came back without an entity', async () => {
+    const { fetch, calls } = replay({ json: exaPage({ url: 'https://www.linkedin.com/in/avery' }) });
+    const { run } = runner();
+    const r = await new ExaEnricher({ fetch }).enrich(
+      { ...subject, url: 'https://linkedin.com/in/avery/' },
+      run,
+    );
+    expect(calls).toHaveLength(1);
+    expect(r.facts).toEqual([]);
+  });
+
+  it('reads a summary in a code fence, and fails a summary of the wrong shape', async () => {
+    const fenced = exaPage({ summary: '```json\n{"current_employer":"Northwind Labs"}\n```' });
+    let { fetch } = replay({ json: exaPage({}) }, { json: fenced });
+    const r = await new ExaEnricher({ fetch }).enrich(
+      { ...subject, url: 'https://avery.example.dev' },
+      runner().run,
+    );
+    expect(r.facts.map((f) => f.object)).toEqual(['Northwind Labs']);
+
+    ({ fetch } = replay({ json: exaPage({}) }, { json: exaPage({ summary: '{"skills":"not a list"}' }) }));
+    await expect(
+      new ExaEnricher({ fetch }).enrich({ ...subject, url: 'https://avery.example.dev' }, runner().run),
+    ).rejects.toThrow();
+    ({ fetch } = replay({ json: exaPage({}) }, { json: exaPage({ summary: 'not json' }) }));
+    await expect(
+      new ExaEnricher({ fetch }).enrich({ ...subject, url: 'https://avery.example.dev' }, runner().run),
+    ).rejects.toThrow();
+  });
+});
+
+describe('schemaFacts', () => {
+  it('keeps a few facts per field and does not repeat the current employer as a past one', () => {
+    const facts = schemaFacts(
+      {
+        current_employer: 'Handshake AI',
+        employer_history: ['Handshake AI', 'Prospify', 'NOCO', 'Slash', 'Contoso', 'Fabrikam'],
+        skills: ['a', 'b', 'c', 'd', 'e', 'f'],
+      },
+      () => ({ confidence: 0.6 }),
+    );
+    expect(facts.filter((f) => f.predicate === 'workedAt').map((f) => f.object)).toEqual([
+      'Prospify',
+      'NOCO',
+      'Slash',
+      'Contoso',
+    ]);
+    expect(facts.filter((f) => f.predicate === 'hasSkill')).toHaveLength(4);
+  });
+});
+
+describe('Exa person entities', () => {
+  const entity = (workHistory: unknown[]) =>
+    exaPage({
+      entities: [{ type: 'person', properties: { name: 'Avery Quinn', workHistory, educationHistory: [] } }],
+    }).results[0] as Parameters<typeof exaCandidate>[0];
+
+  it('treats only a dated role with no end as current', () => {
+    const c = exaCandidate(
+      entity([
+        { title: 'Intern', company: { name: 'Contoso' }, dates: null },
+        { title: 'Engineer', company: { name: 'Fabrikam' }, dates: { from: '2020-01-01', to: '2022-01-01' } },
+        { title: 'Lead', company: { name: 'Northwind Labs' }, dates: { from: '2022-02-01', to: null } },
+      ]),
+    );
+    expect(c.headline).toBe('Lead at Northwind Labs');
+    expect(c.facts?.map((f) => [f.predicate, f.object])).toEqual([
+      ['jobTitle', 'Lead'],
+      ['worksAt', 'Northwind Labs'],
+      ['workedAt', 'Contoso'], // undated: a past employer, not a current one
+      ['workedAt', 'Fabrikam'],
+    ]);
+    // Facts carried on a candidate leave the source to the candidate's URL.
+    expect(c.facts?.every((f) => f.sourceUrl === undefined)).toBe(true);
+  });
+
+  it('gives an entity-free result no facts', () => {
+    expect(exaCandidate(exaPage({}).results[0] as Parameters<typeof exaCandidate>[0]).facts).toBeUndefined();
+  });
+});
+
 describe('Parallel enrichment', () => {
   it('creates a task run with a JSON output schema and maps fields to sourced facts', async () => {
     const { fetch, calls } = replay(
       { json: fixture('parallel-task-created.json') },
       { json: fixture('parallel-task-result.json') },
     );
-    const r = await new ParallelEnricher({ fetch }).enrich({
-      name: 'Avery Quinn',
-      location: 'San Francisco',
-      url: 'https://www.linkedin.com/in/avery-quinn-example',
-    });
+    const { run, models } = runner();
+    const r = await new ParallelEnricher({ fetch }).enrich(
+      {
+        name: 'Avery Quinn',
+        location: 'San Francisco',
+        url: 'https://www.linkedin.com/in/avery-quinn-example',
+      },
+      run,
+    );
+    expect(models).toEqual(['parallel:task']);
     expect(calls[0]!.url).toBe('https://api.parallel.ai/v1/tasks/runs');
     expect(calls[0]!.body).toMatchObject({
       processor: 'base',

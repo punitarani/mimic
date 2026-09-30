@@ -1,4 +1,5 @@
 import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
+import { BudgetExceededError } from '../gateway';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
 import { type Job, jobFromKey, jobKey } from '../jobs';
@@ -31,6 +32,7 @@ import {
   jevModel,
   loadConfig,
   requireMimic,
+  requireSessionBudget,
   sessionSpent,
 } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
@@ -41,6 +43,10 @@ export const MAX_JOB_ATTEMPTS = 5;
 /**
  * Runs one job idempotently via the `jobs` ledger (PLAN §6.4). Returns 'skipped' for duplicates. Throws on failure
  * so the queue retries with backoff; after MAX_JOB_ATTEMPTS the queue's dead-letter queue takes over.
+ *
+ * A job refused by the budget guard is 'skipped', not retried (a retry would be refused the same way), and is never
+ * marked done, so the same job runs again if it is enqueued after the cap is raised (ADR-0035). Its row is written
+ * with the attempts used up, so the stale-job requeue leaves it alone.
  */
 export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skipped'> {
   const key = jobKey(job);
@@ -68,6 +74,17 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
     return 'done';
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (e instanceof BudgetExceededError) {
+      await deps.store.putJob({
+        key,
+        type: job.type,
+        status: 'failed',
+        attempts: Math.max(attempts, MAX_JOB_ATTEMPTS),
+        lastError: `budget: ${msg}`.slice(0, 1000),
+        updatedAt: deps.clock(),
+      });
+      return 'skipped';
+    }
     await deps.store.putJob({
       key,
       type: job.type,
@@ -112,6 +129,8 @@ export async function enqueueMissingShadows(
 ): Promise<number> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
+  // Shadows stop with the session's share (ADR-0035); enqueueing them past it would only queue refusals.
+  if (sessionSpent(deps, m, cfg)) return 0;
   return enqueueMissingPredictions(deps, mimicId, servedBefore, cfg.predictor.shadows);
 }
 
@@ -273,6 +292,8 @@ export async function runShadow(
   key?: string,
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
+  // Shadows (and `pnpm backfill`) are session and research work, so they never draw on the page's reserve.
+  requireSessionBudget(deps, m, await loadConfig(deps, m.configHash));
   const q = await deps.store.getQuestion(questionId);
   if (!q || q.mimicId !== m.id) return;
   const preds = await deps.store.listPredictions({ questionId });
@@ -336,7 +357,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   const pool = loaded.questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled');
   if (pool.length >= MIN_POOL) return;
   // Candidates only feed the session, so refills stop with it and never draw on the page's reserve.
-  if (sessionSpent(deps, m, cfg)) return;
+  requireSessionBudget(deps, m, cfg);
   const facets = await facetsFor(deps, m, cfg);
   const n = Math.min(cfg.generator.batchSize, MAX_POOL - pool.length + 4);
   const mix = cfg.generator.domainMix;
@@ -496,7 +517,7 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
       { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
     );
 
-  // Learning runs to the whole cap, so answers taught on the mimic page after the session still count (ADR-0034).
+  // Learning runs to the whole cap, so answers taught on the mimic page after the session still count (ADR-0035).
   // Over it every model call is refused, and the job would retry until dropped. The answer is kept as evidence and
   // goes into the snapshot; only the reads that need a model are skipped.
   if (budgetSpent(deps, m, cfg)) return snapshot();
@@ -709,7 +730,7 @@ export async function runHypotheses(
   const k = sel.type === 'bald' || sel.type === 'voi' ? sel.k : 0;
   if (k < 2) return;
   // Hypotheses only steer session selection, so they stop with the session's share.
-  if (sessionSpent(deps, m, cfg)) return;
+  requireSessionBudget(deps, m, cfg);
   const cur = await deps.kv.get(`hyp:${m.id}`);
   if (cur) {
     try {

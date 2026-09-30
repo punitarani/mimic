@@ -26,7 +26,7 @@ import {
 } from './deps';
 
 /**
- * SOUL.md (ADR-0035). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
+ * SOUL.md (ADR-0036). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
  * snapshot (so it can't race the `snapshot.write` job or freeze derived data mid-learning), and a fact the person
  * removes leaves the file at once.
  */
@@ -69,7 +69,7 @@ async function view(
 ): Promise<SoulView> {
   const [loaded, draft, stored] = await Promise.all([
     pre.loaded ?? load(deps, m),
-    pre.draft !== undefined ? pre.draft : deps.store.latestPersonaDraft(m.id),
+    pre.draft !== undefined ? pre.draft : deps.store.latestSoulDraft(m.id),
     pre.stored !== undefined ? pre.stored : deps.store.getSoulCuration(m.id),
   ]);
   return buildSoul({
@@ -92,14 +92,14 @@ export async function getSoul(deps: EngineDeps, mimicId: string): Promise<SoulVi
  */
 export async function curateSoul(deps: EngineDeps, mimicId: string, save: SoulSave): Promise<SoulView> {
   const m = await requireMimic(deps, mimicId);
-  const draft = await deps.store.latestPersonaDraft(m.id);
+  const draft = await deps.store.latestSoulDraft(m.id);
   const rec: CurationRecord = {
     mimicId: m.id,
     curation: pruneCuration(save.curation, draft?.draft ?? null),
     rev: save.rev,
     updatedAt: deps.clock(),
   };
-  const wrote = await deps.store.putPersonaCuration(rec);
+  const wrote = await deps.store.putSoulCuration(rec);
   return view(deps, m, wrote ? { draft, stored: rec } : { draft });
 }
 
@@ -137,7 +137,7 @@ export async function draftSoul(deps: EngineDeps, mimicId: string): Promise<Soul
     draft,
     createdAt: deps.clock(),
   };
-  await deps.store.insertPersonaDraft(rec);
+  await deps.store.insertSoulDraft(rec);
   return view(deps, m, { loaded, draft: rec });
 }
 

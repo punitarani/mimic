@@ -47,7 +47,7 @@ async function mimic() {
   );
 }
 
-describe('SOUL.md (ADR-0035)', () => {
+describe('SOUL.md (ADR-0036)', () => {
   it('drafts, curates and exports a SOUL.md from live data', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await mimic();
@@ -135,5 +135,18 @@ describe('SOUL.md (ADR-0035)', () => {
     expect(later.coreMarkdown).not.toContain('## Appendix');
     expect(later.markdown).toContain('**#14**');
     expect(later.markdown).toContain('- Commits quickly, then revisits.');
+  }, 60_000);
+
+  it("drafts from the page's reserve once the session has spent its share (ADR-0035)", async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await mimic();
+    await engine.drain();
+    await answer(m.id, 6);
+    // The standard $1 cap: the session stops at $0.80, and SOUL.md drafts run to $1.
+    await engine.deps.store.updateMimic(m.id, { spendUsd: 0.85 });
+    expect((await serveNext(engine.deps, m.id)).status).toBe('budget');
+    expect((await draftSoul(engine.deps, m.id)).draft?.promptVersion).toBe('soul.v1');
+    await engine.deps.store.updateMimic(m.id, { spendUsd: 1 });
+    await expect(draftSoul(engine.deps, m.id)).rejects.toMatchObject({ code: 'budget' });
   }, 60_000);
 });

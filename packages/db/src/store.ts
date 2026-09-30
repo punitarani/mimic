@@ -737,12 +737,12 @@ export class DrizzleStore implements Store {
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
   }
 
-  // SOUL.md (ADR-0035)
-  async insertPersonaDraft(rec: SoulDraftRecord) {
+  // SOUL.md (ADR-0036)
+  async insertSoulDraft(rec: SoulDraftRecord) {
     const { draft, ...row } = rec;
     await this.db.insert(s.soulDrafts).values({ ...row, draftJson: JSON.stringify(SoulDraft.parse(draft)) });
   }
-  async latestPersonaDraft(mimicId: string): Promise<SoulDraftRecord | null> {
+  async latestSoulDraft(mimicId: string): Promise<SoulDraftRecord | null> {
     const row = await this.db
       .select()
       .from(s.soulDrafts)
@@ -767,7 +767,7 @@ export class DrizzleStore implements Store {
       updatedAt: row.updatedAt,
     };
   }
-  async putPersonaCuration(rec: SoulCurationRecord) {
+  async putSoulCuration(rec: SoulCurationRecord) {
     const json = JSON.stringify(SoulCuration.parse(rec.curation));
     const rows = await this.db
       .insert(s.soulCurations)
