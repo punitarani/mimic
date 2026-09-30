@@ -298,6 +298,11 @@ export interface Store {
   listAnswers(mimicId: string): Promise<AnswerRecord[]>;
   /** Atomically stores the answer, marks the question answered and writes the scores. */
   recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<void>;
+  /**
+   * Atomically inserts a question the person wrote and answered themselves (`kind = feedback`, ADR-0027) at
+   * `answer.seq`, with its answer, and advances the mimic's `seqMax`. Returns false if that seq was already taken.
+   */
+  recordFeedback(args: { question: QuestionRecord; answer: AnswerRecord }): Promise<boolean>;
   insertScores(recs: ScoreRecord[]): Promise<void>;
   listScoredPredictions(mimicId: string, roles: PredictionRole[]): Promise<ScoredPredictionRow[]>;
   // derived state

@@ -7,6 +7,7 @@ import {
   expectedIndex,
   fidelityInput,
   itemAcrossPeople,
+  learnsFrom,
   loadConfig,
   loadMimicData,
   loadMimicDataAt,
@@ -103,6 +104,7 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
     const loaded = await loadMimicData(deps, m);
     const qById = new Map(loaded.questions.map((q) => [q.id, q]));
     const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
+    // Checkpoints count session answers only; person-written feedback stays out of replayed states (ADR-0027).
     const items = loaded.data.evidence
       .filter((e) => e.kind === 'anchor' || e.kind === 'adaptive')
       .sort((a, b) => a.seq - b.seq);
@@ -286,9 +288,7 @@ export async function reproduceOnline(
       // Questions served before stateAt existed fall back to servedAt (approximate, ADR-0017).
       const loaded = await loadMimicDataAt(deps, m, q.stateAt ?? q.servedAt, q.seq);
       const state = buildState(loaded.data, stateOptions(cfg, q.seq, { forQuestions: [q] }));
-      const eligible = loaded.data.evidence.filter(
-        (e) => e.seq < q.seq! && (e.kind === 'anchor' || e.kind === 'adaptive'),
-      ).length;
+      const eligible = loaded.data.evidence.filter((e) => e.seq < q.seq! && learnsFrom(e.kind)).length;
       const overBudget = cfg.stateBuilder.strategy !== 'structured' && state.evidence.length < eligible;
       n++;
       if (q.stateAt === null) legacy++;

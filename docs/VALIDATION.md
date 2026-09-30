@@ -93,6 +93,15 @@ Playwright against `pnpm dev` (14 answered questions, keyboard only):
 - Browser, live providers: 6 answers → Stop here → scenario → DeepSeek drafts a typed question → Jev predicts
   61% / 39% → generated first-person sentence, labeled → the person answers → download `mimic.json` (`mimic/1`, v2,
   playground evidence included) → delete → `GET /api/mimics/:id` returns 404.
+- Feedback (ADR-0027), `packages/eval/test/artifact.test.ts`: stored as `kind = feedback` in one write, idempotent
+  per key, no predictions or scores, fidelity and progress untouched, learned and included in the next sealed state,
+  kept in the export. Validation gives sentences a person can act on. A feedback write and a concurrent `/next` get
+  distinct seqs. That test caught a real race: `/next` lost its seq to the feedback and returned a 409, and now it
+  re-serves on a fresh state.
+- Browser, live providers: 3 answers → write a question by hand → answer it myself (keyboard 1 and Enter, with a
+  reason) → scenario → DeepSeek drafts a scale question → Jev predicts → leave it → answer it later from the
+  history → mobile and dark. In D1, the next session question's primary has `evidence_seq_max` equal to the
+  feedback's seq, and the worker ran `embed.qa` and `traits.read` on each taught answer.
 
 ## M7 Eval CLI
 

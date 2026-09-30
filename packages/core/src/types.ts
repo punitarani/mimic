@@ -2,8 +2,21 @@ import { z } from 'zod';
 
 export const QType = z.enum(['choice', 'noul', 'score']);
 export type QType = z.infer<typeof QType>;
-export const QKind = z.enum(['anchor', 'adaptive', 'repeat', 'playground']);
+export const QKind = z.enum(['anchor', 'adaptive', 'repeat', 'playground', 'feedback']);
 export type QKind = z.infer<typeof QKind>;
+
+/**
+ * Kinds whose answers the mimic learns from: they enter sealed states, trait reads and reflection. `feedback` is a
+ * question the person wrote and answered themselves on the mimic page, with no prediction (ADR-0027).
+ */
+export function learnsFrom(kind: QKind): boolean {
+  return kind === 'anchor' || kind === 'adaptive' || kind === 'feedback';
+}
+
+/** Kinds the session serves. `playground` and `feedback` are written by the person on the mimic page instead. */
+export function isSessionKind(kind: QKind): boolean {
+  return kind === 'anchor' || kind === 'adaptive' || kind === 'repeat';
+}
 export const Domain = z.enum(['core', 'casual', 'professional']);
 export type Domain = z.infer<typeof Domain>;
 

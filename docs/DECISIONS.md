@@ -377,3 +377,41 @@ landing page's button carries it to `/new`.
   Suspense boundary whose fallback is the same form with no code, so the static HTML is what it was before, and
   hydration only fills the field in.
 - Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
+
+## ADR-0027 — Teaching the mimic directly: `kind = feedback` (2026-09-30)
+
+On the mimic page, the person could only ask the mimic and then check its guess. Those playground answers are a
+clean test set (§9.11) and never enter a state, so nothing the person said there taught the mimic. Now they can also
+pick the right answer themselves, without asking.
+
+- **A new question kind, `feedback`.** "Answer it myself" stores the question (drafted from a scenario or written by
+  hand) and the chosen option in one D1 batch (`Store.recordFeedback`): the question is inserted already answered at
+  the next seq, `mimics.seq_max` advances, and the answer row is written. It carries no predictions and no `stateAt`,
+  like a repeat. The prompt ID in its provenance is `feedback.v1`. There is no model call and no spend, so it works
+  after the budget is reached.
+- **The mimic learns from it; nothing scores it.** `learnsFrom(kind)` (anchor, adaptive, feedback) now decides what
+  enters sealed states (state builder and `sealedState`), `learn.answer` (embedding, trait read, reflection) and the
+  eval reproduce check. `isSessionKind(kind)` (anchor, adaptive, repeat) decides serving, progress and repeat
+  scheduling. Fidelity, the scored set, shadows and backfill stay on anchor and adaptive questions only. The lab's
+  invariant monitor skips feedback, like repeats, since there is nothing to seal.
+- **Sealing still holds by seq.** Feedback at seq t enters states for questions with seq > t only. Existing data has
+  no feedback rows, so every stored state rebuilds to the same hash. Offline replay checkpoints still count session
+  answers only, and keep feedback out of their states.
+- **Why a new kind rather than feeding playground answers into states.** Playground answers are checked against a
+  prediction the person has just seen. Keeping them out of states keeps §9.11's test set clean. An answer given
+  without seeing a guess is ordinary first-person evidence. The UI says which is which: "Your answer checks the
+  guess; it isn't used to teach your mimic" and "Pick the right answer. Your mimic learns from it."
+- **Races.** Feedback takes a seq like a serve does, and the unique `(mimic_id, seq)` index decides which one gets
+  it. `submitFeedback` retries at the next seq (up to 3 times), and is idempotent per key. `serveNext` retries once
+  on a fresh state when the only reason it lost its seq was a person-written question. Before, a playground predict
+  racing `/next` surfaced as a 409.
+- **Out-of-order learning is tolerated.** Feedback given while a session question is still served (seq t−1) is
+  learned before that answer. Trait and insight writes stay monotonic by `seqUpTo`, so the late session answer
+  reaches traits at the next read and insights as earlier evidence.
+- **API.** `POST /api/mimics/:id/ask` takes `{ feedback: { question, answer, why?, idempotencyKey } }` and
+  `GET /api/mimics/:id/ask` lists what was asked and taught, with counts (taught, checked, matched). Draft validation
+  errors now read as sentences a person can act on ("Two options say the same thing.").
+- **UI.** The draft editor can add and remove options (2–5), switch between options and yes/no, and start from a
+  blank question. Answers use the session's option buttons and scale, with keyboard 1–5, Y/N and Enter, and the same
+  match, close and miss wording (`verdictOf`, shared with the session). `mimic.json` (`mimic/1`) accepts
+  `kind = feedback` in its evidence.

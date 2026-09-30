@@ -105,6 +105,13 @@ describe('sealing (PLAN §3.1): the state for question t never contains answer t
     expect(buildState(m, opts()).evidence.map((e) => e.seq)).toEqual([1, 2, 3]);
   });
 
+  it('includes feedback the person answered themselves, sealed like any answer (ADR-0027)', () => {
+    const m = mimic(3);
+    m.evidence.push(item(4, { kind: 'feedback' }), item(5, { kind: 'playground' }));
+    expect(buildState(m, opts()).evidence.map((e) => e.seq)).toEqual([1, 2, 3, 4]);
+    expect(buildState(m, opts({ beforeSeq: 4 })).evidence.map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
   it('context-only states carry identity and nothing learned', () => {
     const s = buildState(mimic(20), opts({ contextOnly: true }));
     expect(s.evidence).toEqual([]);

@@ -17,7 +17,7 @@ import { scorePrediction } from '../scoring';
 import { facetCoverage } from '../selectors';
 import { buildState, cosine, toStateEvidence } from '../state-builder';
 import type { FactRecord, InsightRecord, KgEdgeRecord, KgNodeRecord, QuestionRecord } from '../store';
-import type { Domain, PersonState } from '../types';
+import { type Domain, learnsFrom, type PersonState } from '../types';
 import { writeSnapshot } from './artifact';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
@@ -416,8 +416,8 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
   const cfg = await loadConfig(deps, m.configHash);
   const loaded = await loadMimicData(deps, m);
   const item = loaded.data.evidence.find((e) => e.seq === seq);
-  if (!item || (item.kind !== 'anchor' && item.kind !== 'adaptive')) return;
-  const learnable = loaded.data.evidence.filter((e) => e.kind === 'anchor' || e.kind === 'adaptive');
+  if (!item || !learnsFrom(item.kind)) return;
+  const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
   const nAnswered = learnable.filter((e) => e.seq <= seq).length;
 
   // 1) Embed the Q&A (plus the "why").
@@ -537,7 +537,7 @@ export async function runReflection(
   const facets = await facetsFor(deps, m, cfg);
   const lastReflected = existing.reduce((a, i) => Math.max(a, i.seqUpTo), 0);
   const learnable = loaded.data.evidence
-    .filter((e) => (e.kind === 'anchor' || e.kind === 'adaptive') && e.seq <= seq)
+    .filter((e) => learnsFrom(e.kind) && e.seq <= seq)
     .map(toStateEvidence);
   const newEvidence = learnable.filter((e) => e.seq > lastReflected);
   const earlier = learnable.filter((e) => e.seq <= lastReflected).slice(-20);

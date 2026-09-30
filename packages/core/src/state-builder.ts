@@ -1,13 +1,14 @@
 import { canonicalJson, sha256Hex } from './hash';
-import type {
-  Insight,
-  Option,
-  PersonState,
-  QKind,
-  QType,
-  Question,
-  StateEvidence,
-  TraitEstimate,
+import {
+  type Insight,
+  learnsFrom,
+  type Option,
+  type PersonState,
+  type QKind,
+  type QType,
+  type Question,
+  type StateEvidence,
+  type TraitEstimate,
 } from './types';
 
 export type StateStrategy = 'raw' | 'structured' | 'summary' | 'full';
@@ -103,7 +104,7 @@ export function buildState(m: MimicData, opts: BuildOptions): PersonState {
   let evidence: StateEvidence[] = [];
   if (includeEvidence) {
     const eligible = m.evidence
-      .filter((e) => e.seq < opts.beforeSeq && (e.kind === 'anchor' || e.kind === 'adaptive'))
+      .filter((e) => e.seq < opts.beforeSeq && learnsFrom(e.kind))
       .sort((a, b) => a.seq - b.seq);
     const used = estimateTokens({ identity, traits, insights });
     const remaining = Math.max(0, opts.budgetTokens - used);

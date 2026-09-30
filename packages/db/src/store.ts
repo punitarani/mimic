@@ -423,6 +423,23 @@ export class DrizzleStore implements Store {
     for (const part of chunk(scoreRows, 8)) stmts.push(this.db.insert(s.scores).values(part));
     await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
   }
+  async recordFeedback(args: { question: QuestionRecord; answer: AnswerRecord }) {
+    const { question: q, answer: a } = args;
+    try {
+      await this.db.batch([
+        this.db.insert(s.questions).values(fromQuestion(q)),
+        this.db
+          .update(s.mimics)
+          .set({ seqMax: sql`max(${s.mimics.seqMax}, ${a.seq})`, updatedAt: a.createdAt })
+          .where(eq(s.mimics.id, a.mimicId)),
+        this.db.insert(s.answers).values(a),
+      ]);
+    } catch (e) {
+      if (/UNIQUE constraint failed/i.test(String((e as { cause?: unknown }).cause ?? e))) return false;
+      throw e;
+    }
+    return true;
+  }
   async insertScores(recs: ScoreRecord[]) {
     if (!recs.length) return;
     const answers = await this.db

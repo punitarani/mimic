@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { QKind } from '../types';
 import { loadMimicData, vectorId } from './data';
 import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
 import { searchCacheKey } from './identity';
@@ -23,7 +24,7 @@ export const MimicJson = z.object({
   evidence: z.array(
     z.object({
       seq: z.number().int(),
-      kind: z.enum(['anchor', 'adaptive', 'repeat', 'playground']),
+      kind: QKind,
       type: z.enum(['choice', 'noul', 'score']),
       prompt: z.string(),
       options: z.array(z.string()),

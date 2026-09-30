@@ -8,7 +8,7 @@ import type {
   QuestionRecord,
   TraitRecord,
 } from '../store';
-import type { PersonState, Question } from '../types';
+import { learnsFrom, type PersonState, type Question } from '../types';
 import type { EngineDeps } from './deps';
 
 export interface LoadedMimic {
@@ -162,9 +162,7 @@ export async function sealedState(
 ): Promise<PersonState> {
   const opts = stateOptions(cfg, beforeSeq, { forQuestions });
   const first = buildState(loaded.data, opts);
-  const eligible = loaded.data.evidence.filter(
-    (e) => e.seq < beforeSeq && (e.kind === 'anchor' || e.kind === 'adaptive'),
-  );
+  const eligible = loaded.data.evidence.filter((e) => e.seq < beforeSeq && learnsFrom(e.kind));
   if (first.evidence.length >= eligible.length || cfg.stateBuilder.strategy === 'structured') return first;
   try {
     const ids = eligible.map((e) => vectorId.qa(loaded.data.mimicId, e.seq));

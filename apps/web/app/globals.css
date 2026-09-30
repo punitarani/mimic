@@ -185,3 +185,8 @@ button {
     animation-duration: 0ms !important;
   }
 }
+
+/* Headings that take focus when a card changes (for screen readers); not interactive, so no ring. */
+.focus-target:focus-visible {
+  outline: none;
+}

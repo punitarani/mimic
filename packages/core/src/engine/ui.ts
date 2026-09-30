@@ -3,6 +3,7 @@ import { FACET_GROUPS } from '../ontology';
 import { facetCoverage } from '../selectors';
 import { toStateEvidence } from '../state-builder';
 import type { IdentityState, MimicStatus } from '../store';
+import { isSessionKind } from '../types';
 import { facetCounts, loadMimicData } from './data';
 import { type EngineDeps, facetsFor, loadConfig, requireMimic } from './deps';
 import { fidelityFromRecord, MIN_POOL } from './session';
@@ -143,7 +144,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       snapshotVersion: m.snapshotVersion,
     },
     progress: {
-      answered: loaded.questions.filter((q) => q.status === 'answered' && q.kind !== 'playground').length,
+      answered: loaded.questions.filter((q) => q.status === 'answered' && isSessionKind(q.kind)).length,
       target: cfg.session.target,
       basics: cfg.anchors.count,
     },

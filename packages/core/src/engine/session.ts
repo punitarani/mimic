@@ -10,7 +10,14 @@ import { repeatAgreement, scorePrediction } from '../scoring';
 import { makeSelector, questionCoverage } from '../selectors';
 import { cosine, lexicalSimilarity } from '../state-builder';
 import type { AnswerRecord, FidelityRecord, MimicRecord, PredictionRecord, QuestionRecord } from '../store';
-import type { Distribution, PersonState, PredictionResult, Question } from '../types';
+import {
+  type Distribution,
+  isSessionKind,
+  learnsFrom,
+  type PersonState,
+  type PredictionResult,
+  type Question,
+} from '../types';
 import {
   contextState,
   facetCounts,
@@ -40,7 +47,7 @@ export interface PublicQuestion {
   id: string;
   seq: number;
   /** Repeats are shown as adaptive so the person can't tell a probe from a new question. */
-  kind: 'anchor' | 'adaptive' | 'playground';
+  kind: 'anchor' | 'adaptive' | 'playground' | 'feedback';
   type: Question['type'];
   prompt: string;
   options: Question['options'];
@@ -67,7 +74,7 @@ export function toPublic(q: QuestionRecord): PublicQuestion {
 }
 
 function progressOf(questions: QuestionRecord[], cfg: PipelineConfig): Progress {
-  const answered = questions.filter((q) => q.status === 'answered' && q.kind !== 'playground').length;
+  const answered = questions.filter((q) => q.status === 'answered' && isSessionKind(q.kind)).length;
   return { answered, target: cfg.session.target };
 }
 
@@ -80,6 +87,23 @@ function maxSeq(questions: QuestionRecord[]): number {
  * The primary and baseline predictions are persisted before the question is returned (PLAN §3.2).
  */
 export async function serveNext(deps: EngineDeps, mimicId: string): Promise<NextResult> {
+  try {
+    return await serveOnce(deps, mimicId);
+  } catch (e) {
+    // The seq went to a question the person wrote on the mimic page (ADR-0027), not to a concurrent serve:
+    // serve again on a fresh state that includes it. A second loss surfaces as a conflict.
+    if (e instanceof SeqTaken) return serveOnce(deps, mimicId);
+    throw e;
+  }
+}
+
+class SeqTaken extends EngineError {
+  constructor() {
+    super('conflict', 'Concurrent serve; retry');
+  }
+}
+
+async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   const m = await timed(deps, 'mimic', () => requireMimic(deps, mimicId));
   const cfg = await loadConfig(deps, m.configHash);
   // Derived data is pinned to `stateAt` so the sealed states can be rebuilt exactly from an export (ADR-0017).
@@ -88,7 +112,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
   const { questions } = loaded;
   const progress = progressOf(questions, cfg);
 
-  const current = questions.find((q) => q.status === 'served' && q.kind !== 'playground');
+  const current = questions.find((q) => q.status === 'served' && isSessionKind(q.kind));
   if (current) return { status: 'question', question: toPublic(current), progress };
   if (m.status !== 'learning') return { status: 'identity', progress };
   if (m.spendUsd >= cfg.session.budgetUsd) return { status: 'budget', progress };
@@ -105,7 +129,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
 
   // 2) Repeat probes, scheduled outside the selector; no predictions (PLAN §9.5).
   const served = questions
-    .filter((q) => q.seq !== null && q.kind !== 'playground')
+    .filter((q) => q.seq !== null && isSessionKind(q.kind))
     .map((q) => ({
       questionId: q.id,
       seq: q.seq!,
@@ -156,9 +180,9 @@ async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
   const qs = await deps.store.listQuestions(m.id);
-  const current = qs.find((q) => q.status === 'served' && q.kind !== 'playground');
+  const current = qs.find((q) => q.status === 'served' && isSessionKind(q.kind));
   const progress = progressOf(qs, cfg);
-  if (!current) throw new EngineError('conflict', 'Concurrent serve; retry');
+  if (!current) throw new SeqTaken();
   return { status: 'question', question: toPublic(current), progress };
 }
 
@@ -262,7 +286,7 @@ async function serveWithPredictions(
   const baseState = contextState(loaded, cfg);
   if (state.meta.evidenceSeqMax >= seq) throw new Error('Sealing violated: state contains answer ≥ seq');
 
-  const asked = loaded.questions.filter((q) => q.seq !== null && q.kind !== 'playground');
+  const asked = loaded.questions.filter((q) => q.seq !== null && isSessionKind(q.kind));
   const counts = facetCounts(loaded.questions);
 
   // Baseline for every candidate in one batched call, in parallel with selection (PLAN §6.4).
@@ -473,11 +497,10 @@ export async function submitAnswer(
   await timed(deps, 'record', () => deps.store.recordAnswer({ answer, scores }));
 
   const seqAnswered = q.seq;
-  const fidelity =
-    q.kind === 'playground'
-      ? null
-      : await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seqAnswered));
-  if (q.kind === 'anchor' || q.kind === 'adaptive') {
+  const fidelity = isSessionKind(q.kind)
+    ? await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seqAnswered))
+    : null;
+  if (learnsFrom(q.kind)) {
     const seq = q.seq;
     await deferred(deps, () => deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq }));
   }

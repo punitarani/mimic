@@ -86,7 +86,7 @@ export const questions = sqliteTable(
     id: text('id').primaryKey(),
     mimicId: text('mimic_id').notNull(),
     seq: integer('seq'),
-    kind: text('kind', { enum: ['anchor', 'adaptive', 'repeat', 'playground'] }).notNull(),
+    kind: text('kind', { enum: ['anchor', 'adaptive', 'repeat', 'playground', 'feedback'] }).notNull(),
     type: text('type', { enum: ['choice', 'noul', 'score'] }).notNull(),
     domain: text('domain', { enum: ['core', 'casual', 'professional'] }).notNull(),
     prompt: text('prompt').notNull(),
