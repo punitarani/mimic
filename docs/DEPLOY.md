@@ -16,9 +16,9 @@ The command runs `scripts/deploy/deploy.mjs`. Every step is idempotent, so a re-
 | Resources | Finds or creates D1 `mimic-prod`, KV `mimic-cache-prod`, R2 `mimic-blobs-prod`, queues `mimic-jobs-prod` and `mimic-jobs-prod-dlq`, and Vectorize `mimic-qa-prod` (768-d cosine, metadata indexes `mimicId` and `kind`). It writes `apps/*/wrangler.deploy.jsonc` with the real IDs and the settings; that file is gitignored. |
 | Migrations | `wrangler d1 migrations apply DB --remote`, run before any code that expects the new schema. |
 | Worker | Deploys `mimic-worker-prod` (the queue consumer and cron) with its secrets via `--secrets-file`: `OPENROUTER_API_KEY` plus the chosen providers' keys. |
-| Web | Runs the OpenNext build, then deploys `mimic-web-prod` with its secrets and the custom domain. The domain's DNS record and certificate are created by Cloudflare. |
+| Web | Runs the OpenNext build with `SITE_URL` set to the environment's origin (the custom domain, or the `workers.dev` URL for preview), which link previews are built against. Then it deploys `mimic-web-prod` with its secrets and the custom domain. The domain's DNS record and certificate are created by Cloudflare. |
 | Access | Creates the Access application "Mimic lab" on `/lab`, `/lab/*`, `/api/lab` and `/api/lab/*`, with an allow policy for `ADMIN_EMAILS`. |
-| Smoke | Checks that `/` renders, that `/api/health` passes (D1 read, R2 write, no-op job), and that `/lab` redirects to Access. It retries for about 5 minutes while a new domain and certificate come up. |
+| Smoke | Checks that `/` renders, that its `og:image` is a PNG served on the same host, that `/api/health` passes (D1 read, R2 write, no-op job), and that `/lab` redirects to Access. It retries for about 5 minutes while a new domain and certificate come up. |
 
 Secrets are pushed with the code on every deploy, so Doppler stays the source of truth. A value changed in Doppler
 syncs to GitHub and reaches the Workers on the next deploy; to apply it right away, run CD by hand (Actions → CD →

@@ -87,6 +87,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
   },
 );
 
+/** The id `Field` gives its label, for inputs that name themselves with aria-labelledby. */
+export function fieldLabelId(htmlFor: string): string {
+  return `${htmlFor}-label`;
+}
+
 export function Field({
   label,
   hint,
@@ -102,7 +107,7 @@ export function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-graphite">
+      <label id={fieldLabelId(htmlFor)} htmlFor={htmlFor} className="block text-sm font-medium text-graphite">
         {label}
         {required ? (
           <span className="text-rust"> *</span>

@@ -1,9 +1,13 @@
 'use client';
+import { withScheme } from '@mimic/core/links';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
+import { AutocompleteInput } from '@/components/autocomplete';
 import { TopBar } from '@/components/brand';
-import { Button, Checkbox, ErrorText, Field, Input } from '@/components/ui';
+import { Button, Checkbox, ErrorText, Field, fieldLabelId, Input } from '@/components/ui';
 import { api } from '@/lib/api';
+import { loadOccupations, loadPlaces } from '@/lib/autocomplete';
+import sources from '@/lib/autocomplete-sources.json';
 import { INVITE_PARAM, inviteFromQuery } from '@/lib/invite';
 
 export default function NewMimic() {
@@ -50,8 +54,8 @@ function IntakeForm({ invite }: { invite: string | null }) {
   const [research, setResearch] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setF({ ...f, [k]: e.target.value });
+  const setValue = (k: keyof typeof f) => (v: string) => setF((prev) => ({ ...prev, [k]: v }));
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setValue(k)(e.target.value);
 
   // After each failed submit of a linked code, put the cursor where the fix goes (once the field is enabled).
   useEffect(() => {
@@ -73,7 +77,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
         location: f.location,
         ...(f.occupation ? { occupation: f.occupation } : {}),
         ...(f.employer ? { employer: f.employer } : {}),
-        ...(f.link ? { link: f.link } : {}),
+        ...(f.link.trim() ? { link: withScheme(f.link) } : {}),
         attestSelf: true,
         consentSearch: search,
         consentResearch: research,
@@ -112,26 +116,29 @@ function IntakeForm({ invite }: { invite: string | null }) {
         label="Location"
         htmlFor="location"
         required
-        hint="City and country, for example Lisbon, Portugal."
+        hint="Your city finds you best. A state or country works too."
       >
-        <Input
+        <AutocompleteInput
           id="location"
+          labelId={fieldLabelId('location')}
           value={f.location}
-          onChange={set('location')}
+          onChange={setValue('location')}
+          load={loadPlaces}
           required
-          autoComplete="address-level2"
+          placeholder="Lisbon, Portugal"
         />
       </Field>
       <div className="grid gap-5 sm:grid-cols-2">
         <Field label="Occupation" htmlFor="occupation">
-          <Input
+          <AutocompleteInput
             id="occupation"
+            labelId={fieldLabelId('occupation')}
             value={f.occupation}
-            onChange={set('occupation')}
-            autoComplete="organization-title"
+            onChange={setValue('occupation')}
+            load={loadOccupations}
           />
         </Field>
-        <Field label="Employer" htmlFor="employer">
+        <Field label="Employer or school" htmlFor="employer">
           <Input id="employer" value={f.employer} onChange={set('employer')} autoComplete="organization" />
         </Field>
       </div>
@@ -140,7 +147,17 @@ function IntakeForm({ invite }: { invite: string | null }) {
         htmlFor="link"
         hint="LinkedIn or a personal site. It makes finding you much more accurate."
       >
-        <Input id="link" type="url" value={f.link} onChange={set('link')} placeholder="https://" />
+        <Input
+          id="link"
+          type="url"
+          inputMode="url"
+          autoComplete="url"
+          autoCapitalize="none"
+          spellCheck={false}
+          value={f.link}
+          onChange={set('link')}
+          placeholder="linkedin.com/in/you"
+        />
       </Field>
       <div className="space-y-4 border-t border-line pt-5">
         <Checkbox id="attest" checked={attest} onChange={setAttest} label="I'm building a mimic of myself" />
@@ -168,6 +185,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
       >
         {busy ? 'Creating…' : 'Continue'}
       </Button>
+      <p className="text-xs text-muted">{[...sources.places, ...sources.occupations].join(' ')}</p>
     </form>
   );
 }

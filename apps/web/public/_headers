@@ -2,3 +2,12 @@
 # year instead of revalidating on every load (the static assets default is max-age=0, must-revalidate).
 /_next/static/*
   Cache-Control: public,max-age=31536000,immutable
+
+# Icons and the link preview card (ADR-0031). Pages link them with a content hash (?v=), but assets match on the path
+# alone, and iOS also asks for /apple-touch-icon.png bare, so a day rather than immutable.
+/icon.svg
+  Cache-Control: public,max-age=86400
+/share-card.png
+  Cache-Control: public,max-age=86400
+/apple-touch-icon.png
+  Cache-Control: public,max-age=86400
