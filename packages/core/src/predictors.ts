@@ -64,7 +64,7 @@ const LlmProbs = z.union([
   z.record(z.string(), z.number()),
 ]);
 
-export const LLM_PREDICTOR_MAX_TOKENS = 1200;
+export const LLM_PREDICTOR_MAX_TOKENS = 3000;
 
 /** LLM shadow predictor (PLAN §9.6, prompt predict.v1). One chat call per question, run in parallel. */
 export class LlmPredictor implements Predictor {

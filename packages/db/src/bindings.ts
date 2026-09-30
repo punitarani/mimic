@@ -15,14 +15,23 @@ import { and, eq, inArray } from 'drizzle-orm';
 import * as s from './schema';
 import type { MimicDb } from './store';
 
+type Retry = <T>(fn: () => Promise<T>) => Promise<T>;
+const once: Retry = (fn) => fn();
+
 export class R2Blobs implements BlobStore {
-  constructor(private readonly bucket: R2Bucket) {}
+  /** `retry`: local-dev lock retry (ADR-0014); identity in deployed envs. */
+  constructor(
+    private readonly bucket: R2Bucket,
+    private readonly retry: Retry = once,
+  ) {}
   async put(key: string, body: string, contentType = 'application/json') {
-    await this.bucket.put(key, body, { httpMetadata: { contentType } });
+    await this.retry(() => this.bucket.put(key, body, { httpMetadata: { contentType } }));
   }
   async get(key: string) {
-    const o = await this.bucket.get(key);
-    return o ? o.text() : null;
+    return this.retry(async () => {
+      const o = await this.bucket.get(key);
+      return o ? o.text() : null;
+    });
   }
   async list(prefix: string) {
     const keys: string[] = [];
@@ -40,19 +49,24 @@ export class R2Blobs implements BlobStore {
 }
 
 export class CfKv implements KvStore {
-  constructor(private readonly ns: KVNamespace) {}
+  constructor(
+    private readonly ns: KVNamespace,
+    private readonly retry: Retry = once,
+  ) {}
   get(key: string) {
-    return this.ns.get(key);
+    return this.retry(() => this.ns.get(key));
   }
   async put(key: string, value: string, opts?: { ttlSeconds?: number }) {
-    await this.ns.put(
-      key,
-      value,
-      opts?.ttlSeconds ? { expirationTtl: Math.max(60, opts.ttlSeconds) } : undefined,
+    await this.retry(() =>
+      this.ns.put(
+        key,
+        value,
+        opts?.ttlSeconds ? { expirationTtl: Math.max(60, opts.ttlSeconds) } : undefined,
+      ),
     );
   }
   async delete(key: string) {
-    await this.ns.delete(key);
+    await this.retry(() => this.ns.delete(key));
   }
   async list(prefix: string) {
     const keys: string[] = [];

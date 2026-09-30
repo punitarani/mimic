@@ -1,0 +1,21 @@
+{
+  "intake": { "name": "Sam Rivera", "location": "Austin, US", "occupation": "Software engineer" },
+  "consentResearch": false,
+  "seed": "example",
+  "policy": "consistent",
+  "answers": {
+    "anchors.v1/bf_extraversion": "1",
+    "anchors.v1/bf_agreeableness": "3",
+    "anchors.v1/bf_conscientiousness": "3",
+    "anchors.v1/bf_emotional_stability": "2",
+    "anchors.v1/bf_openness": "4",
+    "anchors.v1/risk_gamble": "b",
+    "anchors.v1/intertemporal": "b",
+    "anchors.v1/trust_game": "c",
+    "anchors.v1/work_ship_or_polish": "a",
+    "anchors.v1/free_saturday": "c",
+    "favorite dish": "Something new",
+    "vague requirements": "Start building and adjust as you learn"
+  },
+  "whys": { "anchors.v1/risk_gamble": "The upside is worth it at this size." }
+}

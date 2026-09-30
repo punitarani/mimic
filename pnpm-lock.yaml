@@ -11,6 +11,9 @@ importers:
       '@biomejs/biome':
         specifier: 2.5.14
         version: 2.5.14
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
       turbo:
         specifier: ^2.11.5
         version: 2.11.5
@@ -218,6 +221,9 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
     devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^5.20260929.1
+        version: 5.20260929.1
       '@types/node':
         specifier: ^22.15.0
         version: 22.20.4

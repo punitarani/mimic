@@ -104,12 +104,17 @@ export function gateQuestions(): Record<Gate, DecisionQuestion> {
   };
 }
 
-/** A candidate fails when the bad outcome is likely (PLAN §9.4). */
+/**
+ * A candidate fails when the bad outcome is likely (PLAN §9.4). Thresholds were tuned on the hand-labeled set
+ * `packages/eval/data/gates.labeled.v1.json` with `pnpm eval -- gates` (ADR-0015); stored with each question as
+ * `quality.gatesVersion`.
+ */
+export const GATES_VERSION = 'gates.v2';
 export const GATE_THRESHOLDS: Record<Gate, { failIf: 'above' | 'below'; p: number }> = {
-  ambiguous: { failIf: 'above', p: 0.6 },
-  sensitive: { failIf: 'above', p: 0.6 },
-  leading: { failIf: 'above', p: 0.6 },
-  quick: { failIf: 'below', p: 0.4 },
+  ambiguous: { failIf: 'above', p: 0.85 },
+  sensitive: { failIf: 'above', p: 0.4 },
+  leading: { failIf: 'above', p: 0.55 },
+  quick: { failIf: 'below', p: 0.6 },
 };
 
 export function gateFailures(ps: Record<Gate, number>): Gate[] {

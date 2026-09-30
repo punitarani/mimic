@@ -1,6 +1,7 @@
 import { makeProviders, type ProviderEnv } from '@mimic/adapters';
 import { EMBEDDING_MODEL, type EngineDeps, Gateway, type Job, type JobQueue, ulid } from '@mimic/core';
 import { CfKv, R2Blobs, SqlVectors, StoreBudget, StoreCallLog, VectorizeVectors } from './bindings';
+import { retryer } from './busy';
 import { d1Db } from './index';
 import { DrizzleStore } from './store';
 
@@ -15,6 +16,8 @@ export interface MimicBindings extends ProviderEnv {
   RL?: RateLimit;
   /** 'vectorize' (default when VEC is bound) | 'sql' (local dev; ADR-0003). */
   VECTOR_BACKEND?: string;
+  /** '1' in local dev (.dev.vars): enables dev-only behavior such as the local D1 lock retry (ADR-0014). */
+  DEV_MODE?: string;
   SESSION_SECRET?: string;
   ADMIN_EMAILS?: string;
   INVITE_CODES?: string;
@@ -33,8 +36,11 @@ export function queueFor(env: MimicBindings): JobQueue {
 }
 
 export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = {}): EngineDeps {
-  const store = new DrizzleStore(d1Db(env.DB));
-  const blobs = new R2Blobs(env.BLOBS);
+  const local = env.DEV_MODE === '1';
+  const db = d1Db(env.DB, { local });
+  const store = new DrizzleStore(db);
+  const retry = local ? retryer(true) : undefined;
+  const blobs = new R2Blobs(env.BLOBS, retry);
   const providers = makeProviders(env, {
     embeddingModel: EMBEDDING_MODEL,
     ...(env.AI ? { ai: env.AI } : {}),
@@ -52,8 +58,8 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
     store,
     gateway,
     blobs,
-    kv: new CfKv(env.CACHE),
-    vectors: useVectorize ? new VectorizeVectors(env.VEC!) : new SqlVectors(d1Db(env.DB)),
+    kv: new CfKv(env.CACHE, retry),
+    vectors: useVectorize ? new VectorizeVectors(env.VEC!) : new SqlVectors(db),
     jobs: queueFor(env),
     clock,
     newId: () => ulid(),

@@ -130,7 +130,7 @@ export async function generateCandidates(
     messages,
     jsonSchema: { name: 'questions', schema: p.schema },
     reasoningEffort: input.reasoningEffort,
-    maxTokens: 6000,
+    maxTokens: 12_000,
   });
   const parsed = parseJsonLoose(res.content) as { questions?: unknown[] } | unknown[] | undefined;
   const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed?.questions) ? parsed.questions : [];
@@ -321,7 +321,7 @@ export async function reflect(
     ],
     jsonSchema: { name: 'reflection', schema: p.schema },
     reasoningEffort: 'low',
-    maxTokens: 4000,
+    maxTokens: 10_000,
   });
   const parsed = ReflectionOut.safeParse(parseJsonLoose(res.content));
   if (!parsed.success) throw new Error('reflector returned invalid JSON');
@@ -368,7 +368,7 @@ export async function generateHypotheses(
     ],
     jsonSchema: { name: 'hypotheses', schema: p.schema },
     reasoningEffort: 'low',
-    maxTokens: 4000,
+    maxTokens: 10_000,
   });
   const parsed = parseJsonLoose(res.content) as { hypotheses?: Array<{ text?: unknown }> } | undefined;
   return (parsed?.hypotheses ?? [])
@@ -402,7 +402,7 @@ export async function generateOccupationFacets(
     ],
     jsonSchema: { name: 'facets', schema: p.schema },
     reasoningEffort: 'low',
-    maxTokens: 3000,
+    maxTokens: 6000,
   });
   const parsed = parseJsonLoose(res.content) as { facets?: unknown[] } | undefined;
   const out: Facet[] = [];
@@ -443,7 +443,7 @@ export async function scenarioToQuestion(
     ],
     jsonSchema: { name: 'question', schema: p.schema },
     reasoningEffort: 'low',
-    maxTokens: 2000,
+    maxTokens: 4000,
   });
   const raw = parseJsonLoose(res.content) as Record<string, unknown> | undefined;
   const v = validateDraft(
@@ -471,7 +471,7 @@ export async function generateRationale(
     ],
     jsonSchema: { name: 'rationale', schema: p.schema },
     reasoningEffort: 'low',
-    maxTokens: 800,
+    maxTokens: 2000,
   });
   const parsed = parseJsonLoose(res.content) as { sentence?: unknown } | undefined;
   return typeof parsed?.sentence === 'string' ? parsed.sentence.slice(0, 300) : null;

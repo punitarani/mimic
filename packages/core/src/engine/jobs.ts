@@ -1,4 +1,5 @@
 import { hashJson } from '../hash';
+import { GATES_VERSION } from '../jev';
 import { type Job, jobKey } from '../jobs';
 import {
   generateCandidates,
@@ -270,7 +271,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
       promptVersion: cfg.generator.promptVersion,
     },
     status: 'pooled',
-    quality: { gates: g.p, rationale: d.rationale ?? null },
+    quality: { gates: g.p, gatesVersion: GATES_VERSION, rationale: d.rationale ?? null },
     createdAt: now + i,
     servedAt: null,
   }));

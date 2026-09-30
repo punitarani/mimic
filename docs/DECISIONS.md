@@ -84,3 +84,32 @@ repeats. Repeat probes are shown to the client as `adaptive` so the person can't
 
 `learn.answer` reads traits from identity + evidence (strategy `raw`), so a read never anchors on the previous read's
 output.
+
+## ADR-0014 — Local dev shares one state directory across two processes (2026-09-30)
+
+`next dev` (bindings via wrangler's getPlatformProxy) and `wrangler dev` (the worker) share `.wrangler/state`, so the
+web app enqueues jobs that the worker consumes, exactly as in deployed envs. Two consequences:
+
+- OpenNext's lazy context fallback calls getPlatformProxy without options (persisting to `apps/web/.wrangler`), so
+  `apps/web/lib/server.ts` initializes the dev context itself with the shared persist path, once per process.
+- Two processes writing the same SQLite files occasionally hit `SQLITE_BUSY` (surfacing through the proxy as an opaque
+  `internal error`). With `DEV_MODE=1` (both `.dev.vars`), D1, R2 and KV calls retry on those errors with backoff.
+  Deployed envs only retry D1 on explicit `SQLITE_BUSY`, which a failed statement or batch never partially applies.
+
+## ADR-0015 — Quality-gate thresholds tuned on a labeled set (2026-09-30)
+
+In the first live session, the `ambiguous` gate worded as in PLAN B.3 scored nearly every generated candidate between
+0.70 and 0.88, so the plan's 0.6 threshold rejected 180 of 181 candidates and the pool never filled (the reserve bank
+kept the session going). PLAN §9.4 asks to tune the thresholds on a small labeled set, so
+`packages/eval/data/gates.labeled.v1.json` (32 hand-labeled items) and `pnpm eval -- gates` were added. Results with
+`typesafe/jev-1.13-20260917`:
+
+| Gate | AUC | Chosen threshold |
+| --- | --- | --- |
+| ambiguous | 0.81 | fail if p(yes) > 0.85 |
+| sensitive | 1.00 | fail if p(yes) > 0.40 (stricter than 0.6 on purpose) |
+| leading | 1.00 | fail if p(yes) > 0.55 |
+| quick | 0.99 | fail if p(yes) < 0.60 |
+
+The thresholds are versioned as `gates.v2` and stored in each question's `quality_json`. Re-run the calibration when Jev's
+snapshot changes. The set is small; grow it before drawing conclusions about generator quality.
