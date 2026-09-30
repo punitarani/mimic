@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { TopBar } from '@/components/brand';
-import { FidelityHeadline } from '@/components/model-panel';
+import { FidelityHeadline, KgMap } from '@/components/model-panel';
 import { Button, Card, cn, ErrorText, Input, Spinner, Textarea } from '@/components/ui';
 import { api, type Draft } from '@/lib/api';
 import { newIdempotencyKey } from '@/lib/outbox';
@@ -24,8 +24,9 @@ export default function MimicPage() {
         <section>
           <h1 className="font-serif text-3xl tracking-tight">Your mimic</h1>
           {snap.data ? (
-            <div className="mt-6">
+            <div className="mt-6 space-y-10">
               <FidelityHeadline snap={snap.data} />
+              {snap.data.kg.nodes.length > 1 && <KgMap snap={snap.data} />}
             </div>
           ) : (
             <Spinner className="mt-6" />

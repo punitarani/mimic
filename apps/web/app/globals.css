@@ -1,39 +1,117 @@
 @import "tailwindcss";
 
 /*
- * PLAN §10.2 — a portrait being drawn from answers. Color carries meaning:
- * graphite = the person's answers, ink = the mimic's predictions, moss / rust = match / miss.
- * Cool neutral background (not cream). Serif for prompts; one neutral sans for chrome.
+ * Design tokens (Mimic Session v2, Claude Design handoff). Color carries meaning:
+ * graphite = the person, ink = the mimic, moss / rust = match / miss. Fog is the page, sheet the panels.
+ * Theme: light by default, dark via [data-theme="dark"], and "system" (no attribute) follows the OS.
  */
-@theme {
-  --color-canvas: #eef1f4;
-  --color-surface: #f8f9fb;
-  --color-raised: #ffffff;
-  --color-line: #d9dee5;
-  --color-line-strong: #b9c1cc;
-  --color-muted: #66707d;
-  --color-graphite: #262a31;
-  --color-graphite-soft: #454b55;
-  --color-ink: #2d4fb3;
-  --color-ink-soft: #dfe6f7;
-  --color-ink-strong: #213c8c;
-  --color-moss: #4a7f62;
-  --color-moss-soft: #deebe3;
-  --color-rust: #a9543a;
-  --color-rust-soft: #f3e2dc;
+:root {
+  --fog: #eef0f2;
+  --sheet: #fafbfc;
+  --surface: #f4f5f7;
+  --graphite: #22252a;
+  --graphite-soft: #454b55;
+  --slate: #5e6570;
+  --rule: #d3d7dd;
+  --ink: #3d3a8f;
+  --ink-strong: #2c2a6e;
+  --moss: #356b4e;
+  --rust: #9b4b3e;
+  --ink10: rgba(61, 58, 143, 0.1);
+  --ink16: rgba(61, 58, 143, 0.16);
+  --ink28: rgba(61, 58, 143, 0.28);
+  --g8: rgba(34, 37, 42, 0.08);
+  --moss10: rgba(53, 107, 78, 0.12);
+  --rust10: rgba(155, 75, 62, 0.12);
+  --pop-shadow: 0 8px 24px rgba(21, 23, 27, 0.14);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --fog: #15171b;
+  --sheet: #1d2025;
+  --surface: #191b20;
+  --graphite: #e7e9ec;
+  --graphite-soft: #c5cad1;
+  --slate: #9aa1ac;
+  --rule: #343840;
+  --ink: #a9a6f2;
+  --ink-strong: #c7c5f7;
+  --moss: #7fbf9a;
+  --rust: #d98a74;
+  --ink10: rgba(169, 166, 242, 0.1);
+  --ink16: rgba(169, 166, 242, 0.16);
+  --ink28: rgba(169, 166, 242, 0.28);
+  --g8: rgba(231, 233, 236, 0.08);
+  --moss10: rgba(127, 191, 154, 0.14);
+  --rust10: rgba(217, 138, 116, 0.14);
+  --pop-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    --fog: #15171b;
+    --sheet: #1d2025;
+    --surface: #191b20;
+    --graphite: #e7e9ec;
+    --graphite-soft: #c5cad1;
+    --slate: #9aa1ac;
+    --rule: #343840;
+    --ink: #a9a6f2;
+    --ink-strong: #c7c5f7;
+    --moss: #7fbf9a;
+    --rust: #d98a74;
+    --ink10: rgba(169, 166, 242, 0.1);
+    --ink16: rgba(169, 166, 242, 0.16);
+    --ink28: rgba(169, 166, 242, 0.28);
+    --g8: rgba(231, 233, 236, 0.08);
+    --moss10: rgba(127, 191, 154, 0.14);
+    --rust10: rgba(217, 138, 116, 0.14);
+    --pop-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
+  }
+}
+
+/* Utilities resolve through the variables, so every page follows the theme. Older names alias the new tokens. */
+@theme inline {
+  --color-fog: var(--fog);
+  --color-sheet: var(--sheet);
+  --color-slate: var(--slate);
+  --color-rule: var(--rule);
+  --color-ink10: var(--ink10);
+  --color-ink16: var(--ink16);
+  --color-ink28: var(--ink28);
+  --color-g8: var(--g8);
+
+  --color-canvas: var(--fog);
+  --color-surface: var(--surface);
+  --color-raised: var(--sheet);
+  --color-line: var(--rule);
+  --color-line-strong: var(--slate);
+  --color-muted: var(--slate);
+  --color-graphite: var(--graphite);
+  --color-graphite-soft: var(--graphite-soft);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink10);
+  --color-ink-strong: var(--ink-strong);
+  --color-moss: var(--moss);
+  --color-moss-soft: var(--moss10);
+  --color-rust: var(--rust);
+  --color-rust-soft: var(--rust10);
 
   --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-serif:
-    "Iowan Old Style", "Palatino Linotype", Palatino, "Source Serif 4", "Source Serif Pro", Georgia, serif;
+    "Hanken Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
 
   --radius-card: 14px;
   --shadow-card: 0 1px 2px rgb(20 30 45 / 0.05), 0 4px 16px rgb(20 30 45 / 0.04);
+  --shadow-pop: var(--pop-shadow);
 }
 
 html {
-  background: var(--color-canvas);
-  color: var(--color-graphite);
+  background: var(--fog);
+  color: var(--graphite);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -43,12 +121,16 @@ body {
   min-height: 100dvh;
 }
 
+button {
+  font-family: inherit;
+}
+
 ::selection {
-  background: var(--color-ink-soft);
+  background: var(--ink16);
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-ink);
+  outline: 2px solid var(--ink);
   outline-offset: 2px;
   border-radius: 6px;
 }
@@ -63,6 +145,13 @@ body {
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 /* Only the reveal and the fidelity update animate (PLAN §10.2). */
@@ -86,10 +175,13 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-reveal {
-    animation: none;
-  }
-  .fidelity-motion {
-    transition: none;
+  /* Reduced motion must win over component transitions and animations. */
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: must beat utility classes */
+    transition-duration: 0ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: must beat utility classes */
+    animation-duration: 0ms !important;
   }
 }

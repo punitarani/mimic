@@ -16,10 +16,10 @@ export function cn(...xs: Array<string | false | null | undefined>): string {
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
 const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-graphite text-white hover:bg-graphite-soft disabled:bg-line-strong',
+  primary: 'bg-graphite text-fog hover:bg-graphite-soft disabled:bg-line-strong',
   secondary: 'bg-raised text-graphite border border-line hover:border-line-strong disabled:text-muted',
   ghost: 'text-graphite-soft hover:text-graphite hover:bg-surface',
-  danger: 'bg-rust text-white hover:brightness-95 disabled:opacity-60',
+  danger: 'bg-rust text-fog hover:brightness-95 disabled:opacity-60',
 };
 
 export const Button = forwardRef<

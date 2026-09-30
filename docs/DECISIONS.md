@@ -205,3 +205,39 @@ questions to 0.
   version: the loser's R2 put had already overwritten the winner's committed blob before its D1 insert failed. Now
   the loser deletes its own blob and retries.
 - Stale jobs are requeued after 15 minutes (was 30), the Workers limit for one consumer invocation.
+
+## ADR-0021 — Session UI v2 from the Claude Design handoff (2026-09-30)
+
+The session page and model panel now follow `Mimic Session v2` (Claude Design handoff: 7 desktop frames, 5 panel
+frames, 4 mobile frames and their components). The backend flow is unchanged. Only these additive,
+backward-compatible fields were added, all agreed before implementation:
+
+- `Reveal.dist` on `POST /answers`: the sealed primary distribution over every option. It is shown only after the
+  answer, for the per-option bars and the scale's distribution with its expected tick.
+- `AnswerInput.revealShown` (optional; default shown), from the menu's "Show guesses after each answer". When
+  false, the server neither returns the reveal nor records `revealedPrediction`. The toggle can't mislabel research
+  data, and it is hidden for configs whose reveal is `never`, which stays an experiment variable (PLAN §12.2).
+- On the snapshot:
+  - `history[].{ciLow, ciHigh, selfConsistency}` for the chart's band and "profile alone" line;
+  - `progress.basics`, the anchor count, for "Learning the basics";
+  - `facets[].labels` for readings such as "leans toward the familiar".
+
+Behaviour choices:
+
+- **Answering and advancing:** picking an option answers it (click, 1–5, Y/N or 1–2). The reveal appears in a
+  fixed-height action area, and Next or Enter advances; there is no auto-advance. A scale reserves its reveal bars'
+  height below the action area, so the prompt and options never move. A browser test measured this: 0 px movement
+  over 13 desktop and 15 mobile answers.
+- **Reasons:** a reason goes in before answering, in the action area, and is sent with the answer. After the
+  reveal the button is disabled with a note, because a reason written after seeing the guess would be biased.
+- **Lift:** "N points better than a guess from your profile alone" is on the fidelity scale (fidelity minus
+  baseline accuracy ÷ self-consistency), so it matches the chart's "profile alone" line.
+- **What changed:** computed in the page from the snapshot before the answer and fresher ones after it (score,
+  facets that moved or became more certain, a new insight). The snapshot is re-read at 0, 2.5, 6 and 12 s while
+  learning jobs land. After a reload only the score row is available, from the history.
+- **Theme:** Light, Dark and System, stored on the device. It is applied before paint and uses the design's dark
+  palette. Existing Tailwind colour names alias the new tokens, so every page follows the theme.
+- **Fonts:** Hanken Grotesk and Newsreader, loaded from Google Fonts as in the design.
+- **Knowledge graph:** Session v2's panel has no knowledge-graph map, so the map moved to `/m/[id]/mimic`.
+- **Evidence chips:** the design's chip popover also shows "Mimic guessed". The snapshot doesn't carry the
+  mimic's guess per evidence item, so the popover shows the question and the person's answer only.

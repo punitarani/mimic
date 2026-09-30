@@ -157,3 +157,35 @@ the pipeline only and are not research results.
   - Concurrent `snapshot.write` jobs could overwrite a committed snapshot blob. A deterministic race test fails on
     the old keying (ADR-0020).
   - Worker hot reloads in dev left jobs `running` for 30 minutes; the stale window is now 15 minutes.
+
+## Session UI v2 (Claude Design handoff)
+
+Browser runs against `pnpm dev` with live providers (answers chosen by a script; pipeline and UI validation only).
+Screenshots are in `docs/screenshots/v2-*.png`; videos are `docs/media/session-v2-desktop.webm` and
+`session-v2-mobile.webm`.
+
+- **Desktop (1440 × 900):** each design frame was reproduced:
+  - D1 question 1 with the keyboard hint row;
+  - D2 idle with the menu open;
+  - D3 match and D4 miss reveals, with bars and You/Mimic tags;
+  - D5 scale reveal with the expected tick ("Close. Your mimic expected about 4.");
+  - D6 learning the basics, with "Your last answer touched";
+  - D7 welcome back after a reload;
+  - dark theme;
+  - P5 info popover (55 ÷ 80 = 68%);
+  - the full panel: What changed, Tendencies with "Updated" markers, What it's learned with New washes, facts
+    and gaps.
+- **Mobile (390 × 844, touch):**
+  - M1 idle, laid out bottom-up;
+  - M2 reveal, with no Enter hint on Next;
+  - M3 menu with Finish for now;
+  - M4 bottom sheet at 50%, leading with What changed. M4 was checked on screen, but its screenshot was lost
+    before saving.
+- **Nothing moves on reveal:** the prompt and options were measured before and after every reveal, with 0 px
+  movement over 13 desktop answers (5 of them scales) and 15 mobile answers.
+- **Data:** a reason typed before answering is stored with answer 1. With guesses turned off, answer 13 returned
+  no reveal and is stored with `revealed_prediction = 0`; the others are stored as 1.
+- **Checks:**
+  - `pnpm check` passes, including new tests for reveal `dist`, `revealShown` (including idempotent replay) and
+    the snapshot's history bands, basics and facet labels.
+  - `next build` compiles.

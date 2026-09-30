@@ -13,6 +13,8 @@ export interface UiFacet {
   name: string;
   low: string;
   high: string;
+  /** Five readings, low → high, for the facet's current position. */
+  labels: [string, string, string, string, string];
   mean: number | null;
   /** Jev's confidence in the trait read — shown as "certainty", never accuracy (PLAN §9.10). */
   certainty: number | null;
@@ -38,9 +40,18 @@ export interface UiSnapshot {
     budgetUsd: number;
     snapshotVersion: number;
   };
-  progress: { answered: number; target: number };
+  /** `basics`: the anchor battery size; the panel shows "Learning the basics" until that many are answered. */
+  progress: { answered: number; target: number; basics: number };
   fidelity: FidelityResult | null;
-  history: Array<{ seq: number; fidelity: number; acc: number; accBaseline: number | null }>;
+  history: Array<{
+    seq: number;
+    fidelity: number;
+    acc: number;
+    accBaseline: number | null;
+    selfConsistency: number;
+    ciLow: number;
+    ciHigh: number;
+  }>;
   facets: UiFacet[];
   groups: string[];
   insights: Array<{
@@ -89,6 +100,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       name: f.name,
       low: f.low,
       high: f.high,
+      labels: f.labels,
       mean: t ? t.mean : null,
       certainty: t ? t.confidence : null,
       coverage: facetCoverage(counts, f.id),
@@ -133,6 +145,7 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
     progress: {
       answered: loaded.questions.filter((q) => q.status === 'answered' && q.kind !== 'playground').length,
       target: cfg.session.target,
+      basics: cfg.anchors.count,
     },
     fidelity: latest ? fidelityFromRecord(latest) : null,
     history: fid.map((f) => ({
@@ -140,6 +153,9 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       fidelity: f.fidelity,
       acc: f.acc,
       accBaseline: f.accBaseline,
+      selfConsistency: f.selfConsistency,
+      ciLow: f.ciLow,
+      ciHigh: f.ciHigh,
     })),
     facets: uiFacets,
     groups: [...FACET_GROUPS],

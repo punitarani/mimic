@@ -75,6 +75,8 @@ export interface AnswerRequest {
   why?: string;
   latencyMs: number;
   idempotencyKey: string;
+  /** False when the person turned guesses off (recorded honestly; no reveal is returned). */
+  revealShown?: boolean;
 }
 
 export interface Draft {

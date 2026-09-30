@@ -71,7 +71,7 @@ If a task seems to require breaking one of these, stop and ask.
 - Order prompts for caching: stable prefix (system, ontology, rules) first, variable content last.
 - Test with Vitest, using recorded fixtures in `packages/adapters/fixtures/`. CI makes no live calls. Worker code tests use `@cloudflare/vitest-pool-workers`.
 - Use simulated users for smoke tests only. Never report metrics from LLM-simulated users.
-- UI: Tailwind with shadcn-style components; follow PLAN §10.2. Sentence case, plain verbs, keyboard support for answers, visible focus states, respect reduced motion.
+- UI: Tailwind with shadcn-style components; follow PLAN §10.2. The session page and model panel follow the Claude Design handoff `Mimic Session v2` (ADR-0021): design tokens (fog, sheet, graphite, slate, rule, ink, moss, rust; light and dark) live in `apps/web/app/globals.css`, components in `apps/web/components/session/`. Sentence case, plain verbs, keyboard support for answers, visible focus states, respect reduced motion.
 - Privacy: self-only mimics; every sourced fact shows its source and can be removed; hard delete covers D1, R2, Vectorize and KV.
 
 ## Before implementing an adapter

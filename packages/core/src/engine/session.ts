@@ -10,7 +10,7 @@ import { repeatAgreement, scorePrediction } from '../scoring';
 import { makeSelector, questionCoverage } from '../selectors';
 import { cosine, lexicalSimilarity } from '../state-builder';
 import type { AnswerRecord, FidelityRecord, MimicRecord, PredictionRecord, QuestionRecord } from '../store';
-import type { PersonState, PredictionResult, Question } from '../types';
+import type { Distribution, PersonState, PredictionResult, Question } from '../types';
 import {
   contextState,
   facetCounts,
@@ -399,6 +399,11 @@ export const AnswerInput = z.object({
   why: z.string().trim().max(1000).optional(),
   latencyMs: z.number().int().min(0).max(3_600_000),
   idempotencyKey: z.string().min(8).max(100),
+  /**
+   * False when the person turned guesses off for their session. The reveal is then neither returned nor recorded
+   * as shown, so `revealedPrediction` stays true to what they saw. Defaults to shown.
+   */
+  revealShown: z.boolean().optional(),
 });
 export type AnswerInput = z.infer<typeof AnswerInput>;
 
@@ -407,6 +412,8 @@ export interface Reveal {
   label: string;
   p: number;
   match: boolean;
+  /** The sealed primary distribution over every option, shown after the answer. */
+  dist: Distribution;
 }
 
 export interface AnswerResult {
@@ -439,7 +446,9 @@ export async function submitAnswer(
   const predictions = q.kind === 'repeat' ? [] : await deps.store.listPredictions({ questionId: q.id });
   const primary = predictions.find((p) => p.role === 'primary' && p.ok);
   const reveal =
-    cfg.reveal === 'after_answer' && q.kind !== 'repeat' && primary ? revealOf(q, primary) : null;
+    cfg.reveal === 'after_answer' && input.revealShown !== false && q.kind !== 'repeat' && primary
+      ? revealOf(q, primary)
+      : null;
   const answer: AnswerRecord = {
     id: deps.newId(),
     questionId: q.id,
@@ -482,6 +491,7 @@ function revealOf(q: QuestionRecord, p: PredictionRecord): Reveal {
     label: q.options.find((o) => o.key === key)?.label ?? key,
     p: p.dist[key] ?? 0,
     match: false,
+    dist: p.dist,
   };
 }
 

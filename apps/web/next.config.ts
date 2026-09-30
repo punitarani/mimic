@@ -5,6 +5,8 @@ const nextConfig: NextConfig = {
   turbopack: { root: '../..' },
   poweredByHeader: false,
   agentRules: false,
+  // The dev badge overlaps the session's action area in screenshots.
+  devIndicators: false,
 };
 
 export default nextConfig;

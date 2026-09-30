@@ -18,7 +18,7 @@ export default async function Home() {
         <div className="mt-8">
           <Link
             href="/new"
-            className="inline-flex h-12 items-center rounded-[10px] bg-graphite px-6 text-base font-medium text-white hover:bg-graphite-soft"
+            className="inline-flex h-12 items-center rounded-[10px] bg-graphite px-6 text-base font-medium text-fog hover:bg-graphite-soft"
           >
             Build your mimic
           </Link>
