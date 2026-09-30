@@ -64,3 +64,16 @@ export function meanDist(dists: Distribution[], keys: readonly string[]): Distri
 export function optionKeys(q: Pick<Question, 'options'>): string[] {
   return q.options.map((o) => o.key);
 }
+
+/**
+ * Post-hoc temperature calibration: p ∝ max(p, P_FLOOR)^(1/t). t > 1 softens an overconfident distribution, t < 1
+ * sharpens; the argmax never changes. Nothing is sent to a provider.
+ */
+export function temperatureScale(dist: Distribution, t: number): Distribution {
+  if (t === 1) return dist;
+  const keys = Object.keys(dist);
+  return normalizeDist(
+    Object.fromEntries(keys.map((k) => [k, Math.max(dist[k]!, P_FLOOR) ** (1 / t)])),
+    keys,
+  );
+}

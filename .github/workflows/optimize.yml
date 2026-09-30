@@ -22,9 +22,9 @@ on:
         options: [report, optimize]
         default: report
       predictor:
-        description: Seed predictor, e.g. jev:typesafe/jev-1.13 or llm:deepseek/deepseek-v4.1-flash
+        description: Seed predictor, e.g. jev:typesafe/jev-1.13@jev-predict.v2 (calibrated) or llm:deepseek/deepseek-v4.1-flash@predict.v2
         type: string
-        default: jev:typesafe/jev-1.13
+        default: jev:typesafe/jev-1.13@jev-predict.v2
       components:
         description: Components to rewrite, comma-separated (empty uses the defaults for the predictor kind)
         type: string
@@ -32,11 +32,15 @@ on:
       max_metric_calls:
         description: Budget in predictions (GEPA metric calls)
         type: string
-        default: '400'
+        default: '2500'
       max_usd:
         description: Spend cap in USD for the optimize run
         type: string
         default: '2'
+      max_iterations:
+        description: GEPA iterations (each is two minibatches and a validation pass); the first cap reached stops the run
+        type: string
+        default: '30'
       reflection_model:
         description: Reflection model on OpenRouter
         type: string
@@ -62,7 +66,7 @@ jobs:
     name: ${{ inputs.mode }} ${{ inputs.predictor }} (prod)
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     environment: production
     steps:
       - uses: actions/checkout@v4
@@ -118,20 +122,24 @@ jobs:
           COMPONENTS: ${{ inputs.components }}
           MAX_CALLS: ${{ inputs.max_metric_calls }}
           MAX_USD: ${{ inputs.max_usd }}
+          MAX_ITERATIONS: ${{ inputs.max_iterations }}
           REFLECTION_MODEL: ${{ inputs.reflection_model }}
           PUBLISH: ${{ inputs.publish }}
         run: |
           data=data/prod.sqlite
           [ -f data/twin.sqlite ] && data="$data,data/twin.sqlite"
+          # --max-minutes stops the loop cleanly well inside the job's timeout, so the report and candidate are written.
           args=(--data "$data" --predictor "$PREDICTOR" --max-metric-calls "$MAX_CALLS" --max-usd "$MAX_USD"
-            --reflection-model "$REFLECTION_MODEL" --run-dir data/optimize/run --summary "$GITHUB_STEP_SUMMARY")
+            --max-iterations "$MAX_ITERATIONS" --max-minutes 140 --reflection-model "$REFLECTION_MODEL"
+            --run-dir data/optimize/run --summary "$GITHUB_STEP_SUMMARY")
           [ -n "$COMPONENTS" ] && args+=(--components "$COMPONENTS")
           [ "$PUBLISH" = true ] && args+=(--publish prod)
           pnpm eval -- optimize "${args[@]}"
 
-      # The candidate and its report only: prompt text that passed the leakage lint, and aggregate metrics.
+      # The candidate and its report only: prompt text that passed the leakage lint, and aggregate metrics. Runs even
+      # after a cancel or timeout, so a paid run's result isn't lost with the runner.
       - name: Upload the result
-        if: inputs.mode == 'optimize' && !cancelled()
+        if: always() && inputs.mode == 'optimize'
         uses: actions/upload-artifact@v4
         with:
           name: optimize-result

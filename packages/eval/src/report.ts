@@ -288,12 +288,13 @@ function renderEvaluate(m: M): string[] {
       '## Post-hoc calibration and pooling (fit on dev, checked on test)',
       '',
       'Log loss before → after. With few people the dev column is in-sample; only the test column is evidence.',
+      'A temperature keeps the top pick, but score questions are scored by expected index, so accuracy can move.',
       '',
-      '| Predictor | Method | Fitted | Dev n | Dev | Test n | Test | Test ECE |',
-      '| --- | --- | --- | --- | --- | --- | --- | --- |',
+      '| Predictor | Method | Fitted | Dev n | Dev | Test n | Test | Test ECE | Test accuracy |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
       ...fits.map(
         (x) =>
-          `| \`${String(x.predictor)}\` | ${String(x.method)} | ${f3(x.param)} | ${String(x.nFit)} | ${f4(x.fitBefore)} → ${f4(x.fitAfter)} | ${String(x.nTest)} | ${x.testBefore === null ? '—' : `${f4(x.testBefore)} → ${f4(x.testAfter)}`} | ${x.testEceBefore === null ? '—' : `${f3(x.testEceBefore)} → ${f3(x.testEceAfter)}`} |`,
+          `| \`${String(x.predictor)}\` | ${String(x.method)} | ${f3(x.param)} | ${String(x.nFit)} | ${f4(x.fitBefore)} → ${f4(x.fitAfter)} | ${String(x.nTest)} | ${x.testBefore === null ? '—' : `${f4(x.testBefore)} → ${f4(x.testAfter)}`} | ${x.testEceBefore === null ? '—' : `${f3(x.testEceBefore)} → ${f3(x.testEceAfter)}`} | ${typeof x.testAccBefore === 'number' ? `${pct(x.testAccBefore)} → ${pct(x.testAccAfter)}` : '—'} |`,
       ),
       '',
     );

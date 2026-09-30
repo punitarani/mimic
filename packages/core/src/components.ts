@@ -106,21 +106,82 @@ export const INCUMBENT_COMPONENTS: PredictComponents = {
 };
 
 export interface PredictHarness {
-  /** LLM reasoning effort (never temperature; CLAUDE.md). */
+  /** LLM reasoning effort (never temperature; CLAUDE.md). Used when `reasoningMaxTokens` is null. */
   reasoningEffort: 'none' | 'low' | 'medium';
+  /**
+   * An explicit reasoning token budget, for models that ignore effort levels and take a budget instead (OpenRouter
+   * `reasoning.max_tokens`). Null means use `reasoningEffort`.
+   */
+  reasoningMaxTokens: number | null;
+  /** Output cap. It covers reasoning and the answer together, so it must leave room for both. */
   maxTokens: number;
   /** LLM output schema: `probs`, or `reasoned` (a short rationale written before the probabilities). */
   schema: 'probs' | 'reasoned';
   /** How the state reaches Jev: the JSON object, or the same text rendering the LLMs see. */
   jevState: 'json' | 'text';
+  /**
+   * Post-hoc calibration of the returned distribution: p ∝ p^(1/T). 1 leaves it alone; above 1 softens an
+   * overconfident predictor. Not a sampling temperature: nothing is sent to the provider.
+   */
+  calibrationTemperature: number;
+  /**
+   * Constrain the LLM's `key` field to the question's option keys in the JSON schema (an `enum` per question), so a
+   * model can't key its answer by labels or invent options.
+   */
+  keyEnum: boolean;
+  /**
+   * Accept an LLM's option labels in place of their keys: some models answer a 0–4 scale with "Never", "Often", …
+   * as keys. Used only when every option is then covered, each by one label. A fallback for providers that don't
+   * enforce `keyEnum`.
+   */
+  labelKeys: boolean;
+}
+
+/**
+ * The harness settings a registered variant may set per model (`modelHarness`): how the model reasons and its token
+ * cap, which are measured per model (ADR-0041). Everything else describes the prompt and applies to every model.
+ */
+export const PER_MODEL_HARNESS_KEYS = ['reasoningEffort', 'reasoningMaxTokens', 'maxTokens'] as const;
+
+/** Room kept for the answer when a reasoning budget shares `maxTokens` with it. */
+export const ANSWER_TOKENS_MIN = 256;
+
+/** Problems with a resolved harness: a reasoning budget that leaves no room for the answer. */
+export function harnessProblems(h: PredictHarness): string[] {
+  const out: string[] = [];
+  const b = h.reasoningMaxTokens;
+  if (b !== null && (!Number.isInteger(b) || b < 1))
+    out.push(
+      `reasoningMaxTokens must be a positive integer or null (got ${b}); use reasoningEffort 'none' for no reasoning`,
+    );
+  if (b !== null && b + ANSWER_TOKENS_MIN > h.maxTokens)
+    out.push(
+      `maxTokens ${h.maxTokens} leaves under ${ANSWER_TOKENS_MIN} tokens for the answer after a ${b}-token reasoning budget`,
+    );
+  return out;
+}
+
+/** The one reasoning control a request carries: the budget when there is one, else the effort (never both). */
+export function reasoningOf(
+  h: Pick<PredictHarness, 'reasoningEffort' | 'reasoningMaxTokens'>,
+): { reasoningMaxTokens: number } | { reasoningEffort: PredictHarness['reasoningEffort'] } {
+  return h.reasoningMaxTokens !== null
+    ? { reasoningMaxTokens: h.reasoningMaxTokens }
+    : { reasoningEffort: h.reasoningEffort };
 }
 
 export const INCUMBENT_HARNESS: PredictHarness = {
   reasoningEffort: 'low',
+  reasoningMaxTokens: null,
   maxTokens: 3000,
   schema: 'probs',
   jevState: 'json',
+  calibrationTemperature: 1,
+  keyEnum: false,
+  labelKeys: false,
 };
+
+export type PerModelHarness = Partial<Pick<PredictHarness, (typeof PER_MODEL_HARNESS_KEYS)[number]>>;
 
 export interface PredictPromptVariant {
   id: string;
@@ -129,6 +190,12 @@ export interface PredictPromptVariant {
   /** Overrides over the incumbent; omitted components keep the incumbent text. */
   components: Partial<PredictComponents>;
   harness: Partial<PredictHarness>;
+  /**
+   * Per-model reasoning control and caps (PER_MODEL_HARNESS_KEYS), applied over `harness`. A variant that has them
+   * runs only on the models it lists (`predictorIdProblem`), so a new model gets measured settings rather than a
+   * silent fallback. Part of the version: changing a model's settings means a new version ID.
+   */
+  modelHarness?: Record<string, PerModelHarness>;
   /** Where it came from, e.g. the optimize run that produced it. */
   source: string;
 }
@@ -172,9 +239,46 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
     harness: { reasoningEffort: 'none' },
     source: 'ADR-0038: Qwen3.8 Flash reasons 1-4.5K tokens at effort low; off, it answers in about 2 s',
   },
+  /**
+   * ADR-0041: the incumbent prompt with reasoning controls and caps set per model from measured usage, and option
+   * labels accepted as keys. Every model reasons at a low setting: an effort level where the model honours one, a
+   * 1,024-token budget where it only takes a budget. A cap is about twice the largest completion measured (at least
+   * 1,500), twice the budget for a budget model, so reasoning can't eat the answer. A truncated call is billed for its
+   * whole cap, so a generous cap costs almost nothing. The key field is an enum of the question's option keys, and
+   * label-keyed answers are re-keyed as a fallback. It runs only on the models listed here.
+   */
+  'predict.v2': {
+    id: 'predict.v2',
+    kind: 'llm',
+    title: 'LLM predictor, per-model reasoning budgets',
+    components: {},
+    harness: { keyEnum: true, labelKeys: true },
+    modelHarness: {
+      'openai/gpt-6-luna': { reasoningEffort: 'low', maxTokens: 1500 },
+      'deepseek/deepseek-v4.1-flash': { reasoningEffort: 'low', maxTokens: 6000 },
+      'z-ai/glm-5.3-flash': { reasoningEffort: 'low', maxTokens: 3000 },
+      'xiaomi/mimo-v2.6-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
+      'qwen/qwen3.8-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
+    },
+    source: 'ADR-0041: reasoning usage measured per model on long states',
+  },
+  /**
+   * ADR-0041: the incumbent Jev templates with a calibration temperature of 4. Fitted on the prod dev person and
+   * checked on the two test people, it cut their log loss from 1.80 to 1.12 and calibration error from 0.27 to
+   * 0.10. It only rescales Jev's answer, so it is not a default shadow (a second identical Jev call per question):
+   * `evaluate --from stored` derives it from the stored primary for free. Promotion to primary goes through a config.
+   */
+  'jev-predict.v2': {
+    id: 'jev-predict.v2',
+    kind: 'jev',
+    title: 'Jev prediction templates, calibrated (temperature 4)',
+    components: {},
+    harness: { calibrationTemperature: 4 },
+    source: 'ADR-0041: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)',
+  },
 };
 
-export function resolvePredictPrompt(version: string, kind: 'jev' | 'llm'): PredictPrompt {
+export function resolvePredictPrompt(version: string, kind: 'jev' | 'llm', model?: string): PredictPrompt {
   const v = PREDICT_PROMPTS[version];
   if (!v) throw new Error(`Unknown prediction prompt version: ${version}`);
   if (v.kind !== kind) throw new Error(`Prompt version ${version} is for ${v.kind} predictors, not ${kind}`);
@@ -182,7 +286,7 @@ export function resolvePredictPrompt(version: string, kind: 'jev' | 'llm'): Pred
     version,
     kind,
     components: { ...INCUMBENT_COMPONENTS, ...v.components },
-    harness: { ...INCUMBENT_HARNESS, ...v.harness },
+    harness: { ...INCUMBENT_HARNESS, ...v.harness, ...(model ? v.modelHarness?.[model] : undefined) },
   };
 }
 
@@ -227,9 +331,30 @@ export function renderVariantDoc(v: PredictPromptVariant): string {
     '',
     `- Predictor kind: \`${v.kind}\` (use as \`${v.kind}:<model>@${v.id}\`)`,
     `- Source: ${v.source}`,
-    `- Harness: \`${JSON.stringify(p.harness)}\``,
-    '',
   ];
+  const models = Object.keys(v.modelHarness ?? {});
+  if (!models.length) lines.push(`- Harness: \`${JSON.stringify(p.harness)}\``, '');
+  else {
+    const { reasoningEffort: _e, reasoningMaxTokens: _b, maxTokens: _c, ...shared } = p.harness;
+    lines.push(
+      `- Harness (every model): \`${JSON.stringify(shared)}\``,
+      '- Models: only those listed below.',
+      '',
+      '## Per-model harness',
+      '',
+      '| Model | Reasoning | Token cap (reasoning and answer) |',
+      '| --- | --- | --- |',
+      ...models.map((m) => {
+        const h = resolvePredictPrompt(v.id, v.kind, m).harness;
+        const reasoning =
+          h.reasoningMaxTokens !== null
+            ? `budget ${h.reasoningMaxTokens} tokens`
+            : `effort ${h.reasoningEffort}`;
+        return `| \`${m}\` | ${reasoning} | ${h.maxTokens} |`;
+      }),
+      '',
+    );
+  }
   for (const id of COMPONENT_IDS) {
     if (!componentReadBy(id, p)) continue;
     const overridden = id in v.components ? '' : ' (incumbent)';

@@ -4,7 +4,7 @@
 
 - Predictor kind: `llm` (use as `llm:<model>@predict.v1-direct`)
 - Source: ADR-0038: Qwen3.8 Flash reasons 1-4.5K tokens at effort low; off, it answers in about 2 s
-- Harness: `{"reasoningEffort":"none","maxTokens":3000,"schema":"probs","jevState":"json"}`
+- Harness: `{"reasoningEffort":"none","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":1,"keyEnum":false,"labelKeys":false}`
 
 ## predict.system (incumbent)
 

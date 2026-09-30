@@ -2,23 +2,27 @@ import {
   argmax,
   COMPONENT_IDS,
   type ComponentId,
+  componentReadBy,
   DEFAULT_PROMPT_VERSION,
   type Distribution,
   expectedCalibrationError,
   expectedIndex,
   type Gateway,
+  harnessProblems,
   INCUMBENT_HARNESS,
   JevPredictor,
   LlmPredictor,
   lexicalSimilarity,
   normalizeDist,
   P_FLOOR,
+  PREDICT_PROMPTS,
   type PredictHarness,
   type PredictionResult,
   type Predictor,
   type PredictPrompt,
   parsePredictorId,
   predictionQuestion,
+  predictorIdProblem,
   promptHash,
   quantile,
   renderStateText,
@@ -26,6 +30,7 @@ import {
   scorePrediction,
   seededRng,
   selfConsistency,
+  temperatureScale,
   uniform,
 } from '@mimic/core';
 import { z } from 'zod';
@@ -47,6 +52,10 @@ export const CandidateInput = z.object({
       maxTokens: z.number().int().min(200).max(20_000),
       schema: z.enum(['probs', 'reasoned']),
       jevState: z.enum(['json', 'text']),
+      reasoningMaxTokens: z.number().int().min(128).max(32_000).nullable(),
+      calibrationTemperature: z.number().min(0.1).max(20),
+      keyEnum: z.boolean(),
+      labelKeys: z.boolean(),
     })
     .partial()
     .default({}),
@@ -66,14 +75,19 @@ export interface Candidate {
 
 export function resolveCandidate(input: CandidateInput): Candidate {
   const c = CandidateInput.parse(input);
+  const idProblem = predictorIdProblem(c.predictor);
+  if (idProblem) throw new Error(idProblem);
   const spec = parsePredictorId(c.predictor);
   const baseVersion = spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind];
-  const base = resolvePredictPrompt(baseVersion, spec.kind);
+  const base = resolvePredictPrompt(baseVersion, spec.kind, spec.model);
   const prompt = {
     kind: spec.kind,
     components: { ...base.components, ...c.components },
     harness: { ...base.harness, ...c.harness } as PredictHarness,
   };
+  // Refused before anything is spent: a budget that leaves no room for the answer truncates every call.
+  const problems = harnessProblems(prompt.harness);
+  if (problems.length) throw new Error(`${c.label ?? c.predictor}: ${problems.join('; ')}`);
   const hash = promptHash(prompt).slice(0, 16);
   return {
     label: c.label ?? `${c.predictor} ${hash.slice(0, 8)}`,
@@ -99,7 +113,7 @@ export function changedComponents(
   c: Candidate,
   against: string = c.baseVersion,
 ): Partial<Record<ComponentId, string>> {
-  const base = resolvePredictPrompt(against, c.kind);
+  const base = resolvePredictPrompt(against, c.kind, c.model);
   const out: Partial<Record<ComponentId, string>> = {};
   for (const id of COMPONENT_IDS)
     if (c.prompt.components[id] !== base.components[id]) out[id] = c.prompt.components[id];
@@ -107,7 +121,7 @@ export function changedComponents(
 }
 
 export function changedHarness(c: Candidate, against: string = c.baseVersion): Partial<PredictHarness> {
-  const base = resolvePredictPrompt(against, c.kind).harness;
+  const base = resolvePredictPrompt(against, c.kind, c.model).harness;
   const out: Partial<PredictHarness> = {};
   for (const k of Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>)
     if (c.prompt.harness[k] !== base[k]) Object.assign(out, { [k]: c.prompt.harness[k] });
@@ -431,6 +445,7 @@ export async function evaluateCandidate(
 /** Records for the predictions already stored with each question (no model calls). */
 export function storedRecords(instances: EvalInstance[]): EvalRecord[] {
   const out: EvalRecord[] = [];
+  const derived = new Map<string, Array<{ predictorId: string; t: number }>>();
   for (const inst of instances)
     for (const p of inst.stored) {
       const r = toRecord(inst, `${p.predictorId}|${p.role}`, p.predictorId, {
@@ -438,8 +453,43 @@ export function storedRecords(instances: EvalInstance[]): EvalRecord[] {
         error: p.ok ? undefined : 'failed',
       });
       out.push(r);
+      if (p.role !== 'primary') continue;
+      if (!derived.has(p.predictorId)) derived.set(p.predictorId, derivedCalibrations(p.predictorId));
+      for (const d of derived.get(p.predictorId)!)
+        out.push(
+          toRecord(inst, `${d.predictorId}|derived`, d.predictorId, {
+            ...p,
+            dist: p.ok ? temperatureScale(p.dist, d.t) : p.dist,
+            error: p.ok ? undefined : 'failed',
+            costUsd: 0,
+            latencyMs: 0,
+          }),
+        );
     }
   return out;
+}
+
+/**
+ * Registered Jev variants that differ from a stored primary only by calibration temperature (same model, templates
+ * and state format): their prediction is the primary's answer rescaled, so the stored report derives it for free,
+ * with no noise, instead of a second Jev call per question (ADR-0041). Rows carry the role `derived`.
+ */
+export function derivedCalibrations(primaryId: string): Array<{ predictorId: string; t: number }> {
+  const spec = parsePredictorId(primaryId);
+  if (spec.kind !== 'jev') return [];
+  const baseVersion = spec.promptVersion ?? DEFAULT_PROMPT_VERSION.jev;
+  const base = resolvePredictPrompt(baseVersion, 'jev', spec.model);
+  if (base.harness.calibrationTemperature !== 1) return [];
+  const same = (a: PredictPrompt, b: PredictPrompt) =>
+    a.harness.jevState === b.harness.jevState &&
+    COMPONENT_IDS.every((id) => !componentReadBy(id, a) || a.components[id] === b.components[id]);
+  return Object.values(PREDICT_PROMPTS)
+    .filter(
+      (v) => v.kind === 'jev' && v.id !== baseVersion && !predictorIdProblem(`jev:${spec.model}@${v.id}`),
+    )
+    .map((v) => ({ v, r: resolvePredictPrompt(v.id, 'jev', spec.model) }))
+    .filter(({ r }) => r.harness.calibrationTemperature !== 1 && same(r, base))
+    .map(({ v, r }) => ({ predictorId: `jev:${spec.model}@${v.id}`, t: r.harness.calibrationTemperature }));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -561,13 +611,8 @@ export function noiseSd(
 // Post-hoc calibration and pooling on stored predictions (M11; no model calls)
 // ---------------------------------------------------------------------------------------------------------------
 
-export function temperatureScale(dist: Distribution, t: number): Distribution {
-  const keys = Object.keys(dist);
-  return normalizeDist(
-    Object.fromEntries(keys.map((k) => [k, Math.max(dist[k]!, P_FLOOR) ** (1 / t)])),
-    keys,
-  );
-}
+/** Moved to core (ADR-0041): a registered prompt variant applies it online. */
+export { temperatureScale };
 
 /** Log-linear pool: p ∝ a^w · b^(1−w). */
 export function pool(a: Distribution, b: Distribution, w: number): Distribution {
@@ -601,6 +646,9 @@ export interface FitRow {
   testAfter: number | null;
   testEceBefore: number | null;
   testEceAfter: number | null;
+  /** Item accuracy on test (score questions by expected index, so a temperature can move it; top-1 can't). */
+  testAccBefore: number | null;
+  testAccAfter: number | null;
 }
 
 interface Pair {
@@ -611,6 +659,8 @@ interface Pair {
 
 const ll = (ps: Pair[], f: (p: Pair) => Distribution) =>
   mean(ps.map((p) => -Math.log(Math.max(f(p)[p.inst.answer] ?? 0, P_FLOOR))));
+const acc = (ps: Pair[], f: (p: Pair) => Distribution) =>
+  mean(ps.map((p) => scorePrediction(p.inst.question.type, f(p), p.inst.answer).itemAcc));
 const ece = (ps: Pair[], f: (p: Pair) => Distribution) =>
   expectedCalibrationError(
     ps.map((p) => {
@@ -651,17 +701,21 @@ function fitParam(
     testAfter: has ? ll(testSet, (p) => apply(p, best)) : null,
     testEceBefore: has ? ece(testSet, (p) => apply(p, identity)) : null,
     testEceAfter: has ? ece(testSet, (p) => apply(p, best)) : null,
+    testAccBefore: has ? acc(testSet, (p) => apply(p, identity)) : null,
+    testAccAfter: has ? acc(testSet, (p) => apply(p, best)) : null,
   };
 }
 
 /**
  * Fits on dev people and checks on test people: a temperature per predictor, shrinkage of the primary toward its
  * baseline, and a log-linear pool of the primary with each LLM shadow. With one or two people these are
- * descriptive; the test columns are the honest ones.
+ * descriptive; the test columns are the honest ones. "Before" is the stored distribution as served (a temperature of
+ * 1 leaves it untouched); other temperatures floor it at P_FLOOR first, a difference under 1e-4 nats.
  */
 export function calibrationFits(instances: EvalInstance[]): FitRow[] {
   const rows: FitRow[] = [];
-  const temps = Array.from({ length: 31 }, (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000);
+  // 0.25 to 16: the first prod report put Jev's best temperature at the old top of 4 (ADR-0041).
+  const temps = Array.from({ length: 46 }, (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000);
   const unit = Array.from({ length: 21 }, (_, i) => i / 20);
   const byPredictor = new Map<string, Pair[]>();
   const primary = new Map<string, Distribution>();
@@ -687,7 +741,8 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
         rows.push(
           fitParam(k, 'shrink to baseline', unit, d2, t2, (p, a) => shrink(p.dist, p.inst.baseline!, a), 0),
         );
-    } else {
+    } else if (k.startsWith('llm:')) {
+      // Pools with LLM shadows only: a Jev shadow pooled with the Jev primary is a temperature fit by another name.
       const paired = ps
         .filter((p) => primary.has(p.inst.id))
         .map((p) => ({ ...p, other: primary.get(p.inst.id)! }));

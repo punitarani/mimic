@@ -3,8 +3,8 @@ import {
   type BudgetLedger,
   type ChatResponse,
   Gateway,
+  INCUMBENT_HARNESS,
   isTransientError,
-  LLM_PREDICTOR_MAX_TOKENS,
   LlmPredictor,
   type PersonState,
   type Question,
@@ -72,7 +72,9 @@ describe('LLM predictor failures (ADR-0037)', () => {
       }),
     ).predict(state, [q]);
     expect(cut).toMatchObject({ ok: false, costUsd: 0.0015, latencyMs: 1200, errorKind: 'output' });
-    expect(cut!.error).toBe(`output cut off at max_tokens (${LLM_PREDICTOR_MAX_TOKENS}; 3000 output tokens)`);
+    expect(cut!.error).toBe(
+      `output cut off at max_tokens (${INCUMBENT_HARNESS.maxTokens}; 3000 output tokens)`,
+    );
     expect(cut!.retryable).toBeUndefined();
 
     const [prose] = await predictor(async () =>

@@ -5,14 +5,31 @@ import {
   componentProblems,
   componentReadBy,
   fill,
+  harnessProblems,
   INCUMBENT_COMPONENTS,
+  INCUMBENT_HARNESS,
   PREDICT_PROMPTS,
+  reasoningOf,
   resolvePredictPrompt,
 } from '../src/components';
-import { configHash, DEFAULT_CONFIG, PipelineConfig, parsePredictorId } from '../src/config';
+import {
+  configHash,
+  DEFAULT_CONFIG,
+  PipelineConfig,
+  parsePredictorId,
+  predictorIdProblem,
+} from '../src/config';
+import { temperatureScale } from '../src/distribution';
 import { Gateway } from '../src/gateway';
 import { predictionQuestion } from '../src/jev';
-import { assertPredictorId, LlmPredictor, makePredictor, promptVersionOf } from '../src/predictors';
+import {
+  assertPredictorId,
+  keyedByLabel,
+  LlmPredictor,
+  makePredictor,
+  probsSchema,
+  promptVersionOf,
+} from '../src/predictors';
 import { PROMPTS } from '../src/prompts';
 import { renderStateText } from '../src/state-builder';
 import type { ChatRequest, PersonState, Question } from '../src/types';
@@ -183,5 +200,195 @@ describe('prediction prompt components (ADR-0028)', () => {
     expect(componentProblems('jev.noul.true', 'word '.repeat(41))[0]).toMatch(/41 words/);
     expect(fill('a {x} {y} { "json": 1 }', { x: '1' })).toBe('a 1 {y} { "json": 1 }');
     for (const id of COMPONENT_IDS) expect(COMPONENT_SPECS[id].kinds.length).toBeGreaterThan(0);
+  });
+});
+
+describe('per-model reasoning budgets and calibration (ADR-0041)', () => {
+  const chatGateway = (seen: ChatRequest[], content: string) =>
+    new Gateway({
+      decisions: {
+        provider: 'x',
+        decide: async (req) => ({
+          modelSnapshot: 'jev-snap',
+          answers: Object.fromEntries(
+            Object.entries(req.questions).map(([k, dq]) => [
+              k,
+              dq.type === 'noul'
+                ? { type: 'noul' as const, p: 0.95 }
+                : {
+                    type: 'choice' as const,
+                    choice: 'a',
+                    confidence: 0.9,
+                    probabilities: { a: 0.95, b: 0.05 },
+                  },
+            ]),
+          ),
+          usage: { inputTokens: 1, outputTokens: 0, costUsd: 0 },
+          latencyMs: 1,
+          raw: {},
+        }),
+      },
+      llm: {
+        provider: 'x',
+        chat: async (req) => {
+          seen.push(req);
+          return {
+            content,
+            modelSnapshot: 'm',
+            usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 },
+            latencyMs: 1,
+            raw: {},
+          };
+        },
+      },
+      log: { write: async () => {} },
+      clock: () => 0,
+      newId: () => 'id',
+    });
+
+  it('resolves predict.v2 per model: an effort where the model takes one, a budget where it only takes a budget', () => {
+    const qwen = resolvePredictPrompt('predict.v2', 'llm', 'qwen/qwen3.8-flash').harness;
+    expect(qwen.reasoningMaxTokens).toBe(1024);
+    expect(qwen.maxTokens).toBeGreaterThan(qwen.reasoningMaxTokens! + 500);
+    const glm = resolvePredictPrompt('predict.v2', 'llm', 'z-ai/glm-5.3-flash').harness;
+    expect(glm).toMatchObject({ reasoningEffort: 'low', reasoningMaxTokens: null, maxTokens: 3000 });
+    // A model the variant doesn't list has no measured settings, so it can't be named with predict.v2 (no silent
+    // fallback to the incumbent's effort and cap); the text is the incumbent's for every model.
+    expect(predictorIdProblem('llm:acme/other@predict.v2')).toMatch(
+      /no measured reasoning settings for acme\/other/,
+    );
+    expect(predictorIdProblem('llm:qwen/qwen3.8-flash:nitro@predict.v2')).toMatch(
+      /no measured reasoning settings/,
+    );
+    expect(() =>
+      PipelineConfig.parse({
+        ...DEFAULT_CONFIG,
+        predictor: { primary: DEFAULT_CONFIG.predictor.primary, shadows: ['llm:acme/other@predict.v2'] },
+      }),
+    ).toThrow(/no measured reasoning settings/);
+    for (const id of DEFAULT_CONFIG.predictor.shadows) expect(predictorIdProblem(id)).toBeNull();
+    expect(resolvePredictPrompt('predict.v2', 'llm', 'acme/other').harness).toEqual({
+      ...INCUMBENT_HARNESS,
+      keyEnum: true,
+      labelKeys: true,
+    });
+    expect(resolvePredictPrompt('predict.v2', 'llm', 'qwen/qwen3.8-flash').components).toEqual(
+      INCUMBENT_COMPONENTS,
+    );
+    // Every LLM shadow in the default config has measured settings (ADR-0041).
+    for (const id of DEFAULT_CONFIG.predictor.shadows) {
+      const spec = parsePredictorId(id);
+      if (spec.kind === 'llm') expect(PREDICT_PROMPTS['predict.v2']!.modelHarness).toHaveProperty(spec.model);
+    }
+  });
+
+  it('sends the budget and cap a shadow is configured with, and records predict.v2', async () => {
+    const seen: ChatRequest[] = [];
+    const gw = chatGateway(seen, '{"probs":[{"key":"a","p":0.7},{"key":"b","p":0.3}]}');
+    const p = makePredictor(gw, 'llm:qwen/qwen3.8-flash@predict.v2', { purpose: 't' });
+    const [r] = await p.predict(state, [q('choice')]);
+    expect(r!.ok).toBe(true);
+    expect(seen[0]).toMatchObject({ reasoningMaxTokens: 1024, maxTokens: 2048 });
+    expect(promptVersionOf('llm:qwen/qwen3.8-flash@predict.v2')).toBe('predict.v2');
+    const v1: ChatRequest[] = [];
+    await makePredictor(
+      chatGateway(v1, '{"probs":[{"key":"a","p":0.7},{"key":"b","p":0.3}]}'),
+      'llm:qwen/qwen3.8-flash',
+      {
+        purpose: 't',
+      },
+    ).predict(state, [q('choice')]);
+    expect(v1[0]).not.toHaveProperty('reasoningMaxTokens');
+    expect(v1[0]!.maxTokens).toBe(3000);
+    // One reasoning control per request, so the logged request is what was sent.
+    expect(seen[0]).not.toHaveProperty('reasoningEffort');
+    expect(v1[0]).toMatchObject({ reasoningEffort: 'low' });
+    // predict.v2 pins the answer's keys to the options; the incumbent's schema is untouched (same object).
+    const items = (
+      seen[0]!.jsonSchema!.schema as { properties: { probs: { items: { properties: { key: unknown } } } } }
+    ).properties.probs.items.properties.key;
+    expect(items).toEqual({ type: 'string', enum: ['a', 'b'] });
+    expect(v1[0]!.jsonSchema!.schema).toBe(PROMPTS['predict.v1'].schema);
+  });
+
+  it('keeps room for the answer and never sends a zero budget as no budget', () => {
+    const h = { ...INCUMBENT_HARNESS, reasoningMaxTokens: 1024, maxTokens: 2048 };
+    expect(harnessProblems(h)).toEqual([]);
+    expect(harnessProblems({ ...h, maxTokens: 1200 })).toEqual([
+      expect.stringMatching(/leaves under 256 tokens/),
+    ]);
+    expect(harnessProblems({ ...h, reasoningMaxTokens: 0 })[0]).toMatch(/positive integer or null/);
+    expect(reasoningOf({ reasoningEffort: 'low', reasoningMaxTokens: 0 })).toEqual({ reasoningMaxTokens: 0 });
+    expect(reasoningOf({ reasoningEffort: 'low', reasoningMaxTokens: null })).toEqual({
+      reasoningEffort: 'low',
+    });
+    // Every registered variant, on every model it lists, leaves room for the answer.
+    for (const v of Object.values(PREDICT_PROMPTS))
+      for (const m of Object.keys(v.modelHarness ?? { any: {} }))
+        expect(harnessProblems(resolvePredictPrompt(v.id, v.kind, m).harness)).toEqual([]);
+    // The reasoned schema keeps its rationale field when keys are pinned.
+    const reasoned = probsSchema({ schema: 'reasoned', keyEnum: true }, ['x', 'y']) as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(Object.keys(reasoned.properties)).toEqual(['reasoning', 'probs']);
+    expect(reasoned.required).toEqual(['reasoning', 'probs']);
+  });
+
+  it('accepts option labels as keys under predict.v2, only when they cover every option unambiguously', async () => {
+    const labels = '{"probs":[{"key":"Tea","p":0.8},{"key":" coffee ","p":0.2}]}';
+    const [v2] = await makePredictor(chatGateway([], labels), 'llm:qwen/qwen3.8-flash@predict.v2', {
+      purpose: 't',
+    }).predict(state, [q('choice')]);
+    expect(v2).toMatchObject({ ok: true, dist: { a: 0.8, b: 0.2 } });
+    // The incumbent keeps failing such output, so stored predict.v1 behaviour doesn't change.
+    const [v1] = await makePredictor(chatGateway([], labels), 'llm:qwen/qwen3.8-flash', {
+      purpose: 't',
+    }).predict(state, [q('choice')]);
+    expect(v1).toMatchObject({ ok: false, error: 'output does not cover every option' });
+    // Keys win; a partial, mixed-up or ambiguous mapping is left alone.
+    const tea = q('choice');
+    expect(keyedByLabel({ a: 0.6, b: 0.4 }, tea)).toEqual({ a: 0.6, b: 0.4 });
+    expect(keyedByLabel({ Tea: 1 }, tea)).toEqual({ Tea: 1 });
+    expect(keyedByLabel({ a: 0.5, Tea: 0.5 }, tea)).toEqual({ a: 0.5, Tea: 0.5 });
+    const twins = { ...tea, options: tea.options.map((o) => ({ ...o, label: 'Same' })) };
+    expect(keyedByLabel({ Same: 1 }, twins)).toEqual({ Same: 1 });
+    // An entry that is neither a key nor a label is ignored, as it is for an answer keyed by keys.
+    expect(keyedByLabel({ Tea: 0.7, Coffee: 0.2, Unsure: 0.1 }, tea)).toEqual({ a: 0.7, b: 0.2 });
+    // Keys that are also Object.prototype names are matched as own keys only.
+    const proto = {
+      ...tea,
+      options: [
+        { key: 'constructor', label: 'Build' },
+        { key: 'toString', label: 'Say' },
+      ],
+    };
+    expect(keyedByLabel({ Build: 0.6, Say: 0.4 }, proto)).toEqual({ constructor: 0.6, toString: 0.4 });
+  });
+
+  it('calibrates Jev without changing its pick', async () => {
+    const gw = chatGateway([], '');
+    const [raw] = await makePredictor(gw, 'jev:typesafe/jev-1.13', { purpose: 't' }).predict(state, [
+      q('choice'),
+    ]);
+    const [cal] = await makePredictor(gw, 'jev:typesafe/jev-1.13@jev-predict.v2', { purpose: 't' }).predict(
+      state,
+      [q('choice')],
+    );
+    expect(raw!.dist.a).toBeCloseTo(0.95);
+    expect(cal!.dist.a).toBeLessThan(0.7);
+    expect(cal!.dist.a).toBeGreaterThan(cal!.dist.b!);
+    expect(cal!.confidence).toBeCloseTo(cal!.dist.a!);
+    expect(raw!.confidence).toBe(0.9);
+    // A noul confidence stays on Jev's |p − 0.5|·2 scale after calibration.
+    const [rawNoul] = await makePredictor(gw, 'jev:typesafe/jev-1.13', { purpose: 't' }).predict(state, [
+      q('noul'),
+    ]);
+    const [calNoul] = await makePredictor(gw, 'jev:typesafe/jev-1.13@jev-predict.v2', {
+      purpose: 't',
+    }).predict(state, [q('noul')]);
+    expect(rawNoul!.confidence).toBeCloseTo(Math.abs(rawNoul!.dist.yes! - 0.5) * 2);
+    expect(calNoul!.confidence).toBeCloseTo(Math.abs(calNoul!.dist.yes! - 0.5) * 2);
+    expect(temperatureScale({ a: 0.6, b: 0.4 }, 1)).toEqual({ a: 0.6, b: 0.4 });
   });
 });

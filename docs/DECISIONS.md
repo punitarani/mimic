@@ -1148,3 +1148,168 @@ full policy.
   use `twin2k:`), so reports can keep real people apart (rubric R10).
 - **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0044); PLAN §14 lists them
   and the rubric each is scored on.
+
+## ADR-0041 — Reasoning budgets and caps per model, pinned option keys, calibrated Jev derived: `cfg.default.v6` (2026-09-30)
+
+**Why.** The first Actions → Optimize report on prod data (3 consented people, 232 scored questions) showed two things:
+
+- **Qwen3.8 Flash failed most of its predictions**: only 59 of 78 on the dev person and 20 of 154 on the test people
+  succeeded. It ignores `reasoning.effort` and reasons without a limit, so on long states its thinking ran past the
+  shared 3,000 `max_tokens` cap and the JSON never arrived (ADR-0037 measured the same).
+- **Jev is overconfident.** A calibration temperature of 4 (the top of the old grid), fitted on the dev person, took
+  held-out log loss from 1.804 to 1.124 nats per question and ECE from 0.267 to 0.098 on the two test people. The
+  LLM shadows' fitted temperatures were all 0.9–1.2, so they need no calibration.
+
+ADR-0038 answered the first by turning Qwen's reasoning off (`cfg.default.v5`). This ADR keeps reasoning on for
+every model instead, at one low setting each, chosen for cost and accuracy together. Where a model ignores the effort
+level, it gets a token budget. That way the shadows compare like with like. v5's reasoning-off Qwen stays in v6 as a
+control arm, so real answers show whether reasoning helps Qwen. ADR-0038 left that question to the lab, and the
+control costs about $0.00007 a question.
+
+**Measured.** 8 long states (seq 45–72, from two scripted 72-turn sessions) per model and setting. The response cap
+was 8,000 so nothing truncated. These runs measure token use, latency and whether the JSON is valid; they say nothing
+about accuracy.
+
+| Model | Setting | Valid | Reasoning tokens p50 / max | Completion max | Latency p50 | $ per prediction |
+| --- | --- | --- | --- | --- | --- | --- |
+| GPT-6 Luna | effort low | 8/8 | 86 / 103 | 169 | 2.7 s | 0.00039 |
+| GPT-6 Luna | effort medium | 8/8 | 105 / 134 | 200 | 3.6 s | 0.00041 |
+| DeepSeek V4.1 Flash | effort low | 8/8 | 850 / 1,577 | 1,631 | 14.0 s | 0.00057 |
+| DeepSeek V4.1 Flash | effort medium | 8/8 | 741 / 1,099 | 1,136 | 14.3 s | 0.00051 |
+| GLM 5.3 Flash | effort low | 8/8 | 29 / 44 | 101 | 1.7 s | 0.00043 |
+| GLM 5.3 Flash | effort medium | 8/8 | 30 / 57 | 110 | 1.1 s | 0.00017 |
+| MiMo V2.6 Flash | effort low | 7/8 | 163 / 221 | 295 | 8.4 s | 0.00039 |
+| MiMo V2.6 Flash | budget 1,024 | 8/8 | 152 / 253 | 283 | 9.6 s | 0.00039 |
+| Qwen3.8 Flash | effort low | 7/8 | 1,787 / 4,213 | 4,326 | 40.9 s | 0.00130 |
+| Qwen3.8 Flash | budget 512 | 7/8 | 512 / 512 | 659 | 13.2 s | 0.00070 |
+| Qwen3.8 Flash | budget 1,024 | 8/8 | 886 / 1,024 | 1,087 | 19.0 s | 0.00049 |
+
+Medium effort barely changes how much Luna, DeepSeek and GLM reason; on DeepSeek it reasoned less than low. Low is the
+cheaper setting and the one every stored prediction used, so the comparison with history stays clean. MiMo Flash and
+Qwen Flash list only `reasoning` on OpenRouter, not `reasoning_effort`, so they take a token budget. On Qwen, 1,024 is
+the smallest budget that kept every answer valid, and it costs less than half of effort low.
+
+**Checked end to end.** I then ran `evaluate --predictor <id>@predict.v2` on 120 states from the same sessions, once
+per shadow. The live smoke cost $0.36 in total, including the reruns below.
+
+| Shadow | Completion p50 / p95 / max | Failed |
+| --- | --- | --- |
+| GPT-6 Luna | 130 / 211 / 244 | 0 |
+| DeepSeek V4.1 Flash | 717 / 1,707 / 3,094 | 0 |
+| GLM 5.3 Flash | 84 / 140 / 1,500 | 1 (then 1 in a rerun) |
+| MiMo V2.6 Flash | 204 / 345 / 550 | 0 |
+| Qwen3.8 Flash | 874 / 1,119 / 1,131 | 7 (then 1 in a rerun) |
+
+The checks turned up three things:
+
+- **Two long tails.** DeepSeek reached 3,094 tokens, which would have truncated under the old 3,000 cap. In one call
+  in 240, GLM reasoned all the way to its first 1,500 cap; its next largest completions were 1,342 and 1,005.
+- **Labels as keys.** Qwen's seven failures, and one of GLM's, were valid distributions keyed by option labels. On
+  0–4 scales they wrote "Never", "Often" and so on instead of "0" to "4".
+- **One degenerate loop.** After the label fix, Qwen's one failure listed invented option keys (a to z, then aa and
+  on) until it hit the cap. A larger cap would only make that failure cost more.
+
+Both key problems come from the schema, which let `key` be any string. With the key as an enum of the options
+(`keyEnum`), a final round of the five shadows over the same 120 states each had these results across 602 calls:
+
+- 0 failures and 0 truncations;
+- 0 keys outside the enum, so every provider enforces it;
+- largest completions all under their caps (DeepSeek 2,382, GLM 1,380, Qwen 1,178).
+
+**Decision.**
+
+- **`ChatRequest.reasoningMaxTokens`** is sent as OpenRouter `reasoning.max_tokens` and wins over the effort. Only one
+  of the two is ever sent, and `max_tokens` still covers reasoning and answer together.
+- **The prompt harness gains `reasoningMaxTokens`, `calibrationTemperature`, `keyEnum` and `labelKeys`.**
+  - `calibrationTemperature` post-scales a predictor's distribution: p ∝ max(p, P_FLOOR)^(1/T).
+    - It keeps the argmax, so top-1 accuracy, and item accuracy on choice and yes/no questions, don't change.
+    - Score questions are scored by expected index, and a temperature above 1 moves that toward the middle of the
+      scale. This helps a confident miss and costs a confident hit.
+    - The stored report's fits show test accuracy before and after, next to log loss. Check that column before
+      promoting a calibrated primary.
+  - `keyEnum` makes the answer's `key` field an enum of the question's option keys, in a per-question JSON schema.
+    With the strict schema that is already required, a provider that enforces it can't return labels or invent
+    options.
+  - `labelKeys` re-keys an LLM answer from option labels to option keys, as a fallback for a provider that doesn't
+    enforce the enum. It applies only when every option is then covered by exactly one entry, so a partial or
+    ambiguous answer still fails.
+  - All four default to the incumbent's behaviour (no budget, T = 1, a plain string key, keys only), so every
+    existing prompt version, config hash, request and stored prediction is unchanged. Each request carries one
+    reasoning control (`reasoningOf`), and a budget of 0 is sent as 0, not dropped.
+  - A resolved harness must leave at least 256 tokens for the answer after a reasoning budget (`harnessProblems`).
+    Registered variants are checked by a test, candidates are refused before anything is spent, and predictor IDs
+    are refused on parse.
+  - Eval candidate hashes include the full harness, so they do change. An optimize run directory from before this
+    change can't be resumed, and its cached predictions are paid for again.
+- **A registered variant may set reasoning control and caps per model** (`modelHarness`, only
+  `PER_MODEL_HARNESS_KEYS`), resolved as incumbent → variant → model. A variant that has them runs only on the models
+  it lists: `predictorIdProblem` refuses any other model, in configs, backfill and the optimizer. So a new model, or
+  a routing variant like `:nitro`, gets measured settings and never silently falls back to the incumbent's effort
+  and 3,000 cap, which is the failure this ADR fixes.
+- **`predict.v2`**: the incumbent prompt text with `keyEnum` and `labelKeys` on, plus the settings below, for these
+  five models only.
+
+  | Model | Reasoning | `max_tokens` |
+  | --- | --- | --- |
+  | GPT-6 Luna | effort low | 1,500 |
+  | DeepSeek V4.1 Flash | effort low | 6,000 |
+  | GLM 5.3 Flash | effort low | 3,000 |
+  | MiMo V2.6 Flash | budget 1,024 | 2,048 |
+  | Qwen3.8 Flash | budget 1,024 | 2,048 |
+
+  The cap rule:
+  - For an effort model, the cap is about twice the largest completion seen in both measurements, and at least
+    1,500.
+  - For a budget model, the cap is twice the budget.
+
+  A cap guards against runaways, and it is not a price. A normal call costs the same under any cap, and a truncated
+  call is billed for its whole cap and then fails. So a generous cap costs almost nothing, and one that is too tight
+  wastes the call.
+- **`jev-predict.v2`**: Jev's incumbent templates at T = 4. It is registered, but it is not a default shadow.
+  - As a shadow it would send a second, identical Jev request on the primary's sealed state. CLAUDE.md says to batch
+    Jev questions that share a state, and the comparison would pick up Jev's run-to-run noise (about 0.03 nats).
+  - Instead `evaluate --from stored` derives it: every registered Jev variant that differs from the stored primary
+    only by calibration temperature gets rows with the role `derived`, from the primary's own answers rescaled.
+    Those rows appear in every table (by split, person and question type, with accuracy and lift), at no cost and
+    with no noise.
+  - It remains the seed for Jev template search, and the version to name when calibration is promoted to primary.
+- **`cfg.default.v6`** is v5 (ADR-0038) with its five LLM shadows on `@predict.v2`, plus v5's
+  `llm:qwen/qwen3.8-flash@predict.v1-direct` kept as the reasoning-off control. The primary stays uncalibrated Jev.
+  `predict.v1-direct` sets no per-model settings, so it stays valid for any model.
+
+  New mimics get v6. Existing mimics keep their config, and `pnpm backfill` gives their served questions the new
+  shadows (ADR-0024).
+- **The calibration grid in `evaluate --from stored` now runs 0.25–16 (46 steps).** This is because the old top of 4
+  was the fitted value. Pooling fits pair the primary with LLM shadows only, since a Jev shadow pooled with the Jev
+  primary is a temperature fit under another name.
+- **Actions → Optimize seeds from `jev:typesafe/jev-1.13@jev-predict.v2` by default,** so GEPA searches templates on
+  top of the calibration and not against it. Its caps:
+  - 30 iterations (now a workflow input) and 2,500 metric calls. Each iteration is two minibatches and a
+    validation pass.
+  - The run stops at whichever cap it reaches first. For a Jev seed at the defaults, that is the 30 iterations,
+    after about 2,400 predictions and roughly $0.7–1.3, well under the $2 `max_usd`.
+  - `--max-minutes 140` stops the loop cleanly inside the job's 180-minute timeout. No iteration starts that might
+    not finish, with as long again kept for the holdout.
+  - The result is uploaded even after a cancel or timeout.
+- **The optimizer's `PREDICT_PROMPTS` snippet starts from the seed variant's harness and adds the run's changes.**
+  - A change to reasoning or a cap goes under the optimized model's `modelHarness` entry, so a setting measured for
+    one model never reaches another.
+  - Any other change (the schema, keys, calibration) describes the prompt, so every model shares it.
+  - The seed's entries for the other models are carried over, so the winner can replace the seed on every shadow.
+
+**Why not promote calibrated Jev to primary now.** It was fitted on one person and checked on two. The derived rows
+give the evidence on every new question: log loss, and accuracy per question type, since calibration changes accuracy
+on score questions. Promoting it later is a one-line config change (`primary: jev:typesafe/jev-1.13@jev-predict.v2`).
+The pooling fits also put almost no weight on the primary against any LLM shadow, which is worth revisiting once
+`predict.v2` has been backfilled.
+
+**Cost.** At the table's prices, the v6 shadows cost about $0.0023 per scored question together:
+
+| Config | Shadows' cost per question | Compared with v6 |
+| --- | --- | --- |
+| v4 | $0.0031 | a quarter more, because Qwen's unbounded reasoning was the costliest |
+| v5 | $0.0019 | $0.0004 less, because Qwen doesn't reason |
+| v6 | $0.0023 | — |
+
+Calibrated Jev costs nothing. Backfilling the five `predict.v2` shadows over the 232 questions served so far costs
+about $0.53.

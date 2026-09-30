@@ -418,6 +418,7 @@ export async function optimizeCmd(argv: string[]) {
       'val-size': { type: 'string', default: '60' },
       'holdout-size': { type: 'string', default: '80' },
       'max-iterations': { type: 'string', default: '30' },
+      'max-minutes': { type: 'string' },
       'no-noise': { type: 'boolean', default: false },
       concurrency: { type: 'string', default: '8' },
       'run-dir': { type: 'string' },
@@ -457,10 +458,13 @@ export async function optimizeCmd(argv: string[]) {
     blobsDir: join(runDir, 'traces'),
     providers: values.offline ? 'offline' : 'live',
   });
+  // Wall clock for this invocation (not saved with the run): the loop stops cleanly in time to write its report.
+  const maxMinutes = values['max-minutes'] ? positive('max-minutes', values['max-minutes'], false) : null;
+  const deadline = maxMinutes === null ? undefined : Date.now() + maxMinutes * 60_000;
   let result: Awaited<ReturnType<typeof optimize>>;
   try {
     result = await optimize(
-      { gateway: engine.deps.gateway, runDir, log: (l) => console.log(l) },
+      { gateway: engine.deps.gateway, runDir, log: (l) => console.log(l), ...(deadline ? { deadline } : {}) },
       spec,
       loaded.instances,
     );

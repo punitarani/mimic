@@ -242,6 +242,11 @@ export interface ChatRequest {
   messages: ChatMessage[];
   jsonSchema?: { name: string; schema: Record<string, unknown> };
   reasoningEffort?: ReasoningEffort;
+  /**
+   * An explicit reasoning token budget, for models that take one instead of an effort level (OpenRouter
+   * `reasoning.max_tokens`). Wins over `reasoningEffort`. `maxTokens` covers reasoning and the answer together.
+   */
+  reasoningMaxTokens?: number;
   maxTokens?: number;
 }
 

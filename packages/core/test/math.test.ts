@@ -8,6 +8,7 @@ import {
   DEFAULT_CONFIG,
   DEFAULT_CONFIG_V3,
   DEFAULT_CONFIG_V4,
+  DEFAULT_CONFIG_V5,
   entropy,
   expectedCalibrationError,
   gateFailures,
@@ -159,20 +160,30 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v5 and its predecessors (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v6 and its predecessors (configs are immutable: a change needs a new config)', () => {
+    expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
+    // v6 (ADR-0041): every LLM shadow on predict.v2, with v5's reasoning-off Qwen kept as a control; nothing else
+    // changes. Calibrated Jev is derived from the stored primary, not a second Jev call.
+    expect(DEFAULT_CONFIG.predictor.shadows).toEqual([
+      ...DEFAULT_CONFIG_V4.predictor.shadows.map((s) => `${s}@predict.v2`),
+      'llm:qwen/qwen3.8-flash@predict.v1-direct',
+    ]);
+    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V5.predictor }).toEqual(DEFAULT_CONFIG_V5);
     expect(configHash(DEFAULT_CONFIG)).toBe(
+      '34eb32689f85b1e3b050b2827a575ad8b38b1ec2dd33822fb43698e2da248dd9',
+    );
+    // v5 (ADR-0038) is v4 with Qwen3.8 Flash's shadow run with reasoning off.
+    expect(configHash(DEFAULT_CONFIG_V5)).toBe(
       '85cf13277f7fa5072f6650117bae470f1483443a1b33349205c85dad50dfbd66',
     );
-    expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
-    // v5 (ADR-0038) is v4 with Qwen3.8 Flash's shadow run with reasoning off.
-    expect(DEFAULT_CONFIG.predictor.shadows).toContain('llm:qwen/qwen3.8-flash@predict.v1-direct');
-    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V4.predictor }).toEqual(DEFAULT_CONFIG_V4);
+    expect(DEFAULT_CONFIG_V5.predictor.shadows).toContain('llm:qwen/qwen3.8-flash@predict.v1-direct');
+    expect({ ...DEFAULT_CONFIG_V5, predictor: DEFAULT_CONFIG_V4.predictor }).toEqual(DEFAULT_CONFIG_V4);
     expect(configHash(DEFAULT_CONFIG_V4)).toBe(
       '9783a40b1abf03d36281002a627336edfec98930f993cb62f542a206916460c3',
     );
-    expect(DEFAULT_CONFIG_V4.selector.type).toBe('voi');
-    expect(DEFAULT_CONFIG_V4.generator.promptVersion).toBe('gen.v2');
-    expect(DEFAULT_CONFIG_V4.stateBuilder.latencyHints).toBe(true);
+    expect(DEFAULT_CONFIG.selector.type).toBe('voi');
+    expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v2');
+    expect(DEFAULT_CONFIG.stateBuilder.latencyHints).toBe(true);
     // v3 (ADR-0025) must keep its hash even though the schema gained optional fields (ADR-0027).
     expect(configHash(DEFAULT_CONFIG_V3)).toBe(
       '076c57200e027d35b7a23582003c1161501b635469800fd1189c369d97160993',

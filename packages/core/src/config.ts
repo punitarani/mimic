@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DEFAULT_PROMPT_VERSION, PREDICT_PROMPTS } from './components';
+import { DEFAULT_PROMPT_VERSION, harnessProblems, PREDICT_PROMPTS, resolvePredictPrompt } from './components';
 import { canonicalJson, sha256Hex } from './hash';
 
 /**
@@ -19,6 +19,11 @@ export function predictorIdProblem(id: string): string | null {
   const v = PREDICT_PROMPTS[spec.promptVersion];
   if (!v) return `unknown prediction prompt version in ${id}`;
   if (v.kind !== spec.kind) return `${spec.promptVersion} is a ${v.kind} prompt, not ${spec.kind}`;
+  // Reasoning settings and caps are measured per model (ADR-0041): no silent fallback for a model a variant doesn't list.
+  if (v.modelHarness && !Object.hasOwn(v.modelHarness, spec.model))
+    return `${spec.promptVersion} has no measured reasoning settings for ${spec.model} (it lists ${Object.keys(v.modelHarness).join(', ')}); register a version that lists it`;
+  const problems = harnessProblems(resolvePredictPrompt(spec.promptVersion, spec.kind, spec.model).harness);
+  if (problems.length) return `${id}: ${problems.join('; ')}`;
   return null;
 }
 
@@ -165,7 +170,7 @@ export const DEFAULT_CONFIG_V4: PipelineConfig = {
  * their served questions. Deviation (ADR-0004): generator and reflector default to DeepSeek V4.1 Flash, not GPT-6
  * Luna.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V5: PipelineConfig = {
   ...DEFAULT_CONFIG_V4,
   predictor: {
     ...DEFAULT_CONFIG_V4.predictor,
@@ -178,7 +183,30 @@ export const DEFAULT_CONFIG: PipelineConfig = {
     ],
   },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v5';
+
+/**
+ * `cfg.default.v6` (ADR-0041): every LLM shadow on `predict.v2`, which keeps reasoning on at a low setting per model (an
+ * effort, or a 1,024-token budget for models that only take one), caps sized from measured usage, and the answer's
+ * keys pinned to the options. v5's reasoning-off Qwen stays as a control arm, so real answers show what reasoning buys
+ * (about $0.00007 a question). The primary is unchanged; calibrated Jev (`jev-predict.v2`) is measured from the stored
+ * primary for free rather than by a second Jev call. Older mimics keep their config; `pnpm backfill` adds the new
+ * shadows to questions already served.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V5,
+  predictor: {
+    ...DEFAULT_CONFIG_V5.predictor,
+    shadows: [
+      `llm:${LLM.luna}@predict.v2`,
+      `llm:${LLM.deepseek}@predict.v2`,
+      `llm:${LLM.glm}@predict.v2`,
+      `llm:${LLM.mimoFlash}@predict.v2`,
+      `llm:${LLM.qwenFlash}@predict.v2`,
+      `llm:${LLM.qwenFlash}@predict.v1-direct`,
+    ],
+  },
+};
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v6';
 
 /**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never

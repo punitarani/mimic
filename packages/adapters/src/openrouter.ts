@@ -89,7 +89,10 @@ export class OpenRouterChat implements LlmClient {
         json_schema: { name: req.jsonSchema.name, strict: true, schema: req.jsonSchema.schema },
       };
     }
-    if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort, exclude: true };
+    // A budget and an effort are alternatives on OpenRouter; a budget is the only control some models honour.
+    if (req.reasoningMaxTokens !== undefined)
+      body.reasoning = { max_tokens: req.reasoningMaxTokens, exclude: true };
+    else if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort, exclude: true };
     if (req.maxTokens) body.max_tokens = req.maxTokens;
     return body;
   }

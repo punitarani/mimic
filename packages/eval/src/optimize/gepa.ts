@@ -6,7 +6,12 @@ import {
   componentReadBy,
   DEFAULT_PROMPT_VERSION,
   type Gateway,
+  INCUMBENT_HARNESS,
+  PER_MODEL_HARNESS_KEYS,
+  type PerModelHarness,
   PREDICT_PROMPTS,
+  type PredictHarness,
+  resolvePredictPrompt,
   seededRng,
   shuffle,
   unitHash,
@@ -200,6 +205,9 @@ export interface OptimizeDeps {
   gateway: Gateway;
   runDir: string;
   log: (line: string) => void;
+  /** Wall-clock deadline (ms) for this invocation: no iteration starts that might not finish, holdout included. */
+  deadline?: number;
+  now?: () => number;
 }
 
 /**
@@ -378,7 +386,18 @@ export async function optimize(
 
     const rng = seededRng(`gepa:${run.rngSeed}:${state.iteration}`);
     let reflectionErrors = 0;
+    const now = deps.now ?? Date.now;
+    let iterationStart: number | null = null;
+    let slowestMs = 0;
     while (state.iteration < run.maxIterations) {
+      // Stop before an iteration that might not finish in time, keeping as long again for the holdout check.
+      const t = now();
+      if (iterationStart !== null) slowestMs = Math.max(slowestMs, t - iterationStart);
+      iterationStart = t;
+      if (deps.deadline !== undefined && t + 2 * slowestMs > deps.deadline) {
+        state.stopReason = `time limit: the next iteration could run past the deadline (slowest so far ${Math.round(slowestMs / 1000)} s)`;
+        break;
+      }
       // Stop before an iteration that could not be validated within the budget.
       const needed = 2 * run.minibatch + val.length;
       if (meter.predictions + needed > run.maxMetricCalls) {
@@ -600,12 +619,32 @@ export function variantSnippet(r: OptimizeResult, runId: string): string | null 
   const c = r.best.candidate;
   // A registered variant overrides the incumbent, not the seed's base variant, so diff against the incumbent.
   const incumbent = DEFAULT_PROMPT_VERSION[c.kind];
+  // The seed variant's harness structure plus this run's changes. Reasoning control and caps are measured per model
+  // (ADR-0041), so a change to them is scoped to the model it was optimized on, and the seed's entries for other
+  // models are kept; any other harness change (schema, keys, calibration) describes the prompt and is shared.
+  let harnessLines = `harness: ${JSON.stringify(changedHarness(c, incumbent))},`;
+  if (c.kind === 'llm') {
+    const base = c.baseVersion === incumbent ? undefined : PREDICT_PROMPTS[c.baseVersion];
+    const seeded = resolvePredictPrompt(c.baseVersion, c.kind, c.model).harness;
+    const shared: Partial<PredictHarness> = { ...base?.harness };
+    const perModel: Record<string, PerModelHarness> = { ...base?.modelHarness };
+    const own: PerModelHarness = { ...perModel[c.model] };
+    for (const k of Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>) {
+      if (c.prompt.harness[k] === seeded[k]) continue;
+      if ((PER_MODEL_HARNESS_KEYS as readonly string[]).includes(k))
+        Object.assign(own, { [k]: c.prompt.harness[k] });
+      else Object.assign(shared, { [k]: c.prompt.harness[k] });
+    }
+    if (Object.keys(own).length) perModel[c.model] = own;
+    harnessLines = `harness: ${JSON.stringify(shared)},`;
+    if (Object.keys(perModel).length) harnessLines += `\n    modelHarness: ${JSON.stringify(perModel)},`;
+  }
   return `  '${v}': {
     id: '${v}',
     kind: '${c.kind}',
     title: ${JSON.stringify(`Optimized by ${r.state.spec.name}`)},
     components: ${JSON.stringify(changedComponents(c, incumbent), null, 2).replace(/\n/g, '\n    ')},
-    harness: ${JSON.stringify(changedHarness(c, incumbent))},
+    ${harnessLines}
     source: ${JSON.stringify(`mimic-eval optimize run ${runId}`)},
   },`;
 }
