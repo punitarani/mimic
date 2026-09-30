@@ -1095,9 +1095,9 @@ exercise scores at least 4 of 5.
 
 - **Self-only by design.** The person attests they are modeling themselves, must confirm their own identity, and the UI offers no free search of arbitrary names.
 - **Transparent facts.** Every externally sourced fact shows its source and can be removed.
-- **Separate consents** for app use, web search and research use, plus the categories to ask about and one opt-in
-  per sensitive area (ADR-0040).
-- **Sensitive domains are opt-in.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
+- **Separate consents** for app use, web search and research use, plus the categories to ask about and one consent
+  per sensitive area (ADR-0040), ticked by default at intake and each removable (ADR-0049).
+- **Sensitive domains need their consent.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
   inferred from other answers or web facts, and special-category answers leave research exports unless the person
   separately consents to research on them.
 - **Playground output is labeled as generated.** There is no feature to message anyone "as" a person.

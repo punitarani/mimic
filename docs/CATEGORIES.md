@@ -98,8 +98,9 @@ Stored on the mimic (`mimics.categories_json`, `consents_json`, `research_consen
   researchConsents: { politics?, religion?, sexuality?, health?: true } }
 ```
 
-- **Defaults.** Every category, no sensitive area, no special-category research use. Mimics created before ADR-0040
-  read as this default, which is exactly what they were asked about.
+- **Defaults.** Every category, no sensitive area, no special-category research use (`DEFAULT_SCOPE`). Mimics created
+  before ADR-0040, and API calls that send no scope, read as this default. The intake form starts from `INTAKE_SCOPE`
+  instead: every category and every sensitive area ticked, research use still off (ADR-0049).
 - **Normalisation** (`normalizeScope`). Categories are kept in canonical order; only `true` flags are stored; a
   consent whose category is deselected is dropped (reselecting the category asks again); a research consent is
   kept only with the area's consent and research consent overall.

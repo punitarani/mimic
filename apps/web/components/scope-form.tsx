@@ -19,10 +19,13 @@ export function ScopeTopics({
   value,
   onChange,
   idPrefix = 'scope',
+  intake = false,
 }: {
   value: MimicScope;
   onChange: (next: MimicScope) => void;
   idPrefix?: string;
+  /** Intake starts from `INTAKE_SCOPE` (ADR-0049) and says so; the session dialog shows the person's own choices. */
+  intake?: boolean;
 }) {
   const last = value.categories.length === 1;
   const lastId = `${idPrefix}-last`;
@@ -30,7 +33,7 @@ export function ScopeTopics({
     <fieldset className="space-y-5">
       <legend className="text-[15px] font-medium text-graphite">What to ask about</legend>
       <p className="-mt-2 text-[13px] text-muted">
-        Turn off anything you&apos;d rather not share. All topics are enabled by default.
+        Turn off anything you&apos;d rather not share.{intake ? ' All topics are enabled by default.' : null}
       </p>
       {CATEGORIES.map((c) => {
         const info = CATEGORY_INFO[c];

@@ -172,7 +172,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
         />
       </Field>
       <div className="border-t border-line pt-5">
-        <ScopeTopics value={scope} onChange={setScope} />
+        <ScopeTopics value={scope} onChange={setScope} intake />
       </div>
       <div className="space-y-4 border-t border-line pt-5">
         <Checkbox id="attest" checked={attest} onChange={setAttest} label="I'm building a mimic of myself" />

@@ -1644,6 +1644,10 @@ with the copy "Turn off anything you'd rather not share. All topics are enabled 
 - **Absent still means no.** `DEFAULT_SCOPE` keeps no sensitive consents, so an API call without a scope and mimics
   created before ADR-0040 are unchanged.
 - **Research use stays opt-in.** Special-category answers still leave research exports unless the person ticks each
-  area under research consent.
+  area under research consent. Money in detail follows plain research consent, as before, so with money now ticked
+  by default, a person who gives research consent shares those answers unless they untick money.
+- **Shared form, intake-only line.** The session's Topics and consent dialog reuses the form but not the "enabled by
+  default" sentence, which is only true at intake. `scripts/browser/scope.mjs` now checks that every area starts on
+  and turns two off by keyboard.
 - **Trade-off.** Pre-ticked boxes are weaker evidence of consent than ticked ones; GDPR art. 9 data (politics,
   religion, sexuality, health) generally needs an affirmative act. Revisit before opening sign-ups beyond invites.

@@ -39,7 +39,7 @@ export const Category = z.enum(['psychology', 'values', 'life', 'work']);
 export type Category = z.infer<typeof Category>;
 export const CATEGORIES: readonly Category[] = Category.options;
 
-/** Sensitive areas: opt-in, each under its own consent (ADR-0040). */
+/** Sensitive areas, each under its own consent (ADR-0040); intake starts with every one ticked (ADR-0049). */
 export const SensitiveArea = z.enum(['politics', 'religion', 'sexuality', 'health', 'money']);
 export type SensitiveArea = z.infer<typeof SensitiveArea>;
 export const SENSITIVE_AREAS: readonly SensitiveArea[] = SensitiveArea.options;
@@ -107,7 +107,7 @@ export interface Facet {
   labels: [string, string, string, string, string];
   /** The person-facing category the facet belongs to (ADR-0040). */
   category: Category;
-  /** Set on opt-in facets: asked and learned only with the person's consent for this area (ADR-0040). */
+  /** Set on sensitive facets: asked and learned only with the person's consent for this area (ADR-0040). */
   sensitive?: SensitiveArea;
   /** The research instrument or finding the facet is anchored in (ontology v2; docs/ontology/v2.sources.md). */
   source?: string;
