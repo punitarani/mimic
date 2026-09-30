@@ -13,6 +13,8 @@ export interface SessionMenuProps {
   guesses: boolean | null;
   onGuesses: (on: boolean) => void;
   onDelete: () => Promise<void>;
+  /** Opens Topics and consent (ADR-0043). */
+  onTopics?: () => void;
   compact?: boolean;
 }
 
@@ -25,6 +27,7 @@ export function SessionMenu({
   guesses,
   onGuesses,
   onDelete,
+  onTopics,
   compact = false,
 }: SessionMenuProps) {
   const [open, setOpen] = useState(false);
@@ -157,6 +160,19 @@ export function SessionMenu({
             </div>
           </div>
           <Divider />
+          {onTopics && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onTopics();
+              }}
+              className={cn(ITEM, 'text-graphite hover:bg-g8')}
+            >
+              Topics and consent
+            </button>
+          )}
           <a
             role="menuitem"
             href={`/api/mimics/${mimicId}/export`}

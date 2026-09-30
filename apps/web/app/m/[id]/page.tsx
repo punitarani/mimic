@@ -1,5 +1,5 @@
 'use client';
-import type { NextResult, PublicQuestion, Reveal, UiSnapshot } from '@mimic/core';
+import type { NextResult, PublicQuestion, Reveal, ScopeChange, UiSnapshot } from '@mimic/core';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
@@ -20,6 +20,7 @@ import { OptionButton } from '@/components/session/option-button';
 import { OverlapMark } from '@/components/session/overlap-mark';
 import { ScaleControl } from '@/components/session/scale-control';
 import { SessionMenu } from '@/components/session/session-menu';
+import { TopicsDialog } from '@/components/session/topics-dialog';
 import { cn, Spinner } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { enqueueAnswer, flushOutbox, newIdempotencyKey, pendingAnswers, sendAnswer } from '@/lib/outbox';
@@ -91,6 +92,7 @@ export default function SessionPage() {
    * the dialog stays open to say why. */
   const [confirmUndo, setConfirmUndo] = useState<Undoable | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [topicsOpen, setTopicsOpen] = useState(false);
   const undoRef = useRef<HTMLButtonElement>(null);
   const done = useRef(new Set<string>());
   const shownAt = useRef(Date.now());
@@ -279,6 +281,32 @@ export default function SessionPage() {
     requestAnimationFrame(() => optionRefs.current[0]?.focus({ preventScroll: true }));
   }, [confirmUndo, qc, id]);
 
+  /**
+   * Topics and consent saved (ADR-0043). The question on screen may be in a topic just turned off: ask the server
+   * again, which keeps it if it still fits and serves another if not.
+   */
+  const topicsSaved = useCallback(
+    async (change: ScopeChange) => {
+      setTopicsOpen(false);
+      qc.setQueryData<UiSnapshot>(['snapshot', id], (old) =>
+        old ? { ...old, mimic: { ...old.mimic, scope: change.scope, scopeAt: change.scopeAt } } : old,
+      );
+      void qc.invalidateQueries({ queryKey: ['snapshot', id] });
+      await qc.cancelQueries({ queryKey: ['question', id] });
+      if (!answered) {
+        setCurrent(null);
+        setPicked(null);
+      }
+      await qc.invalidateQueries({ queryKey: ['question', id] });
+      setNotice(
+        change.discarded
+          ? 'Topics saved. Questions on topics you turned off were removed.'
+          : 'Topics saved. Your next questions follow them.',
+      );
+    },
+    [qc, id, answered],
+  );
+
   const cancelUndo = useCallback(() => {
     setConfirmUndo(null);
     // Back to Undo; if a 409 removed it, to Next or the first option.
@@ -408,6 +436,7 @@ export default function SessionPage() {
       guesses={revealConfigured ? guesses : null}
       onGuesses={setGuesses}
       onDelete={remove}
+      {...(s ? { onTopics: () => setTopicsOpen(true) } : {})}
       {...(compact ? { onFinish: finish } : {})}
     />
   );
@@ -536,6 +565,16 @@ export default function SessionPage() {
       <BottomSheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
         {panel(true)}
       </BottomSheet>
+
+      {topicsOpen && s && (
+        <TopicsDialog
+          mimicId={id}
+          scope={s.mimic.scope}
+          consentResearch={s.mimic.consentResearch}
+          onClose={() => setTopicsOpen(false)}
+          onSaved={(change) => void topicsSaved(change)}
+        />
+      )}
 
       {confirmUndo && (
         <ConfirmDialog

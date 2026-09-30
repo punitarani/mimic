@@ -54,7 +54,8 @@ export function Providers({ children }: { children: ReactNode }) {
       persistOptions={{
         persister,
         maxAge: 7 * 24 * 3600 * 1000,
-        buster: 'v1',
+        // v2: the snapshot carries the person's scope (ADR-0043); older cached snapshots don't.
+        buster: 'v2',
         dehydrateOptions: {
           shouldDehydrateQuery: (q) => q.state.status === 'success' && PERSISTED.has(String(q.queryKey[0])),
         },

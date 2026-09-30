@@ -30,6 +30,9 @@ const SpecialFlags = z.object({
   health: z.boolean().optional(),
 });
 
+/** Re-exported so client code can import everything about scope from `@mimic/core/scope` alone. */
+export { CATEGORIES, Category, SENSITIVE_AREAS, SensitiveArea, SPECIAL_AREAS, SpecialArea } from './types';
+
 export const MimicScope = z.object({
   categories: z.array(Category).min(1).max(CATEGORIES.length),
   /** Consent to be asked about each sensitive area. Absent means no. */

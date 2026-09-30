@@ -1,6 +1,8 @@
 'use client';
 import type { UiSnapshot } from '@mimic/core';
+import { CATEGORY_INFO } from '@mimic/core/scope';
 import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { notAsked } from '@/lib/scope-form';
 import {
   bandOf,
   type Change,
@@ -487,20 +489,29 @@ function Knows({
 
 function Gaps({ snap }: { snap: UiSnapshot }) {
   const names = new Map(snap.facets.map((f) => [f.id, sentence(f.name)]));
-  if (!snap.unexplored.length) return null;
+  // Topics the person turned off (ADR-0043): never asked, so never "unexplored".
+  const off = notAsked(snap.mimic.scope).map((c) => CATEGORY_INFO[c].name);
+  if (!snap.unexplored.length && !off.length) return null;
   return (
     <section className="flex flex-col gap-4">
       <h2 className={H2}>Not explored yet</h2>
-      <div className="flex flex-wrap gap-2">
-        {snap.unexplored.map((id) => (
-          <span
-            key={id}
-            className="inline-flex h-7 items-center rounded-full border border-rule px-3 text-[12px] font-medium leading-4 text-slate"
-          >
-            {names.get(id) ?? id}
-          </span>
-        ))}
-      </div>
+      {snap.unexplored.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {snap.unexplored.map((id) => (
+            <span
+              key={id}
+              className="inline-flex h-7 items-center rounded-full border border-rule px-3 text-[12px] font-medium leading-4 text-slate"
+            >
+              {names.get(id) ?? id}
+            </span>
+          ))}
+        </div>
+      )}
+      {off.length > 0 && (
+        <p className="m-0 text-[13px] leading-5 text-slate">
+          Not asked about: {off.join('; ')}. You can change this in Topics and consent, in the menu.
+        </p>
+      )}
     </section>
   );
 }
