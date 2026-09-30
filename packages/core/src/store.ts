@@ -35,7 +35,7 @@ export interface MimicRecord {
   split: 'dev' | 'test';
   seqMax: number;
   /**
-   * Bumped by every undo (ADR-0034). Derived writes and serves made from data read at one epoch are refused at
+   * Bumped by every undo (ADR-0036). Derived writes and serves made from data read at one epoch are refused at
    * another (`Store.guarded`), so nothing built on a retracted answer lands after the undo.
    */
   evidenceEpoch: number;
@@ -95,7 +95,7 @@ export interface AnswerRecord {
 }
 
 /**
- * An answer the person undid to re-answer (ADR-0034). The row keeps what was retracted, so analysis can tell a
+ * An answer the person undid to re-answer (ADR-0036). The row keeps what was retracted, so analysis can tell a
  * re-answer from a first answer, and whether the person had seen the mimic's guess before changing it.
  */
 export interface AnswerRewindRecord {
@@ -114,7 +114,7 @@ export interface AnswerRewindRecord {
 }
 
 /**
- * Derived rows built from evidence at or after `fromSeq`, removed when that evidence is retracted (ADR-0034). Facts
+ * Derived rows built from evidence at or after `fromSeq`, removed when that evidence is retracted (ADR-0036). Facts
  * are chosen by the engine (by the evidence they cite); everything else is selected by seq inside the store.
  */
 export interface DerivedRollback {
@@ -126,7 +126,7 @@ export interface DerivedRollback {
 
 /**
  * A guarded write found the mimic's evidence changed since the data it was built from was read: an undo happened
- * meanwhile (ADR-0034). Nothing was written. Jobs treat it as done; a serve starts again.
+ * meanwhile (ADR-0036). Nothing was written. Jobs treat it as done; a serve starts again.
  */
 export class StaleEvidenceError extends Error {
   constructor() {
@@ -158,7 +158,7 @@ export interface FactRecord {
   createdAt: number;
   /** When userState last changed (null = never). */
   userStateAt: number | null;
-  /** For `reflection` facts: the seqUpTo of the reflection that wrote it, so an undo can remove it (ADR-0034). */
+  /** For `reflection` facts: the seqUpTo of the reflection that wrote it, so an undo can remove it (ADR-0036). */
   seqUpTo?: number | null;
 }
 
@@ -331,7 +331,7 @@ export interface ScoredItemSource {
 export interface Store {
   /**
    * This store, with derived writes and serves refused (`StaleEvidenceError`, nothing written) unless the mimic's
-   * `evidenceEpoch` still equals `epoch` in the same batch (ADR-0034).
+   * `evidenceEpoch` still equals `epoch` in the same batch (ADR-0036).
    */
   guarded(mimicId: string, epoch: number): Store;
   // participants
@@ -391,7 +391,7 @@ export interface Store {
   }): Promise<boolean>;
   // predictions & answers
   insertPredictions(recs: PredictionRecord[]): Promise<void>;
-  /** Removes a shadow that landed on a question discarded while it ran (ADR-0034). */
+  /** Removes a shadow that landed on a question discarded while it ran (ADR-0036). */
   deletePredictions(ids: string[]): Promise<void>;
   listPredictions(filter: {
     mimicId?: string;
@@ -419,7 +419,7 @@ export interface Store {
     move?: { questionId: string; toSeq: number };
   }): Promise<boolean>;
   /**
-   * Atomically retracts `rewind.answerId` (ADR-0034): records the rewind, deletes the answer and its question's scores,
+   * Atomically retracts `rewind.answerId` (ADR-0036): records the rewind, deletes the answer and its question's scores,
    * puts the question back to `served`, discards every session question served after it (deleting their
    * predictions), inserts `requeue` into the pool, drops fidelity rows from `rewind.seq` on, rolls back `derived` and
    * bumps `evidence_epoch`. It applies only if, inside the batch, the answer still exists and nothing was answered,
@@ -433,7 +433,7 @@ export interface Store {
   }): Promise<{ discarded: string[]; factIds: string[] } | null>;
   getAnswerRewindByIdempotencyKey(key: string): Promise<AnswerRewindRecord | null>;
   listAnswerRewinds(mimicId: string): Promise<AnswerRewindRecord[]>;
-  /** Scores whose answer no longer exists (undone, ADR-0034) are not written. */
+  /** Scores whose answer no longer exists (undone, ADR-0036) are not written. */
   insertScores(recs: ScoreRecord[]): Promise<void>;
   listScoredPredictions(mimicId: string, roles: PredictionRole[]): Promise<ScoredPredictionRow[]>;
   // derived state
@@ -448,7 +448,7 @@ export interface Store {
   upsertTraits(recs: TraitRecord[]): Promise<number>;
   listInsights(mimicId: string): Promise<InsightRecord[]>;
   insertInsights(recs: InsightRecord[]): Promise<void>;
-  /** `seq` is the reflection's seqUpTo when it supersedes, so a rewind can restore the insight (ADR-0034). */
+  /** `seq` is the reflection's seqUpTo when it supersedes, so a rewind can restore the insight (ADR-0036). */
   updateInsightStatus(id: string, status: InsightRecord['status'], at: number, seq?: number): Promise<void>;
   listKg(mimicId: string): Promise<{ nodes: KgNodeRecord[]; edges: KgEdgeRecord[] }>;
   insertKg(nodes: KgNodeRecord[], edges: KgEdgeRecord[]): Promise<void>;

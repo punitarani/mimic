@@ -6,17 +6,33 @@
 // for tests.
 import { envBlock } from './lib.mjs';
 
+/** A check for a numeric setting: returns what is wrong with the value, or null. */
+const number = (describe, ok) => (value) => {
+  const n = Number(value);
+  return value.trim() !== '' && Number.isFinite(n) && ok(n) ? null : `must be ${describe}`;
+};
+
+/** Each setting's allowed values, or a check returning what is wrong with a value. */
 export const SETTINGS = {
   VECTOR_BACKEND: ['vectorize', 'sql'],
   EMBEDDINGS_PROVIDER: ['workers-ai', 'openrouter'],
   SEARCH_PROVIDER: ['exa', 'perplexity', 'none'],
-  ENRICH_PROVIDER: ['parallel', 'none'],
+  ENRICH_PROVIDER: ['exa', 'parallel', 'none'],
+  // Spend caps (ADR-0035): the total per mimic in USD, and the share of it the learning session may spend. Defaults
+  // live in code; the ranges match `parseSpendLimits` in packages/core/src/config.ts (a test keeps them in step).
+  BUDGET_USD: number('a number of US dollars above 0', (n) => n > 0),
+  BUDGET_SESSION_SHARE: number('a number above 0 and at most 1', (n) => n > 0 && n <= 1),
 };
+
+function settingProblem(allowed, value) {
+  if (typeof allowed === 'function') return allowed(value);
+  return allowed.includes(value) ? null : `must be one of ${allowed.join(', ')}`;
+}
 
 /** The key each provider choice needs (packages/adapters/src/factory.ts). */
 const PROVIDER_KEYS = {
   SEARCH_PROVIDER: { exa: 'EXA_API_KEY', perplexity: 'PERPLEXITY_API_KEY' },
-  ENRICH_PROVIDER: { parallel: 'PARALLEL_API_KEY' },
+  ENRICH_PROVIDER: { exa: 'EXA_API_KEY', parallel: 'PARALLEL_API_KEY' },
 };
 
 /**
@@ -29,9 +45,8 @@ export function resolveSettings(config, env, source) {
   for (const [name, allowed] of Object.entries(SETTINGS)) {
     const value = source[name]?.trim();
     if (value) vars[name] = value;
-    if (vars[name] !== undefined && !allowed.includes(vars[name])) {
-      problems.push(`${name} must be one of ${allowed.join(', ')}`);
-    }
+    const problem = vars[name] === undefined ? null : settingProblem(allowed, String(vars[name]));
+    if (problem) problems.push(`${name} ${problem}`);
   }
   return { vars, problems };
 }

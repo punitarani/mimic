@@ -85,7 +85,7 @@ export default function SessionPage() {
     baseline: UiSnapshot;
   } | null>(null);
   const [guesses, setGuesses] = useGuesses(id);
-  /** The latest answer, while it can still be undone (ADR-0034): only the one sent from this page, and one step. */
+  /** The latest answer, while it can still be undone (ADR-0036): only the one sent from this page, and one step. */
   const [undoable, setUndoable] = useState<Undoable | null>(null);
   /** The answer the open confirmation is about. Kept apart from `undoable`, so a 409 can clear the button while
    * the dialog stays open to say why. */
@@ -241,7 +241,7 @@ export default function SessionPage() {
   }, [answered, offline, qc, id]);
 
   /**
-   * Takes back the latest answer and shows its question again (ADR-0034). The server discards the question
+   * Takes back the latest answer and shows its question again (ADR-0036). The server discards the question
    * prefetched after it, so a prefetch still in flight is cancelled first and never shown.
    */
   const undo = useCallback(async () => {
@@ -518,7 +518,11 @@ export default function SessionPage() {
               <Done
                 id={id}
                 title="Your mimic has learned all it can for now"
-                body="This session reached its spending limit."
+                body={
+                  s && s.mimic.spendUsd >= s.mimic.budgetUsd
+                    ? "This session reached its spending limit. You can still answer questions yourself on your mimic's page."
+                    : "This session used its share of the budget. The rest is kept for your mimic's page, where you can ask it questions, teach it and curate Persona.md."
+                }
               />
             ) : (
               <div className="flex items-center gap-3 py-16 text-[16px] text-slate" aria-live="polite">

@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { TopBar } from '@/components/brand';
-import { Button, Card, cn, ErrorText, Input, Spinner, Textarea } from '@/components/ui';
+import { Button, buttonClass, Card, cn, ErrorText, Input, Spinner, Textarea } from '@/components/ui';
 import { api } from '@/lib/api';
 
 type SaveState = 'saved' | 'saving' | 'error';
@@ -177,10 +177,7 @@ function FileActions({
         href={busy ? undefined : `/api/mimics/${id}/persona.md`}
         aria-disabled={busy}
         download
-        className={cn(
-          'inline-flex h-10 items-center rounded-[10px] px-4 text-[15px] font-medium',
-          busy ? 'cursor-not-allowed bg-line-strong text-fog' : 'bg-graphite text-fog hover:bg-graphite-soft',
-        )}
+        className={buttonClass('primary')}
       >
         Download Persona.md
       </a>

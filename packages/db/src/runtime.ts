@@ -1,5 +1,14 @@
 import { makeProviders, type ProviderEnv } from '@mimic/adapters';
-import { EMBEDDING_MODEL, type EngineDeps, Gateway, type Job, type JobQueue, ulid } from '@mimic/core';
+import {
+  EMBEDDING_MODEL,
+  type EngineDeps,
+  Gateway,
+  type Job,
+  type JobQueue,
+  parseSpendLimits,
+  type SpendLimits,
+  ulid,
+} from '@mimic/core';
 import { CfKv, R2Blobs, SqlVectors, StoreBudget, StoreCallLog, VectorizeVectors } from './bindings';
 import { retryer } from './busy';
 import { d1Db } from './index';
@@ -11,6 +20,8 @@ export interface MimicBindings extends ProviderEnv {
   BLOBS: R2Bucket;
   CACHE: KVNamespace;
   JOBS?: Queue<Job>;
+  /** Identity jobs' own lane, so a person never waits behind question generation (ADR-0034). Optional. */
+  IDENTITY_JOBS?: Queue<Job>;
   VEC?: VectorizeIndex;
   AI?: { run(model: string, input: { text: string[] }): Promise<unknown> };
   RL?: RateLimit;
@@ -21,6 +32,10 @@ export interface MimicBindings extends ProviderEnv {
   SESSION_SECRET?: string;
   ADMIN_EMAILS?: string;
   INVITE_CODES?: string;
+  /** Spend cap per mimic in USD on the standard budget (default 1; ADR-0035). A string, or a JSON number. */
+  BUDGET_USD?: string | number;
+  /** Share of the cap the session may spend (0–1, default 0.8); the rest is kept for the mimic page. */
+  BUDGET_SESSION_SHARE?: string | number;
 }
 
 export class CfQueue implements JobQueue {
@@ -30,9 +45,57 @@ export class CfQueue implements JobQueue {
   }
 }
 
+/**
+ * Job types a person waits on during sign-up. They get their own queue: Cloudflare Queues adds consumers only after
+ * a batch finishes, so on a shared queue a 1–4 minute `pool.refill` batch held a 2-second search for its whole run.
+ * Producers route by type alone, whatever their own settings say (ADR-0034).
+ */
+export const IDENTITY_JOB_TYPES: ReadonlySet<Job['type']> = new Set(['identity.search', 'identity.enrich']);
+
+/** Identity queues: `mimic-identity` plus the environment suffix (wrangler.jsonc). */
+export function isIdentityQueue(name: string): boolean {
+  return /^mimic-identity(?:-|$)/.test(name);
+}
+
+/**
+ * Whether the identity lane runs this job itself. Decided by the consumer, which is where enrichment runs and whose
+ * ENRICH_PROVIDER counts: Parallel enrichment takes minutes and would hold the lane the way `pool.refill` held the
+ * shared queue, so the consumer forwards it there.
+ */
+export function runsOnIdentityLane(job: Job, env: Pick<MimicBindings, 'ENRICH_PROVIDER'>): boolean {
+  return (
+    job.type === 'identity.search' || (job.type === 'identity.enrich' && env.ENRICH_PROVIDER !== 'parallel')
+  );
+}
+
+/** Routes identity jobs to IDENTITY_JOBS when it is bound; everything else (and all jobs without it) to JOBS. */
+export class RoutedQueue implements JobQueue {
+  constructor(
+    private readonly main: JobQueue,
+    private readonly identity: JobQueue | null,
+  ) {}
+  enqueue(job: Job, opts?: { delaySeconds?: number }) {
+    const q = this.identity && IDENTITY_JOB_TYPES.has(job.type) ? this.identity : this.main;
+    return q.enqueue(job, opts);
+  }
+}
+
 export function queueFor(env: MimicBindings): JobQueue {
   if (!env.JOBS) throw new Error('No job queue bound');
-  return new CfQueue(env.JOBS);
+  return new RoutedQueue(new CfQueue(env.JOBS), env.IDENTITY_JOBS ? new CfQueue(env.IDENTITY_JOBS) : null);
+}
+
+const warned = new Set<string>();
+
+/** Spend limits from the vars; an invalid value keeps its default and is logged once per isolate. */
+export function spendLimitsFor(env: Pick<MimicBindings, 'BUDGET_USD' | 'BUDGET_SESSION_SHARE'>): SpendLimits {
+  const { limits, problems } = parseSpendLimits(env);
+  for (const p of problems) {
+    if (warned.has(p)) continue;
+    warned.add(p);
+    console.warn(p);
+  }
+  return limits;
 }
 
 export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = {}): EngineDeps {
@@ -46,10 +109,12 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
     ...(env.AI ? { ai: env.AI } : {}),
   });
   const clock = () => Date.now();
+  // One object for both: the gateway's guard and the engine's checks always read the same caps.
+  const spend = overrides.spend ?? spendLimitsFor(env);
   const gateway = new Gateway({
     ...providers,
     log: new StoreCallLog(store, blobs),
-    budget: new StoreBudget(store),
+    budget: new StoreBudget(store, spend),
     clock,
     newId: () => ulid(),
   });
@@ -64,5 +129,6 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
     clock,
     newId: () => ulid(),
     ...overrides,
+    spend,
   };
 }

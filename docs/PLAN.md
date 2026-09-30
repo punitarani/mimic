@@ -110,7 +110,7 @@ Intake ─► Identity (search → "Is one of these you?" → facts) ─► Anch
 | Decision | `typesafe/jev-1.13` (pinned) | `POST https://openrouter.ai/api/alpha/decisions`. $0.042/M input, output free; 32K context; answers in 70–500 ms. |
 | Decision | OpenAI Decisions API | Out of scope; `DecisionProvider` stub only. |
 | Search | Exa, `category: "people"` | Candidate discovery for identity resolution. |
-| Search | Parallel Task API with a JSON output schema | Structured enrichment of the confirmed identity. |
+| Search | Exa `/contents` (person entity; schema summary for other pages), Parallel Task API optional | Structured enrichment of the confirmed identity (ADR-0034). |
 | Search | Perplexity | Optional fallback adapter. |
 | Embeddings | A Workers AI embedding model | For question dedupe and evidence retrieval (Vectorize). Pick the model at M1 and record its ID in config. |
 
@@ -208,12 +208,12 @@ Synchronous calls, where the user waits:
 - **`POST /next`** picks from a pre-generated pool. It scores all pooled candidates with one batched Jev call on the current state, and that call's output for the chosen question is the primary prediction. In parallel, a second batched Jev call on the context-only state yields the baseline for every candidate. It persists the chosen question's primary and baseline predictions, then returns. Target p50 ≤ 800 ms.
 - **`POST /answers`** validates and persists the answer, scores the sealed predictions, updates fidelity and enqueues learning. Target p50 ≤ 300 ms.
 
-Asynchronous jobs, on Queue `mimic-jobs`:
+Asynchronous jobs, on Queue `mimic-jobs`. The identity jobs a person waits on during sign-up run on their own Queue, `mimic-identity`, so question generation never holds them up (ADR-0034):
 
 | Job | Trigger | What it does |
 |---|---|---|
 | `identity.search` | Intake submitted, or "Search with a link" | Exa people search (and a lookup of the person's link) finds candidates; Jev pre-ranks them with a `noul` "same person?" question |
-| `identity.enrich` | Person confirms a candidate | Parallel structured enrichment produces facts with sources |
+| `identity.enrich` | Person confirms a candidate | Exa reads the confirmed profile and produces facts with sources (Parallel optional) |
 | `pool.refill` | Pool drops below 6 | LLM generates candidates; they are validated, gated by Jev, deduped and inserted |
 | `predict.shadow` | Question served | LLM predictors run on the sealed state (§3.1) |
 | `learn.answer` | Answer submitted | Embed the Q&A; Jev trait read; every R answers, reflection and KG update; snapshot (debounced) |
@@ -223,7 +223,7 @@ Asynchronous jobs, on Queue `mimic-jobs`:
 Job rules:
 
 - **Idempotent.** The dedupe key is the job type plus its IDs plus seq. `learn.answer` also carries the answer ID, so
-  a re-answer after an undo is learned again (ADR-0034).
+  a re-answer after an undo is learned again (ADR-0036).
 - **Monotonic writes.** A job writes derived state only if its `seqUpTo` is greater than the stored one.
 - **Resilient.** Retries with backoff, and a dead-letter queue.
 - **Logged.** Every job logs its model calls.
@@ -241,6 +241,7 @@ Cold start needs no LLM. The first 10 questions are static anchors, which gives 
 | `CACHE` | KV namespace |
 | `VEC` | Vectorize index `mimic-qa` |
 | `JOBS` | Queue `mimic-jobs` (web produces, worker consumes) |
+| `IDENTITY_JOBS` | Queue `mimic-identity`: `identity.search` and `identity.enrich` (ADR-0034) |
 | `AI` | Workers AI |
 | `RL` | Rate limiter |
 
@@ -360,7 +361,7 @@ export const PipelineConfig = z.object({
 | Reflector | GPT-6 Luna, every 5 answers |
 | Repeats | Every 8 questions, minimum gap 6 |
 | Reveal | `after_answer` |
-| Session | Target 30 questions, budget $0.50 |
+| Session | Target 30 questions; budget $0.50 in the config, which marks the standard budget that `BUDGET_USD` sets ($1 by default); the session spends 80% of it (ADR-0035) |
 
 ---
 
@@ -373,7 +374,7 @@ participants        id, email?, is_admin, created_at
 mimics              id, participant_id, display_name, location, occupation?, employer?, links_json,
                     status(intake|identity|learning|paused|archived), config_hash, experiment_id?, arm?,
                     consent_app, consent_search, consent_research, split(dev|test),
-                    seq_max, evidence_epoch (ADR-0034), snapshot_version, spend_usd, created_at, updated_at
+                    seq_max, evidence_epoch (ADR-0036), snapshot_version, spend_usd, created_at, updated_at
 identity_candidates id, mimic_id, provider, rank, name, headline, location, url, summary,
                     jev_same_person_p, r2_key, status(proposed|confirmed|rejected), created_at
 facts               id, mimic_id, predicate, object, source(intake|search|answer|reflection), source_ref,
@@ -389,7 +390,7 @@ item_stats          key PK, kind(item|archetype), n_people, n_answers, answer_en
 answers             id, question_id, mimic_id, seq, value, why?, latency_ms, revealed_prediction,
                     idempotency_key UNIQUE, created_at
 answer_rewinds      id, mimic_id, question_id, seq, answer_id UNIQUE, value, why?, latency_ms, revealed_prediction,
-                    idempotency_key, answered_at, rewound_at    (undone answers, ADR-0034)
+                    idempotency_key, answered_at, rewound_at    (undone answers, ADR-0036)
 scores              prediction_id PK, answer_id, top1, item_acc, log_loss, brier, created_at
 trait_estimates     PK(mimic_id, facet_id, method) method(jev|psychometric), seq_up_to, mean, dist_json,
                     confidence, n_evidence, config_hash, created_at
@@ -519,10 +520,10 @@ Optional consents, each a separate checkbox:
 
 ### 9.2 Identity resolution and enrichment
 
-1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2–3 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0029): `{name}, {occupation} at {employer}, {location}`, the same without the location, and the name alone. If the person gave a link, read it with Exa `/contents` too. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
+1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0029): `{name}, {occupation} at {employer}, {location}` and the same without the location, plus the name alone only if those find nobody with the full name; or `{name}, {location}` and the name alone when there is no role (ADR-0034). If the person gave a link, read it with Exa `/contents` first; when it resolves to a profile with their full name, skip the search. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
 2. **Pre-rank.** For each candidate, one Jev request (all run in parallel, state = intake plus that candidate's summary) asks the `noul` question "Is this profile the same person as the intake?". Store the result as `jev_same_person_p`.
 3. **Confirm.** The UI asks "Is one of these you?" and shows the top 3–5 candidates with name, headline, location and source; namesakes Jev scores low are behind "Show more". The person picks one or chooses "None of these". Never auto-confirm. If they aren't listed, they can search again with a link to their profile.
-4. **Enrich.** `identity.enrich` runs on confirmation. A Parallel Task with a JSON output schema collects current role, employer history, education, skills, public projects and writing, interests and locations, each with a source URL. Optionally, fetch Exa contents for the confirmed URLs.
+4. **Enrich.** A candidate from Exa search carries its person entity's facts (current role and employer, employer history, schools, location), so confirming it writes them, sourced to the profile, with no call. Otherwise `identity.enrich` runs on confirmation: Exa `/contents` reads the confirmed profile, and a page without an entity (a personal site) gets an Exa schema summary with the same fields a Parallel Task would return, including skills, public projects and writing, and interests. `ENRICH_PROVIDER=parallel` switches to a Parallel Task (ADR-0034).
 5. **Review.** The person sees every fact with its source and can remove any of them. Removed facts never enter any state.
 6. **Use.** Active facts become `identity` in `PersonState`. Together with intake, they are everything the baseline predictor sees.
 
@@ -746,7 +747,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 
 **Undo.** The latest answer can be undone, once, after a simple confirmation: "Undo" next to Next during the reveal,
 or "Undo last answer" on the question after it. The question comes back with its sealed predictions, and the answer
-is kept as a rewind, not as evidence (ADR-0034).
+is kept as a rewind, not as evidence (ADR-0036).
 
 **Progress** reads "12 of ~30", with "Stop here" always available. Stopping never loses the mimic.
 
@@ -791,7 +792,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
-| `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0034) |
+| `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0036) |
 | `POST /api/mimics/:id/ask` | scenario → typed question + prediction | Playground |
 | `GET /api/mimics/:id/export` | → latest `mimic.json` | |
 | `GET /api/mimics/:id/persona` | → Persona view: sections, items, curation, rendered Markdown | §8.3 |
@@ -803,7 +804,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 
 **Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and locks the field, and unlocks it only if the server rejects the code (ADR-0026). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
-**Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd ≥ session.budgetUsd`.
+**Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: `BUDGET_USD` (default $1) for configs on the standard budget, else the config's own `session.budgetUsd`. Session work (serving, shadows, refills, hypotheses) stops at `BUDGET_SESSION_SHARE` of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and Persona.md (ADR-0035).
 
 ---
 

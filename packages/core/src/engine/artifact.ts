@@ -212,7 +212,7 @@ async function writeSnapshotOnce(
   ]);
   const latest = snaps.at(-1);
   const currentSeq = answers.reduce((a, x) => Math.max(a, x.seq), 0);
-  // A snapshot taken before an undo still holds the retracted answer, even with the same count and seq (ADR-0034).
+  // A snapshot taken before an undo still holds the retracted answer, even with the same count and seq (ADR-0036).
   const lastRewind = rewinds.reduce((a, r) => Math.max(a, r.rewoundAt), 0);
   if (
     latest &&

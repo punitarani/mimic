@@ -101,7 +101,7 @@ async function expectSealed(mimicId: string) {
   }
 }
 
-describe('undo the latest answer (ADR-0034)', () => {
+describe('undo the latest answer (ADR-0036)', () => {
   it('takes back the answer, discards the prefetched question and rolls back what was learned', async () => {
     const id = await start();
     const { store, vectors } = engine.deps;
@@ -267,7 +267,7 @@ describe('undo the latest answer (ADR-0034)', () => {
   }
 
   /**
-   * Deps whose guarded store (Store.guarded, ADR-0034) runs `undo` just ahead of its first write: the undo lands
+   * Deps whose guarded store (Store.guarded, ADR-0036) runs `undo` just ahead of its first write: the undo lands
    * after the work read its evidence and before it writes anything.
    */
   function undoBeforeGuardedWrite(undo: () => Promise<unknown>) {

@@ -1,5 +1,15 @@
-import { configHash, DEFAULT_CONFIG, DEFAULT_CONFIG_LABEL, JEV_MODEL, LLM, PipelineConfig } from '../config';
-import type { CallContext, Gateway } from '../gateway';
+import {
+  configHash,
+  DEFAULT_CONFIG,
+  DEFAULT_CONFIG_LABEL,
+  JEV_MODEL,
+  LLM,
+  PipelineConfig,
+  type SpendCaps,
+  type SpendLimits,
+  spendCaps,
+} from '../config';
+import { BudgetExceededError, type CallContext, type Gateway } from '../gateway';
 import { unitHash } from '../hash';
 import type { JobQueue } from '../jobs';
 import { getOntology } from '../ontology';
@@ -26,6 +36,8 @@ export interface EngineDeps {
   defer?: (task: () => Promise<void>) => void;
   /** Receives phase timings (ms), e.g. for Server-Timing headers. */
   timing?: (phase: string, ms: number) => void;
+  /** Deploy-time spend limits (ADR-0035); unset fields fall back to the config's budget and an 80% session share. */
+  spend?: SpendLimits;
 }
 
 export class EngineError extends Error {
@@ -92,6 +104,42 @@ export function allocateArm<T extends { weight: number }>(
   return arms[arms.length - 1]!;
 }
 
+/** This mimic's caps: the session stops at `sessionUsd`; asking, teaching and Persona.md run to `totalUsd`. */
+export function capsFor(deps: EngineDeps, cfg: PipelineConfig): SpendCaps {
+  return spendCaps(cfg, deps.spend);
+}
+
+/** True once the session has spent its share: `/next` stops serving, and session background work stops. */
+export function sessionSpent(
+  deps: EngineDeps,
+  m: Pick<MimicRecord, 'spendUsd'>,
+  cfg: PipelineConfig,
+): boolean {
+  return m.spendUsd >= capsFor(deps, cfg).sessionUsd;
+}
+
+/**
+ * Stops session background work (shadows, refills, hypotheses) once the session has spent its share, before it loads
+ * anything. The job ledger records the refusal without marking the job done, so a raised cap can run it again.
+ */
+export function requireSessionBudget(
+  deps: EngineDeps,
+  m: Pick<MimicRecord, 'id' | 'spendUsd'>,
+  cfg: PipelineConfig,
+): void {
+  const { sessionUsd } = capsFor(deps, cfg);
+  if (m.spendUsd >= sessionUsd) throw new BudgetExceededError(m.id, m.spendUsd, sessionUsd);
+}
+
+/** True once the whole cap is spent; the gateway refuses every call for the mimic from here. */
+export function budgetSpent(
+  deps: EngineDeps,
+  m: Pick<MimicRecord, 'spendUsd'>,
+  cfg: PipelineConfig,
+): boolean {
+  return m.spendUsd >= capsFor(deps, cfg).totalUsd;
+}
+
 export function jevModel(deps: EngineDeps): string {
   return deps.jevModel ?? JEV_MODEL;
 }
@@ -119,7 +167,7 @@ export async function timed<T>(deps: EngineDeps, phase: string, fn: () => Promis
 
 /**
  * `deps` whose store refuses derived writes and serves once an undo moves the mimic's evidence past what `m` saw
- * (ADR-0034). Use it for anything built from data read along with `m`.
+ * (ADR-0036). Use it for anything built from data read along with `m`.
  */
 export function guardedDeps(deps: EngineDeps, m: Pick<MimicRecord, 'id' | 'evidenceEpoch'>): EngineDeps {
   return { ...deps, store: deps.store.guarded(m.id, m.evidenceEpoch) };

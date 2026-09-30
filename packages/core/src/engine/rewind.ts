@@ -15,7 +15,7 @@ import {
 } from './session';
 
 /**
- * Undo the latest answer (ADR-0034). The person names the question they are taking back, so a double click or a
+ * Undo the latest answer (ADR-0036). The person names the question they are taking back, so a double click or a
  * stale tab can't undo an answer they didn't mean to.
  */
 export const RewindInput = z.object({ questionId: z.string().min(1).max(100) });
@@ -164,7 +164,7 @@ export async function rewindLastAnswer(
 }
 
 /**
- * Makes the Q&A vector at `seq` match the answer there now (ADR-0034): a learn job that embedded an answer undone
+ * Makes the Q&A vector at `seq` match the answer there now (ADR-0036): a learn job that embedded an answer undone
  * while it ran may have written it after the undo removed it. Deletes it if the question has no answer yet.
  */
 export async function refreshQaVector(deps: EngineDeps, m: MimicRecord, seq: number): Promise<void> {

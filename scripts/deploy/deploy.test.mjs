@@ -166,8 +166,10 @@ describe('config', () => {
     assert.deepEqual(requiredSecrets(web, 'preview'), web3);
     for (const env of ['preview', 'prod']) {
       assert.deepEqual(requiredSecrets(worker, env), ['OPENROUTER_API_KEY']);
-      // The default providers (exa search, parallel enrichment) add their keys.
-      assert.deepEqual(workerSecrets(worker, env, {}), [
+      // The default providers (exa search, exa enrichment) add their key, once.
+      assert.deepEqual(workerSecrets(worker, env, {}), ['OPENROUTER_API_KEY', 'EXA_API_KEY']);
+      // Choosing Parallel for enrichment adds its key.
+      assert.deepEqual(workerSecrets(worker, env, { ENRICH_PROVIDER: 'parallel' }), [
         'OPENROUTER_API_KEY',
         'EXA_API_KEY',
         'PARALLEL_API_KEY',
@@ -199,6 +201,22 @@ describe('config', () => {
     assert.deepEqual(problems, [
       'EMBEDDINGS_PROVIDER must be one of workers-ai, openrouter',
       'SEARCH_PROVIDER must be one of exa, perplexity, none',
+    ]);
+  });
+
+  it('passes spend caps to both Workers only when set, and refuses caps that are not numbers in range', () => {
+    for (const c of [web, worker]) {
+      // Unset, the code defaults apply (packages/core/src/config.ts), so both Workers agree without a var.
+      assert.equal(resolveSettings(c, 'prod', {}).vars.BUDGET_USD, undefined);
+      const ok = resolveSettings(c, 'prod', { BUDGET_USD: ' 1.5 ', BUDGET_SESSION_SHARE: '0.75' });
+      assert.deepEqual(ok.problems, []);
+      assert.equal(ok.vars.BUDGET_USD, '1.5');
+      assert.equal(ok.vars.BUDGET_SESSION_SHARE, '0.75');
+    }
+    const { problems } = resolveSettings(worker, 'prod', { BUDGET_USD: '0', BUDGET_SESSION_SHARE: '80%' });
+    assert.deepEqual(problems, [
+      'BUDGET_USD must be a number of US dollars above 0',
+      'BUDGET_SESSION_SHARE must be a number above 0 and at most 1',
     ]);
   });
 
@@ -243,7 +261,7 @@ describe('resources', () => {
       d1: 'mimic-prod',
       kv: 'mimic-cache-prod',
       r2: 'mimic-blobs-prod',
-      queues: ['mimic-jobs-prod', 'mimic-jobs-prod-dlq'],
+      queues: ['mimic-jobs-prod', 'mimic-identity-prod', 'mimic-jobs-prod-dlq'],
       vectorize: 'mimic-qa-prod',
     });
   });
@@ -257,7 +275,7 @@ describe('resources', () => {
     assert.deepEqual(state.r2, ['mimic-blobs-prod']);
     assert.deepEqual(
       state.queues.map((q) => q.queue_name),
-      ['mimic-jobs-prod', 'mimic-jobs-prod-dlq'],
+      ['mimic-jobs-prod', 'mimic-identity-prod', 'mimic-jobs-prod-dlq'],
     );
     assert.deepEqual(state.indexes.get('mimic-qa-prod'), {
       config: { dimensions: 768, metric: 'cosine' },
@@ -335,10 +353,12 @@ describe('preflight', () => {
 
   it('passes with every name and a matching APP_URL', () => {
     assert.deepEqual(checkNames(full, web, worker, 'prod'), { problems: [], warnings: [] });
-    assert.equal(requiredNames(web, worker, 'prod', full).length, 9);
-    // Without exa search, EXA_API_KEY isn't needed.
-    const noSearch = { ...full, SEARCH_PROVIDER: 'none', EXA_API_KEY: '' };
-    assert.deepEqual(checkNames(noSearch, web, worker, 'prod'), { problems: [], warnings: [] });
+    // PARALLEL_API_KEY is only needed when Parallel does enrichment (the default is Exa).
+    assert.equal(requiredNames(web, worker, 'prod', full).length, 8);
+    assert.equal(requiredNames(web, worker, 'prod', { ...full, ENRICH_PROVIDER: 'parallel' }).length, 9);
+    // Without Exa for search or enrichment, EXA_API_KEY isn't needed.
+    const noExa = { ...full, SEARCH_PROVIDER: 'none', ENRICH_PROVIDER: 'none', EXA_API_KEY: '' };
+    assert.deepEqual(checkNames(noExa, web, worker, 'prod'), { problems: [], warnings: [] });
   });
 
   it('names what is missing, mismatched or local-only', () => {

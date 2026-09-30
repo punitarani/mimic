@@ -1,8 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { type Theme, useTheme } from '@/lib/theme';
+import { ConfirmDelete } from '../confirm-delete';
 import { cn } from '../ui';
-import { ConfirmDialog } from './confirm-dialog';
 import { Dots, DownloadIcon, TrashIcon } from './icons';
 
 export interface SessionMenuProps {
@@ -191,19 +191,4 @@ export function SessionMenu({
 
 function Divider() {
   return <div className="mx-1 my-1.5 h-px bg-rule" />;
-}
-
-function ConfirmDelete({ onCancel, onDelete }: { onCancel: () => void; onDelete: () => Promise<void> }) {
-  return (
-    <ConfirmDialog
-      title="Delete your mimic?"
-      body="This removes your answers, predictions, facts, snapshots and logs from every store. It can't be undone."
-      confirmLabel="Delete"
-      busyLabel="Deleting…"
-      tone="rust"
-      errorFallback="Could not delete."
-      onCancel={onCancel}
-      onConfirm={onDelete}
-    />
-  );
 }

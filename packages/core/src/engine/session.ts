@@ -56,6 +56,7 @@ import {
   guardedDeps,
   loadConfig,
   requireMimic,
+  sessionSpent,
   timed,
 } from './deps';
 
@@ -135,7 +136,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
     try {
       return await serveOnce(deps, mimicId);
     } catch (e) {
-      // Built from evidence an undo changed meanwhile, so nothing was served (ADR-0034): build it again.
+      // Built from evidence an undo changed meanwhile, so nothing was served (ADR-0036): build it again.
       if (!(e instanceof StaleEvidenceError)) throw e;
       if (attempt >= 2) throw new EngineError('conflict', 'Your last answer changed; try again');
     }
@@ -143,7 +144,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
 }
 
 /**
- * Fresh pool copies of served questions being taken back (ADR-0034). A repeat probe gets none: the repeat schedule
+ * Fresh pool copies of served questions being taken back (ADR-0036). A repeat probe gets none: the repeat schedule
  * picks it again. Copies keep `createdAt`, so anchors keep their per-person order.
  */
 export function poolCopies(
@@ -186,7 +187,7 @@ export async function copyQuestionVectors(
   }
 }
 
-/** Puts pool copies of already-discarded questions back (ADR-0034). */
+/** Puts pool copies of already-discarded questions back (ADR-0036). */
 export async function requeueDiscarded(deps: EngineDeps, mimicId: string, ids: string[]): Promise<void> {
   if (!ids.length) return;
   const discarded = (await Promise.all(ids.map((id) => deps.store.getQuestion(id)))).filter(
@@ -209,7 +210,7 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
   const current = questions.find((q) => q.status === 'served' && isSessionKind(q.kind));
   if (current) return { status: 'question', question: toPublic(current), progress };
   if (m.status !== 'learning') return { status: 'identity', progress };
-  if (m.spendUsd >= cfg.session.budgetUsd) return { status: 'budget', progress };
+  if (sessionSpent(deps, m, cfg)) return { status: 'budget', progress };
 
   const seq = maxSeq(questions) + 1;
   const rng = seededRng(`select:${m.id}:${seq}`);
@@ -248,7 +249,7 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
     await deps.store.insertQuestions([rep]);
     let at: number | null;
     try {
-      // Scheduled from the answers read above, so guarded by their epoch like any serve (ADR-0034).
+      // Scheduled from the answers read above, so guarded by their epoch like any serve (ADR-0036).
       at = await serveAtFreeSeq(guardedDeps(deps, m), {
         questionId: rep.id,
         mimicId: m.id,
@@ -501,7 +502,7 @@ async function serveWithPredictions(
     ...hypothesisRows,
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
-  // Guarded: if an undo changed the evidence since `loaded` was read, nothing is written (ADR-0034).
+  // Guarded: if an undo changed the evidence since `loaded` was read, nothing is written (ADR-0036).
   const at = await timed(deps, 'persist', () =>
     serveAtFreeSeq(guardedDeps(deps, m), {
       questionId: chosen.id,
@@ -681,7 +682,7 @@ export async function submitAnswer(
     if (existing.mimicId !== m.id) throw new EngineError('conflict', 'Idempotency key reused');
     return replayResult(deps, m, cfg, existing);
   }
-  // A resend of an answer the person undid (a retrying outbox, another tab) must not bring it back (ADR-0034).
+  // A resend of an answer the person undid (a retrying outbox, another tab) must not bring it back (ADR-0036).
   if (undone) throw new EngineError('conflict', 'This answer was undone');
   // Feedback given while this question is served moves it to a later seq (ADR-0032); an answer that raced the
   // move is recorded again at the question's new seq.
@@ -751,7 +752,7 @@ async function afterAnswer(
       )
     : null;
   if (learnsFrom(q.kind)) {
-    // Keyed by answer, so a re-answer after an undo is learned again (ADR-0034).
+    // Keyed by answer, so a re-answer after an undo is learned again (ADR-0036).
     await deferred(deps, () =>
       deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq, answerId: answer.id }),
     );

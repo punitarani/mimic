@@ -33,7 +33,7 @@ export const mimics = sqliteTable(
     consentResearch: bool('consent_research').notNull(),
     split: text('split', { enum: ['dev', 'test'] }).notNull(),
     seqMax: integer('seq_max').notNull().default(0),
-    /** Bumped by every undo; guarded writes check it in the same batch (ADR-0034). */
+    /** Bumped by every undo; guarded writes check it in the same batch (ADR-0036). */
     evidenceEpoch: integer('evidence_epoch').notNull().default(0),
     snapshotVersion: integer('snapshot_version').notNull().default(0),
     spendUsd: real('spend_usd').notNull().default(0),
@@ -78,7 +78,7 @@ export const facts = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** Last change of user_state (ADR-0017). */
     userStateAt: integer('user_state_at'),
-    /** For reflection facts: the seqUpTo of the reflection that wrote it (ADR-0034). */
+    /** For reflection facts: the seqUpTo of the reflection that wrote it (ADR-0036). */
     seqUpTo: integer('seq_up_to'),
   },
   (t) => [index('facts_mimic_idx').on(t.mimicId)],
@@ -169,7 +169,7 @@ export const answers = sqliteTable(
   ],
 );
 
-/** ADR-0034: answers the person undid to re-answer. One row per retracted answer (answer_id is unique). */
+/** ADR-0036: answers the person undid to re-answer. One row per retracted answer (answer_id is unique). */
 export const answerRewinds = sqliteTable(
   'answer_rewinds',
   {
@@ -188,7 +188,7 @@ export const answerRewinds = sqliteTable(
   },
   (t) => [
     index('answer_rewinds_mimic_idx').on(t.mimicId, t.seq),
-    // Makes a second, concurrent undo of the same answer fail as a whole (ADR-0034).
+    // Makes a second, concurrent undo of the same answer fail as a whole (ADR-0036).
     uniqueIndex('answer_rewinds_answer_idx').on(t.answerId),
     index('answer_rewinds_idempotency_idx').on(t.idempotencyKey),
   ],
@@ -250,7 +250,7 @@ export const insights = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** When the status left `active` (ADR-0017: lets replay rebuild the state as it was at serve time). */
     statusChangedAt: integer('status_changed_at'),
-    /** seqUpTo of the reflection that superseded it, so undoing that answer restores it (ADR-0034). */
+    /** seqUpTo of the reflection that superseded it, so undoing that answer restores it (ADR-0036). */
     supersededSeq: integer('superseded_seq'),
   },
   (t) => [index('insights_mimic_idx').on(t.mimicId)],

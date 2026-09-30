@@ -11,6 +11,7 @@ import type {
   LlmClient,
   PeopleSearch,
   PeopleSearchResult,
+  ProviderCallRunner,
   Usage,
 } from './types';
 
@@ -58,8 +59,50 @@ export interface CallLog {
 
 /** Per-mimic spend ledger backing the budget guard (PLAN §11 Limits). */
 export interface BudgetLedger {
-  get(mimicId: string): Promise<{ spendUsd: number; budgetUsd: number } | null>;
+  /** `budgetUsd` is the whole cap; `sessionUsd`, when set, is the session's share of it (ADR-0035). */
+  get(mimicId: string): Promise<{ spendUsd: number; budgetUsd: number; sessionUsd?: number } | null>;
   add(mimicId: string, usd: number): Promise<void>;
+}
+
+/**
+ * Which cap a call is held to (ADR-0035):
+ * - `session`: background session and research work, held to the session's share so it never draws on the reserve.
+ * - `serve`: the calls that serve a session question. `/next` admits a serve only under the session's share, and the
+ *   guard then holds its calls to the whole cap, so a serve that starts under the share is never cut off halfway.
+ * - `page`: asking, teaching, Persona.md and learning from answers, held to the whole cap.
+ */
+export type SpendScope = 'session' | 'serve' | 'page';
+
+/** Every purpose an engine call is logged under, and its scope. A test keeps this complete. */
+export const SPEND_SCOPES: Readonly<Record<string, SpendScope>> = {
+  'predict.primary': 'serve',
+  'predict.baseline': 'serve',
+  'predict.fallback': 'serve',
+  'select.bald': 'serve',
+  'predict.shadow': 'session',
+  'pool.generate': 'session',
+  'pool.gate': 'session',
+  'embed.question': 'session',
+  hypotheses: 'session',
+  'identity.lookup': 'session',
+  'identity.search': 'session',
+  'identity.rank': 'session',
+  'identity.enrich': 'session',
+  'embed.fact': 'session',
+  'embed.qa': 'page',
+  'traits.read': 'page',
+  reflect: 'page',
+  'facets.occupation': 'page',
+  'playground.draft': 'page',
+  'playground.predict': 'page',
+  'playground.baseline': 'page',
+  'playground.rationale': 'page',
+  'persona.draft': 'page',
+};
+
+/** An unlisted purpose is held to the session's share, so a new call can't spend the reserve by accident. */
+export function spendScope(purpose: string): SpendScope {
+  return SPEND_SCOPES[purpose] ?? 'session';
 }
 
 export class BudgetExceededError extends Error {
@@ -113,7 +156,10 @@ export async function withModelCall<T extends CallOutcome>(
 ): Promise<T> {
   if (ctx.mimicId && deps.budget) {
     const b = await deps.budget.get(ctx.mimicId);
-    if (b && b.spendUsd >= b.budgetUsd) throw new BudgetExceededError(ctx.mimicId, b.spendUsd, b.budgetUsd);
+    if (b) {
+      const cap = spendScope(ctx.purpose) === 'session' ? (b.sessionUsd ?? b.budgetUsd) : b.budgetUsd;
+      if (b.spendUsd >= cap) throw new BudgetExceededError(ctx.mimicId, b.spendUsd, cap);
+    }
   }
   const id = deps.newId();
   const createdAt = deps.clock();
@@ -243,17 +289,20 @@ export class Gateway {
     );
   }
 
+  /** True when confirming a search candidate that carries facts needs no enrichment call (ADR-0034). */
+  get enrichmentUsesSearchFacts(): boolean {
+    return this.deps.enricher?.usesSearchFacts === true;
+  }
+
+  /** Each provider call the enricher makes is logged as its own `model_calls` row (PLAN §3.5). */
   async enrich(ctx: CallContext, subject: Parameters<Enricher['enrich']>[0]): Promise<EnrichmentResult> {
     const en = this.deps.enricher;
     if (!en) throw new Error('No enricher configured');
-    return withModelCall(
-      this.deps,
-      { ...ctx, provider: en.provider, model: `${en.provider}:task` },
-      subject,
-      async () => {
-        const r = await en.enrich(subject);
+    const run: ProviderCallRunner = (model, request, call) =>
+      withModelCall(this.deps, { ...ctx, provider: en.provider, model }, request, async () => {
+        const r = await call();
         return { ...r, usage: { inputTokens: 0, outputTokens: 0, costUsd: r.costUsd }, modelSnapshot: null };
-      },
-    );
+      });
+    return en.enrich(subject, run);
   }
 }

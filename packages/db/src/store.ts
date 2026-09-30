@@ -134,7 +134,7 @@ function isUniqueViolation(e: unknown): boolean {
 
 /**
  * A batch guard fired. Guards set a NOT NULL column from a subquery that is NULL when the condition fails, which
- * aborts the whole batch (a D1 batch is one transaction) with no trigger and no extra round trip (ADR-0034).
+ * aborts the whole batch (a D1 batch is one transaction) with no trigger and no extra round trip (ADR-0036).
  */
 function isGuardViolation(e: unknown, column: string): boolean {
   return String((e as { cause?: unknown }).cause ?? e).includes(`NOT NULL constraint failed: ${column}`);
@@ -272,7 +272,7 @@ export class DrizzleStore implements Store {
 
   /**
    * Sets the mimic's `updated_at` to itself, or to NULL (aborting the batch) when `evidence_epoch` moved on
-   * (ADR-0034). The subquery aliases the table so it reads the stored row, not the one being updated.
+   * (ADR-0036). The subquery aliases the table so it reads the stored row, not the one being updated.
    */
   private epochGuard(mimicId: string, epoch: number) {
     return this.db
@@ -514,7 +514,7 @@ export class DrizzleStore implements Store {
       stmts.push(this.db.insert(s.predictions).values(part));
     }
     try {
-      // Guarded, a serve whose state was built before an undo writes nothing (ADR-0034).
+      // Guarded, a serve whose state was built before an undo writes nothing (ADR-0036).
       await this.write(stmts);
     } catch (e) {
       if (isUniqueViolation(e)) return false;
@@ -566,7 +566,7 @@ export class DrizzleStore implements Store {
     const a = args.answer;
     const stmts: BatchItem<'sqlite'>[] = [
       // The guard: the seq comes from the question, still served at that seq. Feedback that moved it (ADR-0032) or
-      // an undo that discarded it (ADR-0034) leaves it NULL, and the whole batch aborts, so no answer ever lands on a
+      // an undo that discarded it (ADR-0036) leaves it NULL, and the whole batch aborts, so no answer ever lands on a
       // question that isn't being asked.
       this.db.insert(s.answers).values({
         ...a,
@@ -636,7 +636,7 @@ export class DrizzleStore implements Store {
     for (const r of recs) byAnswer.set(r.answerId, [...(byAnswer.get(r.answerId) ?? []), r]);
     for (const [answerId, rows] of byAnswer) {
       // Each row takes its mimic_id from its answer in the same statement, so a score for an answer undone
-      // meanwhile (ADR-0034) aborts instead of landing as an orphan.
+      // meanwhile (ADR-0036) aborts instead of landing as an orphan.
       const mimicId = sql`(select a.mimic_id from answers a where a.id = ${answerId})`;
       try {
         await this.write(
@@ -653,7 +653,7 @@ export class DrizzleStore implements Store {
     }
   }
 
-  // rewinds (ADR-0034)
+  // rewinds (ADR-0036)
   async rewindAnswer(args: {
     rewind: AnswerRewindRecord;
     requeue: QuestionRecord[];

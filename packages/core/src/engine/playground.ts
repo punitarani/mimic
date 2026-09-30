@@ -11,7 +11,15 @@ import { makePredictor, promptVersionOf } from '../predictors';
 import type { AnswerRecord, PredictionRecord, QuestionRecord } from '../store';
 import { type Distribution, isSessionKind } from '../types';
 import { contextState, loadMimicDataAt, STATE_SETTLE_MS, sealedState, stateBlobKey } from './data';
-import { ctxFor, deferred, type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
+import {
+  budgetSpent,
+  ctxFor,
+  deferred,
+  type EngineDeps,
+  EngineError,
+  loadConfig,
+  requireMimic,
+} from './deps';
 import { maxSeq, type PublicQuestion, serveAtFreeSeq, toPublic } from './session';
 
 export const ScenarioInput = z.object({ scenario: z.string().trim().min(8).max(1000) });
@@ -47,7 +55,7 @@ function validateQuestion(input: Omit<DraftInput, 'rationale'>): DraftQuestion {
 export async function draftFromScenario(deps: EngineDeps, mimicId: string, scenario: string) {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  if (m.spendUsd >= cfg.session.budgetUsd) throw new EngineError('budget', 'Budget reached');
+  if (budgetSpent(deps, m, cfg)) throw new EngineError('budget', 'Budget reached');
   const d = await scenarioToQuestion(deps.gateway, ctxFor(m, 'playground.draft'), {
     model: cfg.generator.model,
     scenario,
@@ -74,7 +82,7 @@ export async function predictPlayground(
 ): Promise<PlaygroundPrediction> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  if (m.spendUsd >= cfg.session.budgetUsd) throw new EngineError('budget', 'Budget reached');
+  if (budgetSpent(deps, m, cfg)) throw new EngineError('budget', 'Budget reached');
   const { rationale: _wantsRationale, ...question } = input;
   const v = validateQuestion(question);
   const stateAt = deps.clock() - STATE_SETTLE_MS;
@@ -203,7 +211,7 @@ export async function submitFeedback(
 ): Promise<FeedbackResult> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  const learns = m.spendUsd < cfg.session.budgetUsd;
+  const learns = !budgetSpent(deps, m, cfg);
   const v = validateQuestion(input.question);
   // Keys are renormalized by the gate (a, b, c… for choices, 0–4 for a scale), so the pick is carried over by
   // position; yes/no keeps its keys whatever order they came in.

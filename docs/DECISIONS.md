@@ -759,12 +759,117 @@ beliefs, opinions and biases, and above all how the person thinks and decides. P
 - **Synchronous.** Drafting is a route handler call like the playground's, not a queue job: the person is waiting
   on the page for it, and it is one LLM call.
 
-## ADR-0034 — Undo the latest answer (2026-09-30)
+## ADR-0034 — Identity search and enrichment: cheaper, and on their own queue (2026-09-30)
+
+The goal was the cheapest, fastest identity step that is still reasonably accurate. Each option was measured live on
+the two ADR-0029 test people. The prices are Exa's and Parallel's published ones.
+
+**Changed**
+
+- **Search results carry their facts, so confirming costs nothing.**
+  - Exa people search returns each profile's structured person entity: the current role and employers, past
+    employers, schools and location. `exaCandidate` maps it to facts on the candidate.
+  - The search stores them in one R2 blob (`search/{mimicId}/facts/{at}.json`, the candidate's `r2_key`).
+  - Confirming such a candidate writes those facts, sourced to its URL, and goes straight to `review`: no
+    enrichment call, no job, no wait.
+- **Enrichment otherwise uses Exa, not Parallel** (`ENRICH_PROVIDER=exa`; `parallel` stays selectable).
+  - Exa `/contents` returns the same entity for $0.001 in 0.2–0.6 s. A Parallel `base` task costs $0.010 and takes
+    tens of seconds.
+  - A readable page with no entity (a personal site) gets one more call: an Exa schema summary with Parallel's
+    output schema ($0.001, 2.5–4.7 s). It is validated with zod, at confidence 0.6.
+  - No second call when Exa couldn't read the page, or for a LinkedIn page without an entity. A summary of a
+    LinkedIn profile listed things like "100Bs tokens" as skills.
+  - Each call is logged as its own `model_calls` row (`exa:contents`, `exa:summary`). The gateway hands the
+    enricher a per-call runner (`ProviderCallRunner`).
+- **Entity facts, precisely.**
+  - A role is current only when it has a start date and no end. Undated roles are past employers.
+  - Schools are named alone, so "Pomona College" is one organization in the KG whatever the degree.
+- **Two search queries, not three.** Given a role, the name-only query never found anyone the other two missed,
+  and each query costs $0.007. It now runs only as a fallback: when the role queries find nobody with the person's
+  full name (a role or school that isn't on their profile). Without a role, the queries are `{name}, {location}`
+  and the name alone.
+- **The person's link short-circuits search.**
+  - When the link resolves to a profile with their full name ($0.001), searching as well would only add
+    namesakes, so it is skipped.
+  - The lookup gets a 1.5-second head start; if it is slower, or matches only part of the name, search runs
+    alongside it.
+- **Identity jobs have their own queue** (`IDENTITY_JOBS` → `mimic-identity`, same DLQ).
+  - Cloudflare Queues adds consumers only after a batch finishes. On the shared queue, a 2-second search sat behind
+    a `pool.refill` batch for 1 to 4 minutes, and so did enrichment.
+  - Producers send `identity.search` and `identity.enrich` there by type alone.
+  - The consumer, whose `ENRICH_PROVIDER` is the one that counts, forwards minutes-long Parallel enrichment to the
+    shared queue.
+  - Identity calls to Exa are bounded (search 10 s, page 8 s, one retry; summary 15 s, none), so one bad page
+    can't hold the lane for long.
+  - `/__jobs` enqueues through the same routing, and backfill publishes to the `JOBS` binding by name.
+  - Deploy finds or creates the queue by name, like the others.
+
+**Kept, after measuring**
+
+- **Exa `auto` search.** Every search type costs the same, $7 per 1k.
+  - `fast` (0.38 s median) and `instant` (0.29 s) found the true profile in 7 of 9 queries; `auto` (1.65 s) found
+    it in 9.
+  - The two misses were the hardest intake (a short school name that is also a city).
+- **One Jev request per candidate.** One batched request with every candidate in a single state was about 0.4 s
+  faster and $0.0001 cheaper per search. But it pushed the true profile from #1 to #2 in one case.
+
+**Result.** Per person, with the listed prices:
+
+| Path | Search | Rank (Jev) | Enrich | Total | Before |
+| --- | --- | --- | --- | --- | --- |
+| No link, profile from search | $0.014 (2 queries) | ~$0.0003 | $0 (carried) | ~$0.014 | ~$0.031 |
+| Link that resolves | $0.001 (lookup) | ~$0.00003 | $0 (carried) | ~$0.001 | ~$0.032 |
+| No full-name match (fallback query) | $0.021 | ~$0.0003 | $0 | ~$0.021 | ~$0.031 |
+| Profile without an entity (personal site) | as above | | $0.001–0.002 | | |
+
+On the local stack, with a 35-second `pool.refill` batch running on the main queue:
+
+- search took 1.9 s;
+- search with a link, 0.65 s;
+- enrichment through Exa, 0.94 s. A candidate's carried facts need none.
+
+A deploy-time `ENRICH_PROVIDER` set in Doppler overrides the new default (ADR-0022). Remove it, or set it to `exa`.
+
+## ADR-0035 — Spend caps: a session share and a reserve for the mimic page (2026-09-30)
+
+The budget guard stopped everything at `session.budgetUsd` ($0.50). A session that spent all of it left nothing for
+the mimic page, so a person who finished the session could no longer ask their mimic a question or draft Persona.md,
+the two things they finish the session to do.
+
+- **Two caps from one budget.** The session may spend a share of the cap (`BUDGET_SESSION_SHARE`, default 0.8); the
+  rest is a reserve for the mimic page. Past the share `/next` returns `budget`.
+- **Enforced at the gateway, by purpose.** Every purpose an engine call is logged under has a spend scope
+  (`SPEND_SCOPES` in `packages/core/src/gateway.ts`), and a test fails when a purpose in the engine is missing
+  from it. `session` purposes (shadows, `pnpm backfill`, pool refills and gates, hypotheses, identity) are held to
+  the share, so no background or research work can draw on the reserve. `page` purposes (asking, teaching,
+  Persona.md, and learning from answers: embeddings, trait reads, reflection) run to the whole cap, so an answer
+  taught after the session still updates the mimic. `serve` purposes (primary, baseline, fallback, BALD
+  exploration) are admitted once by `/next` under the share and then held to the whole cap, so a serve that
+  starts just under the share is never cut off halfway with a failed primary. An unlisted purpose is held to the
+  share.
+- **Refused jobs.** A job the guard refuses is skipped, not retried, and never marked done in the ledger, so the
+  same job runs if it's enqueued after the cap is raised. Shadows, refills and hypotheses check the share before
+  loading anything, and the cron stops enqueueing missing shadows for a mimic past its share.
+- **Deploy settings, not config.** The caps change what a mimic may spend, never what a prediction sees, so they stay
+  out of `PipelineConfig` and every config hash stays valid. A new config field would have meant `cfg.default.v5`
+  and a new label on every question, just for a limit change. `BUDGET_USD` sets the standard budget (default $1,
+  `DEFAULT_BUDGET_USD`). It applies to every config carrying $0.50, the budget every `cfg.default.*` has had, so
+  mimics created earlier get it too, and one that stopped at $0.50 reopens its session. A config that names any
+  other budget, such as an experiment arm, keeps its own, so arms stay comparable.
+- **Defaults in code.** $1 and 0.8 are constants in `packages/core/src/config.ts`, used by the Workers, tests and
+  the eval CLI alike. The Workers' vars only carry an override set in Doppler, and the live eval engine reads the
+  same variables from its environment. Preflight refuses a non-number, a cap at or below 0, or a share outside
+  (0, 1], and a test checks that it accepts exactly what the runtime accepts. At runtime a var may be a string or
+  a JSON number; an invalid one keeps its default and is logged once.
+- **UI.** `budgetUsd` in the snapshot is the whole cap. The session's end says what is left: the reserve for the
+  mimic page, or, once everything is spent, that answers can still be taught there.
+
+## ADR-0036 — Undo the latest answer (2026-09-30)
 
 People mis-tap. The session page lets them take back their **latest** answer, once, and answer that question again:
 "Undo" sits next to Next during the reveal, and "Undo last answer" shows on the question after it. Both open a
 simple confirmation that names the question and the answer; while the undo runs the dialog can't be dismissed, and a
-refusal stays in it with the reason. `POST /api/mimics/:id/rewind { questionId }` does the work; the client names the
+refusal stays in it with the reason (the undo and delete confirmations share one `ConfirmDialog`). `POST /api/mimics/:id/rewind { questionId }` does the work; the client names the
 question it is undoing, so a double click or a stale tab gets a 409 instead of undoing something else. The button is
 only offered for an answer this page sent and the server confirmed (not while it waits in the offline outbox), and
 it is gone after a reload.

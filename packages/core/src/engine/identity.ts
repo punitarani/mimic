@@ -13,7 +13,7 @@ import type {
   MimicRecord,
   QuestionRecord,
 } from '../store';
-import type { PersonCandidate } from '../types';
+import type { PeopleSearchResult, PersonCandidate } from '../types';
 import { vectorId } from './data';
 import {
   allocateArm,
@@ -176,7 +176,8 @@ export function searchCacheKeys(m: SearchSubject): string[] {
 /**
  * Query variants for Exa people search (PLAN §9.2 step 1, ADR-0029). The index is semantic: a quoted name is not
  * a phrase match, and in live checks it returned strangers or nothing at all. So each query is a plain description
- * that leads with the name, from most to least specific.
+ * that leads with the name, from most to least specific. Two, not three (ADR-0034): with a role, the name alone never
+ * found anyone the other two missed, and each query is $0.007.
  */
 export function searchQueries(
   m: Pick<MimicRecord, 'displayName' | 'location' | 'occupation' | 'employer'>,
@@ -186,7 +187,7 @@ export function searchQueries(
   const employer = m.employer?.trim();
   const role = occupation && employer ? `${occupation} at ${employer}` : occupation || employer || '';
   const qs = role
-    ? [`${m.displayName}, ${role}, ${m.location}`, `${m.displayName}, ${role}`, m.displayName]
+    ? [`${m.displayName}, ${role}, ${m.location}`, `${m.displayName}, ${role}`]
     : [`${m.displayName}, ${m.location}`, m.displayName];
   return [...new Set(qs.map((q) => q.replace(/\s+/g, ' ').trim()))];
 }
@@ -259,6 +260,13 @@ export function mergeCandidates(
     .map((v) => v.c);
 }
 
+const CarriedFact = z.object({
+  predicate: z.string(),
+  object: z.string(),
+  confidence: z.number(),
+  sourceUrl: z.string().optional(),
+});
+
 const CachedCandidates = z.array(
   z.object({
     provider: z.string(),
@@ -267,8 +275,31 @@ const CachedCandidates = z.array(
     location: z.string().optional(),
     url: z.string(),
     summary: z.string(),
+    facts: z.array(CarriedFact).optional(),
   }),
 );
+
+/** Facts carried from search for this search's candidates, by candidate ID (one blob per search; ADR-0034). */
+const CarriedFacts = z.record(z.string(), z.array(CarriedFact));
+
+/**
+ * How long the person's own link gets to resolve before search starts anyway (ADR-0034). A LinkedIn lookup takes
+ * 0.2–0.6 s; a slow or failing one must not hold up the search behind it.
+ */
+export const LOOKUP_HEAD_START_MS = 1_500;
+
+/** `p`'s value if it settles within `ms`, else undefined (and `p` keeps running). */
+async function within<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  try {
+    return await Promise.race([p, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function parseCached(raw: string | null): PersonCandidate[] | null {
   if (!raw) return null;
@@ -306,16 +337,32 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
   const cacheKey = searchCacheKey(m);
   let candidates = parseCached(await deps.kv.get(cacheKey));
   if (!candidates) {
-    const calls = [
-      ...(link && deps.gateway.canLookupPeople
-        ? [deps.gateway.lookupPerson(ctxFor(m, 'identity.lookup', jobKey), link)]
-        : []),
-      ...searchQueries(m).map((q) =>
-        deps.gateway.searchPeople(ctxFor(m, 'identity.search', jobKey), q, RESULTS_PER_QUERY),
-      ),
-    ];
-    const results = await Promise.all(calls.map((p) => p.catch(() => null)));
-    const ok = results.filter((r): r is NonNullable<typeof r> => r !== null);
+    const search = (q: string) =>
+      deps.gateway.searchPeople(ctxFor(m, 'identity.search', jobKey), q, RESULTS_PER_QUERY).catch(() => null);
+    const lookup =
+      link && deps.gateway.canLookupPeople
+        ? deps.gateway.lookupPerson(ctxFor(m, 'identity.lookup', jobKey), link).catch(() => null)
+        : null;
+    // The person's own link gets a short head start ($0.001). When it resolves to a profile with their full name,
+    // that is the answer: searching as well would cost $0.014 to offer namesakes of someone who said who they are.
+    // Otherwise, or if it is slow, search runs alongside it.
+    const early = lookup ? await within(lookup, LOOKUP_HEAD_START_MS) : undefined;
+    const own = early?.candidates[0];
+    let results: Array<PeopleSearchResult | null>;
+    if (early && own && nameMatch(m.displayName, own.name) === 2) {
+      results = [early];
+    } else {
+      const queries = searchQueries(m);
+      results = await Promise.all([...(lookup ? [lookup] : []), ...queries.map(search)]);
+      // With a role, the queries don't include the name alone. If they found nobody with the person's full name (a
+      // role or school that isn't on their profile), the name alone is the fallback, paid for only then.
+      const nameOnly = m.displayName.replace(/\s+/g, ' ').trim();
+      const found = results.flatMap((r) => r?.candidates ?? []);
+      if (!queries.includes(nameOnly) && !found.some((c) => nameMatch(m.displayName, c.name) === 2)) {
+        results.push(await search(nameOnly));
+      }
+    }
+    const ok = results.filter((r): r is PeopleSearchResult => r !== null);
     await deps.blobs.put(
       `search/${m.id}/${ok[0]?.candidates[0]?.provider ?? 'exa'}/${now}.json`,
       JSON.stringify(ok.map((r) => r.raw)),
@@ -366,21 +413,31 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
   );
   // The profile at the person's own link leads; the rest follow Jev.
   scored.sort((a, b) => Number(b.own) - Number(a.own) || (b.p ?? -1) - (a.p ?? -1));
-  const recs: CandidateRecord[] = scored.map(({ c, p }, i) => ({
-    id: deps.newId(),
-    mimicId: m.id,
-    provider: c.provider,
-    rank: i + 1,
-    name: c.name,
-    headline: c.headline ?? null,
-    location: c.location ?? null,
-    url: c.url,
-    summary: c.summary.slice(0, 2000),
-    jevSamePersonP: p,
-    r2Key: null,
-    status: 'proposed',
-    createdAt: now,
-  }));
+  // Facts the search results carried (Exa person entities) are kept with this search, so confirming one of these
+  // candidates needs no enrichment call (ADR-0034). Hard delete removes `search/{mimicId}/`.
+  const factsKey = `search/${m.id}/facts/${now}.json`;
+  const carried: Record<string, PersonCandidate['facts']> = {};
+  const recs: CandidateRecord[] = scored.map(({ c, p }, i) => {
+    const id = deps.newId();
+    if (c.facts?.length) carried[id] = c.facts;
+    return {
+      id,
+      mimicId: m.id,
+      provider: c.provider,
+      rank: i + 1,
+      name: c.name,
+      headline: c.headline ?? null,
+      location: c.location ?? null,
+      url: c.url,
+      summary: c.summary.slice(0, 2000),
+      jevSamePersonP: p,
+      r2Key: c.facts?.length ? factsKey : null,
+      status: 'proposed',
+      createdAt: now,
+    };
+  });
+  if (Object.keys(carried).length)
+    await deps.blobs.put(factsKey, JSON.stringify(carried), 'application/json');
   await deps.store.insertCandidates(recs);
   // Only from 'searching': the person may have skipped while we searched.
   await deps.store.transitionIdentity(m.id, ['searching'], {
@@ -455,15 +512,15 @@ export async function confirmIdentity(
     return;
   }
   const now = deps.clock();
+  // Facts the candidate carried from search are what the enricher would fetch again: use them, with no call and no
+  // wait (ADR-0034). Otherwise enrichment runs as a job.
+  const carried = deps.gateway.enrichmentUsesSearchFacts ? await carriedFacts(deps, chosen) : null;
   // Claimed in one statement: a search again (or another tab) that moved on first wins.
-  if (
-    !(await deps.store.transitionIdentity(m.id, ['candidates'], {
-      identityState: 'enriching',
-      updatedAt: now,
-    }))
-  ) {
-    throw new EngineError('conflict', NOT_WAITING);
-  }
+  const claimed = await deps.store.transitionIdentity(m.id, ['candidates'], {
+    identityState: carried ? 'review' : 'enriching',
+    updatedAt: now,
+  });
+  if (!claimed) throw new EngineError('conflict', NOT_WAITING);
   await deps.store.setCandidateStatus(
     m.id,
     open.filter((c) => c.id !== chosen.id).map((c) => c.id),
@@ -471,10 +528,34 @@ export async function confirmIdentity(
   );
   await deps.store.setCandidateStatus(m.id, [chosen.id], 'confirmed');
   const facts: FactRecord[] = [];
-  if (chosen.headline) facts.push(fact(deps, m.id, 'headline', chosen.headline, chosen.url, 0.8, now));
-  if (chosen.location) facts.push(fact(deps, m.id, 'livesIn', chosen.location, chosen.url, 0.7, now));
+  const seen = new Set<string>();
+  const push = (predicate: string, object: string, url: string, confidence: number) => {
+    const key = `${predicate}|${normalize(object)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    facts.push(fact(deps, m.id, predicate, object, url, confidence, now));
+  };
+  if (chosen.headline) push('headline', chosen.headline, chosen.url, 0.8);
+  if (chosen.location) push('livesIn', chosen.location, chosen.url, 0.7);
+  for (const f of carried ?? []) push(f.predicate, f.object, f.sourceUrl ?? chosen.url, f.confidence);
   await addFacts(deps, m, facts);
-  await deps.jobs.enqueue({ type: 'identity.enrich', mimicId: m.id, candidateId: chosen.id });
+  if (!carried) await deps.jobs.enqueue({ type: 'identity.enrich', mimicId: m.id, candidateId: chosen.id });
+}
+
+/** The facts a candidate carried from search, or null when it carried none (or the blob is gone or malformed). */
+async function carriedFacts(
+  deps: EngineDeps,
+  c: CandidateRecord,
+): Promise<z.infer<typeof CarriedFact>[] | null> {
+  if (!c.r2Key) return null;
+  const raw = await deps.blobs.get(c.r2Key);
+  if (!raw) return null;
+  try {
+    const facts = CarriedFacts.parse(JSON.parse(raw))[c.id];
+    return facts?.length ? facts : null;
+  } catch {
+    return null;
+  }
 }
 
 function fact(

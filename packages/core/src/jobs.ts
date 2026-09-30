@@ -12,14 +12,14 @@ export const Job = z.discriminatedUnion('type', [
     questionId: z.string(),
     predictorId: z.string(),
   }),
-  /** `answerId` ties the job to one answer, so a re-answer after a rewind learns again (ADR-0034). */
+  /** `answerId` ties the job to one answer, so a re-answer after a rewind learns again (ADR-0036). */
   z.object({
     type: z.literal('learn.answer'),
     mimicId: z.string(),
     seq: z.number().int(),
     answerId: z.string().optional(),
   }),
-  /** `epoch` (ADR-0034) keys a refresh or snapshot to the evidence it follows, so one queued before an undo never
+  /** `epoch` (ADR-0036) keys a refresh or snapshot to the evidence it follows, so one queued before an undo never
    * stands in for the re-answer's. Absent on jobs queued before it. */
   z.object({
     type: z.literal('hypotheses.refresh'),

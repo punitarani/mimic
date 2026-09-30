@@ -1,5 +1,6 @@
 import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
 import type { PipelineConfig } from '../config';
+import { BudgetExceededError } from '../gateway';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
 import { type Job, jobFromKey, jobKey } from '../jobs';
@@ -39,7 +40,18 @@ import {
   stateOptions,
   vectorId,
 } from './data';
-import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
+import {
+  budgetSpent,
+  ctxFor,
+  type EngineDeps,
+  EngineError,
+  facetsFor,
+  jevModel,
+  loadConfig,
+  requireMimic,
+  requireSessionBudget,
+  sessionSpent,
+} from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
 import { refreshQaVector } from './rewind';
 import { invalidateItemStatsCache, loadHypotheses, MAX_POOL, MIN_POOL } from './session';
@@ -49,6 +61,10 @@ export const MAX_JOB_ATTEMPTS = 5;
 /**
  * Runs one job idempotently via the `jobs` ledger (PLAN §6.4). Returns 'skipped' for duplicates. Throws on failure
  * so the queue retries with backoff; after MAX_JOB_ATTEMPTS the queue's dead-letter queue takes over.
+ *
+ * A job refused by the budget guard is 'skipped', not retried (a retry would be refused the same way), and is never
+ * marked done, so the same job runs again if it is enqueued after the cap is raised (ADR-0035). Its row is written
+ * with the attempts used up, so the stale-job requeue leaves it alone.
  */
 export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skipped'> {
   const key = jobKey(job);
@@ -75,7 +91,7 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
     });
     return 'done';
   } catch (e) {
-    // An undo landed while the job ran and its writes were refused (ADR-0034): a retry would only be refused again.
+    // An undo landed while the job ran and its writes were refused (ADR-0036): a retry would only be refused again.
     if (e instanceof StaleEvidenceError) {
       await deps.store.putJob({
         key,
@@ -88,6 +104,17 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
       return 'done';
     }
     const msg = e instanceof Error ? e.message : String(e);
+    if (e instanceof BudgetExceededError) {
+      await deps.store.putJob({
+        key,
+        type: job.type,
+        status: 'failed',
+        attempts: Math.max(attempts, MAX_JOB_ATTEMPTS),
+        lastError: `budget: ${msg}`.slice(0, 1000),
+        updatedAt: deps.clock(),
+      });
+      return 'skipped';
+    }
     await deps.store.putJob({
       key,
       type: job.type,
@@ -132,6 +159,8 @@ export async function enqueueMissingShadows(
 ): Promise<number> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
+  // Shadows stop with the session's share (ADR-0035); enqueueing them past it would only queue refusals.
+  if (sessionSpent(deps, m, cfg)) return 0;
   return enqueueMissingPredictions(deps, mimicId, servedBefore, cfg.predictor.shadows);
 }
 
@@ -293,6 +322,8 @@ export async function runShadow(
   key?: string,
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
+  // Shadows (and `pnpm backfill`) are session and research work, so they never draw on the page's reserve.
+  requireSessionBudget(deps, m, await loadConfig(deps, m.configHash));
   const q = await deps.store.getQuestion(questionId);
   if (!q || q.mimicId !== m.id) return;
   const preds = await deps.store.listPredictions({ questionId });
@@ -329,7 +360,7 @@ export async function runShadow(
     createdAt: now,
   };
   await deps.store.insertPredictions([rec]);
-  // Discarded by an undo while this ran (ADR-0034): its state held the retracted answer.
+  // Discarded by an undo while this ran (ADR-0036): its state held the retracted answer.
   if ((await deps.store.getQuestion(q.id))?.status === 'discarded') {
     await deps.store.deletePredictions([rec.id]);
     return;
@@ -360,7 +391,8 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   const loaded = await loadMimicData(deps, m);
   const pool = loaded.questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled');
   if (pool.length >= MIN_POOL) return;
-  if (m.spendUsd >= cfg.session.budgetUsd) return;
+  // Candidates only feed the session, so refills stop with it and never draw on the page's reserve.
+  requireSessionBudget(deps, m, cfg);
   const facets = await facetsFor(deps, m, cfg);
   const n = Math.min(cfg.generator.batchSize, MAX_POOL - pool.length + 4);
   const mix = cfg.generator.domainMix;
@@ -507,7 +539,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
 export const SNAPSHOT_DEBOUNCE_SECONDS = 10;
 
 /**
- * `answerId` (absent on jobs queued before ADR-0034) names the answer being learned; if the person undid it, the job
+ * `answerId` (absent on jobs queued before ADR-0036) names the answer being learned; if the person undid it, the job
  * is a no-op. Every derived write goes through a store guarded by the evidence epoch read here, so if they undo it
  * while the job runs, nothing the job computes lands after the undo (which removed what had already landed).
  */
@@ -562,9 +594,10 @@ async function learnGuarded(
   const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
   const nAnswered = learnable.filter((e) => e.seq <= seq).length;
 
-  // Over budget every model call is refused, and the job would retry until dropped. The answer is kept as evidence
-  // and goes into the snapshot; only the reads that need a model are skipped.
-  if (m.spendUsd >= cfg.session.budgetUsd) return;
+  // Learning runs to the whole cap, so answers taught on the mimic page after the session still count (ADR-0035).
+  // Over it every model call is refused, and the job would retry until dropped. The answer is kept as evidence and
+  // goes into the snapshot (queued by runLearn); only the reads that need a model are skipped.
+  if (budgetSpent(deps, m, cfg)) return;
 
   // 1) Embed the Q&A (plus the "why").
   try {
@@ -780,6 +813,8 @@ export async function runHypotheses(
   const sel = cfg.selector;
   const k = sel.type === 'bald' || sel.type === 'voi' ? sel.k : 0;
   if (k < 2) return;
+  // Hypotheses only steer session selection, so they stop with the session's share.
+  requireSessionBudget(deps, m, cfg);
   if (((await loadHypotheses(deps, m.id))?.seqUpTo ?? -1) >= seqUpTo) return;
   const loaded = await loadMimicData(deps, m);
   const state = buildState(loaded.data, stateOptions(cfg, seqUpTo + 1));
@@ -800,7 +835,7 @@ export async function runHypotheses(
   if (!hypotheses.length) return;
   const body = JSON.stringify({ seqUpTo, hypotheses });
   await deps.kv.put(`hyp:${m.id}`, body);
-  // KV can't join the D1 guard (ADR-0034): if an undo landed while these were drawn from its state, take them back,
+  // KV can't join the D1 guard (ADR-0036): if an undo landed while these were drawn from its state, take them back,
   // unless a newer set has replaced them already.
   if (
     (await deps.store.getMimic(m.id))?.evidenceEpoch !== m.evidenceEpoch &&
