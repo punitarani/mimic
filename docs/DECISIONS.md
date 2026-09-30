@@ -1649,5 +1649,9 @@ with the copy "Turn off anything you'd rather not share. All topics are enabled 
 - **Shared form, intake-only line.** The session's Topics and consent dialog reuses the form but not the "enabled by
   default" sentence, which is only true at intake. `scripts/browser/scope.mjs` now checks that every area starts on
   and turns two off by keyboard.
-- **Trade-off.** Pre-ticked boxes are weaker evidence of consent than ticked ones; GDPR art. 9 data (politics,
-  religion, sexuality, health) generally needs an affirmative act. Revisit before opening sign-ups beyond invites.
+- **Trade-off.** A box left ticked is weaker evidence of consent than one the person ticks; GDPR art. 9 data
+  (politics, religion, sexuality, health) generally needs an affirmative act, and the stored scope does not record
+  whether a consent was the default or a choice. Sensitive questions also offer no "prefer not to say", on the
+  premise that the person chose the area (`gen.v3`, CATEGORIES.md §2), and a default consent weakens that premise.
+  Revisit both before an ontology v2 config (or experiment arm) serves sensitive questions, and before opening
+  sign-ups beyond invites.

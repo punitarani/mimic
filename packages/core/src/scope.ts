@@ -51,7 +51,14 @@ export const DEFAULT_SCOPE: MimicScope = { categories: [...CATEGORIES], consents
  */
 export const INTAKE_SCOPE: MimicScope = {
   categories: [...CATEGORIES],
-  consents: Object.fromEntries(SENSITIVE_AREAS.map((a) => [a, true])),
+  // Spelled out so a new area fails to compile here until someone decides whether intake ticks it.
+  consents: {
+    politics: true,
+    religion: true,
+    sexuality: true,
+    health: true,
+    money: true,
+  } satisfies Record<SensitiveArea, true>,
   researchConsents: {},
 };
 

@@ -65,7 +65,9 @@ try {
   await page.keyboard.press('Space');
   await tabTo('scope-health');
   await page.keyboard.press('Space');
+  assert.equal(await page.getByLabel('Ask about sexuality and intimate relationships').isChecked(), false);
   assert.equal(await page.getByLabel('Ask about health and body').isChecked(), false);
+  assert.equal(await page.getByLabel('Ask about religion and worldview').isChecked(), true);
   await page.getByLabel(/Use my answers, without my name/).check();
   const research = page.getByRole('group', { name: 'Research use of sensitive answers' });
   await research.waitFor();

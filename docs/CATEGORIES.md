@@ -51,7 +51,7 @@ is rejected in code, and professional reserve items are skipped, whatever facet 
 
 ## 2. Sensitive areas
 
-Five areas sit behind their own consent, asked for under the category it belongs to. A sensitive area is
+Five areas each sit behind their own consent, asked for under the category they belong to. A sensitive area is
 reachable only when its category is selected and its consent is given. Intake starts with every consent ticked, so
 the person turns off what they'd rather not share (ADR-0049); a scope sent without consents grants none.
 
