@@ -29,14 +29,7 @@
   "kv_namespaces": [{ "binding": "CACHE", "id": "local-cache" }],
   "queues": { "producers": [{ "binding": "JOBS", "queue": "mimic-jobs" }] },
   "ratelimits": [{ "name": "RL", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } }],
-  // BUDGET_*: the spend cap per mimic and the session's share of it (ADR-0034); each env repeats them, since vars
-  // are not inherited, and a value set in Doppler overrides them on deploy (scripts/deploy/settings.mjs).
-  "vars": {
-    "VECTOR_BACKEND": "sql",
-    "EMBEDDINGS_PROVIDER": "openrouter",
-    "BUDGET_USD": "0.75",
-    "BUDGET_SESSION_SHARE": "0.8"
-  },
+  "vars": { "VECTOR_BACKEND": "sql", "EMBEDDINGS_PROVIDER": "openrouter" },
   "env": {
     "preview": {
       "name": "mimic-web-preview",
@@ -54,12 +47,7 @@
       "ai": { "binding": "AI" },
       "queues": { "producers": [{ "binding": "JOBS", "queue": "mimic-jobs-preview" }] },
       "ratelimits": [{ "name": "RL", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } }],
-      "vars": {
-        "VECTOR_BACKEND": "vectorize",
-        "EMBEDDINGS_PROVIDER": "workers-ai",
-        "BUDGET_USD": "0.75",
-        "BUDGET_SESSION_SHARE": "0.8"
-      },
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
       // Pushed from Doppler with each deploy (scripts/deploy). Not inherited: listed per environment.
       // No ADMIN_EMAILS: preview is served on workers.dev with no Access in front, where the Access email header
       // could be forged, so its lab stays closed (ADR-0022).
@@ -86,12 +74,7 @@
       "ai": { "binding": "AI" },
       "queues": { "producers": [{ "binding": "JOBS", "queue": "mimic-jobs-prod" }] },
       "ratelimits": [{ "name": "RL", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } }],
-      "vars": {
-        "VECTOR_BACKEND": "vectorize",
-        "EMBEDDINGS_PROVIDER": "workers-ai",
-        "BUDGET_USD": "0.75",
-        "BUDGET_SESSION_SHARE": "0.8"
-      },
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
       "secrets": { "required": ["OPENROUTER_API_KEY", "SESSION_SECRET", "INVITE_CODES", "ADMIN_EMAILS"] }
     }
   }

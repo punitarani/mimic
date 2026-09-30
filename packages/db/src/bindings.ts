@@ -7,8 +7,10 @@ import {
   type ModelCallRecord,
   type ModelCallTrace,
   PipelineConfig,
+  type SpendCaps,
   type SpendLimits,
   type Store,
+  spendCaps,
   type VectorIndex,
   type VectorRecord,
 } from '@mimic/core';
@@ -204,11 +206,11 @@ export class StoreCallLog implements CallLog {
 }
 
 /**
- * Budget guard backed by `mimics.spend_usd` and the whole cap: `BUDGET_USD` when set, else the mimic's config
- * `session.budgetUsd` (ADR-0034). The session's smaller share is enforced by the engine, which knows what a call is for.
+ * Budget guard backed by `mimics.spend_usd` and the caps from the mimic's config and the deploy's spend limits
+ * (`spendCaps`, ADR-0034): the whole cap, and the session's share the gateway holds session work to.
  */
 export class StoreBudget implements BudgetLedger {
-  private readonly budgets = new Map<string, number>();
+  private readonly caps = new Map<string, SpendCaps>();
   constructor(
     private readonly store: Store,
     private readonly limits: SpendLimits = {},
@@ -216,15 +218,15 @@ export class StoreBudget implements BudgetLedger {
   async get(mimicId: string) {
     const m = await this.store.getMimic(mimicId);
     if (!m) return null;
-    if (this.limits.budgetUsd !== undefined)
-      return { spendUsd: m.spendUsd, budgetUsd: this.limits.budgetUsd };
-    let budget = this.budgets.get(m.configHash);
-    if (budget === undefined) {
+    let caps = this.caps.get(m.configHash);
+    if (caps === undefined) {
       const c = await this.store.getConfig(m.configHash);
-      budget = c ? PipelineConfig.parse(JSON.parse(c.json)).session.budgetUsd : Number.POSITIVE_INFINITY;
-      this.budgets.set(m.configHash, budget);
+      caps = c
+        ? spendCaps(PipelineConfig.parse(JSON.parse(c.json)), this.limits)
+        : { totalUsd: Number.POSITIVE_INFINITY, sessionUsd: Number.POSITIVE_INFINITY };
+      this.caps.set(m.configHash, caps);
     }
-    return { spendUsd: m.spendUsd, budgetUsd: budget };
+    return { spendUsd: m.spendUsd, budgetUsd: caps.totalUsd, sessionUsd: caps.sessionUsd };
   }
   add(mimicId: string, usd: number) {
     return this.store.addSpend(mimicId, usd);

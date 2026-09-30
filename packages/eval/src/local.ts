@@ -13,7 +13,9 @@ import {
   Gateway,
   type Job,
   MemoryQueue,
+  parseSpendLimits,
   runJob,
+  type SpendLimits,
   seededRng,
   ulid,
 } from '@mimic/core';
@@ -41,6 +43,8 @@ export interface LocalOptions {
   clock?: () => number;
   /** Deterministic IDs (mimic IDs seed anchor order and selection), for reproducible offline tests. */
   seed?: string;
+  /** Spend limits (ADR-0034); defaults to `BUDGET_*` from the environment for live runs, and none offline. */
+  spend?: SpendLimits;
 }
 
 /** Engine deps for Node: libSQL with the D1 schema and migrations, filesystem blobs, SQL vectors, inline queue. */
@@ -63,10 +67,11 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
           search: new FixturePeopleSearch(),
           enricher: new FixtureEnricher(),
         };
+  const spend = opts.spend ?? (opts.providers === 'live' ? parseSpendLimits(process.env).limits : {});
   const gateway = new Gateway({
     ...providers,
     log: new StoreCallLog(store, blobs),
-    budget: new StoreBudget(store),
+    budget: new StoreBudget(store, spend),
     clock,
     newId: () => ulid(),
   });
@@ -81,6 +86,7 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
     jobs: queue,
     clock,
     newId,
+    spend,
   };
   const drain = async (filter?: (job: Job) => boolean) => {
     let n = 0;

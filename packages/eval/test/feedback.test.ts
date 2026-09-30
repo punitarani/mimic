@@ -1,12 +1,16 @@
 import {
   buildState,
   createMimic,
+  enqueueMissingShadows,
   exportMimic,
   type FeedbackInput,
+  type Job,
+  jobKey,
   listPlayground,
   loadConfig,
   loadMimicDataAt,
   predictPlayground,
+  runJob,
   serveNext,
   stateOptions,
   submitAnswer,
@@ -47,6 +51,16 @@ async function session(turns: number) {
   }
   return m;
 }
+
+const ask = {
+  type: 'choice' as const,
+  prompt: 'Would you take a spontaneous day off?',
+  options: [
+    { key: 'a', label: 'Yes, today' },
+    { key: 'b', label: 'No, I would wait' },
+  ],
+  rationale: false,
+};
 
 const teach = (key: string, answer = 'b'): FeedbackInput => ({
   question: {
@@ -214,31 +228,68 @@ describe('feedback robustness (ADR-0032)', () => {
   it("keeps the budget's last 20% for the mimic page once the session has spent its share (ADR-0034)", async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await session(2);
-    const ask = {
-      type: 'choice' as const,
-      prompt: 'Would you take a spontaneous day off?',
-      options: [
-        { key: 'a', label: 'Yes, today' },
-        { key: 'b', label: 'No, I would wait' },
-      ],
-      rationale: false,
-    };
-    // cfg.default.v4's $0.50 cap: the session stops at $0.40, the page runs to $0.50.
-    await engine.deps.store.updateMimic(m.id, { spendUsd: 0.45 });
+    const { store } = engine.deps;
+    const calls = async () => (await store.listModelCalls({ mimicId: m.id, limit: 10_000 })).length;
+    // The standard $1 cap: the session stops at $0.80, the page runs to $1.
+    await store.updateMimic(m.id, { spendUsd: 0.85 });
     expect((await serveNext(engine.deps, m.id)).status).toBe('budget');
-    const snap = await uiSnapshot(engine.deps, m.id);
-    expect(snap.mimic).toMatchObject({ budgetUsd: 0.5, sessionBudgetUsd: 0.4 });
-    expect((await predictPlayground(engine.deps, m.id, ask)).guess).toBeDefined();
+    expect((await uiSnapshot(engine.deps, m.id)).mimic.budgetUsd).toBe(1);
+
+    // Session background work stops before any call, and is not marked done, so a raised cap can run it again.
+    const before = await calls();
+    for (const q of await store.listQuestions(m.id, ['pooled']))
+      await store.updateQuestionStatus(q.id, 'discarded');
+    const served = (await store.listQuestions(m.id)).find((q) => q.kind === 'anchor' && q.seq !== null)!;
+    const jobs: Job[] = [
+      { type: 'pool.refill', mimicId: m.id, seq: 99 },
+      { type: 'hypotheses.refresh', mimicId: m.id, seqUpTo: 99 },
+      { type: 'predict.shadow', mimicId: m.id, questionId: served.id, predictorId: 'llm:test/new-shadow' },
+    ];
+    for (const job of jobs) {
+      expect(await runJob(engine.deps, job)).toBe('skipped');
+      expect((await store.getJob(jobKey(job)))?.lastError).toMatch(/^budget: /);
+    }
+    expect(await enqueueMissingShadows(engine.deps, m.id, Number.MAX_SAFE_INTEGER)).toBe(0);
+    expect(await calls()).toBe(before);
+
+    // The page still asks and teaches from the reserve.
+    const asked = await predictPlayground(engine.deps, m.id, ask);
+    expect(asked.guess).toBeDefined();
     expect((await submitFeedback(engine.deps, m.id, teach('reserve'))).learns).toBe(true);
 
-    // A deploy that raises the cap reopens the session under the new share.
-    engine.deps.spend = { budgetUsd: 0.75 };
-    expect((await serveNext(engine.deps, m.id)).status).toBe('question');
-    delete engine.deps.spend;
+    // Under the share again (as after a raised cap), the refused shadow runs.
+    await store.updateMimic(m.id, { spendUsd: 0.1 });
+    expect(await runJob(engine.deps, jobs[2]!)).toBe('done');
 
-    await engine.deps.store.updateMimic(m.id, { spendUsd: 0.5 });
+    await store.updateMimic(m.id, { spendUsd: 1 });
     await expect(predictPlayground(engine.deps, m.id, ask)).rejects.toMatchObject({ code: 'budget' });
     expect((await submitFeedback(engine.deps, m.id, teach('spent'))).learns).toBe(false);
+  });
+
+  it('holds the gateway and the engine to the same raised cap', async () => {
+    engine = await openLocalEngine({
+      db: ':memory:',
+      providers: 'offline',
+      spend: { budgetUsd: 2, sessionShare: 0.5 },
+    });
+    const m = await session(2);
+    await engine.deps.store.updateMimic(m.id, { spendUsd: 0.85 });
+    // $0.85 is under the $1 share of a $2 cap: the engine serves, and the gateway lets every serve call through.
+    const next = await serveNext(engine.deps, m.id);
+    expect(next.status).toBe('question');
+    if (next.status !== 'question') return;
+    const preds = await engine.deps.store.listPredictions({ questionId: next.question.id });
+    expect(preds.find((p) => p.role === 'primary')?.ok).toBe(true);
+    const shadow: Job = {
+      type: 'predict.shadow',
+      mimicId: m.id,
+      questionId: next.question.id,
+      predictorId: 'llm:test/new-shadow',
+    };
+    expect(await runJob(engine.deps, shadow)).toBe('done');
+    // At the $1 share, session work stops; the page's calls would still go through up to $2.
+    await engine.deps.store.updateMimic(m.id, { spendUsd: 1 });
+    expect(await runJob(engine.deps, { ...shadow, predictorId: 'llm:test/other-shadow' })).toBe('skipped');
   });
 
   it('serves an asked question at the next free seq when feedback takes its seq, keeping its predictions', async () => {

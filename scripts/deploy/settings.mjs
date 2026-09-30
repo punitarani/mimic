@@ -18,7 +18,8 @@ export const SETTINGS = {
   EMBEDDINGS_PROVIDER: ['workers-ai', 'openrouter'],
   SEARCH_PROVIDER: ['exa', 'perplexity', 'none'],
   ENRICH_PROVIDER: ['parallel', 'none'],
-  // Spend caps (ADR-0034): the total per mimic in USD, and the share of it the learning session may spend.
+  // Spend caps (ADR-0034): the total per mimic in USD, and the share of it the learning session may spend. Defaults
+  // live in code; the ranges match `parseSpendLimits` in packages/core/src/config.ts (a test keeps them in step).
   BUDGET_USD: number('a number of US dollars above 0', (n) => n > 0),
   BUDGET_SESSION_SHARE: number('a number above 0 and at most 1', (n) => n > 0 && n <= 1),
 };

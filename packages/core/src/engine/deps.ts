@@ -9,7 +9,7 @@ import {
   type SpendLimits,
   spendCaps,
 } from '../config';
-import type { CallContext, Gateway } from '../gateway';
+import { BudgetExceededError, type CallContext, type Gateway } from '../gateway';
 import { unitHash } from '../hash';
 import type { JobQueue } from '../jobs';
 import { getOntology } from '../ontology';
@@ -109,13 +109,26 @@ export function capsFor(deps: EngineDeps, cfg: PipelineConfig): SpendCaps {
   return spendCaps(cfg, deps.spend);
 }
 
-/** True once the session has spent its share: no new session questions, pool refills or hypotheses. */
+/** True once the session has spent its share: `/next` stops serving, and session background work stops. */
 export function sessionSpent(
   deps: EngineDeps,
   m: Pick<MimicRecord, 'spendUsd'>,
   cfg: PipelineConfig,
 ): boolean {
   return m.spendUsd >= capsFor(deps, cfg).sessionUsd;
+}
+
+/**
+ * Stops session background work (shadows, refills, hypotheses) once the session has spent its share, before it loads
+ * anything. The job ledger records the refusal without marking the job done, so a raised cap can run it again.
+ */
+export function requireSessionBudget(
+  deps: EngineDeps,
+  m: Pick<MimicRecord, 'id' | 'spendUsd'>,
+  cfg: PipelineConfig,
+): void {
+  const { sessionUsd } = capsFor(deps, cfg);
+  if (m.spendUsd >= sessionUsd) throw new BudgetExceededError(m.id, m.spendUsd, sessionUsd);
 }
 
 /** True once the whole cap is spent; the gateway refuses every call for the mimic from here. */

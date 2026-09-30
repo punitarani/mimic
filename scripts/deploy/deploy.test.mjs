@@ -202,16 +202,15 @@ describe('config', () => {
     ]);
   });
 
-  it('gives both Workers the same spend caps, and refuses caps that are not numbers in range', () => {
-    for (const env of ['preview', 'prod']) {
-      const w = resolveSettings(worker, env, {}).vars;
-      const s = resolveSettings(web, env, {}).vars;
-      assert.equal(w.BUDGET_USD, s.BUDGET_USD);
-      assert.equal(w.BUDGET_SESSION_SHARE, s.BUDGET_SESSION_SHARE);
+  it('passes spend caps to both Workers only when set, and refuses caps that are not numbers in range', () => {
+    for (const c of [web, worker]) {
+      // Unset, the code defaults apply (packages/core/src/config.ts), so both Workers agree without a var.
+      assert.equal(resolveSettings(c, 'prod', {}).vars.BUDGET_USD, undefined);
+      const ok = resolveSettings(c, 'prod', { BUDGET_USD: ' 1.5 ', BUDGET_SESSION_SHARE: '0.75' });
+      assert.deepEqual(ok.problems, []);
+      assert.equal(ok.vars.BUDGET_USD, '1.5');
+      assert.equal(ok.vars.BUDGET_SESSION_SHARE, '0.75');
     }
-    const ok = resolveSettings(web, 'prod', { BUDGET_USD: ' 1.5 ', BUDGET_SESSION_SHARE: '0.75' });
-    assert.deepEqual(ok.problems, []);
-    assert.equal(ok.vars.BUDGET_USD, '1.5');
     const { problems } = resolveSettings(worker, 'prod', { BUDGET_USD: '0', BUDGET_SESSION_SHARE: '80%' });
     assert.deepEqual(problems, [
       'BUDGET_USD must be a number of US dollars above 0',
