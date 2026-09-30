@@ -820,9 +820,9 @@ Item-level answer frequencies from other consented dev-split people, used as an 
 `item_stats` holds aggregate rows per stable item (`item_key`) and per archetype (`facet | domain | type`) over
 research-consented, dev-split mimics: people, answers, the population's answer entropy (items only), the
 context-only baseline's error, the primary's error and normalised log loss, lift and mean latency. An hourly
-`stats.refresh` job recomputes them from scratch. They rank pooled candidates in the `voi` selector (weight π,
-shrunk toward neutral with a prior of 20 answers, null below 5 people) and never enter a prompt or a state, so
-§3.9 holds. `pnpm eval -- select --no-population` runs the selector without them.
+`stats.refresh` job recomputes them from scratch and replaces the table, writing only groups of 5 or more people.
+They rank pooled candidates in the `voi` selector (weight π, shrunk toward neutral with a prior of 20 answers) and
+never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-population` runs the selector without them.
 
 ### 12.7 First experiments
 

@@ -14,7 +14,6 @@ import {
   questionCoverage,
   type SelectContext,
   usesHypotheses,
-  withHypothesis,
 } from '../selectors';
 import { cosine, lexicalSimilarity } from '../state-builder';
 import type { AnswerRecord, FidelityRecord, MimicRecord, PredictionRecord, QuestionRecord } from '../store';
@@ -316,9 +315,7 @@ async function serveWithPredictions(
     if (hyp && sel.hypothesisPreds) {
       selection.hypothesisWeights = hyp.weights.map((w) => Math.round(w * 1000) / 1000);
       for (const h of sel.hypothesisPreds) {
-        const hs = withHypothesis(state, hyp.hypotheses[h.index]!);
-        if (hs.meta.stateHash !== h.stateHash) throw new Error('Hypothesis state hash mismatch');
-        hypothesisStates.push(hs);
+        hypothesisStates.push(h.state);
         hypothesisRows.push({
           id: deps.newId(),
           questionId: chosen.id,
@@ -327,8 +324,8 @@ async function serveWithPredictions(
           role: 'hypothesis',
           dist: h.result.dist,
           confidence: h.result.confidence ?? null,
-          stateHash: h.stateHash,
-          evidenceSeqMax: state.meta.evidenceSeqMax,
+          stateHash: h.state.meta.stateHash,
+          evidenceSeqMax: h.state.meta.evidenceSeqMax,
           configHash: m.configHash,
           promptVersion: primarySpec.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
           modelSnapshot: h.result.modelSnapshot,
@@ -482,6 +479,27 @@ export async function loadHypothesisSet(
   return { ...set, weights: hypothesisPosterior(obs, set.hypotheses.length) };
 }
 
+/**
+ * `item_stats` changes hourly (`stats.refresh`) and is read on every `/next`, so it is cached per isolate for a
+ * short while, like question vectors. `stats.refresh` invalidates the cache of its own isolate; other isolates see
+ * the new rows within ITEM_STATS_TTL_MS.
+ */
+export const ITEM_STATS_TTL_MS = 5 * 60 * 1000;
+let ITEM_STATS_CACHE: { at: number; byKey: Map<string, ItemStatRecord> } | null = null;
+
+export function invalidateItemStatsCache(): void {
+  ITEM_STATS_CACHE = null;
+}
+
+async function itemStatsByKey(deps: EngineDeps): Promise<Map<string, ItemStatRecord>> {
+  const now = deps.clock();
+  if (ITEM_STATS_CACHE && now - ITEM_STATS_CACHE.at < ITEM_STATS_TTL_MS && now >= ITEM_STATS_CACHE.at)
+    return ITEM_STATS_CACHE.byKey;
+  const byKey = new Map((await deps.store.listItemStats()).map((s) => [s.key, s]));
+  ITEM_STATS_CACHE = { at: now, byKey };
+  return byKey;
+}
+
 /** Belief state and population prior for the `voi` selector. */
 async function voiContext(
   deps: EngineDeps,
@@ -490,13 +508,12 @@ async function voiContext(
   loaded: LoadedMimic,
 ): Promise<Pick<SelectContext, 'belief' | 'population'>> {
   const wantStats = cfg.selector.type === 'voi' && cfg.selector.piPopulation > 0;
-  const [facets, sources, stats] = await Promise.all([
+  const [facets, sources, byKey] = await Promise.all([
     facetsFor(deps, m, cfg),
     loadBeliefSources(deps, m),
-    wantStats ? deps.store.listItemStats() : Promise.resolve([] as ItemStatRecord[]),
+    wantStats ? itemStatsByKey(deps) : Promise.resolve(new Map<string, ItemStatRecord>()),
   ]);
   const belief = beliefFromLoaded(loaded, facets, cfg, sources);
-  const byKey = new Map(stats.map((s) => [s.key, s]));
   return {
     belief,
     population: (q) => (byKey.size ? populationScore(q, byKey) : null),

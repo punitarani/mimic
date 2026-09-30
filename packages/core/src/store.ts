@@ -241,6 +241,18 @@ export interface ScoredPredictionRow {
   question: Pick<QuestionRecord, 'id' | 'kind' | 'type' | 'seq' | 'itemKey'>;
 }
 
+/** One scored primary or baseline with what the item statistics need (ADR-0027). */
+export interface ScoredItemSource {
+  mimicId: string;
+  questionId: string;
+  role: 'primary' | 'baseline';
+  fallback: boolean;
+  itemAcc: number;
+  logLoss: number;
+  question: Pick<QuestionRecord, 'kind' | 'type' | 'domain' | 'facetIds' | 'options' | 'itemKey'>;
+  answer: { value: string; latencyMs: number };
+}
+
 /** Persistence port used by the engine. Implemented with Drizzle over D1 (Workers) and libSQL (Node CLI). */
 export interface Store {
   // participants
@@ -327,7 +339,13 @@ export interface Store {
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
   // cross-person item statistics (aggregate only; ADR-0027)
-  putItemStats(recs: import('./population').ItemStatRecord[]): Promise<void>;
+  /** Every scored primary and baseline of the matching mimics' anchor and adaptive questions, in one query. */
+  listScoredForStats(filter: {
+    consentResearch: boolean;
+    split: 'dev' | 'test';
+  }): Promise<ScoredItemSource[]>;
+  /** Replaces the whole table atomically, so keys absent from `recs` are removed. */
+  replaceItemStats(recs: import('./population').ItemStatRecord[]): Promise<void>;
   listItemStats(): Promise<import('./population').ItemStatRecord[]>;
   // jobs ledger
   getJob(key: string): Promise<JobRecord | null>;

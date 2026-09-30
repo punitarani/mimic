@@ -19,6 +19,7 @@ import {
   type PredictionRole,
   type QuestionRecord,
   type QuestionStatus,
+  type ScoredItemSource,
   type ScoredPredictionRow,
   type ScoreRecord,
   type SnapshotRecord,
@@ -649,27 +650,62 @@ export class DrizzleStore implements Store {
   }
 
   // cross-person item statistics (ADR-0027)
-  async putItemStats(recs: ItemStatRecord[]) {
-    for (const part of chunk(recs, 11)) {
-      await this.db
-        .insert(s.itemStats)
-        .values(part)
-        .onConflictDoUpdate({
-          target: s.itemStats.key,
-          set: {
-            kind: sql`excluded.kind`,
-            nPeople: sql`excluded.n_people`,
-            nAnswers: sql`excluded.n_answers`,
-            answerEntropy: sql`excluded.answer_entropy`,
-            baselineError: sql`excluded.baseline_error`,
-            primaryError: sql`excluded.primary_error`,
-            surprise: sql`excluded.surprise`,
-            lift: sql`excluded.lift`,
-            meanLatencyMs: sql`excluded.mean_latency_ms`,
-            updatedAt: sql`excluded.updated_at`,
-          },
-        });
-    }
+  async listScoredForStats(filter: { consentResearch: boolean; split: 'dev' | 'test' }) {
+    const rows = await this.db
+      .select({
+        mimicId: s.predictions.mimicId,
+        questionId: s.predictions.questionId,
+        role: s.predictions.role,
+        fallback: s.predictions.fallback,
+        itemAcc: s.scores.itemAcc,
+        logLoss: s.scores.logLoss,
+        kind: s.questions.kind,
+        type: s.questions.type,
+        domain: s.questions.domain,
+        facetIdsJson: s.questions.facetIdsJson,
+        optionsJson: s.questions.optionsJson,
+        itemKey: s.questions.itemKey,
+        value: s.answers.value,
+        latencyMs: s.answers.latencyMs,
+      })
+      .from(s.scores)
+      .innerJoin(s.predictions, eq(s.predictions.id, s.scores.predictionId))
+      .innerJoin(s.questions, eq(s.questions.id, s.predictions.questionId))
+      .innerJoin(s.answers, eq(s.answers.questionId, s.predictions.questionId))
+      .innerJoin(s.mimics, eq(s.mimics.id, s.predictions.mimicId))
+      .where(
+        and(
+          eq(s.mimics.consentResearch, filter.consentResearch),
+          eq(s.mimics.split, filter.split),
+          inArray(s.predictions.role, ['primary', 'baseline']),
+          inArray(s.questions.kind, ['anchor', 'adaptive']),
+        ),
+      )
+      .all();
+    return rows.map(
+      (r): ScoredItemSource => ({
+        mimicId: r.mimicId,
+        questionId: r.questionId,
+        role: r.role as 'primary' | 'baseline',
+        fallback: r.fallback,
+        itemAcc: r.itemAcc,
+        logLoss: r.logLoss,
+        question: {
+          kind: r.kind,
+          type: r.type,
+          domain: r.domain,
+          facetIds: parse(StrArr, r.facetIdsJson, []),
+          options: parse(Options, r.optionsJson, []),
+          ...(r.itemKey ? { itemKey: r.itemKey } : {}),
+        },
+        answer: { value: r.value, latencyMs: r.latencyMs },
+      }),
+    );
+  }
+  async replaceItemStats(recs: ItemStatRecord[]) {
+    const stmts: BatchItem<'sqlite'>[] = [this.db.delete(s.itemStats)];
+    for (const part of chunk(recs, 11)) stmts.push(this.db.insert(s.itemStats).values(part));
+    await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
   }
   async listItemStats(): Promise<ItemStatRecord[]> {
     return this.db.select().from(s.itemStats).orderBy(asc(s.itemStats.key)).all();

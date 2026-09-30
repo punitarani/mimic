@@ -1,4 +1,5 @@
 import { entropy } from './distribution';
+import { mean } from './metrics';
 import type { Domain, QType } from './types';
 
 /**
@@ -51,8 +52,6 @@ export const itemStatKey = {
   archetype: (facetId: string, domain: Domain, type: QType) => `arch:${facetId}|${domain}|${type}`,
 };
 
-const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-
 function aggregate(key: string, kind: ItemStatKind, rows: ScoredItemRow[], now: number): ItemStatRecord {
   const baselines = rows.map((r) => r.baselineItemAcc).filter((x): x is number => x !== null);
   const paired = rows.filter((r) => r.baselineItemAcc !== null);
@@ -79,24 +78,32 @@ function aggregate(key: string, kind: ItemStatKind, rows: ScoredItemRow[], now: 
   };
 }
 
-/** Groups scored rows by item key and by archetype (one group per facet of each row). */
-export function computeItemStats(rows: ScoredItemRow[], now: number): ItemStatRecord[] {
+/**
+ * Groups scored rows by item key and by archetype (one group per facet of each row). Groups with fewer than
+ * `minPeople` people are dropped before anything is returned, so no stored row is one person's numbers.
+ */
+export function computeItemStats(
+  rows: ScoredItemRow[],
+  now: number,
+  minPeople = POP_MIN_PEOPLE,
+): ItemStatRecord[] {
   const items = new Map<string, ScoredItemRow[]>();
   const archs = new Map<string, ScoredItemRow[]>();
+  const add = (map: Map<string, ScoredItemRow[]>, k: string, r: ScoredItemRow) => {
+    const g = map.get(k);
+    if (g) g.push(r);
+    else map.set(k, [r]);
+  };
   for (const r of rows) {
-    if (r.itemKey) {
-      const k = itemStatKey.item(r.itemKey);
-      items.set(k, [...(items.get(k) ?? []), r]);
-    }
-    for (const f of r.facetIds) {
-      const k = itemStatKey.archetype(f, r.domain, r.type);
-      archs.set(k, [...(archs.get(k) ?? []), r]);
-    }
+    if (r.itemKey) add(items, itemStatKey.item(r.itemKey), r);
+    for (const f of r.facetIds) add(archs, itemStatKey.archetype(f, r.domain, r.type), r);
   }
   return [
     ...[...items.entries()].map(([k, g]) => aggregate(k, 'item', g, now)),
     ...[...archs.entries()].map(([k, g]) => aggregate(k, 'archetype', g, now)),
-  ].sort((a, b) => a.key.localeCompare(b.key));
+  ]
+    .filter((s) => s.nPeople >= minPeople)
+    .sort((a, b) => a.key.localeCompare(b.key));
 }
 
 function shrink(raw: number, n: number, priorWeight: number): number {

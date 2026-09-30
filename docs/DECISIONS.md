@@ -393,7 +393,9 @@ ADR records the decisions.
   never in a prompt or a state.
 - **`voi` selector** (`selector.type = 'voi'`): `info + λ·gap + β·conflict + γ·weakness + π·(pop − ½) − μ·redundancy
   − ν·burden`, with exposure control (a facet may take at most 35% of the adaptive questions once 4 are answered).
-  `info` is posterior-weighted hypothesis mutual information when K ≥ 2 hypotheses exist, else predictive entropy.
+  `info` is on one scale per selection: posterior-weighted hypothesis mutual information when any candidate has
+  ≥ 2 hypothesis predictions (0 for a candidate whose exploration calls failed), else predictive entropy for every
+  candidate. Exposure control is shared with the generator (`overExposed`) and starts after 4 adaptive answers.
   The chosen question's sealed primary is still the plain-state prediction from the batched call. The winning
   score's components go to `questions.selection_json`.
 - **Persona posterior.** The chosen question's per-hypothesis predictions are stored as `role = hypothesis` rows
@@ -407,15 +409,18 @@ ADR records the decisions.
   the exposure cap are listed to avoid; the domain quota is tilted toward the weakest domains. Pooled candidates
   count toward coverage so a refill does not pile onto facets the pool already has.
 - **Latency hints** (`stateBuilder.latencyHints`, builder `full.v2`): evidence carries `pace: quick | slow` for
-  answers under half or over twice the person's median latency over the sealed evidence. Deterministic from
-  exported data (`answers.latency_ms`), so replay still reproduces states. Optional and undefaulted in the schema,
+  answers under half or over twice the person's median latency over the sealed evidence, costed against the
+  budget as rendered. A latency of 0 means "not recorded" everywhere (no pace, never speeding). Deterministic
+  from exported data (`answers.latency_ms`), so replay still reproduces states. Optional and undefaulted in the schema,
   so configs written before it keep their hashes (v3 is pinned in a test next to v4).
 - **Item statistics** (`item_stats`, migration 0003, `stats.refresh` from the cron hourly): aggregate rows per
-  `item_key` and per `facet | domain | type` archetype over research-consented dev-split mimics; recomputed from
-  scratch so a deleted mimic drops out at the next run. `pop(q)` is `½·answer entropy + ½·baseline error` for
-  items, or the mean over the question's facets' archetypes of `½·surprise + ½·baseline error`, shrunk toward ½
-  with a prior of 20 answers and null below 5 people. It ranks candidates only, never enters a prompt or a state
-  (PLAN §3.8), and its weight π is bounded. The test split never feeds it.
+  `item_key` and per `facet | domain | type` archetype over research-consented dev-split mimics, read in one join
+  query and written by replacing the whole table atomically, so a deleted mimic or a withdrawn consent drops out
+  at the next run and no stale key survives. Groups with fewer than 5 people are never written, so no stored row
+  is one person's numbers. `pop(q)` is `½·answer entropy + ½·baseline error` for items, or the mean over the
+  question's facets' archetypes of `½·surprise + ½·baseline error`, shrunk toward ½ with a prior of 20 answers.
+  It ranks candidates only, never enters a prompt or a state (PLAN §3.8), and its weight π is bounded. The test
+  split never feeds it. `/next` reads the table through a per-isolate cache with a 5-minute TTL.
 - **Guardrails against getting worse with use**: every term is bounded; coverage, uncertainty and conflict decay
   on their own; the exposure cap stops a noisy facet from monopolising a session; weakness is prequential; burden
   grows with session length; population statistics are a shrunk, bounded prior that cannot override the person's

@@ -1,4 +1,4 @@
-import type { BeliefState } from './belief';
+import { type BeliefState, COVERAGE_TARGET, overExposed } from './belief';
 import type { PipelineConfig } from './config';
 import { entropy, meanDist, normalizedEntropy, optionKeys, P_FLOOR } from './distribution';
 import { canonicalJson, sha256Hex } from './hash';
@@ -32,8 +32,8 @@ export interface Selection {
   question: Question;
   primary: PredictionResult;
   diagnostics: Record<string, number>;
-  /** The chosen question's prediction under each hypothesis, with that hypothesis state's hash (`voi`). */
-  hypothesisPreds?: Array<{ index: number; stateHash: string; result: PredictionResult }>;
+  /** The chosen question's prediction under each hypothesis, with the state it was predicted from (`voi`). */
+  hypothesisPreds?: Array<{ index: number; state: PersonState; result: PredictionResult }>;
 }
 
 export interface Selector {
@@ -191,8 +191,6 @@ export type VoiConfig = Extract<PipelineConfig['selector'], { type: 'voi' }>;
 
 /** Prompts longer than this many words count as full burden. */
 export const BURDEN_WORDS = 40;
-/** Exposure control only starts once this many adaptive questions have been answered. */
-export const EXPOSURE_MIN_ADAPTIVE = 4;
 
 /**
  * Posterior weights over K persona hypotheses from the likelihood each gave the answers observed since the set was
@@ -258,8 +256,10 @@ export interface VoiParts {
 }
 
 /**
- * score(q) = info + λ·gap + β·conflict + γ·weakness + π·(pop − ½) − μ·redundancy − ν·burden. `info` is the
- * posterior-weighted hypothesis MI when ≥ 2 hypotheses predicted the pool, else the normalised predictive entropy.
+ * score(q) = info + λ·gap + β·conflict + γ·weakness + π·(pop − ½) − μ·redundancy − ν·burden. `info` is on one scale
+ * for the whole selection: when any candidate has ≥ 2 hypothesis predictions, it is the posterior-weighted
+ * hypothesis MI (0 for a candidate whose exploration calls failed, never its entropy); otherwise it is the
+ * normalised predictive entropy for every candidate.
  */
 export class VoiSelector implements Selector {
   readonly type = 'voi' as const;
@@ -271,13 +271,15 @@ export class VoiSelector implements Selector {
     primary: PredictionResult,
     hypDists: Distribution[],
     weights: number[],
+    hypRegime: boolean,
   ): VoiParts {
     const keys = optionKeys(q);
     const logN = Math.log(Math.max(2, keys.length));
-    const info =
-      hypDists.length >= 2
+    const info = hypRegime
+      ? hypDists.length >= 2
         ? Math.min(1, weightedMutualInformation(hypDists, weights, keys) / logN)
-        : normalizedEntropy(primary.dist);
+        : 0
+      : normalizedEntropy(primary.dist);
     const b = ctx.belief;
     const facets = q.facetIds.map((f) => b?.facets[f]).filter((x): x is NonNullable<typeof x> => !!x);
     const meanOf = (pick: (f: NonNullable<(typeof facets)[number]>) => number) =>
@@ -306,10 +308,8 @@ export class VoiSelector implements Selector {
   private eligible(ctx: SelectContext): boolean[] {
     const b = ctx.belief;
     const flags = ctx.pool.map(() => true);
-    if (!b || b.person.nAdaptive < EXPOSURE_MIN_ADAPTIVE) return flags;
-    const over = ctx.pool.map((q) =>
-      q.facetIds.some((f) => (b.facets[f]?.exposure ?? 0) > this.cfg.exposureCap),
-    );
+    if (!b) return flags;
+    const over = ctx.pool.map((q) => q.facetIds.some((f) => overExposed(b, f, this.cfg.exposureCap)));
     return over.every(Boolean) ? flags : over.map((o) => !o);
   }
 
@@ -326,18 +326,23 @@ export class VoiSelector implements Selector {
         ? ctx.hypothesisWeights!
         : hyps.map(() => 1 / Math.max(1, hyps.length));
     const eligible = this.eligible(ctx);
+    const okHypsFor = (i: number) =>
+      hypPreds.map((ps, k) => ({ d: ps[i]!, w: weights[k]! })).filter((x) => x.d.ok);
+    // One information scale per selection (see the class comment).
+    const hypRegime = hypStates.length >= 2 && ctx.pool.some((_, i) => okHypsFor(i).length >= 2);
     let best = -1;
     let bestParts: VoiParts | null = null;
     ctx.pool.forEach((q, i) => {
       const p = primaryPreds[i]!;
       if (!p.ok || !eligible[i]) return;
-      const okHyps = hypPreds.map((ps, k) => ({ d: ps[i]!, w: weights[k]! })).filter((x) => x.d.ok);
+      const okHyps = okHypsFor(i);
       const parts = this.parts(
         ctx,
         q,
         p,
         okHyps.map((x) => x.d.dist),
         okHyps.map((x) => x.w),
+        hypRegime,
       );
       if (!bestParts || parts.score > bestParts.score) {
         best = i;
@@ -372,11 +377,10 @@ export class VoiSelector implements Selector {
       },
     };
     if (hypStates.length)
-      selection.hypothesisPreds = hypStates.map((s, k) => ({
-        index: k,
-        stateHash: s.meta.stateHash,
-        result: hypPreds[k]![best]!,
-      }));
+      // Failed exploration calls carry no information and are not persisted (the call log records them).
+      selection.hypothesisPreds = hypStates
+        .map((state, k) => ({ index: k, state, result: hypPreds[k]![best]! }))
+        .filter((h) => h.result.ok);
     return selection;
   }
 }
@@ -400,9 +404,6 @@ export function makeSelector(cfg: PipelineConfig['selector']): Selector {
 export function usesHypotheses(cfg: PipelineConfig['selector']): boolean {
   return cfg.type === 'bald' || (cfg.type === 'voi' && cfg.k >= 2);
 }
-
-/** Facets reach full coverage after this many answered questions touch them. */
-export const COVERAGE_TARGET = 3;
 
 export function facetCoverage(counts: Map<string, number>, facetId: string): number {
   return Math.min(1, (counts.get(facetId) ?? 0) / COVERAGE_TARGET);

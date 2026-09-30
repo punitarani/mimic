@@ -7,6 +7,7 @@ import {
   type MimicData,
   pickRepeat,
   SECTION_BUDGETS,
+  toStateEvidence,
   validateDraft,
 } from '../src';
 
@@ -213,6 +214,23 @@ describe('state builder (PLAN §9.9)', () => {
       true,
     );
     expect(buildState(m, opts({ latencyHints: true, contextOnly: true })).meta.builder).toBe('context.v1');
+  });
+
+  it('`xs.map(toStateEvidence)` never injects a median (the index is not a latency)', () => {
+    const items = Array.from({ length: 5 }, (_, i) => item(i + 1, { latencyMs: 3000 }));
+    // The compiler rejects `items.map(toStateEvidence)` now; the runtime guard covers untyped callers.
+    const mapped = items.map((e, i) => toStateEvidence(e, i as unknown as { medianLatencyMs: number }));
+    expect(mapped.every((e) => e.pace === undefined)).toBe(true);
+    expect(
+      items.map((e) => toStateEvidence(e, { medianLatencyMs: 3000 })).every((e) => e.pace === undefined),
+    ).toBe(true);
+    expect(toStateEvidence(item(1, { latencyMs: 100 }), { medianLatencyMs: 3000 }).pace).toBe('quick');
+    // The budget is costed as rendered: with hints on, pace marks count toward it.
+    const m = mimic(200);
+    for (const e of m.evidence) e.latencyMs = e.seq % 2 ? 100 : 30000;
+    const s = buildState(m, opts({ budgetTokens: 2000, latencyHints: true }));
+    expect(s.meta.tokens).toBeLessThanOrEqual(2000);
+    expect(s.evidence.some((e) => e.pace !== undefined)).toBe(true);
   });
 });
 

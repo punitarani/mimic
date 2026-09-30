@@ -1,5 +1,6 @@
 import {
   DEFAULT_CONFIG,
+  deleteMimic,
   hashJson,
   itemStatKey,
   type PersonState,
@@ -13,7 +14,7 @@ import { runSession, SessionScript } from '../src/session';
 
 let engine: LocalEngine;
 let ids: string[] = [];
-const PEOPLE = 7;
+const PEOPLE = 10;
 
 beforeAll(async () => {
   engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'voi-cohort' });
@@ -120,6 +121,7 @@ describe('value-of-information selection (ADR-0027)', () => {
     expect(n).toBeGreaterThan(0);
     const stats = await store.listItemStats();
     const dev = (await store.listMimics({ consentResearch: true })).filter((m) => m.split === 'dev');
+    expect(dev.length).toBeGreaterThanOrEqual(5);
     const gamble = stats.find((s) => s.key === itemStatKey.item('anchors.v1/risk_gamble'))!;
     expect(gamble.kind).toBe('item');
     expect(gamble.nPeople).toBe(dev.length);
@@ -139,9 +141,28 @@ describe('value-of-information selection (ADR-0027)', () => {
     expect(score).not.toBeNull();
     expect(score!).toBeGreaterThan(0);
     expect(score!).toBeLessThan(1);
+    // No stored row is one person's numbers.
+    for (const s of stats) expect(s.nPeople).toBeGreaterThanOrEqual(5);
     // A second refresh is idempotent on the same data.
     await runStatsRefresh(engine.deps);
     expect((await store.listItemStats()).length).toBe(stats.length);
+    // The table is replaced, not upserted: a person who leaves takes their contribution with them, and a key
+    // that no longer clears the threshold disappears rather than lingering.
+    const gone = dev.slice(0, dev.length - 4);
+    for (const m of gone) await deleteMimic(engine.deps, m.id);
+    await runStatsRefresh(engine.deps);
+    expect(await store.listItemStats()).toEqual([]);
+    // Restore a cohort for the population check below.
+    for (let i = 0; i < gone.length; i++) {
+      const script = SessionScript.parse({
+        intake: { name: `Person again ${i}`, location: 'Lisbon, PT', occupation: 'Nurse' },
+        consentResearch: true,
+        seed: `again${i}`,
+      });
+      await runSession(engine, script, { turns: 14 });
+    }
+    await runStatsRefresh(engine.deps);
+    expect((await store.listItemStats()).length).toBeGreaterThan(0);
     // A new selection with statistics available carries a population term.
     const script = SessionScript.parse({
       intake: { name: 'Person late', location: 'Lisbon, PT', occupation: 'Nurse' },

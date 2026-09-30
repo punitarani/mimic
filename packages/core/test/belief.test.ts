@@ -9,7 +9,9 @@ import {
   medianOf,
   NEED_WEIGHTS,
   ONTOLOGY_V1,
+  overExposed,
   paceOf,
+  splitQuota,
   targetFacets,
 } from '../src';
 
@@ -177,6 +179,9 @@ describe('belief state (docs/SELECTION.md §3)', () => {
     expect(paceOf(100, null)).toBe('even');
     expect(isSpeeding(500, 3000)).toBe(true);
     expect(isSpeeding(2500, 10000)).toBe(false); // slow in absolute terms
+    // A latency of 0 is "not recorded", never speeding or quick.
+    expect(isSpeeding(0, 3000)).toBe(false);
+    expect(paceOf(0, 3000)).toBe('even');
     const answers = [
       ...[1, 2, 3, 4, 5].map((s) => answer(s, { type: 'score', answer: '4', latencyMs: 3000 })),
       answer(6, { latencyMs: 400 }),
@@ -184,6 +189,9 @@ describe('belief state (docs/SELECTION.md §3)', () => {
     const b = buildBelief(input({ answers }));
     expect(b.person.speedingRate).toBeCloseTo(1 / 6, 12);
     expect(b.person.straightlining).toBe(true);
+    const untimed = buildBelief(input({ answers: [...answers, answer(7, { latencyMs: 0 })] }));
+    expect(untimed.person.speedingRate).toBeCloseTo(1 / 7, 12);
+    expect(untimed.person.medianLatencyMs).toBe(3000);
     expect(isStraightlining([{ type: 'score', answer: '1' }])).toBe(false);
   });
 
@@ -209,6 +217,12 @@ describe('generator targets (docs/SELECTION.md §5)', () => {
     expect(t.slice(1).map((x) => x.id)).toEqual(['humor', 'planning']);
     expect(t[1]).toMatchObject({ reason: 'unexplored', label: null, certainty: null });
     expect(targetFacets(b, facets, 5).map((x) => x.id)).toContain('risk_tolerance');
+    // Exposure control waits for EXPOSURE_MIN_ADAPTIVE adaptive answers, in the generator as in the selector.
+    const early = buildBelief(input({ answers: [answer(4, { facetIds: ['risk_tolerance'] })] }));
+    expect(early.facets.risk_tolerance!.exposure).toBe(1);
+    expect(overExposed(early, 'risk_tolerance', 0.35)).toBe(false);
+    expect(targetFacets(early, facets, 5, 0.35).map((x) => x.id)).toContain('risk_tolerance');
+    expect(overExposed(b, 'risk_tolerance', 0.35)).toBe(true);
   });
 
   it('tilts the domain quota toward weak domains and always sums to n', () => {
@@ -221,6 +235,8 @@ describe('generator targets (docs/SELECTION.md §5)', () => {
     expect(q.core + q.casual + q.professional).toBe(12);
     expect(q.professional).toBeGreaterThan(q.casual);
     const flat = domainQuota(buildBelief(input()), mix, 12);
+    expect(flat).toEqual(splitQuota(mix, 12)); // uniform weakness: the plain mix split gen.v1 uses
+    expect(splitQuota(mix, 12)).toEqual({ core: 1, casual: 5, professional: 6 });
     expect(flat.core + flat.casual + flat.professional).toBe(12);
     expect(Math.abs(flat.casual - flat.professional)).toBeLessThanOrEqual(1); // rounding residual
   });

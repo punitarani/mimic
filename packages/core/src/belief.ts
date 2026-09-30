@@ -1,4 +1,5 @@
 import { normalizedEntropy } from './distribution';
+import { quantile } from './metrics';
 import type { Domain, Facet, QType, TraitEstimate } from './types';
 
 /**
@@ -92,8 +93,10 @@ export interface BeliefState {
 }
 
 export const NEED_WEIGHTS = { uncertainty: 0.35, conflict: 0.25, weakness: 0.25, gap: 0.15 } as const;
-/** Facets reach full coverage after this many questions touch them (same rule as `facetCoverage`). */
-export const BELIEF_COVERAGE_TARGET = 3;
+/** Facets reach full coverage after this many answered questions touch them (`facetCoverage` uses it too). */
+export const COVERAGE_TARGET = 3;
+/** Exposure control only starts once this many adaptive questions have been answered. */
+export const EXPOSURE_MIN_ADAPTIVE = 4;
 /** Weakness looks at the last this many scored questions touching a facet or domain. */
 export const WEAKNESS_WINDOW = 12;
 /** Prior weight (in questions) pulling a facet's error toward the person's overall error. */
@@ -113,24 +116,24 @@ const DOMAINS: Domain[] = ['core', 'casual', 'professional'];
 const clamp01 = (x: number) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0);
 
 export function medianOf(xs: number[]): number | null {
-  if (!xs.length) return null;
-  const s = [...xs].sort((a, b) => a - b);
-  const mid = Math.floor(s.length / 2);
-  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+  return xs.length ? quantile(xs, 0.5) : null;
 }
 
 export type Pace = 'quick' | 'even' | 'slow';
 
-/** Pace of one answer against the person's own median latency (Konovalov & Krajbich 2019). */
+/**
+ * Pace of one answer against the person's own median latency (Konovalov & Krajbich 2019). A latency of 0 means no
+ * timing was recorded, not an instant answer: it is 'even' here and never speeding below.
+ */
 export function paceOf(latencyMs: number, medianMs: number | null): Pace {
-  if (medianMs === null || medianMs <= 0) return 'even';
+  if (medianMs === null || medianMs <= 0 || latencyMs <= 0) return 'even';
   if (latencyMs < medianMs / TORN_RATIO) return 'quick';
   if (latencyMs > medianMs * TORN_RATIO) return 'slow';
   return 'even';
 }
 
 export function isSpeeding(latencyMs: number, medianMs: number | null): boolean {
-  if (medianMs === null || medianMs <= 0) return false;
+  if (medianMs === null || medianMs <= 0 || latencyMs <= 0) return false;
   return latencyMs < medianMs * SPEEDING_RATIO && latencyMs < SPEEDING_MAX_MS;
 }
 
@@ -216,7 +219,7 @@ export function buildBelief(input: BeliefInput): BeliefState {
       overallError,
     );
 
-    const coverage = Math.min(1, n / BELIEF_COVERAGE_TARGET);
+    const coverage = Math.min(1, n / COVERAGE_TARGET);
     const adaptiveTouching = touching.filter((a) => a.kind === 'adaptive').length;
     const exposure = nAdaptive ? adaptiveTouching / nAdaptive : 0;
     const need = clamp01(
@@ -291,6 +294,15 @@ export function buildBelief(input: BeliefInput): BeliefState {
   };
 }
 
+/**
+ * Exposure control (docs/SELECTION.md §4): true when the facet already takes more than `cap` of the person's
+ * adaptive questions, once EXPOSURE_MIN_ADAPTIVE of them are answered. Shared by the selector and the generator.
+ */
+export function overExposed(belief: BeliefState, facetId: string, cap: number): boolean {
+  if (belief.person.nAdaptive < EXPOSURE_MIN_ADAPTIVE) return false;
+  return (belief.facets[facetId]?.exposure ?? 0) > cap;
+}
+
 export interface TargetFacet {
   id: string;
   name: string;
@@ -315,7 +327,7 @@ export function targetFacets(
 ): TargetFacet[] {
   return facets
     .map((f) => ({ f, b: belief.facets[f.id] }))
-    .filter((x): x is { f: Facet; b: FacetBelief } => !!x.b && x.b.exposure <= exposureCap)
+    .filter((x): x is { f: Facet; b: FacetBelief } => !!x.b && !overExposed(belief, x.f.id, exposureCap))
     .sort((a, b) => b.b.need - a.b.need || a.f.id.localeCompare(b.f.id))
     .slice(0, n)
     .map(({ f, b }) => ({
@@ -330,13 +342,9 @@ export function targetFacets(
     }));
 }
 
-/** Domain quota tilted toward the domains the mimic is weakest in: mix_d · (½ + weakness_d), renormalised. */
-export function domainQuota(
-  belief: BeliefState,
-  mix: Record<Domain, number>,
-  n: number,
-): Record<Domain, number> {
-  const w = DOMAINS.map((d) => Math.max(0, mix[d] ?? 0) * (0.5 + belief.domains[d].weakness));
+/** Splits `n` questions across domains in proportion to `weights`; the rounding residual goes to the last domain. */
+export function splitQuota(weights: Record<Domain, number>, n: number): Record<Domain, number> {
+  const w = DOMAINS.map((d) => Math.max(0, weights[d] ?? 0));
   const total = w.reduce((a, b) => a + b, 0) || 1;
   const quota = { core: 0, casual: 0, professional: 0 } as Record<Domain, number>;
   let assigned = 0;
@@ -348,4 +356,15 @@ export function domainQuota(
     }
   });
   return quota;
+}
+
+/** Domain quota tilted toward the domains the mimic is weakest in: mix_d · (½ + weakness_d), renormalised. */
+export function domainQuota(
+  belief: BeliefState,
+  mix: Record<Domain, number>,
+  n: number,
+): Record<Domain, number> {
+  const weights = { core: 0, casual: 0, professional: 0 } as Record<Domain, number>;
+  for (const d of DOMAINS) weights[d] = Math.max(0, mix[d] ?? 0) * (0.5 + belief.domains[d].weakness);
+  return splitQuota(weights, n);
 }

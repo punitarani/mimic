@@ -115,7 +115,9 @@ export function buildState(m: MimicData, opts: BuildOptions): PersonState {
     // The median is over every sealed answer, not only the ones that fit the budget, so it is stable as evidence
     // grows and reproducible from an export.
     const median = opts.latencyHints ? latencyMedian(eligible) : null;
-    evidence = selectEvidence(eligible, remaining, m, opts).map((e) => toStateEvidence(e, median));
+    evidence = selectEvidence(eligible, remaining, m, opts, median).map((e) =>
+      toStateEvidence(e, { medianLatencyMs: median }),
+    );
     for (const e of evidence) seqMax = Math.max(seqMax, e.seq);
   }
 
@@ -167,8 +169,10 @@ function selectEvidence(
   budget: number,
   m: MimicData,
   opts: BuildOptions,
+  medianLatencyMs: number | null,
 ): EvidenceItem[] {
-  const cost = (xs: EvidenceItem[]) => estimateTokens(xs.map(toStateEvidence));
+  // Costed exactly as rendered, pace marks included, so the budget holds with latency hints on.
+  const cost = (xs: EvidenceItem[]) => estimateTokens(xs.map((e) => toStateEvidence(e, { medianLatencyMs })));
   if (cost(items) <= budget) return items;
 
   // Outgrown the budget: anchors + top-K by similarity to the targets + the last recentN (PLAN §9.9).
@@ -218,8 +222,13 @@ export function latencyMedian(items: EvidenceItem[]): number | null {
   return xs.length >= LATENCY_MIN_N ? medianOf(xs) : null;
 }
 
-/** With `medianLatencyMs`, decisive and torn answers are marked (`pace`); even-paced ones carry no mark. */
-export function toStateEvidence(e: EvidenceItem, medianLatencyMs: number | null = null): StateEvidence {
+/**
+ * With `opts.medianLatencyMs`, decisive and torn answers are marked (`pace`); even-paced ones carry no mark. The
+ * option is an object so that `xs.map(toStateEvidence)`, which passes the index as the second argument, can never
+ * inject a median.
+ */
+export function toStateEvidence(e: EvidenceItem, opts?: { medianLatencyMs: number | null }): StateEvidence {
+  const medianLatencyMs = typeof opts === 'object' && opts !== null ? opts.medianLatencyMs : null;
   const label = e.options.find((o) => o.key === e.answer)?.label ?? e.answer;
   const out: StateEvidence = {
     seq: e.seq,

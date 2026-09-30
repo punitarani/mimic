@@ -1,7 +1,7 @@
 import { type BeliefAnswer, type BeliefState, buildBelief } from '../belief';
 import type { PipelineConfig } from '../config';
 import { repeatAgreement } from '../scoring';
-import type { InsightRecord, MimicRecord, QuestionRecord, ScoredPredictionRow } from '../store';
+import type { AnswerRecord, InsightRecord, MimicRecord, QuestionRecord, ScoredPredictionRow } from '../store';
 import type { Facet } from '../types';
 import type { LoadedMimic } from './data';
 import type { EngineDeps } from './deps';
@@ -22,6 +22,34 @@ export async function loadBeliefSources(deps: EngineDeps, m: MimicRecord): Promi
 }
 
 /**
+ * Answered anchor and adaptive questions with seq < `beforeSeq` as the belief state sees them, with the sealed
+ * primary's item accuracy where one is known. Shared by the engine and the offline selection simulation.
+ */
+export function beliefAnswers(
+  answers: AnswerRecord[],
+  qById: ReadonlyMap<string, QuestionRecord>,
+  itemAccByQuestion: ReadonlyMap<string, number>,
+  beforeSeq = Number.MAX_SAFE_INTEGER,
+): BeliefAnswer[] {
+  const out: BeliefAnswer[] = [];
+  for (const a of answers) {
+    const q = qById.get(a.questionId);
+    if (!q || (q.kind !== 'anchor' && q.kind !== 'adaptive') || a.seq >= beforeSeq) continue;
+    out.push({
+      seq: a.seq,
+      kind: q.kind,
+      type: q.type,
+      domain: q.domain,
+      facetIds: q.facetIds,
+      answer: a.value,
+      latencyMs: a.latencyMs,
+      itemAcc: itemAccByQuestion.get(q.id) ?? null,
+    });
+  }
+  return out;
+}
+
+/**
  * The person's belief state from loaded data (docs/SELECTION.md §3). Answered anchor and adaptive questions with
  * seq < `beforeSeq` count as answers; served, unanswered ones count toward coverage and exposure only.
  */
@@ -35,22 +63,8 @@ export function beliefFromLoaded(
   const beforeSeq = opts.beforeSeq ?? Number.MAX_SAFE_INTEGER;
   const qById = new Map(loaded.questions.map((q) => [q.id, q]));
   const accByQ = new Map(sources.scored.map((r) => [r.question.id, r.score.itemAcc]));
-  const answers: BeliefAnswer[] = [];
+  const answers = beliefAnswers(loaded.answers, qById, accByQ, beforeSeq);
   const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
-  for (const a of loaded.answers) {
-    const q = qById.get(a.questionId);
-    if (!q || (q.kind !== 'anchor' && q.kind !== 'adaptive') || a.seq >= beforeSeq) continue;
-    answers.push({
-      seq: a.seq,
-      kind: q.kind,
-      type: q.type,
-      domain: q.domain,
-      facetIds: q.facetIds,
-      answer: a.value,
-      latencyMs: a.latencyMs,
-      itemAcc: accByQ.get(q.id) ?? null,
-    });
-  }
   const served = loaded.questions
     .filter((q) => q.status === 'served' && (q.kind === 'anchor' || q.kind === 'adaptive'))
     .map((q) => ({ type: q.type, domain: q.domain, facetIds: q.facetIds }));

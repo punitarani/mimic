@@ -1,5 +1,5 @@
 import {
-  type BeliefAnswer,
+  beliefAnswers,
   buildBelief,
   buildState,
   type EngineDeps,
@@ -69,7 +69,6 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
     const facets = await facetsFor(deps, m, cfg);
     const loaded = await loadMimicData(deps, m);
     const qById = new Map(loaded.questions.map((q) => [q.id, q]));
-    const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
     const anchors = loaded.data.evidence.filter((e) => e.kind === 'anchor');
     const pool = loaded.data.evidence.filter((e) => e.kind === 'adaptive');
     for (const { label, selector: selCfg } of spec.selectors) {
@@ -78,7 +77,7 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
         if (pool.length <= budget) continue;
         const rng = seededRng(`${spec.seed}:${label}:${m.id}:${budget}`);
         const chosen: EvidenceItem[] = [];
-        const itemAccBySeq = new Map<number, number>();
+        const itemAccByQuestion = new Map<string, number>();
         let remaining = [...pool];
         const counts = new Map<string, number>();
         for (const e of anchors) for (const f of e.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
@@ -88,19 +87,13 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
             stateOptions(cfg, Number.MAX_SAFE_INTEGER, { strategy: 'raw' }),
           );
         const beliefFor = (evidence: EvidenceItem[]) => {
-          const answers: BeliefAnswer[] = evidence.map((e) => {
-            const q = qById.get(e.questionId)!;
-            return {
-              seq: e.seq,
-              kind: e.kind as 'anchor' | 'adaptive',
-              type: e.type,
-              domain: q.domain,
-              facetIds: e.facetIds,
-              answer: e.answer,
-              latencyMs: answerByQ.get(e.questionId)?.latencyMs ?? 0,
-              itemAcc: itemAccBySeq.get(e.seq) ?? null,
-            };
-          });
+          // The same answer mapping the engine uses (engine/belief.ts), over the answers revealed so far.
+          const revealed = new Set(evidence.map((e) => e.questionId));
+          const answers = beliefAnswers(
+            loaded.answers.filter((a) => revealed.has(a.questionId)),
+            qById,
+            itemAccByQuestion,
+          );
           return buildBelief({
             facets,
             answers,
@@ -133,8 +126,8 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
           // The sealed prediction of the chosen question is scored against the real answer, as online, so the
           // belief's weakness term sees the same prequential signal.
           if (sel.primary.ok)
-            itemAccBySeq.set(
-              picked.seq,
+            itemAccByQuestion.set(
+              picked.questionId,
               scorePrediction(sel.question.type, sel.primary.dist, picked.answer).itemAcc,
             );
           chosen.push(picked);

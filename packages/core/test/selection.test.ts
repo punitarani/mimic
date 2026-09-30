@@ -192,8 +192,9 @@ describe('VoiSelector', () => {
     expect(sel.diagnostics.info).toBeGreaterThan(0.3);
     expect(sel.hypothesisPreds).toHaveLength(3);
     for (const h of sel.hypothesisPreds!) {
-      expect(h.stateHash).not.toBe(sel.primary);
-      expect(h.stateHash).toHaveLength(64);
+      expect(h.state.hypothesis).toBeTruthy();
+      expect(h.state.meta.stateHash).toHaveLength(64);
+      expect(h.state.meta.evidenceSeqMax).toBe(0);
     }
     expect(sel.hypothesisPreds![0]!.result.dist.a).toBeCloseTo(0.9, 12);
     expect(sel.hypothesisPreds![1]!.result.dist.a).toBeCloseTo(0.1, 12);
@@ -219,6 +220,44 @@ describe('VoiSelector', () => {
     expect(settled.diagnostics.info).toBeLessThan(0.05);
     // A question every remaining reading agrees on carries no epistemic value, even at p = ½ (BALD).
     expect(settled.diagnostics.score).toBeLessThan(open.diagnostics.score! - 0.25);
+  });
+
+  it('scores every candidate on one information scale when some hypothesis calls fail', async () => {
+    // Hypothesis predictions fail for `q_lost` only; it must not win by falling back to its entropy.
+    const flaky: Predictor = {
+      id: 'jev:flaky',
+      async predict(s, qs) {
+        return qs.map((x): PredictionResult => {
+          if (s.hypothesis && x.id === 'q_lost')
+            return { dist: {}, costUsd: 0, latencyMs: 1, modelSnapshot: 'x', ok: false, error: 'missing' };
+          let pA = 0.5;
+          if (x.id === 'q_split' && s.hypothesis) pA = s.hypothesis.includes('bold') ? 0.8 : 0.2;
+          return { dist: { a: pA, b: 1 - pA }, costUsd: 0, latencyMs: 1, modelSnapshot: 'x', ok: true };
+        });
+      },
+    };
+    const pool = [q('q_lost', ['humor']), q('q_split', ['risk_tolerance'])];
+    const sel = await selector.select(ctx({ pool, primary: flaky, hypotheses: ['bold', 'cautious'] }));
+    expect(sel.question.id).toBe('q_split');
+    expect(sel.hypothesisPreds).toHaveLength(2);
+    // With no hypothesis prediction for any candidate, every candidate falls back to entropy together.
+    const dead: Predictor = {
+      id: 'jev:dead',
+      async predict(s, qs) {
+        return qs.map((x) => ({
+          dist: { a: x.id === 'q_lost' ? 0.5 : 0.9, b: x.id === 'q_lost' ? 0.5 : 0.1 },
+          costUsd: 0,
+          latencyMs: 1,
+          modelSnapshot: 'x',
+          ok: !s.hypothesis,
+          ...(s.hypothesis ? { error: 'down' } : {}),
+        }));
+      },
+    };
+    const fallback = await selector.select(ctx({ pool, primary: dead, hypotheses: ['bold', 'cautious'] }));
+    expect(fallback.question.id).toBe('q_lost');
+    expect(fallback.diagnostics.info).toBeCloseTo(1, 12);
+    expect(fallback.hypothesisPreds).toEqual([]);
   });
 
   it('applies exposure control once enough adaptive questions were answered', async () => {
@@ -305,7 +344,9 @@ describe('population item statistics (docs/SELECTION.md §7)', () => {
       row({ mimicId: 'p3', answer: 'a', baselineItemAcc: 0 }),
       row({ mimicId: 'p1', itemKey: null, domain: 'casual' }),
     ];
-    const stats = computeItemStats(rows, 5);
+    // Three people: below the default minimum, so nothing is written unless the threshold is lowered.
+    expect(computeItemStats(rows, 5)).toEqual([]);
+    const stats = computeItemStats(rows, 5, 1);
     const item = stats.find((s) => s.key === 'item:anchors.v1/risk_gamble')!;
     expect(item.kind).toBe('item');
     expect(item.nPeople).toBe(3);
@@ -321,7 +362,7 @@ describe('population item statistics (docs/SELECTION.md §7)', () => {
     expect(stats.find((s) => s.key === 'arch:risk_tolerance|casual|choice')!.nPeople).toBe(1);
     expect(JSON.stringify(stats)).not.toContain('p1');
     // An item everyone answers the same way carries no information about individuals.
-    const same = computeItemStats([row({ mimicId: 'p1' }), row({ mimicId: 'p2' })], 5);
+    const same = computeItemStats([row({ mimicId: 'p1' }), row({ mimicId: 'p2' })], 5, 2);
     expect(same[0]!.answerEntropy).toBeCloseTo(0, 12);
   });
 

@@ -62,11 +62,13 @@ score(q) = info(q)
 ```
 
 - `info(q)` is the posterior-weighted BALD mutual information between the answer and the persona hypotheses when at
-  least two hypotheses exist: `H(Σ_k w_k p_k) − Σ_k w_k H(p_k)`, normalised by `log|options|`. Without hypotheses it
-  is the normalised entropy of *p_q*. MI rewards questions on which plausible readings of the person disagree and
-  ignores questions that are merely noisy.
-- Exposure control: a candidate whose facets already take more than `exposureCap` (35%) of the adaptive questions is
-  excluded, unless every candidate is.
+  least two hypotheses predicted the pool: `H(Σ_k w_k p_k) − Σ_k w_k H(p_k)`, normalised by `log|options|`; a
+  candidate whose own hypothesis calls failed scores 0 rather than switching scales. Without hypotheses it is the
+  normalised entropy of *p_q* for every candidate. MI rewards questions on which plausible readings of the person
+  disagree and ignores questions that are merely noisy.
+- Exposure control: once four adaptive questions are answered, a candidate whose facets already take more than
+  `exposureCap` (35%) of them is excluded, unless every candidate is. The generator applies the same rule to its
+  targets.
 - The chosen question's primary prediction is its sealed prediction, exactly as with `entropy` (PLAN §9.5). The
   per-hypothesis predictions of the chosen question are stored as `role = hypothesis` rows (not scored), which is
   what the posterior in §6 reads.
@@ -116,12 +118,13 @@ A cron job (`stats.refresh`, hourly) aggregates the scored questions of research
 - **archetypes** `facet | domain | type`: the same, minus answer entropy, because generated prompts are unique per person.
 
 `pop(q)` is an item's `½·answer entropy + ½·baseline error` (or, for generated questions, the mean over its facets'
-archetypes of `½·surprise + ½·baseline error`), shrunk toward ½ with a prior weight of 20 answers, and null (no effect)
-below 5 people. It directly targets the mega-study's finding: the questions worth asking are the ones the demographic
-stereotype gets wrong.
+archetypes of `½·surprise + ½·baseline error`), shrunk toward ½ with a prior weight of 20 answers. It directly
+targets the mega-study's finding: the questions worth asking are the ones the demographic stereotype gets wrong.
 
-Rules: aggregate-only rows with no free text and no per-person data; consented dev-split mimics only, so the test
-split stays clean; used for ranking pooled candidates only, never in a prompt or a state; weight bounded by π.
+Rules: aggregate-only rows with no free text and no per-person data, so groups with fewer than 5 people are never
+written; the table is replaced whole on each refresh, so a deleted mimic drops out at the next run; consented
+dev-split mimics only, so the test split stays clean; used for ranking pooled candidates only, never in a prompt or
+a state; weight bounded by π.
 
 ## 8. Reliability signals from response time
 

@@ -1,4 +1,4 @@
-import { domainQuota, targetFacets } from '../belief';
+import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
 import { parsePredictorId } from '../config';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
@@ -25,7 +25,7 @@ import { beliefFromLoaded, loadBeliefSources } from './belief';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
-import { JEV_PROMPT_VERSION, MAX_POOL, MIN_POOL } from './session';
+import { invalidateItemStatsCache, JEV_PROMPT_VERSION, MAX_POOL, MIN_POOL } from './session';
 
 export const MAX_JOB_ATTEMPTS = 5;
 
@@ -217,46 +217,37 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * Recomputes `item_stats` from scratch (so a deleted mimic drops out at the next run). Aggregate only: no row names
- * a person, and the result ranks pooled candidates without ever entering a prompt or a state (PLAN §3.8).
+ * Recomputes `item_stats` from scratch in one query and replaces the table atomically, so a deleted mimic (or a
+ * withdrawn consent) drops out at the next run and nothing stale survives. Aggregate only: groups below
+ * POP_MIN_PEOPLE are never written, no row names a person, and the result ranks pooled candidates without ever
+ * entering a prompt or a state (PLAN §3.8).
  */
 export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
-  const mimics = (await deps.store.listMimics({ consentResearch: true })).filter((m) => m.split === 'dev');
+  const sources = await deps.store.listScoredForStats({ consentResearch: true, split: 'dev' });
+  const baselineByQ = new Map(
+    sources.filter((r) => r.role === 'baseline').map((r) => [r.questionId, r.itemAcc]),
+  );
   const rows: ScoredItemRow[] = [];
-  for (const m of mimics) {
-    const [scored, questions, answers] = await Promise.all([
-      deps.store.listScoredPredictions(m.id, ['primary', 'baseline']),
-      deps.store.listQuestions(m.id),
-      deps.store.listAnswers(m.id),
-    ]);
-    const qById = new Map(questions.map((q) => [q.id, q]));
-    const answerByQ = new Map(answers.map((a) => [a.questionId, a]));
-    const baselineByQ = new Map(
-      scored.filter((r) => r.prediction.role === 'baseline').map((r) => [r.question.id, r.score.itemAcc]),
-    );
-    for (const r of scored) {
-      if (r.prediction.role !== 'primary' || r.prediction.fallback) continue;
-      if (r.question.kind !== 'anchor' && r.question.kind !== 'adaptive') continue;
-      const q = qById.get(r.question.id);
-      const a = answerByQ.get(r.question.id);
-      if (!q || !a) continue;
-      rows.push({
-        mimicId: m.id,
-        itemKey: q.itemKey ?? null,
-        facetIds: q.facetIds,
-        domain: q.domain,
-        type: q.type,
-        answer: a.value,
-        nOptions: q.options.length,
-        primaryItemAcc: r.score.itemAcc,
-        primaryLogLoss: r.score.logLoss,
-        baselineItemAcc: baselineByQ.get(q.id) ?? null,
-        latencyMs: a.latencyMs,
-      });
-    }
+  for (const r of sources) {
+    if (r.role !== 'primary' || r.fallback) continue;
+    if (r.question.kind !== 'anchor' && r.question.kind !== 'adaptive') continue;
+    rows.push({
+      mimicId: r.mimicId,
+      itemKey: r.question.itemKey ?? null,
+      facetIds: r.question.facetIds,
+      domain: r.question.domain,
+      type: r.question.type,
+      answer: r.answer.value,
+      nOptions: r.question.options.length,
+      primaryItemAcc: r.itemAcc,
+      primaryLogLoss: r.logLoss,
+      baselineItemAcc: baselineByQ.get(r.questionId) ?? null,
+      latencyMs: r.answer.latencyMs,
+    });
   }
   const stats = computeItemStats(rows, deps.clock());
-  if (stats.length) await deps.store.putItemStats(stats);
+  await deps.store.replaceItemStats(stats);
+  invalidateItemStatsCache();
   return stats.length;
 }
 
@@ -349,7 +340,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
     const cap = cfg.selector.type === 'voi' ? cfg.selector.exposureCap : 1;
     targetDetails = targetFacets(belief, facets, 5, cap);
     targets = targetDetails.map((t) => t.id);
-    avoid = facets.filter((f) => (belief.facets[f.id]?.exposure ?? 0) > cap).map((f) => f.id);
+    avoid = facets.filter((f) => overExposed(belief, f.id, cap)).map((f) => f.id);
     quota = domainQuota(belief, mix, n);
   } else {
     const counts = facetCounts(loaded.questions);
@@ -366,13 +357,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
       )
       .slice(0, 5)
       .map((f) => f.id);
-    const total = mix.core + mix.casual + mix.professional || 1;
-    quota = {
-      core: Math.round((n * mix.core) / total),
-      casual: Math.round((n * mix.casual) / total),
-      professional: 0,
-    };
-    quota.professional = Math.max(0, n - quota.core - quota.casual);
+    quota = splitQuota(mix, n);
   }
 
   const state = buildState(
@@ -613,7 +598,7 @@ export async function runReflection(
   const lastReflected = existing.reduce((a, i) => Math.max(a, i.seqUpTo), 0);
   const learnable = loaded.data.evidence
     .filter((e) => (e.kind === 'anchor' || e.kind === 'adaptive') && e.seq <= seq)
-    .map(toStateEvidence);
+    .map((e) => toStateEvidence(e));
   const newEvidence = learnable.filter((e) => e.seq > lastReflected);
   const earlier = learnable.filter((e) => e.seq <= lastReflected).slice(-20);
   const delta = await reflect(deps.gateway, ctxFor(m, 'reflect', key), {
