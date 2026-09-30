@@ -1,5 +1,13 @@
 import { makeProviders, type ProviderEnv } from '@mimic/adapters';
-import { EMBEDDING_MODEL, type EngineDeps, Gateway, type Job, type JobQueue, ulid } from '@mimic/core';
+import {
+  EMBEDDING_MODEL,
+  type EngineDeps,
+  Gateway,
+  type Job,
+  type JobQueue,
+  type QueuedJob,
+  ulid,
+} from '@mimic/core';
 import { CfKv, R2Blobs, SqlVectors, StoreBudget, StoreCallLog, VectorizeVectors } from './bindings';
 import { retryer } from './busy';
 import { d1Db } from './index';
@@ -23,10 +31,22 @@ export interface MimicBindings extends ProviderEnv {
   INVITE_CODES?: string;
 }
 
+/** Queues' sendBatch limit. */
+const SEND_BATCH = 100;
+
 export class CfQueue implements JobQueue {
   constructor(private readonly q: Queue<Job>) {}
   async enqueue(job: Job, opts?: { delaySeconds?: number }) {
     await this.q.send(job, opts?.delaySeconds ? { delaySeconds: opts.delaySeconds } : undefined);
+  }
+  async enqueueBatch(items: readonly QueuedJob[]) {
+    for (let i = 0; i < items.length; i += SEND_BATCH) {
+      await this.q.sendBatch(
+        items
+          .slice(i, i + SEND_BATCH)
+          .map((x) => (x.delaySeconds ? { body: x.job, delaySeconds: x.delaySeconds } : { body: x.job })),
+      );
+    }
   }
 }
 

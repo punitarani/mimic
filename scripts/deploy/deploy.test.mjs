@@ -18,6 +18,7 @@ import {
   checkPermissions,
   customDomain,
   requiredNames,
+  siteUrl,
   verifyToken,
   workerSecrets,
 } from './preflight.mjs';
@@ -69,6 +70,7 @@ function fakeCloudflare({ zeroTrust = true, deny = [], zones = ['punitarani.com'
         200,
         zones.filter((z) => z === u.searchParams.get('name')).map((name) => ({ name })),
       );
+    if (path === '/workers/subdomain') return reply(200, { subdomain: 'acct' });
     if (path === '/workers/scripts' || (path === '/r2/buckets' && method === 'GET')) return reply(200, []);
     if (path === '/vectorize/v2/indexes' && method === 'GET') return reply(200, []);
     if (path === '/d1/database' && method === 'GET')
@@ -398,12 +400,31 @@ describe('preflight', () => {
   });
 });
 
+describe('siteUrl', () => {
+  it("is the custom domain, or the workers.dev URL on the account's subdomain", async () => {
+    const { cf } = fakeCloudflare();
+    assert.equal(await siteUrl(web, 'prod', cf), 'https://mimic.punitarani.com');
+    assert.equal(await siteUrl(web, 'preview', cf), 'https://mimic-web-preview.acct.workers.dev');
+    // A dry run has no credentials.
+    assert.equal(await siteUrl(web, 'preview'), null);
+  });
+});
+
 describe('smoke', () => {
   const site =
-    (labStatus, labLocation = 'https://team.cloudflareaccess.com/cdn-cgi/access/login') =>
+    (
+      labStatus,
+      labLocation = 'https://team.cloudflareaccess.com/cdn-cgi/access/login',
+      card = 'https://mimic.punitarani.com/share-card.png?v=1',
+    ) =>
     async (url) => {
       const path = new URL(url).pathname;
-      if (path === '/') return new Response('<h1>Build your mimic</h1>', { status: 200 });
+      if (path === '/')
+        return new Response(`<meta property="og:image" content="${card}"/><h1>Build your mimic</h1>`, {
+          status: 200,
+        });
+      if (path === '/share-card.png')
+        return new Response(new Uint8Array(8), { headers: { 'content-type': 'image/png' } });
       if (path === '/api/health') return Response.json({ ok: true });
       return new Response(null, { status: labStatus, headers: { location: labLocation } });
     };
@@ -416,6 +437,17 @@ describe('smoke', () => {
     await assert.rejects(
       smoke('https://mimic.punitarani.com', { fetchImpl: site(200), attempts: 2, delayMs: 1, log: quiet }),
       /the lab is public/,
+    );
+  });
+
+  it("fails when the link preview's image isn't on the deployed host", async () => {
+    await assert.rejects(
+      smoke('https://mimic.punitarani.com', {
+        fetchImpl: site(302, undefined, 'http://localhost:3000/share-card.png?v=1'),
+        attempts: 1,
+        log: quiet,
+      }),
+      /og:image is http:\/\/localhost:3000/,
     );
   });
 

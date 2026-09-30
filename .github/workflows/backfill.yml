@@ -1,7 +1,7 @@
 # Run predictors over questions served before they existed (ADR-0024), against prod, from the Actions tab:
 # Actions → Backfill → Run workflow. A dry run unless "enqueue" is checked: it prints the missing count per scope and
 # a cost estimate from what the model has cost so far, and how its failures split between unusable output and failed
-# calls. Enqueued predictions run at "rate" a minute (ADR-0027). Re-run the dry run to watch the count fall to 0.
+# calls. Enqueued predictions run at "rate" a minute (ADR-0034). Re-run the dry run to watch the count fall to 0.
 
 name: Backfill
 
@@ -22,7 +22,7 @@ on:
         type: string
         default: '30'
       retry_failed:
-        description: Also redo failed calls (timeouts, rate limits, provider errors); unusable output is kept
+        description: Also redo failed calls (rate limits, provider errors); unusable output and timeouts are kept
         type: boolean
         default: false
       enqueue:

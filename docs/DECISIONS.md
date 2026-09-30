@@ -378,7 +378,388 @@ landing page's button carries it to `/new`.
   hydration only fills the field in.
 - Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
 
-## ADR-0027 — Backfill accuracy: failed calls are retried, not scored as the model failing; paced runs (2026-09-30)
+## ADR-0027 — Value-of-information selection, belief-driven generation and cross-person item statistics (2026-09-30)
+
+The adaptive loop asked what the predictor was unsure about. That over-selects noisy questions, ignores what the
+person's own answers contradict, ignores where the mimic is actually wrong, and learns nothing from other people.
+`docs/SELECTION.md` sets out the replacement and the research behind it (adaptive testing, expected information
+gain, BALD, the digital-twin mega-study, response-time evidence, survey satisficing, hierarchical priors). This
+ADR records the decisions.
+
+- **Belief state** (`packages/core/src/belief.ts`): per facet, uncertainty (trait-read entropy and confidence),
+  conflict (Jev vs psychometric reads, superseded insights, repeat flips, torn answers), weakness (the sealed
+  primary's recent error on the facet, shrunk toward the person's overall error), coverage and exposure; per
+  domain, share and weakness; per person, median latency, speeding and straightlining. Pure and deterministic;
+  never in a prompt or a state.
+- **`voi` selector** (`selector.type = 'voi'`): `info + λ·gap + β·conflict + γ·weakness + π·(pop − ½) − μ·redundancy
+  − ν·burden`, with exposure control (a facet may take at most 35% of the adaptive questions once 4 are answered).
+  `info` is on one scale per selection: posterior-weighted hypothesis mutual information when any candidate has
+  ≥ 2 hypothesis predictions (0 for a candidate whose exploration calls failed), else predictive entropy for every
+  candidate. Exposure control is shared with the generator (`overExposed`) and starts after 4 adaptive answers.
+  The chosen question's sealed primary is still the plain-state prediction from the batched call. The winning
+  score's components go to `questions.selection_json`.
+- **Persona posterior.** The chosen question's per-hypothesis predictions are stored as `role = hypothesis` rows
+  tagged `{set seqUpTo}:{index}` (`predictions.hypothesis`), with their states in R2 like every other prediction
+  (ADR-0010). They are never scored. On each serve the weights are recomputed from those rows and the answers
+  given since the set was written (uniform prior, likelihoods floored at 1e-4). `hypotheses.refresh` now runs
+  for `voi` as well as `bald`. Backfill and the missing-shadow repair ignore hypothesis rows.
+- **`gen.v2`**: targets are the five facets with the highest need, each with why (unexplored, uncertain,
+  conflicted, weak) and the person's current reading, so the generator pitches trade-offs at that reading (the
+  adaptive-testing rule that an item is most informative where its difficulty matches the estimate). Facets over
+  the exposure cap are listed to avoid; the domain quota is tilted toward the weakest domains. Pooled candidates
+  count toward coverage so a refill does not pile onto facets the pool already has.
+- **Latency hints** (`stateBuilder.latencyHints`, builder `full.v2`): evidence carries `pace: quick | slow` for
+  answers under half or over twice the person's median latency over the sealed evidence, costed against the
+  budget as rendered. A latency of 0 means "not recorded" everywhere (no pace, never speeding). Deterministic
+  from exported data (`answers.latency_ms`), so replay still reproduces states. Optional and undefaulted in the schema,
+  so configs written before it keep their hashes (v3 is pinned in a test next to v4).
+- **Item statistics** (`item_stats`, migration 0003, `stats.refresh` from the cron hourly): aggregate rows per
+  `item_key` and per `facet | domain | type` archetype over research-consented dev-split mimics, read in one join
+  query and written by replacing the whole table atomically, so a deleted mimic or a withdrawn consent drops out
+  at the next run and no stale key survives. Groups with fewer than 5 people are never written, so no stored row
+  is one person's numbers. `pop(q)` is `½·answer entropy + ½·baseline error` for items, or the mean over the
+  question's facets' archetypes of `½·surprise + ½·baseline error`, shrunk toward ½ with a prior of 20 answers.
+  It ranks candidates only, never enters a prompt or a state (PLAN §3.8), and its weight π is bounded. The test
+  split never feeds it. `/next` reads the table through a per-isolate cache with a 5-minute TTL.
+- **Guardrails against getting worse with use**: every term is bounded; coverage, uncertainty and conflict decay
+  on their own; the exposure cap stops a noisy facet from monopolising a session; weakness is prequential; burden
+  grows with session length; population statistics are a shrunk, bounded prior that cannot override the person's
+  own terms and are reported as a separate ablation (`pnpm eval -- select --selector entropy,voi` and
+  `--no-population`).
+- **Default config `cfg.default.v4`** = v3 + `voi`, `gen.v2` and latency hints. Mimics created under v1–v3 keep
+  their configs. Not done: one-step lookahead EIG on the pool (exact but |pool| × |options| Jev calls), a shared
+  bank of generated questions (needs a leakage check), Twin-2K-500 item statistics as a cold-start prior.
+
+## ADR-0028 — Prediction prompt variants, the eval loop and GEPA-style optimization (2026-09-30)
+
+`docs/OPTIMIZATION.md` is the design; this records what was built and the choices made.
+
+**Prompt components and variants.** The prediction prompts are named text components
+(`packages/core/src/components.ts`): the LLM predictor's system prompt and user template, the evidence line of the state
+text, and Jev's instructions and criteria templates. The incumbents render byte for byte what the old literals did
+(pinned by a test). A registered variant is addressable as `llm:<model>@<version>` or `jev:<model>@<version>`
+(`parsePredictorId`), so it can be a config's primary or shadow, and `pnpm backfill` can run it over served questions
+on the primary's sealed states. `predictions.prompt_version` now comes from the predictor ID instead of a literal.
+Without a suffix nothing changes: the IDs, prompts and config hashes of v1–v3 are untouched. Variants are mirrored to
+`docs/prompts/variants/`. A variant may also set harness options: reasoning effort, max tokens, an output schema with
+a short rationale before the probabilities, and Jev receiving the state as the LLMs' text rendering.
+
+**Evaluator.** `mimic-eval evaluate` scores candidates on sealed instances: each served question with its state rebuilt
+as served (ADR-0017), or, for Twin-2K-500 people, their first k answers against the held-out wave. Each record carries
+log loss, item accuracy, Brier, the stored baseline's accuracy on the same question, and textual feedback (the answer,
+the person's reason, the profile-only guess, related earlier answers, repeat agreement). `--from stored` reports on the
+predictions already stored, with no model calls, and fits a temperature per predictor, shrinkage toward the baseline
+and Jev + LLM log-linear pools on dev people, checked on test people.
+
+**Optimizer.** `mimic-eval optimize` is a TypeScript GEPA loop over the real engine code (no Python, no second copy of
+the prompts): Pareto parent sampling over per-instance validation scores, one component rewritten per iteration by a
+reflection model reading a minibatch of cases, acceptance only when the child beats its parent on the minibatch by
+more than the measured noise floor, then a full validation pass. Choices:
+
+- *Objective:* −log loss per question, so calibration counts; a failed output scores as a uniform guess minus 1 nat.
+- *Splits:* dev people train and validate (by person with 6 or more dev people, otherwise by question); test people
+  are a holdout evaluated once, after selection (PLAN §12.4). "Improved" needs the validation gain above twice the
+  noise standard error, a 90% bootstrap CI above zero, and no loss on the holdout beyond that margin.
+- *Leakage lint:* a child is rejected if it adds a 6-word sequence from any question, reason or insight in the data, or
+  an identity detail (name, location, employer, fact). Instruction-only optimization with no real-person demos keeps
+  invariant 8.
+- *Reflection model:* `anthropic/claude-sonnet-5.5` by default ($2/$10 per million tokens at the time), low reasoning
+  effort. It is offline tooling, logged through the gateway as `eval.reflect`, never in a production config.
+- *Budgets:* hard caps on predictions (`--max-metric-calls`, default 400) and dollars (`--max-usd`, default 2); an
+  iteration that could not be validated within either is not started. Runs are resumable from `--run-dir`.
+- *Cost:* Jev components are the default target because Jev bills input only (about $0.0001 per question), so a run
+  is dominated by reflection calls.
+- *One person per reflection:* each minibatch is drawn from one person, and `diagnose` makes one call per person, so
+  no prompt mixes people's answers (invariant 8). Names are left out of the cases as well. These are offline analysis
+  calls on consented, scrubbed data, and their output passes the leakage lint before it can reach a product prompt.
+- *Tooling prompts are versioned:* the reflection and diagnosis prompts (`optimize.reflect.v1`,
+  `optimize.diagnose.v1`) live in `packages/eval/src/optimize/reflect.ts`, are recorded on each run and mirrored to
+  `docs/prompts/optimize/` with a sync test. A reply that breaks a rule gets one repair turn naming the problems.
+- *Transport failures are not scores:* predictors label a failure `transport` or `output`. Only the failed questions
+  are retried once. A transport failure is never cached. If it persists, the optimizer stops gracefully rather than
+  let an outage decide an acceptance, the Pareto front or the holdout; the run can be resumed. A malformed output is
+  the candidate's fault and is scored as a failure.
+- *Batching and margins:* Jev questions that share a state go in one request, split only near the 32K context. The
+  minibatch margin uses the size of the minibatch actually drawn. With six or more dev people, a balanced, seeded
+  half of them validate. A run directory refuses to resume against different data, since exports re-salt IDs.
+- *Validation at the edges:* `PipelineConfig` rejects an unregistered or incumbent-aliased `@<version>`, so `/lab`
+  can't register a config that would break `/next`. `pnpm backfill` checks a version against
+  `docs/prompts/variants/` before enqueueing. Published metrics are compacted to fit one D1 statement; the full report
+  is in R2.
+
+**Shipping.** A winner is never deployed by the optimizer. It writes the candidate and a `PREDICT_PROMPTS` entry to
+paste; registering it is a code change reviewed like any other, then `pnpm backfill --predictor <id>@<version>` gives a
+within-person comparison on identical sealed states in `/lab`, and promotion to primary goes through a config and an
+experiment arm. Calibration post-processing is reported but not applied online yet (a later config field).
+
+**Where it runs.** `.github/workflows/optimize.yml` (Actions → Optimize), like the backfill: export prod (consented,
+scrubbed), optionally add Twin-2K-500 people, report on stored predictions for free, and optionally optimize. Only
+aggregates and prompt text leave the runner: the step summary, `/lab`, and an artifact with the candidate. Hugging
+Face is blocked in the Claude Code environment, so the Twin step runs only in Actions and is best-effort there.
+
+## ADR-0029 — Identity search: plain queries, the person's link, a name filter and search again (2026-09-30)
+
+Two real people tried identity search in prod and neither was offered: a software engineer with a rare name got two
+strangers, and a recent graduate with a common name got nothing. Replaying their intakes against Exa found the causes.
+
+- **Quoted names.** Every query was `"{name}" …`, as PLAN §9.2 suggested. Exa's people index is semantic and has no
+  phrase operator: the quoted query returned strangers (both engineers, neither named like the person) or zero
+  results. Unquoted, the engineer is Exa's first result for every variant tried. Queries are now plain descriptions
+  that lead with the name: `{name}, {occupation} at {employer}, {location}`, the same without the location, and the
+  name alone. The graduate's profile shows up when the query includes her school or field; the name alone is buried
+  under namesakes.
+- **The link was never used.** Intake says a link "makes finding you much more accurate", but search ignored it. Now
+  the link is read with Exa `/contents` (a LinkedIn URL resolves to the same person entity as search; any other page
+  gives its title and text) and that profile is always kept and listed first. It's logged as `identity.lookup`.
+- **A merge that favoured the first query.** Results were concatenated in query order and cut to 8 before Jev saw
+  them. They're now merged by reciprocal rank, deduped by profile URL and cut to 10, the most the screen lists.
+  `profileKey` (`@mimic/core/links`, shared with the browser) ignores the scheme, `www.`, a trailing slash and
+  tracking parameters, and treats every LinkedIn host (country and mobile) as one with case-insensitive paths.
+  Other query parameters count (`profile.php?id=…`).
+- **No name check.** Strangers were offered. A profile with no name part in common with the intake is dropped,
+  ignoring accents, apostrophes (O'Brien = OBrien), other punctuation and suffixes (Jr., PhD). A last initial that
+  ends the name counts, since LinkedIn shows "First L." outside someone's network, which is exactly how the
+  graduate's profile appears; a middle initial doesn't.
+- **Blank fields.** Intake stored a blank occupation as `''`, and `??` let it hide the employer from every query.
+  Blank optional fields are now absent, and queries use `||`.
+- **A cache that kept failures.** The KV key covered only name, location and occupation, and an empty or partial
+  result was cached for 7 days. The key is now `search:v2:` over every intake field plus the link. Only complete,
+  non-empty results are cached. Hard delete removes every key a mimic may have written, including the old format.
+- **No way back.** The screen told people to add a link "when you start", after they had started. "Search with a
+  link" (`POST /api/mimics/:id/identity/search`) now works while a choice is pending, with search consent, for up to
+  4 distinct links. It moves `identity_state` to `searching` in one conditional statement
+  (`Store.transitionIdentity`), so two requests at once start one search. Then it marks the open candidates
+  `superseded`, puts the link first in `links`, and enqueues `identity.search` with an `attempt`, which gets its own
+  ledger key.
+  - `superseded` is a new candidate status. Those candidates weren't judged, so they never read as "not me"
+    (`rejected`) in the data.
+  - If the enqueue fails there is no ledger row for the cron to requeue, so the candidates and state are put back.
+  - Only the newest link's profile leads the list and is tagged "Your link".
+  - Confirming also moves the state in one statement, from `candidates` only, and only a candidate from the latest
+    search can be confirmed. Status changes are one statement each, not one per row.
+  - A redelivered search job that finds its candidates already in place finishes the move to `candidates`, so a
+    run that failed after inserting them doesn't leave the person on the spinner.
+- **Intake.** "Employer" is now "Employer or school", since a school is what finds a student. The column is still
+  `employer`, and states and prompts are unchanged.
+
+Jev ranking was already sound given the right profile: 0.93 and 0.68 for the two people, with at most 0.49 for
+anyone else. Live after the change, five intakes for the two people (different wording, with and without the
+employer or school) found the right profile every time: first in four, second in one. In that one, the school was
+entered by a short name that is also a nearby city, and Jev preferred a local namesake. The screen therefore has no
+"likely you" badge; order alone carries the ranking. Cost is unchanged at about $0.021 per search, 3 Exa queries
+plus 10 Jev calls, and $0.001 more for a link.
+
+The picker is a radio group (select, then "This is me"). Profiles below p = 0.2 are behind "Show more". The link
+search sits under the list and on the "couldn't find" screen.
+
+## ADR-0030 — Location and occupation autocomplete on `/new` (2026-09-30)
+
+The location and occupation fields on `/new` suggest as you type. A location can be a city, a state or province, or a
+country: "Cambridge, Massachusetts, United States", "Bavaria, Germany" or "Portugal". Suggestions only fill the text
+field, and anything typed is kept, so a village or a title that isn't listed still works. The API and the `mimics`
+columns don't change: both fields are still free text.
+
+This departs from PLAN §9.1, which asked for "city and country". A country-only location makes the identity queries
+(`"{name}, {role}, {location}"`, ADR-0029) and the baseline's context less specific, so the hint asks for a city first
+and a state or country is the fallback for people who don't want to give one.
+
+- **Data.** `apps/web/scripts/autocomplete/gen.mjs` (`pnpm --filter @mimic/web gen:autocomplete`) writes two static
+  files to `apps/web/public/autocomplete/`, plus `lib/autocomplete-sources.json`, which is the attribution the form
+  shows. All three are committed and deterministic. The script's directory is its own package, outside the
+  workspace. It installs its ~80 MB of source data only when run, so CI and deploys never download it.
+  - `places.v1.json` (~350 KB gzipped) holds 250 countries and 5,076 subdivisions from `@countrystatecity/countries`
+    (dr5hn, ODbL). It also holds 24,686 cities from GeoNames via `all-the-cities` (CC BY 4.0): those with 15,000+
+    people, plus capitals.
+    - Each city takes its state from the nearest same-named dr5hn city, so the names agree.
+    - The UK keeps only England, Scotland, Wales and Northern Ireland as its subdivisions.
+    - A subdivision that is also listed as a country (Hong Kong SAR, Macau SAR, Puerto Rico, Taiwan, Kosovo) is left
+      out, and so is a city that is its own country (Singapore, Monaco).
+    - A few cities carry the names people type (NYC, SF, Bangalore, Kiev, DC). US, Canadian and Australian states
+      match their abbreviations (TX, ON, NSW).
+  - `occupations.v1.json` holds 6,813 titles from O*NET 30.3 "Sample of Reported Titles" (USDOL/ETA, CC BY 4.0).
+    Titles longer than the 120 characters the server accepts are dropped. A short list O*NET lacks is added:
+    student, founder, retired, data scientist… O*NET isn't on npm, so pass its text file with `--onet`.
+- **Search** (`apps/web/lib/autocomplete.ts`). A field fetches its file the first time it is focused, validates it
+  (zod/mini), indexes it (~150 ms once) and searches in memory. A lookup takes about 1 ms because only names with a
+  word starting with the query's first two letters are scored.
+  - Matching folds case, accents and letters like ł, ø and ı (`lib/norm.mjs`, which the generator shares), so
+    "lodz" finds Łódź.
+  - Tiers, best first: the start of a name or alias; a word inside a name; then a name followed by its region or
+    country ("cambridge ma", "paris, france") or the words in any order ("engineer software").
+  - Within a tier, bigger places rank first. A whole-name match counts three times its population, except for
+    states, and a state weighs 0.4 of the population of its cities. So "new york" puts the city first and
+    "georgia" the country.
+  - Country codes are used only to narrow a search ("paris fr"), never to match on their own. If they did, "ma" or
+    "to" would put Morocco or Tonga first.
+- **UI** (`apps/web/components/autocomplete.tsx`). A WAI-ARIA combobox on downshift's `useCombobox`:
+  - The menu counts as open only while it shows suggestions, so Enter submits the form unless a suggestion is
+    highlighted.
+  - Tab takes the highlighted suggestion; Escape keeps the typed text.
+  - Typing updates the form synchronously. downshift's `onInputValueChange` runs one render late and dropped fast
+    keystrokes.
+  - The browser's own autofill is off on both fields (downshift sets `autocomplete="off"`); its popup would cover
+    the list.
+
+Rejected: a geocoding API (Photon, Mapbox). It sends what people type to a third party and needs a key and a network
+dependency, and this environment's egress blocks it. Serving the data from a Worker route would add ~1 MB to the web
+Worker for no gain.
+
+## ADR-0031 — Link previews (2026-09-30)
+
+A shared link used to unfurl as a bare title ("Mimic") and a generic compass icon: there was no `og:image`, and the
+only icon was an SVG, which iMessage doesn't use. Every route now shares one preview.
+
+- **The card.** The app's `OverlapMark` ("You" and "Mimic") over one question: "How predictable are you?" There's no
+  subtitle, because it can't be read at chat bubble size. The title ("Mimic: a model that predicts how you decide")
+  and the description under the image do the explaining. The description repeats the session's own promise (your
+  mimic guesses before you answer) and claims no accuracy. The same description is now the page's
+  `<meta name="description">`.
+- **Picked with a rubric.** Four gates:
+  - no personal data;
+  - no unbacked claims;
+  - a 1200×630 PNG under 300 KB with an absolute URL, size and alt;
+  - no runtime cost.
+
+  Eight weighted criteria, out of 48: thumbnail legibility, instant clarity, hook, simplicity, brand fidelity, crop
+  safety, contrast on light and dark chat backgrounds, and copy. Eighteen variants were rendered over five rounds,
+  each at full size, in iMessage-style bubbles on dark and light backgrounds, and as an 84 px square crop. An
+  independent blind review scored the finalists, and the fog card beat an ink-field card, 46 to 38. A 2 px rule
+  gives it an edge on white chat backgrounds. The headline fits WhatsApp's centered square crop.
+- **Self-only, so no per-mimic previews.** A mimic's pages get the same card and title as the landing page. A preview
+  never carries a name, answers or traits.
+- **Static assets.**
+  - `public/share-card.png` (about 44 KB) and `public/apple-touch-icon.png` are committed and served by Workers static
+    assets, so the Worker never runs for them.
+  - Pages link each image with a `?v=` content hash, computed in `next.config.ts`, because link previews cache
+    images by URL.
+  - Assets match `_headers` rules on the path alone, and iOS also requests `/apple-touch-icon.png` with no query, so
+    both are cached for a day rather than marked immutable.
+  - We didn't use Next's `opengraph-image` and `apple-icon` file conventions. They inline the PNG into the Worker
+    bundle and answer each request through the Worker with `max-age=0`.
+  - Next ignores file-based icons once metadata sets `icons`, so `icon.svg` moved from `app/` to `public/` too. It is
+    no longer a prerendered route (ADR-0023).
+- **The generator.** `apps/web/scripts/share-card/gen.mjs` (`pnpm --filter @mimic/web gen:share-card`) renders
+  both images. Like the autocomplete generator (ADR-0030), its directory is its own package outside the workspace,
+  so only a run installs Playwright; it needs `playwright install chromium` once.
+  - It renders `OverlapMark` and `Mark` with react-dom/server and colors them with the light theme's tokens, read from
+    `globals.css`, so a change to any of them reaches the images on the next run.
+  - A font that fails to load stops the run instead of drawing a fallback.
+- **The origin is set per environment at build time.** Previews need absolute image URLs.
+  - `scripts/deploy` sets `SITE_URL` for the OpenNext build: the custom domain, or for preview the `workers.dev`
+    URL on the account's subdomain.
+  - `next.config.ts` inlines it into `metadataBase`, so `/new` stays prerendered.
+  - Local builds fall back to `http://localhost:3000`.
+  - The smoke test checks that `/` links a PNG on the deployed host, so a build without `SITE_URL` fails the deploy.
+
+## ADR-0032 — Teaching the mimic directly: `kind = feedback` (2026-09-30)
+
+On the mimic page, the person could only ask the mimic and then check its guess. Those playground answers are a
+clean test set (§9.11) and never enter a state, so nothing the person said there taught the mimic. Now they can also
+pick the right answer themselves, without asking.
+
+- **A new question kind, `feedback`.** "Answer it myself" stores the question (drafted from a scenario or written by
+  hand) and the chosen option in one D1 batch (`Store.recordFeedback`): the question is inserted already answered,
+  `mimics.seq_max` advances, and the answer row is written. It carries no predictions and no `stateAt`, like a
+  repeat. The prompt ID in its provenance is `feedback.v1`. Saving makes no model call.
+- **The mimic learns from it; nothing scores it.** Four predicates in `types.ts` replace the hand-written kind
+  checks. `learnsFrom` (anchor, adaptive, feedback) decides what enters sealed states and `learn.answer` (embedding,
+  trait read, reflection). `isSessionKind` (anchor, adaptive, repeat) decides serving, progress and repeat
+  scheduling. `isScoredKind` (anchor, adaptive) decides fidelity, shadows, backfill, coverage and replay targets.
+  `isPredictedKind` (anchor, adaptive, playground) is what the lab's invariant monitor checks.
+- **Invariant 2 is unchanged.** It covers questions served for the person to answer. Feedback is never served: the
+  person writes the question and its answer together, so there is nothing to predict before it is returned.
+- **Learnable answers still arrive in seq order.** Snapshots, reflection, trait writes (monotonic by `seqUpTo`) and
+  the `everyN` cadence all assume it. The session keeps one question served and prefetched, so feedback often comes
+  while a session question at seq t is still waiting for its answer. In that case the feedback takes seq t, and the
+  same batch moves the open question to the next free seq. Its predictions were sealed below t, so they stay
+  sealed. Two more changes support the move:
+  - `loadMimicDataAt` also pins feedback evidence by answer time. A state then rebuilds exactly at the question's
+    new seq, and feedback given within `STATE_SETTLE_MS` of a serve reaches the next state instead, as derived data
+    does (ADR-0017).
+  - An answer that races the move fails on the unique `(mimic_id, seq)` answer index, and `submitAnswer` records it
+    again at the question's new seq.
+- **Races over seqs.** A serve that loses its seq to feedback (session or playground, `serveAtFreeSeq`) keeps its
+  predictions and takes the next free seq instead of predicting again or returning a 409. The answer that took the
+  seq came after `stateAt`, so replay leaves it out too. A playground question is stored only once predicted, and is
+  discarded if it can't be served, so nothing is left orphaned. `submitFeedback` retries up to 3 times.
+- **Idempotent, and strict about it.** A retry with the same key returns the stored result. The same key with a
+  different question or answer is refused. Choice and scale answers map to the renormalized keys by position;
+  yes/no answers map by key in any order.
+- **Budget.** Learning from feedback costs what learning from a session answer does. Once the budget is spent,
+  `learn.answer` keeps the evidence, skips the model reads and still writes the snapshot, instead of failing until
+  the job is dropped. This also covers the session answer that crosses the budget. The response says
+  `learns: false`, and the page says the answer is saved rather than learned.
+- **Snapshots.** A snapshot counts as current only if it holds every answer (same count, seq at least as high).
+  Before, only the highest seq was compared, which missed an answer that arrived below it. That already happened
+  when an asked question was answered while a session question below it was still open.
+- **Repeats.** `minGap` counts session questions, not seqs. Questions written on the mimic page (feedback, and
+  playground before this change) no longer shorten it.
+- **Offline replay.** A checkpoint's state includes feedback given before it, as it did online, because the traits
+  and insights as of that time already learned from it. The as-of time comes from the next predicted question, never
+  from a feedback row. Existing data has no feedback, so every stored state and replay result is unchanged.
+- **Privacy.** Feedback text is free text the person wrote, like playground prompts and `why`. Research exports keep
+  it under `consent_research`, as they keep those (PLAN §12.4). Hard delete covers it with the rest of the evidence.
+- **API.** `POST /api/mimics/:id/ask` takes `{ feedback: { question, answer, why?, idempotencyKey } }`.
+  `GET /api/mimics/:id/ask` lists what was asked and taught, with counts (taught, checked, matched), reading only
+  playground and feedback rows. Draft validation errors read as sentences a person can act on ("Two options say the
+  same thing."). The word limit is shared with the client (`@mimic/core/limits`).
+- **UI.**
+  - The draft editor can add and remove options (2–5), switch between options and yes/no (the written options
+    survive the switch, and a trip to answering and back), and start from a blank question.
+  - Answers use the session's option buttons and scale, with 1–5, Y/N and Enter only when focus is on an option or
+    on no control. Match, close and miss wording is shared with the session (`verdictOf`).
+  - Each new card moves focus to its first control, with the usual visible focus ring.
+  - Opening a question from the history waits for any request in flight. An asked question uses one idempotency key
+    per pick, and shows the stored answer if an earlier attempt already saved one.
+  - `mimic.json` (`mimic/1`) accepts `kind = feedback` in its evidence.
+
+## ADR-0033 — Persona.md: a curated, portable portrait for any agent (2026-09-30)
+
+`mimic.json` is a research artifact: it lets a predictor run against a person's state. People also want to bring
+themselves to the agents they already use, which read prose, not trait vectors. `Persona.md` is that file: values,
+beliefs, opinions and biases, and above all how the person thinks and decides. PLAN §8.3 describes it.
+
+- **A view, not new evidence.** The file is built from the mimic's current data, the latest `persona.v1` draft and
+  the person's curation. The deterministic sections need no model call, so the file downloads even before a draft
+  exists. Curation filters and rewords the file only; nothing flows back into states, traits or predictions, so
+  invariants 1 and 3 are untouched.
+- **Live data, not the snapshot.** An earlier version read the latest snapshot through `exportMimic`, which writes one
+  when evidence has moved. Every persona request could then write a snapshot mid-learning (freezing traits and
+  insights from before the last answer, after which the debounced `snapshot.write` job had nothing to do), race that
+  job for the version number, and keep showing a fact the person had removed until their next answer. The persona
+  now reads the same fields live (`mimicDocParts`, shared with `buildMimicJson`), so viewing writes nothing.
+- **One new prompt, `persona.v1`.** It runs on the reflector's model (the generator's when reflection is off) at
+  `reasoning.effort: medium`, since it's a one-off per request and quality matters more than latency. Not adding a
+  config field keeps every existing config hash valid; the draft row records the evidence seq it covers, config
+  hash, prompt version, model and model snapshot instead (invariant 4). The call goes through the gateway
+  (invariant 5) and the budget guard.
+- **Citations or nothing.** Like the reflector, every statement must cite answers the writer was shown, or it is
+  dropped, and at most six survive per section. Each statement is validated on its own, so one malformed item
+  doesn't sink the rest. A statement with a single citation is marked tentative whatever confidence the model
+  reports. Citations in the file point into the decision record at its end, and are shown only for answers that are
+  in the file. The model is told to cite only in `evidenceSeqs`; inline references like "(#1, #2)" (seen in the first
+  live run) are stripped, and bare numbers such as "(2019)" are left alone.
+- **Data minimization.** The writer gets location, occupation, sourced facts other than `headline` (a search
+  result's page title, which usually carries the name), tendencies, insights and answers. The display name and each
+  part of it are redacted anywhere in that input. Draft text that mentions a fact the person later removes is left
+  out of the file, and removing a fact also hides identical copies stored by another source.
+- **Curation keys.** Draft items are keyed by content hash (`summary:` and `st:`), so a rewrite that changes one
+  drops its edit and never lets an old edit mask new text. Everything else is keyed by a stable identity (`fact:`,
+  `trait:{facet}`, `ex:{seq}`, `id:location`), and those keys are never pruned, so an item the person hid stays hidden
+  when it drops out and comes back (a facet whose certainty dips, for example).
+- **Ordered saves.** The page sends one save at a time and flushes an unsent change when the person leaves (a
+  keepalive request). Each save carries an increasing `rev`; the upsert applies only when it is newer than the stored
+  one, so a slow or late request can never overwrite a newer curation.
+- **Shared labels.** Fact predicate labels and certainty tiers live in `@mimic/core/labels` (client-safe, like
+  `@mimic/core/links`), used by the model panel, the identity page and the file, so the three agree.
+- **Storage.** `persona_drafts` (append-only, one row per draft) and `persona_curations` (one row per mimic, with
+  `rev`), migration `0004_persona`. Both are in the hard-delete scope. Research exports always drop curations, the
+  person's own writing, and drop drafts whenever identity is scrubbed, since drafts are free text written from
+  location and sourced facts.
+- **Synchronous.** Drafting is a route handler call like the playground's, not a queue job: the person is waiting
+  on the page for it, and it is one LLM call.
+
+## ADR-0034 — Backfill accuracy: failure kinds, bounded retries, paced and deduplicated runs (2026-09-30)
 
 After the ADR-0025 backfill, the lab showed Qwen3.8 Flash with 142 failed predictions (78%) and a p50 of 35 s, and
 MiMo V2.6 Flash at 7.8 s. Some of that is the models, and some was how the backfill ran and what it recorded.
@@ -395,53 +776,67 @@ measured:
 | GLM 5.3 Flash | 1–3.5 s | 8 of 8 valid |
 
 So Qwen's latency is real at `effort: low`: its provider doesn't cap reasoning at that effort. Its failures were
-mostly the 3000-token cap, recorded as "invalid JSON output". Whether to run it with more tokens, with reasoning
-off (a different predictor), or not at all is a separate decision; this ADR doesn't change the predictor.
+mostly the 3000-token cap, recorded as "invalid JSON output". Whether to give it more tokens, run it with reasoning
+off (a prompt variant, ADR-0028) or drop it is a separate decision; this ADR doesn't change the predictor.
 
 **What was the backfill.**
 
-1. **Failed calls were stored as the model failing, forever.** A timeout, a 429 or a provider error made
-   `LlmPredictor` return a failed prediction, and `runShadow` stored it and marked the job done. Neither the queue
-   nor a backfill re-run would retry it: the missing rule counted any row, and the ledger key had no run ID. The
-   budget guard did the same: a backfill on a mimic near its $0.50 session cap stored "Budget exceeded" failures.
-2. **Latency counted retries.** Adapters timed a call from before the first attempt, so a success after a 429 or a
-   90 s timeout included the failed attempt and the backoff.
-3. **No pacing.** Each run enqueued every prediction at once. Queues then ran up to 10 per batch and scaled out
-   consumers, which is what draws rate limits and slower answers. It also queued ahead of live sessions' jobs. A
-   batch of 10 could also exceed the six connections a Worker invocation may have waiting for response headers, and
-   the wait would count as latency.
+1. **Failed calls were stored as the model failing, forever.** A 429 or a provider error made `LlmPredictor` return
+   a failed prediction, and `runShadow` stored it and marked the job done, so nothing ever retried it. The budget
+   guard did the same on a mimic near its $0.50 session cap.
+2. **Latency counted retries.** Adapters timed a call from before the first attempt, so a success after a 429
+   included the failed attempt and the backoff.
+3. **No pacing.** Each run enqueued every prediction at once, which draws rate limits and slower answers, and queues
+   ahead of live sessions' jobs.
 
 **Decisions.**
 
-- **A failed call is thrown, not stored** (`PredictionResult.retryable`, `isTransientError`). Timeouts, network
-  errors, transient HTTP statuses (408, 425, 429, 5xx, 524, 529) and malformed provider responses are retryable; a
-  200 whose body is an OpenRouter `error` becomes an `HttpError`. The queue retries with backoff. If every attempt
-  fails, the question stays missing: the cron's missing-shadow repair (live) or a re-run (backfill) fills it later
-  on the same sealed state. The invariant monitor counts it as incomplete meanwhile, which is accurate. This
-  applies to live shadows too. The budget guard and other 4xx statuses are not retryable and are stored as before.
-- **Only unusable output is the model's failure**: invalid JSON, options not covered, and now `output cut off at
-  max_tokens (…)` when `finish_reason` is `length` (`OUTPUT_FAILURE`, `isOutputFailure`). These are stored and
-  never retried, since retrying until one parses would flatter the model.
-- **Latency is the attempt that answered** (`requestJson` returns `latencyMs` and `attempts`), for chat, Jev and
-  embeddings. Earlier attempts and backoff are retry overhead. Their calls are still in `model_calls`.
-- **Backfill predictions are their own job, `backfill.shadow`**, keyed by run ID, and are logged as
-  `predict.backfill`. `backfill.predictor` now enqueues them directly for every (consented) mimic, spaced `60 /
-  perMinute` seconds apart as one stream (default 30 a minute per predictor, `--rate`), via `delaySeconds`.
-  `backfill.mimic` does the same for one mimic from `offsetSeconds`; the CLI uses it for `--mimic`, staggering
-  mimics after each other. A run enqueues at most 5,000 predictions and delays at most 12 h; the rest wait for a
-  re-run. Questions served in the last 15 minutes (`PENDING_WINDOW_MS`) are left to the live shadows, so a
-  backfill never races a live shadow for the same predictor.
+- **Failures have a kind, stored with the prediction** (`predictions.error_kind`, main's `errorKind` plus one):
+  - `output`: the model answered but the answer was unusable. Invalid JSON, options not covered, Jev's missing or
+    wrong-typed answer, and now named cutoffs: `output cut off at max_tokens (…)` when `finish_reason` is `length`,
+    and the provider's content filter.
+  - `timeout`: the model didn't answer within the call's timeout. Chat calls no longer retry a timeout in-request
+    (`retryTimeouts: false`): a retry bills a second generation and would record only the fast answers.
+  - `transport`: the call failed before the model answered. `retryable` says whether it may succeed later: rate
+    limits, 5xx, network errors, malformed responses, a 200 carrying an OpenRouter `error` body or a choice with
+    `finish_reason: error`. The budget guard and other 4xx are not.
+  - `output` and `timeout` are the model's: stored at once, counted, never redone. The optimizer still treats a
+    timeout as transient, as before.
+- **Retries are bounded.** A retryable failure makes `runShadow` throw so the queue retries it with backoff. On the
+  last attempt (`MAX_JOB_ATTEMPTS`, from the ledger) it's stored as a `transport` failure instead. The cron's
+  missing-shadow repair then sees the row and stops; it also skips a live shadow whose job used up its attempts.
+- **Latency is the attempt that answered.** `requestJson` returns it with `attempts`, and `model_calls.attempts`
+  records how many HTTP attempts each call took, so retry pressure stays visible.
+- **Backfill predictions are `backfill.shadow` jobs, keyed without a run** (`backfill.shadow:{mimic}:{question}:
+  {predictor}`), so the ledger dedupes them across runs. They are logged as `predict.backfill`.
+- **Pacing.** `backfill.predictor` enqueues them for every (consented) mimic, `60 / perMinute` seconds apart as one
+  stream (default 30 a minute per predictor, `--rate`), through `enqueueBatch` (Queues' `sendBatch`, 100 at a
+  time). `backfill.mimic` does the same for one named mimic from `offsetSeconds`; the CLI staggers several.
+- **Run limits.** A run enqueues at most 5,000, and nothing delayed past 12 h (`backfillLimit`). The CLI says when
+  a run stops there, and a re-run enqueues the rest. The options are part of the job keys, so a job the cron
+  requeues from the ledger keeps its rate.
+- **In flight.** Each prediction is written to the ledger as `queued` (a new status) due at its time before it's
+  sent. The missing rule, in the engine and the CLI, skips a question whose live or backfill shadow job is queued,
+  running or being retried, and not stale. So a re-run never doubles the pace, and neither the cron nor a backfill
+  races a live shadow. A queued job still not done 15 minutes after its time is stale, and the cron requeues it,
+  which also repairs a lost message.
+- **One shadow per question and predictor.** The partial unique index `predictions_shadow_uq` makes a concurrent
+  second run of the same shadow a no-op (`Store.insertShadow` returns whether it stored). The migration first
+  keeps the best of any existing duplicates: ok first, then the earliest.
+- **Legacy failures are classified in the migration:** Jev's `Error: Expected …`, the two LlmPredictor messages and
+  a missing answer are `output`; anything that timed out is `timeout`; the rest is `transport`.
 - **Backfills are outside the session budget** (`CallContext.budgeted: false`): neither refused by it nor charged
   to `mimics.spend_usd`, so a research backfill can't block a person's session or inflate an arm's spend. The cost
   is still on each prediction and in `model_calls`.
-- **`--retry-failed`** redoes this predictor's failed calls: failed shadows whose error isn't an output failure,
-  such as those stored before this ADR or refused by the budget. `Store.replaceFailedShadows` swaps each one for
-  its new prediction atomically, and deletes only failed shadow rows, never primary or baseline ones.
-- **Queue batches run at most 5 jobs at once**, below the Worker's six-connection limit.
-- **The dry run explains failures.** It splits them into unusable output and failed calls, lists the most common
-  messages, and estimates cost from every charged prediction, unusable output included. It gives the duration at
-  the chosen rate. `packages/eval/test/backfill.test.ts` runs the CLI's SQL against the real schema and checks it
-  against the engine's rule.
-
-Backfill options (`perMinute`, `retryFailed`, `offsetSeconds`) are not in the job keys, so a job the cron requeues
-from the ledger falls back to the defaults: the default pace, no retries of failed calls.
+- **Consent is checked again when each prediction runs**, since a paced run can span hours. Named mimics
+  (`--mimic`) skip the check unless `--consented`.
+- **`--retry-failed`** redoes this predictor's `transport` failures, carried on each job. `insertShadow` deletes
+  the failed row and stores the new one atomically, and deletes only failed shadow rows, never primary or baseline
+  ones.
+- **The dry run explains failures.** It splits them by kind and lists the most common messages. It also reports
+  predictions in flight, estimates cost from every charged prediction (unusable output included), and gives the
+  duration and any run limit at the chosen rate. `packages/eval/test/backfill.test.ts` runs the CLI's SQL against
+  the real schema, checks it against the engine's rule, and checks the CLI's copies of the engine's constants.
+- **Queue batches still run all their jobs at once.** Capping them would make live jobs wait behind slow shadows.
+  Pacing keeps backfill batches small; a live burst larger than six calls waiting on headers can still add a
+  little queueing to a shadow's latency.

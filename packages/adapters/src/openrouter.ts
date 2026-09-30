@@ -96,13 +96,17 @@ export class OpenRouterChat implements LlmClient {
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
     const url = `${this.opts.baseUrl ?? OPENROUTER_BASE}/api/v1/chat/completions`;
-    const { json, latencyMs } = await requestJson({ timeoutMs: 90_000, ...this.opts }, url, {
-      headers: {
-        ...authHeader('authorization', this.opts.apiKey, 'Bearer '),
-        'x-title': this.opts.appName ?? 'Mimic',
+    const { json, latencyMs, attempts } = await requestJson(
+      { timeoutMs: 90_000, retryTimeouts: false, ...this.opts },
+      url,
+      {
+        headers: {
+          ...authHeader('authorization', this.opts.apiKey, 'Bearer '),
+          'x-title': this.opts.appName ?? 'Mimic',
+        },
+        body: this.buildBody(req),
       },
-      body: this.buildBody(req),
-    });
+    );
     const failed = ErrorBody.safeParse(json);
     if (failed.success && !(json as { choices?: unknown }).choices) {
       const { code, message } = failed.data.error;
@@ -112,6 +116,11 @@ export class OpenRouterChat implements LlmClient {
     const r = ChatResponseSchema.parse(json);
     const usage = r.usage ?? {};
     const choice = r.choices[0]!;
+    // The provider failed mid-generation: a failed call, not the model's answer.
+    if (choice.finish_reason === 'error') {
+      const detail = (choice as { error?: { message?: string } }).error?.message;
+      throw new HttpError(502, detail ?? 'the provider stopped with finish_reason "error"', url);
+    }
     return {
       content: choice.message.content ?? '',
       // OpenRouter does not return dated chat snapshots; the serving provider matters (quantization), so record it.
@@ -124,6 +133,7 @@ export class OpenRouterChat implements LlmClient {
         costUsd: usage.cost ?? 0,
       },
       latencyMs,
+      attempts,
       raw: json,
     };
   }
@@ -189,7 +199,7 @@ export class JevDecisions implements DecisionProvider {
   constructor(private readonly opts: OpenRouterOptions = {}) {}
 
   async decide(req: DecisionRequest): Promise<DecisionResponse> {
-    const { json, latencyMs } = await requestJson(
+    const { json, latencyMs, attempts } = await requestJson(
       { timeoutMs: 15_000, ...this.opts },
       `${this.opts.baseUrl ?? OPENROUTER_BASE}/api/alpha/decisions`,
       {
@@ -210,6 +220,7 @@ export class JevDecisions implements DecisionProvider {
         costUsd: r.usage.cost ?? 0,
       },
       latencyMs,
+      attempts,
       raw: json,
     };
   }
@@ -235,7 +246,7 @@ export class OpenRouterEmbedder implements Embedder {
   ) {}
 
   async embed(texts: string[]): Promise<EmbedResult> {
-    const { json, latencyMs } = await requestJson(
+    const { json, latencyMs, attempts } = await requestJson(
       { timeoutMs: 20_000, ...this.opts },
       `${this.opts.baseUrl ?? OPENROUTER_BASE}/api/v1/embeddings`,
       {
@@ -250,6 +261,7 @@ export class OpenRouterEmbedder implements Embedder {
       model: this.model,
       usage: { inputTokens: r.usage?.prompt_tokens ?? 0, outputTokens: 0, costUsd: r.usage?.cost ?? 0 },
       latencyMs,
+      attempts,
     };
   }
 }

@@ -95,7 +95,7 @@ Intake ─► Identity (search → "Is one of these you?" → facts) ─► Anch
 | Primary | The predictor behind the UI and headline (Jev by default). |
 | Shadow | A predictor that runs for comparison only. |
 | Baseline | The primary predictor on a context-only state (no answers). |
-| Question kinds | `anchor`, `adaptive`, `repeat`, `playground`. |
+| Question kinds | `anchor`, `adaptive`, `repeat`, `playground`, `feedback` (ADR-0032). |
 | Fidelity | The headline metric (§9.10). |
 
 ---
@@ -212,12 +212,13 @@ Asynchronous jobs, on Queue `mimic-jobs`:
 
 | Job | Trigger | What it does |
 |---|---|---|
-| `identity.search` | Intake submitted | Exa people search finds candidates; Jev pre-ranks them with a `noul` "same person?" question |
+| `identity.search` | Intake submitted, or "Search with a link" | Exa people search (and a lookup of the person's link) finds candidates; Jev pre-ranks them with a `noul` "same person?" question |
 | `identity.enrich` | Person confirms a candidate | Parallel structured enrichment produces facts with sources |
 | `pool.refill` | Pool drops below 6 | LLM generates candidates; they are validated, gated by Jev, deduped and inserted |
 | `predict.shadow` | Question served | LLM predictors run on the sealed state (§3.1) |
 | `learn.answer` | Answer submitted | Embed the Q&A; Jev trait read; every R answers, reflection and KG update; snapshot (debounced) |
-| `hypotheses.refresh` | After a reflection | BALD only: sample K persona hypotheses |
+| `hypotheses.refresh` | After a reflection | BALD and `voi`: sample K persona hypotheses |
+| `stats.refresh` | Cron, hourly | Recompute the aggregate cross-person item statistics (§12.6a) |
 
 Job rules:
 
@@ -262,7 +263,7 @@ Cold start needs no LLM. The first 10 questions are static anchors, which gives 
 
 ```ts
 export type QType = 'choice' | 'noul' | 'score';
-export type QKind = 'anchor' | 'adaptive' | 'repeat' | 'playground';
+export type QKind = 'anchor' | 'adaptive' | 'repeat' | 'playground' | 'feedback';
 export type Domain = 'core' | 'casual' | 'professional';
 
 export interface Option { key: string; label: string; description?: string }
@@ -351,7 +352,7 @@ export const PipelineConfig = z.object({
 |---|---|
 | Anchors | `anchors.v1`, 10 items |
 | Generator | GPT-6 Luna, low reasoning effort, batch of 12, domain mix core 10 / casual 45 / professional 45 |
-| Selector | `entropy` with λ = 0.3, μ = 0.5 |
+| Selector | `entropy` with λ = 0.3, μ = 0.5 (v1–v3); `voi` since v4: K 4, λ 0.3, μ 0.5, β 0.25, γ 0.25, π 0.15, ν 0.2, exposure cap 0.35 (ADR-0027) |
 | Predictors | Primary `jev:typesafe/jev-1.13`; shadows are the three LLMs |
 | State builder | `full`, 8,000 tokens, retrievalK 12, recentN 6 |
 | Trait reader | Jev, after every answer |
@@ -378,10 +379,12 @@ facts               id, mimic_id, predicate, object, source(intake|search|answer
                     source_url?, confidence, user_state(active|removed), created_at
 questions           id, mimic_id, seq?, kind, type, domain, prompt, options_json, facet_ids_json, repeat_of?,
                     status(pooled|served|answered|discarded), config_hash, prompt_version, generator,
-                    quality_json, created_at, served_at?
+                    quality_json, selection_json?, created_at, served_at?
 predictions         id, question_id, mimic_id, predictor_id, role(primary|baseline|shadow|hypothesis),
                     dist_json, confidence?, state_hash, evidence_seq_max, config_hash, model_snapshot,
-                    cost_usd, latency_ms, ok, error?, created_at
+                    cost_usd, latency_ms, ok, error?, hypothesis?, created_at
+item_stats          key PK, kind(item|archetype), n_people, n_answers, answer_entropy?, baseline_error,
+                    primary_error, surprise, lift?, mean_latency_ms, updated_at   (aggregate only; §12.6a)
 answers             id, question_id, mimic_id, seq, value, why?, latency_ms, revealed_prediction,
                     idempotency_key UNIQUE, created_at
 scores              prediction_id PK, answer_id, top1, item_acc, log_loss, brier, created_at
@@ -402,6 +405,9 @@ experiments         id, name, status, arms_json [{arm, config_hash, weight}], cr
 snapshots           mimic_id, version, r2_key, seq_up_to, created_at
 eval_runs           id, name, spec_json, dataset_hash, status, metrics_json, r2_report_key, created_at
 jobs                key PK, type, status, attempts, last_error, updated_at    (idempotency ledger)
+persona_drafts      id, mimic_id, seq_up_to, config_hash, prompt_version, model, model_snapshot,
+                    draft_json, created_at                                    (persona.v1, §8.3)
+persona_curations   mimic_id PK, json, rev, updated_at                        (the person's choices, §8.3)
 ```
 
 KG node types follow schema.org names where one exists.
@@ -458,6 +464,33 @@ Using a mimic means running any predictor against its snapshot.
 - **Session identity.** A signed, httpOnly `participant_id` cookie. Nothing sensitive goes in localStorage.
 - **On load.** Render from cache immediately, then revalidate.
 
+### 8.3 Persona.md
+
+`mimic.json` is for running predictors. `Persona.md` is for people's own agents: a Markdown portrait that any agent
+can read to represent the person, with decision-making first (ADR-0033). It is a view with three inputs:
+
+1. **The mimic's current data**, in the same shape as `mimic.json` (§8.1) but read live: viewing never writes a
+   snapshot, and a fact the person removes leaves the file at once. The deterministic sections come from it:
+   background (intake and active sourced facts, with sources), measured tendencies (each facet's reading, poles and
+   certainty tier, as in the model panel), cited insights, facets not known yet, and a decision record of the
+   person's real answers and reasons. Repeats are left out of the record.
+2. **The latest `persona.v1` draft** (optional). One LLM call writes a summary and cited statements in seven
+   sections: how they decide, rules of thumb, tradeoffs, values, beliefs and opinions, biases and blind spots, and
+   how they come across. The writer never sees the person's name (redacted wherever it appears), `headline` facts or
+   repeats. The reflector's citation guard applies, limited to the answers the writer was shown. A statement with
+   one citation is marked tentative. Draft text that mentions a fact the person later removed is left out. Drafts
+   store the evidence seq they cover, config, prompt version and model snapshot, and say how many answers have
+   arrived since.
+3. **The person's curation:** the name to use, their own words (first in the file, and they override anything
+   inferred), sections on or off, hidden items, and rewordings of drafted statements. Saves carry an increasing
+   `rev`, and the server ignores one older than what it has, so out-of-order requests can't lose a change.
+
+Curation only filters and rewords the file. It never feeds back into states, traits or predictions. The file opens
+with instructions for the reading agent (reason as this person would, say when the file is silent, don't invent
+facts) and the fidelity numbers, so the agent knows how far to trust it. Citations appear only for answers that are
+in the file. Hard delete covers both tables. Research exports always drop curations, and drop drafts too unless
+identity is kept (`--keep-identity`), since drafts are free text written from location and sourced facts.
+
 ---
 
 ## 9. The learning engine
@@ -467,13 +500,13 @@ Using a mimic means running any predictor against its snapshot.
 Required fields:
 
 - Name
-- Location (city and country)
+- Location: a city, state or country, suggested as you type (ADR-0030). A city is best for identity search, so the hint asks for it first.
 - Attestation: "I'm building a mimic of myself"
 
 Optional fields:
 
 - Occupation
-- Employer
+- Employer or school (students and recent graduates enter their school; stored as `employer`, ADR-0029)
 - One link, such as LinkedIn or a personal site (this improves identity matching a lot)
 
 Optional consents, each a separate checkbox:
@@ -483,9 +516,9 @@ Optional consents, each a separate checkbox:
 
 ### 9.2 Identity resolution and enrichment
 
-1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2–3 query variants: `"{name}" {occupation} {location}`, with and without the employer. Request `numResults` 5–10 with highlights, then merge and dedupe by URL. Cache in KV and store raw results in R2.
+1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2–3 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0029): `{name}, {occupation} at {employer}, {location}`, the same without the location, and the name alone. If the person gave a link, read it with Exa `/contents` too. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
 2. **Pre-rank.** For each candidate, one Jev request (all run in parallel, state = intake plus that candidate's summary) asks the `noul` question "Is this profile the same person as the intake?". Store the result as `jev_same_person_p`.
-3. **Confirm.** The UI asks "Is one of these you?" and shows the top 3–5 candidates with name, headline, location and source. The person picks one or chooses "None of these". Never auto-confirm.
+3. **Confirm.** The UI asks "Is one of these you?" and shows the top 3–5 candidates with name, headline, location and source; namesakes Jev scores low are behind "Show more". The person picks one or chooses "None of these". Never auto-confirm. If they aren't listed, they can search again with a link to their profile.
 4. **Enrich.** `identity.enrich` runs on confirmation. A Parallel Task with a JSON output schema collects current role, employer history, education, skills, public projects and writing, interests and locations, each with a source URL. Optionally, fetch Exa contents for the confirmed URLs.
 5. **Review.** The person sees every fact with its source and can remove any of them. Removed facts never enter any state.
 6. **Use.** Active facts become `identity` in `PersonState`. Together with intake, they are everything the baseline predictor sees.
@@ -510,7 +543,7 @@ The anchors serve three purposes: a cross-person comparable eval set, a psychome
 2. Ontology facet list with definitions
 3. Question-type specs
 4. Exclusion list
-5. Target facets: the 5 with the lowest coverage or confidence, plus the domain quota from `domainMix`
+5. Target facets: the 5 with the lowest coverage or confidence, plus the domain quota from `domainMix` (`gen.v1`). Since `gen.v2` (ADR-0027): the 5 with the highest belief-state need, each with why it is targeted and the person's current reading, facets over the exposure cap to avoid, and a quota tilted toward the weakest domains (§9.5).
 6. Person context: compact identity facts, trait summary, the last 10 questions (to avoid repeats), and occupation-specific facets
 
 **Generator output** (JSON schema):
@@ -543,7 +576,9 @@ The anchors serve three purposes: a cross-person comparable eval set, a psychome
 
 ### 9.5 Selection
 
-Every strategy scores pooled questions only. Repeat probes are scheduled outside the selector.
+Every strategy scores pooled questions only. Repeat probes are scheduled outside the selector. The default since
+`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; the strategies
+below remain as controls and experiment arms.
 
 - **`random`** is the control arm.
 - **`coverage`** takes the facet with the lowest coverage, breaking ties randomly.
@@ -561,6 +596,24 @@ Every strategy scores pooled questions only. Repeat probes are scheduled outside
   ```
 
   This favors questions where plausible versions of the person disagree, rather than questions that are merely noisy. The sealed primary prediction still comes from a separate Jev call on the plain state, so BALD costs K + 1 Jev calls per selection. That stays cheap because Jev bills input tokens only.
+- **`voi`** (default since v4; `docs/SELECTION.md`). A **belief state** is built from the person's own data before each
+  selection: per facet, uncertainty (trait-read entropy and confidence), conflict (Jev vs psychometric reads,
+  superseded insights, repeat flips, torn answers), weakness (the sealed primary's recent error on that facet),
+  coverage and exposure; per domain, share and weakness; per person, median latency, speeding and straightlining.
+  The selector picks the argmax of:
+
+  ```
+  score(q) = info(q) + λ·gap(q) + β·conflict(q) + γ·weakness(q) + π·(pop(q) − ½) − μ·redundancy(q) − ν·burden(q)
+  ```
+
+  `info` is the posterior-weighted BALD mutual information over K persona hypotheses when they exist (weights
+  come from each hypothesis's likelihood of the answers given since the set was written, read from stored
+  `role = hypothesis` rows), else the normalised predictive entropy. `gap` balances facet and domain coverage,
+  `pop` is a shrunk cross-person item statistic (§12.6a), and `burden` prefers short prompts and interleaved
+  types and domains as the session grows. Candidates whose facets already take more than `exposureCap` of the
+  adaptive questions are skipped. The winning score's components are stored on the question
+  (`questions.selection_json`). The generator (`gen.v2`) targets the facets with the highest **need** and is told
+  the person's current reading on each, so it writes trade-offs pitched at that reading.
 
 **Repeat schedule.** After every `repeats.every` adaptive questions, re-serve an earlier answered anchor or adaptive question verbatim, at least `minGap` questions after it was first asked. Repeats are excluded from learning and from fidelity accuracy, and no predictions are made for them. They feed self-consistency only.
 
@@ -610,7 +663,7 @@ Jev's context is 32K tokens. LLM contexts are larger, but cost scales with token
 1. **`identity`** (≤ 600 tokens): intake plus active facts.
 2. **`traits`** (≤ 500): facets with mean and confidence. Included by the `structured` and `full` strategies.
 3. **`insights`** (≤ 800): active, cited insights only. Included by `summary` and `full`.
-4. **`evidence`**: include every answered item while it fits the budget. A 30–40 question session is only about 2–3K tokens, so the synchronous path needs no retrieval. Once evidence outgrows the budget, include every anchor, the top `retrievalK` Q&A by embedding similarity to the target question(s) (or to the centroid of a candidate batch), and the last `recentN` answers. Always dedupe, and truncate each "why" to 200 characters.
+4. **`evidence`**: include every answered item while it fits the budget. A 30–40 question session is only about 2–3K tokens, so the synchronous path needs no retrieval. Once evidence outgrows the budget, include every anchor, the top `retrievalK` Q&A by embedding similarity to the target question(s) (or to the centroid of a candidate batch), and the last `recentN` answers. Always dedupe, and truncate each "why" to 200 characters. With `stateBuilder.latencyHints` (on since v4; builder `full.v2`), each item also carries `pace: quick | slow` when it was answered in under half or over twice the person's median latency over the sealed evidence (response time reveals strength of preference; `docs/SELECTION.md` §8).
 
 Ablation strategies:
 
@@ -629,7 +682,7 @@ Recomputed after every answer and appended to the `fidelity` table.
 
 **Inputs:**
 
-- **Scored set S:** the most recent 30 primary predictions on anchor and adaptive questions. Repeats and playground questions are excluded.
+- **Scored set S:** the most recent 30 primary predictions on anchor and adaptive questions. Repeats, playground and feedback questions are excluded.
 - **`acc`:** mean `item_acc` over S.
 - **`acc_baseline`:** the same, for the baseline predictions on S.
 - **Self-consistency `c`:** agreement across repeat pairs. For categorical items agreement is 1 if the answers match, else 0. For scale items it is `1 − |a1 − a2| / 4`. Smooth toward a prior:
@@ -658,6 +711,8 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 2. An LLM turns it into a typed question, whose options the person can edit.
 3. Jev predicts on the full state, and the UI shows the distribution. Optionally, an LLM adds one sentence of rationale in the person's voice, labeled "generated".
 4. The person then answers the question themselves. The answer is stored as `kind = playground` evidence and scored separately, which builds a clean, user-verified test set.
+5. Instead of asking (step 3), the person can answer the question themselves right away: "Answer it myself". The question can also be written by hand, without step 2's LLM. The answer is stored as `kind = feedback`, with no predictions, in one atomic write. If a session question is open, the feedback takes its seq and the question moves to the next one, so answers are learned in order. Unlike playground answers, feedback is evidence the mimic learns from: it enters later sealed states, embeddings, trait reads and reflection like a session answer. It is never scored and never counts toward session progress (ADR-0032).
+6. The page lists what was asked and taught, newest first. An asked question left unanswered can be answered from that list.
 
 ---
 
@@ -668,10 +723,11 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | Route | Purpose |
 |---|---|
 | `/` | One sentence on what Mimic does, and one button: "Build your mimic". |
-| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and locks the field. |
+| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and locks the field. Location and occupation suggest as you type (ADR-0030). |
 | `/m/[id]/identity` | Search progress, "Is one of these you?", then fact review with remove toggles. "Skip" is always available. |
 | `/m/[id]` | The session. |
-| `/m/[id]/mimic` | Talk to your mimic (§9.11); download `mimic.json`; delete the mimic. |
+| `/m/[id]/mimic` | Talk to your mimic (§9.11): ask it, or teach it an answer; download `mimic.json` and `Persona.md`; delete the mimic. |
+| `/m/[id]/persona` | Curate `Persona.md` (§8.3): write or rewrite the inferred sections, include or hide sections and items, reword statements, add your own words; preview, copy and download. |
 | `/lab` | Admin only. |
 
 **Session layout.** On desktop, the model panel sits on the left (about 40%) and the question on the right. On mobile, the question fills the screen, and a compact fidelity chip at the top opens the panel as a bottom sheet.
@@ -724,11 +780,16 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `GET /api/mimics/:id` | → UI snapshot | Profile, fidelity, facets, insights, KG, pool status |
 | `GET /api/mimics/:id/identity` | → `{ status, candidates, facts }` | |
 | `POST /api/mimics/:id/identity/confirm` | `{ candidateId \| null }` | Enqueues `identity.enrich` |
+| `POST /api/mimics/:id/identity/search` | `{ link }` | Searches again led by the link; only while a choice is pending (ADR-0029) |
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
 | `POST /api/mimics/:id/ask` | scenario → typed question + prediction | Playground |
 | `GET /api/mimics/:id/export` | → latest `mimic.json` | |
+| `GET /api/mimics/:id/persona` | → Persona view: sections, items, curation, rendered Markdown | §8.3 |
+| `POST /api/mimics/:id/persona` | → new `persona.v1` draft, then the view | One LLM call; rate-limited, budget-guarded |
+| `PUT /api/mimics/:id/persona` | `{ rev, curation }` → view | Ignored if an equal or newer `rev` is stored; keys for replaced draft items are pruned |
+| `GET /api/mimics/:id/persona.md` | → `Persona.md` (text/markdown) | |
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
@@ -791,6 +852,15 @@ Twin-2K-500 covers about 2,000 respondents, each with 500 input questions and 88
 ### 12.6 Population priors (P1, flagged)
 
 Item-level answer frequencies from other consented dev-split people, used as an extra baseline and predictor feature. Off by default, behind an experiment flag, and aggregate-only.
+
+#### 12.6a Item statistics for selection (ADR-0027)
+
+`item_stats` holds aggregate rows per stable item (`item_key`) and per archetype (`facet | domain | type`) over
+research-consented, dev-split mimics: people, answers, the population's answer entropy (items only), the
+context-only baseline's error, the primary's error and normalised log loss, lift and mean latency. An hourly
+`stats.refresh` job recomputes them from scratch and replaces the table, writing only groups of 5 or more people.
+They rank pooled candidates in the `voi` selector (weight π, shrunk toward neutral with a prior of 20 answers) and
+never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-population` runs the selector without them.
 
 ### 12.7 First experiments
 

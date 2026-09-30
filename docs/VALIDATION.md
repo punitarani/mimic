@@ -93,6 +93,24 @@ Playwright against `pnpm dev` (14 answered questions, keyboard only):
 - Browser, live providers: 6 answers → Stop here → scenario → DeepSeek drafts a typed question → Jev predicts
   61% / 39% → generated first-person sentence, labeled → the person answers → download `mimic.json` (`mimic/1`, v2,
   playground evidence included) → delete → `GET /api/mimics/:id` returns 404.
+- Feedback (ADR-0032), `packages/eval/test/artifact.test.ts`: stored as `kind = feedback` in one write, idempotent
+  per key, no predictions or scores, fidelity and progress untouched, learned and included in the next sealed state,
+  kept in the export. Validation gives sentences a person can act on. A feedback write and a concurrent `/next` get
+  distinct seqs. That test caught a real race: `/next` lost its seq to the feedback and returned a 409. Now it keeps
+  its predictions and serves at the next free seq.
+- Review follow-up, `packages/eval/test/feedback.test.ts`:
+  - Feedback given while a session question is open takes its seq, and the question moves. `/next` returns it at
+    the new seq. Answers are learned in seq order. Replay rebuilds the moved question's state to the same hash.
+  - An answer that raced the move is recorded at the new seq.
+  - A reused key with a different answer is refused. Yes/no maps by key in any order.
+  - Over budget, feedback is kept, with no model calls or failed jobs, and is in the snapshot.
+  - An asked question that loses its seq to feedback is served at the next one without predicting again, and
+    leaves no orphaned row.
+  - An answer that arrives below the latest snapshot gets a new snapshot.
+- Browser, live providers: 3 answers → write a question by hand → answer it myself (keyboard 1 and Enter, with a
+  reason) → scenario → DeepSeek drafts a scale question → Jev predicts → leave it → answer it later from the
+  history → mobile and dark. In D1, the next session question's primary has `evidence_seq_max` equal to the
+  feedback's seq, and the worker ran `embed.qa` and `traits.read` on each taught answer.
 
 ## M7 Eval CLI
 
@@ -189,3 +207,72 @@ Screenshots are in `docs/screenshots/v2-*.png`; videos are `docs/media/session-v
   - `pnpm check` passes, including new tests for reveal `dist`, `revealShown` (including idempotent replay) and
     the snapshot's history bands, basics and facet labels.
   - `next build` compiles.
+
+## Selection v2: value of information (ADR-0027)
+
+Offline fakes only (deterministic; outputs are arbitrary), so nothing below is a research result. It validates the
+machinery: `pnpm check` passes with 74 core unit tests and 41 eval integration tests.
+
+- Unit tests (`packages/core/test/belief.test.ts`, `selection.test.ts`, `state.test.ts`): the belief state's
+  uncertainty, conflict (method gap, superseded insights, repeat flips, torn answers), shrunk weakness, coverage,
+  exposure, domain shares, speeding and straightlining; generator targets and the tilted domain quota; the
+  hypothesis posterior and weighted mutual information; burden; the `voi` selector's pick with and without
+  hypotheses, exposure control, population and belief terms, and its failure fallback; item statistics with no
+  per-person data, shrinkage and the people threshold; latency hints (builder `full.v2`, median over the sealed
+  evidence, no hints below three timed answers, context-only untouched). Config hashes: v4 pinned, v3 unchanged.
+- Integration (`packages/eval/test/selection.test.ts`, 7 people × 24 turns plus one late-comer): every adaptive
+  question served by `voi` records its score components; each hypothesis prediction of the chosen question is
+  stored, sealed (`evidence_seq_max < seq`), never scored, and rebuilds from its state blob; posterior weights
+  move away from uniform once answers arrive; sealed states use `full.v2` and baselines stay context-only;
+  `stats.refresh` aggregates consented dev-split mimics with no names or IDs in any row, is idempotent, and a
+  session served afterwards carries a population term; `gen.v2` candidates and their calls are logged.
+- The existing 30-turn session test still holds: 1 primary, 1 context-only baseline and 5 shadows per scored
+  question sharing one state hash, none for repeats, 28 × 7 scored rows, 30 fidelity rows.
+- Not yet measured: E3 arms `entropy` vs `voi` on real people, and `pnpm eval -- select --selector entropy,voi`
+  on a real export. Both need human answers.
+
+## Evals and prompt optimization (ADR-0028)
+
+Checked in the Claude Code environment. Prod data isn't reachable here, so the live runs used two scripted live
+sessions: 17 answered questions, with one dev person and one test person. The metrics below validate the machinery
+only; scripted answers say nothing about real people. The whole live smoke cost **$0.20**.
+
+- **Offline** (fake providers, 7 scripted people, 161 instances):
+  - every command runs end to end: `evaluate --from stored`, live-mode `evaluate` with `--repeat`, `diagnose` and
+    `optimize`;
+  - the fake Jev ignores its templates, so the optimizer rejects every child, as it should.
+- **Tests** (`packages/eval/test/optimize.test.ts`, `packages/core/test/components.test.ts`):
+  - the incumbent prompts render byte for byte as before;
+  - `@version` IDs parse, resolve and are rejected when unregistered, or when they name the incumbent;
+  - instances are sealed, and test people never reach train or val;
+  - stored records, fits and feedback;
+  - candidate caching and the spend cap;
+  - the leakage lint;
+  - the reflection repair turn;
+  - a full GEPA run that accepts an improving child, passes the holdout and resumes;
+  - the call-budget stop;
+  - Pareto sampling;
+  - report rendering with no question text in it.
+- **Live, every command:**
+
+  | Run | Calls | Cost | Result |
+  | --- | --- | --- | --- |
+  | `evaluate --from stored` | 0 | $0 | Seven predictors per split, person and type |
+  | `optimize`, Jev templates, 4 iterations | 44 | $0.033 | 1 invalid (133 words over the 120 limit), 2 rejected, 1 accepted on its minibatch but worse on val; verdict "no candidate beat the seed" |
+  | `optimize`, DeepSeek prompt, 3 iterations | 35 | $0.044 | 3 rejected under the noise margin |
+  | `evaluate`, `probs` vs `reasoned` schema, `--repeat` | 39 | $0.013 | Paired comparison and noise floor |
+  | `diagnose`, Jev primary | 1 | $0.035 | Overconfident peaks on thin evidence (100% on a miss, log loss 9.2), and drift away from a correct profile-only guess |
+
+- **Findings that shape how to use it:**
+  - Run-to-run noise per question is 0.031 nats for Jev and 0.14–0.20 for DeepSeek V4.1 Flash. LLM prompt changes
+    therefore need about 5× the validation size to show the same gain, and Jev is the cheaper, more sensitive target.
+  - A Sonnet 5.5 reflection costs $0.007–0.011, so a 30-iteration Jev run costs well under $1.
+  - The accepted reflection was general strategy with no copied data: weigh direct earlier answers, cap confidence
+    on thin evidence, leave mass on adjacent scale points. The lint passed it.
+  - A reflection over the word limit wasted an iteration, so the loop now gives a rejected reflection one repair
+    turn naming its problems.
+- **Not verified here:**
+  - the Actions workflow's prod export and `/lab` publishing, which need the Cloudflare credentials in the
+    production environment;
+  - its Twin-2K-500 step, since Hugging Face is blocked in this environment. That step is best-effort, and the run
+    continues without it.

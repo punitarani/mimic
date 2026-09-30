@@ -1,4 +1,4 @@
-import { TRANSIENT_HTTP_STATUS } from '@mimic/core';
+import { isTimeoutError, TRANSIENT_HTTP_STATUS } from '@mimic/core';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -11,6 +11,11 @@ export interface HttpOptions {
   relay?: string;
   timeoutMs?: number;
   retries?: number;
+  /**
+   * Retry an attempt that timed out (default true). Chat turns it off: a timeout there means the model was too slow,
+   * and a retry would bill a second generation and hide the slowness (ADR-0034).
+   */
+  retryTimeouts?: boolean;
 }
 
 export class HttpError extends Error {
@@ -69,6 +74,7 @@ export async function requestJson(
       };
     } catch (e) {
       if (e instanceof HttpError) throw e;
+      if (opts.retryTimeouts === false && isTimeoutError(e)) throw e;
       lastErr = e;
       if (attempt < retries) {
         await sleep(250 * 4 ** attempt);

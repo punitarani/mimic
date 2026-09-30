@@ -1,8 +1,8 @@
 'use client';
 import {
   type ButtonHTMLAttributes,
+  type ComponentProps,
   forwardRef,
-  type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
@@ -10,39 +10,18 @@ import {
   useRef,
 } from 'react';
 
-export function cn(...xs: Array<string | false | null | undefined>): string {
-  return xs.filter(Boolean).join(' ');
-}
+import { type ButtonSize, type ButtonVariant, buttonClass, cn } from './button-styles';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
-const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-graphite text-fog hover:bg-graphite-soft disabled:bg-line-strong',
-  secondary: 'bg-raised text-graphite border border-line hover:border-line-strong disabled:text-muted',
-  ghost: 'text-graphite-soft hover:text-graphite hover:bg-surface',
-  danger: 'bg-rust text-fog hover:brightness-95 disabled:opacity-60',
-};
+export { type ButtonSize, type ButtonVariant, buttonClass, cn };
 
 export const Button = forwardRef<
   HTMLButtonElement,
-  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: 'sm' | 'md' | 'lg' }
->(function Button({ variant = 'primary', size = 'md', className, ...props }, ref) {
-  return (
-    <button
-      ref={ref}
-      className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-[10px] font-medium transition-colors disabled:cursor-not-allowed',
-        size === 'sm' && 'h-8 px-3 text-sm',
-        size === 'md' && 'h-10 px-4 text-[15px]',
-        size === 'lg' && 'h-12 px-6 text-base',
-        VARIANTS[variant],
-        className,
-      )}
-      {...props}
-    />
-  );
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize }
+>(function Button({ variant, size, className, ...props }, ref) {
+  return <button ref={ref} className={buttonClass(variant, size, className)} {...props} />;
 });
 
-export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+export function Card({ className, ...props }: ComponentProps<'div'>) {
   return (
     <div
       className={cn(
@@ -87,6 +66,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
   },
 );
 
+/** The id `Field` gives its label, for inputs that name themselves with aria-labelledby. */
+export function fieldLabelId(htmlFor: string): string {
+  return `${htmlFor}-label`;
+}
+
 export function Field({
   label,
   hint,
@@ -102,7 +86,7 @@ export function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-graphite">
+      <label id={fieldLabelId(htmlFor)} htmlFor={htmlFor} className="block text-sm font-medium text-graphite">
         {label}
         {required ? (
           <span className="text-rust"> *</span>

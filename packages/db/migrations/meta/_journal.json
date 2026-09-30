@@ -22,6 +22,27 @@
       "when": 1790735485680,
       "tag": "0002_state_at",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790763541191,
+      "tag": "0003_selection",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790768653276,
+      "tag": "0004_persona",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790788132209,
+      "tag": "0005_backfill_accuracy",
+      "breakpoints": true
     }
   ]
 }

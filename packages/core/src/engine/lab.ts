@@ -9,6 +9,7 @@ import {
   type ScoredRow,
 } from '../metrics';
 import type { ConfigRecord, EvalRunRecord, ExperimentRecord } from '../store';
+import { isPredictedKind } from '../types';
 import { type EngineDeps, loadConfig } from './deps';
 
 export interface ArmCurve {
@@ -115,7 +116,8 @@ export async function labOverview(
     const predsByQ = new Map<string, typeof preds>();
     for (const p of preds) predsByQ.set(p.questionId, [...(predsByQ.get(p.questionId) ?? []), p]);
     for (const q of questions) {
-      if (q.seq === null || q.kind === 'repeat') continue;
+      // Repeats and person-written feedback carry no predictions by design (PLAN §9.5; ADR-0032).
+      if (q.seq === null || !isPredictedKind(q.kind)) continue;
       inv.servedQuestions++;
       const ps = predsByQ.get(q.id) ?? [];
       const primary = ps.find((p) => p.role === 'primary');

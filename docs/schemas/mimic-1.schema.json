@@ -104,7 +104,8 @@
               "anchor",
               "adaptive",
               "repeat",
-              "playground"
+              "playground",
+              "feedback"
             ]
           },
           "type": {

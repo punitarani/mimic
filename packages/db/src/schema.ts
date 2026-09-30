@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /** PLAN §8. IDs are ULIDs; timestamps are integer ms; *_json columns are validated with zod on read. */
@@ -55,7 +56,7 @@ export const identityCandidates = sqliteTable(
     summary: text('summary').notNull(),
     jevSamePersonP: real('jev_same_person_p'),
     r2Key: text('r2_key'),
-    status: text('status', { enum: ['proposed', 'confirmed', 'rejected'] }).notNull(),
+    status: text('status', { enum: ['proposed', 'confirmed', 'rejected', 'superseded'] }).notNull(),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [index('identity_candidates_mimic_idx').on(t.mimicId)],
@@ -86,7 +87,7 @@ export const questions = sqliteTable(
     id: text('id').primaryKey(),
     mimicId: text('mimic_id').notNull(),
     seq: integer('seq'),
-    kind: text('kind', { enum: ['anchor', 'adaptive', 'repeat', 'playground'] }).notNull(),
+    kind: text('kind', { enum: ['anchor', 'adaptive', 'repeat', 'playground', 'feedback'] }).notNull(),
     type: text('type', { enum: ['choice', 'noul', 'score'] }).notNull(),
     domain: text('domain', { enum: ['core', 'casual', 'professional'] }).notNull(),
     prompt: text('prompt').notNull(),
@@ -103,6 +104,8 @@ export const questions = sqliteTable(
     servedAt: integer('served_at'),
     /** As-of time of the derived data (traits, insights, facts) in this question's sealed states (ADR-0017). */
     stateAt: integer('state_at'),
+    /** The selector's diagnostics for the winning score (ADR-0027). */
+    selectionJson: text('selection_json'),
   },
   (t) => [
     index('questions_mimic_idx').on(t.mimicId),
@@ -130,12 +133,18 @@ export const predictions = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
+    /** Failed rows only: 'output' | 'timeout' (the model's) | 'transport' (the call's); ADR-0034. */
+    errorKind: text('error_kind', { enum: ['output', 'timeout', 'transport'] }),
     fallback: bool('fallback').notNull().default(false),
+    /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0027). */
+    hypothesis: text('hypothesis'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
     index('predictions_mimic_idx').on(t.mimicId),
     index('predictions_question_role_idx').on(t.questionId, t.role),
+    // One shadow per question and predictor, however many runs race to store it (ADR-0034).
+    uniqueIndex('predictions_shadow_uq').on(t.questionId, t.predictorId).where(sql`${t.role} = 'shadow'`),
   ],
 );
 
@@ -289,6 +298,8 @@ export const modelCalls = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
+    /** HTTP attempts it took: retries after a 429 or 5xx, which latencyMs (the answering attempt) leaves out. */
+    attempts: integer('attempts').notNull().default(1),
     configHash: text('config_hash'),
     r2TraceKey: text('r2_trace_key').notNull(),
     createdAt: integer('created_at').notNull(),
@@ -337,7 +348,7 @@ export const evalRuns = sqliteTable('eval_runs', {
 export const jobs = sqliteTable('jobs', {
   key: text('key').primaryKey(),
   type: text('type').notNull(),
-  status: text('status', { enum: ['running', 'done', 'failed'] }).notNull(),
+  status: text('status', { enum: ['queued', 'running', 'done', 'failed'] }).notNull(),
   attempts: integer('attempts').notNull(),
   lastError: text('last_error'),
   updatedAt: integer('updated_at').notNull(),
@@ -356,6 +367,32 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
+/** ADR-0033: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds Persona.md. */
+export const personaDrafts = sqliteTable(
+  'persona_drafts',
+  {
+    id: text('id').primaryKey(),
+    mimicId: text('mimic_id').notNull(),
+    seqUpTo: integer('seq_up_to').notNull(),
+    configHash: text('config_hash').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    model: text('model').notNull(),
+    modelSnapshot: text('model_snapshot').notNull(),
+    draftJson: text('draft_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('persona_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
+);
+
+/** ADR-0033: the person's choices for Persona.md (sections, hidden items, edits, their own words). */
+export const personaCurations = sqliteTable('persona_curations', {
+  mimicId: text('mimic_id').primaryKey(),
+  json: text('json').notNull(),
+  /** Client revision: saves apply only in increasing rev order. */
+  rev: integer('rev').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 /** ADR-0003: local stand-in for Vectorize (dev and the Node CLI). */
 export const vectors = sqliteTable(
   'vectors',
@@ -369,6 +406,24 @@ export const vectors = sqliteTable(
   },
   (t) => [index('vectors_mimic_idx').on(t.mimicId, t.kind)],
 );
+
+/**
+ * ADR-0027: cross-person item statistics, aggregate only (no mimic_id, no free text), over research-consented
+ * dev-split mimics. Used to rank pooled candidates; never in a prompt or a state.
+ */
+export const itemStats = sqliteTable('item_stats', {
+  key: text('key').primaryKey(),
+  kind: text('kind', { enum: ['item', 'archetype'] }).notNull(),
+  nPeople: integer('n_people').notNull(),
+  nAnswers: integer('n_answers').notNull(),
+  answerEntropy: real('answer_entropy'),
+  baselineError: real('baseline_error').notNull(),
+  primaryError: real('primary_error').notNull(),
+  surprise: real('surprise').notNull(),
+  lift: real('lift'),
+  meanLatencyMs: real('mean_latency_ms').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
 
 /** Tables scoped to one mimic, all removed by a hard delete. */
 export const MIMIC_TABLES = [
@@ -388,4 +443,6 @@ export const MIMIC_TABLES = [
   snapshots,
   mimicFacets,
   vectors,
+  personaDrafts,
+  personaCurations,
 ] as const;

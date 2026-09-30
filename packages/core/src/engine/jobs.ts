@@ -1,7 +1,7 @@
-import { parsePredictorId } from '../config';
+import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
-import { type Job, jobFromKey, jobKey } from '../jobs';
+import { type Job, jobFromKey, jobKey, type QueuedJob } from '../jobs';
 import {
   generateCandidates,
   generateHypotheses,
@@ -12,9 +12,10 @@ import {
   runQualityGates,
 } from '../learning';
 import { getAnchorSet } from '../ontology';
-import { isOutputFailure, makePredictor } from '../predictors';
+import { computeItemStats, type ScoredItemRow } from '../population';
+import { assertPredictorId, makePredictor, promptVersionOf } from '../predictors';
 import { scorePrediction } from '../scoring';
-import { facetCoverage } from '../selectors';
+import { facetCoverage, usesHypotheses } from '../selectors';
 import { buildState, cosine, toStateEvidence } from '../state-builder';
 import type {
   FactRecord,
@@ -24,13 +25,14 @@ import type {
   PredictionRecord,
   QuestionRecord,
 } from '../store';
-import type { Domain, PersonState } from '../types';
+import { type Domain, isScoredKind, learnsFrom, type PersonState } from '../types';
 import { writeSnapshot } from './artifact';
+import { beliefFromLoaded, loadBeliefSources } from './belief';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
 import { PENDING_WINDOW_MS } from './lab';
-import { JEV_PROMPT_VERSION, MAX_POOL, MIN_POOL } from './session';
+import { invalidateItemStatsCache, MAX_POOL, MIN_POOL } from './session';
 
 export const MAX_JOB_ATTEMPTS = 5;
 
@@ -52,7 +54,7 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
     updatedAt: deps.clock(),
   });
   try {
-    await dispatch(deps, job, key);
+    await dispatch(deps, job, key, attempts);
     await deps.store.putJob({
       key,
       type: job.type,
@@ -113,7 +115,8 @@ export async function enqueueMissingShadows(
 
 /**
  * Enqueues a `predict.shadow` for each of `predictorIds` on each of the mimic's served anchor and adaptive questions
- * that has no prediction from it yet, in any role.
+ * that has no prediction from it yet, in any role, and none in flight. A shadow whose job used up its attempts
+ * without storing anything is left alone, so the cron can't retry it forever.
  */
 export async function enqueueMissingPredictions(
   deps: EngineDeps,
@@ -121,39 +124,62 @@ export async function enqueueMissingPredictions(
   servedBefore: number,
   predictorIds: readonly string[],
 ): Promise<number> {
-  const work = await missingPredictions(deps, mimicId, servedBefore, predictorIds);
+  const work = await missingPredictions(deps, mimicId, servedBefore, predictorIds, { live: true });
   for (const w of work) await deps.jobs.enqueue({ type: 'predict.shadow', mimicId, ...w });
   return work.length;
 }
 
 /**
- * A shadow whose provider call failed (stored before ADR-0027, or refused by the budget guard): the model never
- * answered, so a backfill may redo it. A shadow whose output was unusable is the model's failure and stands.
+ * A shadow whose call failed before the model answered (a transport error after every attempt, or the budget
+ * guard): a backfill with `retryFailed` may redo it. Unusable output and timeouts are the model's, and stand.
  */
-export function isFailedCall(p: Pick<PredictionRecord, 'role' | 'ok' | 'error'>): boolean {
-  return p.role === 'shadow' && !p.ok && !isOutputFailure(p.error);
+export function isFailedCall(p: Pick<PredictionRecord, 'role' | 'ok' | 'errorKind'>): boolean {
+  return p.role === 'shadow' && !p.ok && p.errorKind === 'transport';
+}
+
+/** `${questionId}|${predictorId}` of the mimic's shadow jobs, live or backfill, that are queued or being retried. */
+async function shadowJobs(deps: EngineDeps, mimicId: string) {
+  const now = deps.clock();
+  const [live, backfill] = await Promise.all([
+    deps.store.listJobs(`predict.shadow:${mimicId}:`),
+    deps.store.listJobs(`backfill.shadow:${mimicId}:`),
+  ]);
+  const inFlight = new Set<string>();
+  const exhausted = new Set<string>();
+  for (const r of [...live, ...backfill]) {
+    const job = jobFromKey(r.key);
+    if (r.status === 'done' || !job || !('questionId' in job)) continue;
+    const id = `${job.questionId}|${job.predictorId}`;
+    if (r.attempts >= MAX_JOB_ATTEMPTS && r.status === 'failed') {
+      if (job.type === 'predict.shadow') exhausted.add(id);
+    } else if (r.updatedAt >= now - STALE_JOB_MS) inFlight.add(id); // older: its message was lost
+  }
+  return { inFlight, exhausted };
 }
 
 /**
- * The mimic's anchor and adaptive questions served before `servedBefore`, with a primary (so a sealed state) and no
- * prediction from each predictor in any role; with `retryFailed`, a failed call counts as missing too. In `seq`
- * order. The same rule as `pnpm backfill`'s dry run (scripts/backfill.mjs).
+ * The mimic's anchor and adaptive questions served before `servedBefore`, with a primary (so a sealed state), no
+ * prediction from each predictor in any role (a failed call counts as none with `retryFailed`), and no shadow job
+ * for it in flight. `live`: also skips shadows whose live job gave up. In `seq` order. The same rule as `pnpm
+ * backfill`'s dry run (scripts/backfill.mjs).
  */
 async function missingPredictions(
   deps: EngineDeps,
   mimicId: string,
   servedBefore: number,
   predictorIds: readonly string[],
-  retryFailed = false,
+  opts: { retryFailed?: boolean | undefined; live?: boolean } = {},
 ): Promise<Array<{ questionId: string; predictorId: string }>> {
   if (!predictorIds.length) return [];
-  const [questions, predictions] = await Promise.all([
+  const [questions, predictions, jobs] = await Promise.all([
     deps.store.listQuestions(mimicId),
     deps.store.listPredictions({ mimicId }),
+    shadowJobs(deps, mimicId),
   ]);
+  // Hypothesis rows carry the primary's predictor id but are exploration artifacts, not predictions of the question.
   const have = new Set(
     predictions
-      .filter((p) => !(retryFailed && isFailedCall(p)))
+      .filter((p) => p.role !== 'hypothesis' && !(opts.retryFailed && isFailedCall(p)))
       .map((p) => `${p.questionId}|${p.predictorId}`),
   );
   // A shadow reads the primary's sealed state; without a primary there is nothing to predict from.
@@ -161,36 +187,44 @@ async function missingPredictions(
   const out: Array<{ questionId: string; predictorId: string }> = [];
   for (const q of [...questions].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))) {
     if (q.seq === null || q.servedAt === null || q.servedAt >= servedBefore) continue;
-    if (q.kind !== 'anchor' && q.kind !== 'adaptive') continue;
+    if (!isScoredKind(q.kind)) continue;
     if (!sealed.has(q.id)) continue;
     for (const predictorId of predictorIds) {
-      if (!have.has(`${q.id}|${predictorId}`)) out.push({ questionId: q.id, predictorId });
+      const id = `${q.id}|${predictorId}`;
+      if (have.has(id) || jobs.inFlight.has(id) || (opts.live && jobs.exhausted.has(id))) continue;
+      out.push({ questionId: q.id, predictorId });
     }
   }
   return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Backfill (ADR-0024, ADR-0027): a new shadow model run over questions already served, on the same sealed states.
+// Backfill (ADR-0024, ADR-0034): a new shadow model run over questions already served, on the same sealed states.
 // ---------------------------------------------------------------------------------------------------------------
 
 /** Default pace, per predictor: one prediction every 2 s, about what a few live sessions produce. */
 export const BACKFILL_PER_MINUTE = 30;
-/** At most this many predictions per backfill job (the rest wait for a re-run): well inside a Worker's subrequests. */
+/** At most this many predictions per backfill job; a re-run enqueues the rest. */
 export const BACKFILL_MAX_JOBS = 5000;
-/** Queues delay a message by at most 24 h; a longer backfill enqueues the rest on a re-run. */
+/** Queues delay a message by at most 24 h; a run spans at most this, and a re-run enqueues the rest. */
 export const BACKFILL_MAX_DELAY_SECONDS = 12 * 3600;
+
+/** How many predictions one run enqueues at this pace: the job cap, or what fits in the delay horizon. */
+export function backfillLimit(perMinute = BACKFILL_PER_MINUTE, offsetSeconds = 0): number {
+  const fit = Math.floor(((BACKFILL_MAX_DELAY_SECONDS - offsetSeconds) * perMinute) / 60) + 1;
+  return Math.max(0, Math.min(BACKFILL_MAX_JOBS, fit));
+}
 
 function checkPredictorId(id: string): void {
   try {
-    parsePredictorId(id);
+    // The ID must parse and any `@<promptVersion>` must be registered (ADR-0028).
+    assertPredictorId(id);
   } catch (e) {
     throw new EngineError('invalid', e instanceof Error ? e.message : String(e));
   }
 }
 
 interface BackfillRun {
-  runId: string;
   predictorId: string;
   perMinute?: number | undefined;
   retryFailed?: boolean | undefined;
@@ -198,42 +232,56 @@ interface BackfillRun {
 
 export interface BackfillEnqueued {
   enqueued: number;
-  /** Past BACKFILL_MAX_JOBS or BACKFILL_MAX_DELAY_SECONDS: left for the next run. */
-  deferred: number;
+  /** Stopped at backfillLimit(): anything left waits for a re-run. */
+  capped: boolean;
 }
 
 /**
  * Enqueues one `backfill.shadow` per missing prediction of these mimics, spaced `60 / perMinute` seconds apart from
  * `offsetSeconds` on. Pacing keeps a backfill from flooding the queue (live sessions share it) and the provider
- * (rate limits, slower answers), so its failures and latencies look like a live shadow's. Questions served in the
- * last PENDING_WINDOW_MS are left to the live path, whose shadows may still be running.
+ * (rate limits, slower answers), so its failures and latencies look like a live shadow's. Each one is written to
+ * the ledger as `queued` first: a re-run skips it, and the cron requeues it if its message is lost. Questions
+ * served in the last PENDING_WINDOW_MS are left to the live path.
  */
 async function enqueueBackfill(
   deps: EngineDeps,
   run: BackfillRun,
   mimicIds: readonly string[],
-  offsetSeconds = 0,
+  opts: { offsetSeconds?: number | undefined; allMimics: boolean },
 ): Promise<BackfillEnqueued> {
+  const offset = opts.offsetSeconds ?? 0;
   const gap = 60 / (run.perMinute ?? BACKFILL_PER_MINUTE);
-  const servedBefore = deps.clock() - PENDING_WINDOW_MS;
+  const limit = backfillLimit(run.perMinute, offset);
+  const now = deps.clock();
   let enqueued = 0;
-  let deferred = 0;
   for (const mimicId of mimicIds) {
-    const work = await missingPredictions(deps, mimicId, servedBefore, [run.predictorId], run.retryFailed);
-    for (const { questionId } of work) {
-      const delaySeconds = Math.round(offsetSeconds + enqueued * gap);
-      if (enqueued >= BACKFILL_MAX_JOBS || delaySeconds > BACKFILL_MAX_DELAY_SECONDS) {
-        deferred++;
-        continue;
-      }
-      await deps.jobs.enqueue(
-        { type: 'backfill.shadow', runId: run.runId, mimicId, questionId, predictorId: run.predictorId },
-        delaySeconds > 0 ? { delaySeconds } : undefined,
-      );
-      enqueued++;
+    if (enqueued >= limit) return { enqueued, capped: true };
+    const work = await missingPredictions(deps, mimicId, now - PENDING_WINDOW_MS, [run.predictorId], {
+      retryFailed: run.retryFailed,
+    });
+    const batch: Array<QueuedJob & { delaySeconds: number }> = [];
+    for (const { questionId } of work.slice(0, limit - enqueued)) {
+      const job: Job = { type: 'backfill.shadow', mimicId, questionId, predictorId: run.predictorId };
+      if (run.retryFailed) job.retryFailed = true;
+      if (opts.allMimics) job.allMimics = true;
+      batch.push({ job, delaySeconds: Math.round(offset + (enqueued + batch.length) * gap) });
     }
+    if (!batch.length) continue;
+    await deps.store.putJobs(
+      batch.map((b) => ({
+        key: jobKey(b.job),
+        type: b.job.type,
+        status: 'queued' as const,
+        attempts: 0,
+        lastError: null,
+        updatedAt: now + b.delaySeconds * 1000,
+      })),
+    );
+    await deps.jobs.enqueueBatch(batch.map((b) => (b.delaySeconds > 0 ? b : { job: b.job })));
+    enqueued += batch.length;
+    if (work.length > batch.length) return { enqueued, capped: true };
   }
-  return { enqueued, deferred };
+  return { enqueued, capped: false };
 }
 
 /** Every (consented) mimic, paced as one stream so the predictor sees a steady rate. */
@@ -243,25 +291,32 @@ export async function runBackfillPredictor(
 ): Promise<BackfillEnqueued & { mimics: number }> {
   checkPredictorId(job.predictorId);
   const mimics = await deps.store.listMimics(job.consentedOnly ? { consentResearch: true } : {});
+  const ids = mimics.map((m) => m.id);
   return {
     mimics: mimics.length,
-    ...(await enqueueBackfill(
-      deps,
-      job,
-      mimics.map((m) => m.id),
-    )),
+    ...(await enqueueBackfill(deps, job, ids, { allMimics: !job.consentedOnly })),
   };
 }
 
-export function runBackfillMimic(
+/** One named mimic (the CLI's `--mimic`), chosen by the operator; with `consentedOnly`, only while it consents. */
+export async function runBackfillMimic(
   deps: EngineDeps,
-  job: BackfillRun & { mimicId: string; offsetSeconds?: number | undefined },
+  job: BackfillRun & {
+    mimicId: string;
+    offsetSeconds?: number | undefined;
+    consentedOnly?: boolean | undefined;
+  },
 ): Promise<BackfillEnqueued> {
   checkPredictorId(job.predictorId);
-  return enqueueBackfill(deps, job, [job.mimicId], job.offsetSeconds ?? 0);
+  if (job.consentedOnly && !(await requireMimic(deps, job.mimicId)).consentResearch)
+    return { enqueued: 0, capped: false };
+  return enqueueBackfill(deps, job, [job.mimicId], {
+    offsetSeconds: job.offsetSeconds,
+    allMimics: !job.consentedOnly,
+  });
 }
 
-async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> {
+async function dispatch(deps: EngineDeps, job: Job, key: string, attempt: number): Promise<void> {
   // A job for a deleted mimic is a no-op.
   if ('mimicId' in job && !(await deps.store.getMimic(job.mimicId))) return;
   switch (job.type) {
@@ -274,7 +329,7 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
     case 'pool.refill':
       return runPoolRefill(deps, job.mimicId, key);
     case 'predict.shadow':
-      return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key);
+      return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key, { attempt });
     case 'learn.answer':
       return runLearn(deps, job.mimicId, job.seq, key);
     case 'hypotheses.refresh':
@@ -289,8 +344,55 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
       await runBackfillMimic(deps, job);
       return;
     case 'backfill.shadow':
-      return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key, { backfill: true });
+      return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key, {
+        backfill: true,
+        retryFailed: job.retryFailed ?? false,
+        allMimics: job.allMimics ?? false,
+        attempt,
+      });
+    case 'stats.refresh':
+      await runStatsRefresh(deps);
+      return;
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// stats.refresh (ADR-0027): cross-person item statistics over research-consented, dev-split mimics.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Recomputes `item_stats` from scratch in one query and replaces the table atomically, so a deleted mimic (or a
+ * withdrawn consent) drops out at the next run and nothing stale survives. Aggregate only: groups below
+ * POP_MIN_PEOPLE are never written, no row names a person, and the result ranks pooled candidates without ever
+ * entering a prompt or a state (PLAN §3.8).
+ */
+export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
+  const sources = await deps.store.listScoredForStats({ consentResearch: true, split: 'dev' });
+  const baselineByQ = new Map(
+    sources.filter((r) => r.role === 'baseline').map((r) => [r.questionId, r.itemAcc]),
+  );
+  const rows: ScoredItemRow[] = [];
+  for (const r of sources) {
+    if (r.role !== 'primary' || r.fallback) continue;
+    if (!isScoredKind(r.question.kind)) continue;
+    rows.push({
+      mimicId: r.mimicId,
+      itemKey: r.question.itemKey ?? null,
+      facetIds: r.question.facetIds,
+      domain: r.question.domain,
+      type: r.question.type,
+      answer: r.answer.value,
+      nOptions: r.question.options.length,
+      primaryItemAcc: r.itemAcc,
+      primaryLogLoss: r.logLoss,
+      baselineItemAcc: baselineByQ.get(r.questionId) ?? null,
+      latencyMs: r.answer.latencyMs,
+    });
+  }
+  const stats = computeItemStats(rows, deps.clock());
+  await deps.store.replaceItemStats(stats);
+  invalidateItemStatsCache();
+  return stats.length;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -298,12 +400,15 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
 // ---------------------------------------------------------------------------------------------------------------
 
 /**
- * A transport failure (timeout, rate limit, provider error) is thrown rather than stored, so the queue retries it
- * with backoff and, if every attempt fails, the question stays missing for the cron or a backfill re-run to fill.
- * Only the model's own failures (unusable output) are stored as failed predictions (ADR-0027).
+ * A call that failed before the model answered (a rate limit, provider error or network failure) is thrown, so the
+ * queue retries it with backoff; on the last attempt (MAX_JOB_ATTEMPTS) it is stored as a failed call instead, so
+ * nothing retries it forever and a backfill with `retryFailed` can redo it later. The model's own failures
+ * (unusable output, a timeout) are stored at once (ADR-0034). The unique shadow index makes a concurrent run of
+ * the same shadow a no-op.
  *
  * `backfill`: operator research work (ADR-0024). The call is logged as `predict.backfill`, outside the mimic's
- * session budget, and it replaces a failed call from this predictor instead of skipping the question.
+ * session budget; it skips a mimic that no longer consents (unless `allMimics`), and with `retryFailed` it replaces
+ * this predictor's failed call instead of skipping the question.
  */
 export async function runShadow(
   deps: EngineDeps,
@@ -311,14 +416,15 @@ export async function runShadow(
   questionId: string,
   predictorId: string,
   key?: string,
-  opts: { backfill?: boolean } = {},
+  opts: { backfill?: boolean; retryFailed?: boolean; allMimics?: boolean; attempt?: number } = {},
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
+  if (opts.backfill && !opts.allMimics && !m.consentResearch) return;
   const q = await deps.store.getQuestion(questionId);
   if (!q || q.mimicId !== m.id) return;
   const preds = await deps.store.listPredictions({ questionId });
-  const mine = preds.filter((p) => p.predictorId === predictorId);
-  const redo = opts.backfill ? mine.filter(isFailedCall) : [];
+  const mine = preds.filter((p) => p.predictorId === predictorId && p.role !== 'hypothesis');
+  const redo = opts.backfill && opts.retryFailed ? mine.filter(isFailedCall) : [];
   if (opts.backfill ? mine.length > redo.length : mine.some((p) => p.role === 'shadow')) return;
   const primary = preds.find((p) => p.role === 'primary');
   if (!primary) return;
@@ -332,34 +438,36 @@ export async function runShadow(
     ? { ...ctxFor(m, 'predict.backfill', key), budgeted: false }
     : ctxFor(m, 'predict.shadow', key);
   const [r] = await makePredictor(deps.gateway, predictorId, ctx).predict(state, [q]);
-  if (!r!.ok && r!.retryable) throw new Error(`${predictorId} call failed, will retry: ${r!.error}`);
+  const attempt = opts.attempt ?? MAX_JOB_ATTEMPTS;
+  if (!r!.ok && r!.retryable && attempt < MAX_JOB_ATTEMPTS)
+    throw new Error(`${predictorId} call failed (attempt ${attempt} of ${MAX_JOB_ATTEMPTS}): ${r!.error}`);
   const now = deps.clock();
-  const rec = {
+  const rec: PredictionRecord = {
     id: deps.newId(),
     questionId: q.id,
     mimicId: m.id,
     predictorId,
-    role: 'shadow' as const,
+    role: 'shadow',
     dist: r!.dist,
     confidence: r!.confidence ?? null,
     stateHash: meta.stateHash,
     evidenceSeqMax: meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: predictorId.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
+    promptVersion: promptVersionOf(predictorId),
     modelSnapshot: r!.modelSnapshot,
     costUsd: r!.costUsd,
     latencyMs: r!.latencyMs,
     ok: r!.ok,
     error: r!.error ?? null,
+    errorKind: r!.ok ? null : (r!.errorKind ?? null),
     fallback: false,
     createdAt: now,
   };
-  if (redo.length)
-    await deps.store.replaceFailedShadows(
-      redo.map((p) => p.id),
-      [rec],
-    );
-  else await deps.store.insertPredictions([rec]);
+  const stored = await deps.store.insertShadow(
+    rec,
+    redo.map((p) => p.id),
+  );
+  if (!stored) return; // another run of this shadow got there first
   // Sealing is defined by state contents, so a shadow may finish after the answer and still be scored.
   const answer = await deps.store.getAnswerForQuestion(q.id);
   if (answer && rec.ok) {
@@ -388,29 +496,38 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   if (pool.length >= MIN_POOL) return;
   if (m.spendUsd >= cfg.session.budgetUsd) return;
   const facets = await facetsFor(deps, m, cfg);
-  const counts = facetCounts(loaded.questions);
-  for (const q of pool) for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
-  const traitConf = new Map(
-    loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t.confidence]),
-  );
-  const targets = [...facets]
-    .sort(
-      (a, b) =>
-        facetCoverage(counts, a.id) - facetCoverage(counts, b.id) ||
-        (traitConf.get(a.id) ?? 0) - (traitConf.get(b.id) ?? 0) ||
-        a.id.localeCompare(b.id),
-    )
-    .slice(0, 5)
-    .map((f) => f.id);
   const n = Math.min(cfg.generator.batchSize, MAX_POOL - pool.length + 4);
   const mix = cfg.generator.domainMix;
-  const total = mix.core + mix.casual + mix.professional || 1;
-  const quota: Record<Domain, number> = {
-    core: Math.round((n * mix.core) / total),
-    casual: Math.round((n * mix.casual) / total),
-    professional: 0,
-  };
-  quota.professional = Math.max(0, n - quota.core - quota.casual);
+  let targets: string[];
+  let quota: Record<Domain, number>;
+  let targetDetails: ReturnType<typeof targetFacets> | undefined;
+  let avoid: string[] | undefined;
+  if (cfg.generator.promptVersion === 'gen.v2') {
+    // Belief-driven targets (docs/SELECTION.md §5): the facets with the highest need, each with why and the
+    // person's current reading; the domain quota tilts toward the domains the mimic is weakest in.
+    const belief = beliefFromLoaded(loaded, facets, cfg, await loadBeliefSources(deps, m), { pooled: pool });
+    const cap = cfg.selector.type === 'voi' ? cfg.selector.exposureCap : 1;
+    targetDetails = targetFacets(belief, facets, 5, cap);
+    targets = targetDetails.map((t) => t.id);
+    avoid = facets.filter((f) => overExposed(belief, f.id, cap)).map((f) => f.id);
+    quota = domainQuota(belief, mix, n);
+  } else {
+    const counts = facetCounts(loaded.questions);
+    for (const q of pool) for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
+    const traitConf = new Map(
+      loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t.confidence]),
+    );
+    targets = [...facets]
+      .sort(
+        (a, b) =>
+          facetCoverage(counts, a.id) - facetCoverage(counts, b.id) ||
+          (traitConf.get(a.id) ?? 0) - (traitConf.get(b.id) ?? 0) ||
+          a.id.localeCompare(b.id),
+      )
+      .slice(0, 5)
+      .map((f) => f.id);
+    quota = splitQuota(mix, n);
+  }
 
   const state = buildState(
     loaded.data,
@@ -430,8 +547,11 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   const gen = await generateCandidates(deps.gateway, ctx, {
     model: cfg.generator.model,
     reasoningEffort: cfg.generator.reasoningEffort,
+    promptVersion: cfg.generator.promptVersion,
     facets,
     targets,
+    ...(targetDetails ? { targetDetails } : {}),
+    ...(avoid ? { avoid } : {}),
     quota,
     identity: state.identity,
     traitSummary,
@@ -525,9 +645,18 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
   const cfg = await loadConfig(deps, m.configHash);
   const loaded = await loadMimicData(deps, m);
   const item = loaded.data.evidence.find((e) => e.seq === seq);
-  if (!item || (item.kind !== 'anchor' && item.kind !== 'adaptive')) return;
-  const learnable = loaded.data.evidence.filter((e) => e.kind === 'anchor' || e.kind === 'adaptive');
+  if (!item || !learnsFrom(item.kind)) return;
+  const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
   const nAnswered = learnable.filter((e) => e.seq <= seq).length;
+  const snapshot = () =>
+    deps.jobs.enqueue(
+      { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
+      { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
+    );
+
+  // Over budget every model call is refused, and the job would retry until dropped. The answer is kept as evidence
+  // and goes into the snapshot; only the reads that need a model are skipped.
+  if (m.spendUsd >= cfg.session.budgetUsd) return snapshot();
 
   // 1) Embed the Q&A (plus the "why").
   try {
@@ -599,7 +728,7 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
   // 3) Reflection every N answers, with the citation guard.
   if (cfg.reflector.model && cfg.reflector.everyN > 0 && nAnswered % cfg.reflector.everyN === 0) {
     await runReflection(deps, m.id, seq, key);
-    if (cfg.selector.type === 'bald')
+    if (usesHypotheses(cfg.selector))
       await deps.jobs.enqueue({ type: 'hypotheses.refresh', mimicId: m.id, seqUpTo: seq });
   }
 
@@ -625,10 +754,7 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
   }
 
   // 5) Debounced snapshot.
-  await deps.jobs.enqueue(
-    { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
-    { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
-  );
+  await snapshot();
 }
 
 export async function runReflection(
@@ -646,8 +772,8 @@ export async function runReflection(
   const facets = await facetsFor(deps, m, cfg);
   const lastReflected = existing.reduce((a, i) => Math.max(a, i.seqUpTo), 0);
   const learnable = loaded.data.evidence
-    .filter((e) => (e.kind === 'anchor' || e.kind === 'adaptive') && e.seq <= seq)
-    .map(toStateEvidence);
+    .filter((e) => learnsFrom(e.kind) && e.seq <= seq)
+    .map((e) => toStateEvidence(e));
   const newEvidence = learnable.filter((e) => e.seq > lastReflected);
   const earlier = learnable.filter((e) => e.seq <= lastReflected).slice(-20);
   const delta = await reflect(deps.gateway, ctxFor(m, 'reflect', key), {
@@ -736,7 +862,9 @@ export async function runHypotheses(
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  if (cfg.selector.type !== 'bald') return;
+  const sel = cfg.selector;
+  const k = sel.type === 'bald' || sel.type === 'voi' ? sel.k : 0;
+  if (k < 2) return;
   const cur = await deps.kv.get(`hyp:${m.id}`);
   if (cur) {
     try {
@@ -757,7 +885,7 @@ export async function runHypotheses(
     model: cfg.reflector.model ?? cfg.generator.model,
     state,
     lowFacets,
-    k: cfg.selector.k,
+    k,
   });
   if (hypotheses.length) await deps.kv.put(`hyp:${m.id}`, JSON.stringify({ seqUpTo, hypotheses }));
 }

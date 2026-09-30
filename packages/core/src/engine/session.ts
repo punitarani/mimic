@@ -1,16 +1,40 @@
 import { z } from 'zod';
+import { DEFAULT_PROMPT_VERSION } from '../components';
 import type { PipelineConfig } from '../config';
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
 import { RESERVE_V1 } from '../ontology';
-import { JevPredictor, LlmPredictor } from '../predictors';
+import { type ItemStatRecord, populationScore } from '../population';
+import { LlmPredictor, makePredictor, promptVersionOf } from '../predictors';
 import { pickRepeat } from '../repeats';
 import { repeatAgreement, scorePrediction } from '../scoring';
-import { makeSelector, questionCoverage } from '../selectors';
+import {
+  hypothesisPosterior,
+  makeSelector,
+  questionCoverage,
+  type SelectContext,
+  usesHypotheses,
+} from '../selectors';
 import { cosine, lexicalSimilarity } from '../state-builder';
-import type { AnswerRecord, FidelityRecord, MimicRecord, PredictionRecord, QuestionRecord } from '../store';
-import type { Distribution, PersonState, PredictionResult, Question } from '../types';
+import type {
+  AnswerRecord,
+  FidelityRecord,
+  MimicRecord,
+  PredictionRecord,
+  QuestionRecord,
+  Store,
+} from '../store';
+import {
+  type Distribution,
+  isScoredKind,
+  isSessionKind,
+  learnsFrom,
+  type PersonState,
+  type PredictionResult,
+  type Question,
+} from '../types';
+import { beliefFromLoaded, loadBeliefSources } from './belief';
 import {
   contextState,
   facetCounts,
@@ -26,13 +50,14 @@ import {
   deferred,
   type EngineDeps,
   EngineError,
+  facetsFor,
   fallbackModel,
   loadConfig,
   requireMimic,
   timed,
 } from './deps';
 
-export const JEV_PROMPT_VERSION = 'jev-predict.v1';
+export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.jev;
 export const MIN_POOL = 6;
 export const MAX_POOL = 15;
 
@@ -40,7 +65,7 @@ export interface PublicQuestion {
   id: string;
   seq: number;
   /** Repeats are shown as adaptive so the person can't tell a probe from a new question. */
-  kind: 'anchor' | 'adaptive' | 'playground';
+  kind: 'anchor' | 'adaptive' | 'playground' | 'feedback';
   type: Question['type'];
   prompt: string;
   options: Question['options'];
@@ -67,12 +92,36 @@ export function toPublic(q: QuestionRecord): PublicQuestion {
 }
 
 function progressOf(questions: QuestionRecord[], cfg: PipelineConfig): Progress {
-  const answered = questions.filter((q) => q.status === 'answered' && q.kind !== 'playground').length;
+  const answered = questions.filter((q) => q.status === 'answered' && isSessionKind(q.kind)).length;
   return { answered, target: cfg.session.target };
 }
 
-function maxSeq(questions: QuestionRecord[]): number {
+export function maxSeq(questions: QuestionRecord[]): number {
   return questions.reduce((a, q) => Math.max(a, q.seq ?? 0), 0);
+}
+
+const SERVE_ATTEMPTS = 3;
+
+/**
+ * Marks a question served, with its sealed predictions, at `seq`, or at the next free seq when a question the
+ * person wrote on the mimic page took it meanwhile (ADR-0032). The predictions stay sealed at a later seq, and the
+ * answer that took the seq was given after `stateAt`, so replay leaves it out of the state too. Returns the seq
+ * used, or null when the question was served elsewhere or, for a session question, another session serve won.
+ */
+export async function serveAtFreeSeq(
+  deps: EngineDeps,
+  args: Parameters<Store['serveQuestion']>[0],
+): Promise<number | null> {
+  let seq = args.seq;
+  for (let attempt = 0; attempt < SERVE_ATTEMPTS; attempt++) {
+    if (await deps.store.serveQuestion({ ...args, seq })) return seq;
+    const qs = await deps.store.listQuestions(args.mimicId);
+    const q = qs.find((x) => x.id === args.questionId);
+    if (q?.status !== 'pooled') return null;
+    if (isSessionKind(q.kind) && qs.some((x) => x.status === 'served' && isSessionKind(x.kind))) return null;
+    seq = maxSeq(qs) + 1;
+  }
+  return null;
 }
 
 /**
@@ -88,7 +137,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
   const { questions } = loaded;
   const progress = progressOf(questions, cfg);
 
-  const current = questions.find((q) => q.status === 'served' && q.kind !== 'playground');
+  const current = questions.find((q) => q.status === 'served' && isSessionKind(q.kind));
   if (current) return { status: 'question', question: toPublic(current), progress };
   if (m.status !== 'learning') return { status: 'identity', progress };
   if (m.spendUsd >= cfg.session.budgetUsd) return { status: 'budget', progress };
@@ -105,7 +154,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
 
   // 2) Repeat probes, scheduled outside the selector; no predictions (PLAN §9.5).
   const served = questions
-    .filter((q) => q.seq !== null && q.kind !== 'playground')
+    .filter((q) => q.seq !== null && isSessionKind(q.kind))
     .map((q) => ({
       questionId: q.id,
       seq: q.seq!,
@@ -113,7 +162,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
       repeatOf: q.repeatOf ?? null,
       answered: q.status === 'answered',
     }));
-  const repeatOf = pickRepeat(served, seq, cfg.repeats, rng);
+  const repeatOf = pickRepeat(served, cfg.repeats, rng);
   if (repeatOf) {
     const src = questions.find((q) => q.id === repeatOf)!;
     const rep: QuestionRecord = {
@@ -128,7 +177,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
       stateAt: null,
     };
     await deps.store.insertQuestions([rep]);
-    const ok = await deps.store.serveQuestion({
+    const at = await serveAtFreeSeq(deps, {
       questionId: rep.id,
       mimicId: m.id,
       seq,
@@ -136,8 +185,8 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
       stateAt: null,
       predictions: [],
     });
-    if (!ok) return raced(deps, m.id);
-    return { status: 'question', question: toPublic({ ...rep, seq, status: 'served' }), progress };
+    if (at === null) return raced(deps, m.id);
+    return { status: 'question', question: toPublic({ ...rep, seq: at, status: 'served' }), progress };
   }
 
   // 3) Adaptive pool (reserve bank when the generated pool is empty).
@@ -156,7 +205,7 @@ async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
   const qs = await deps.store.listQuestions(m.id);
-  const current = qs.find((q) => q.status === 'served' && q.kind !== 'playground');
+  const current = qs.find((q) => q.status === 'served' && isSessionKind(q.kind));
   const progress = progressOf(qs, cfg);
   if (!current) throw new EngineError('conflict', 'Concurrent serve; retry');
   return { status: 'question', question: toPublic(current), progress };
@@ -250,25 +299,24 @@ async function serveWithPredictions(
   rng: () => number,
 ): Promise<NextResult> {
   const primarySpec = cfg.predictor.primary;
-  const ctxPrimary = ctxFor(m, 'predict.primary');
-  const primary = primarySpec.startsWith('jev:')
-    ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxPrimary)
-    : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxPrimary);
-  const baselinePredictor = primarySpec.startsWith('jev:')
-    ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'predict.baseline'))
-    : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'predict.baseline'));
+  // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
+  const primary = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
+  const baselinePredictor = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.baseline'));
 
   const state = await timed(deps, 'state', () => sealedState(deps, loaded, cfg, seq, pool));
   const baseState = contextState(loaded, cfg);
   if (state.meta.evidenceSeqMax >= seq) throw new Error('Sealing violated: state contains answer ≥ seq');
 
-  const asked = loaded.questions.filter((q) => q.seq !== null && q.kind !== 'playground');
+  const asked = loaded.questions.filter((q) => q.seq !== null && isSessionKind(q.kind));
   const counts = facetCounts(loaded.questions);
 
   // Baseline for every candidate in one batched call, in parallel with selection (PLAN §6.4).
   const baselinePromise = baselinePredictor.predict(baseState, pool);
   let chosen: QuestionRecord;
   let primaryResult: PredictionResult;
+  let selection: Record<string, unknown> | null = null;
+  const hypothesisRows: PredictionRecord[] = [];
+  const hypothesisStates: PersonState[] = [];
   if (fixed) {
     chosen = fixed;
     [primaryResult] = (await timed(deps, 'select', () => primary.predict(state, [fixed]))) as [
@@ -276,8 +324,13 @@ async function serveWithPredictions(
     ];
   } else {
     const selector = makeSelector(cfg.selector);
-    const hypotheses = cfg.selector.type === 'bald' ? await loadHypotheses(deps, m.id) : undefined;
-    const redundancy = await timed(deps, 'redundancy', () => redundancyFn(deps, m, pool, asked));
+    // Same prompt as the primary, including a prompt variant (ADR-0028); logged under its own purpose.
+    const explore = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'select.bald'));
+    const [hyp, redundancy, voi] = await Promise.all([
+      usesHypotheses(cfg.selector) ? loadHypothesisSet(deps, m, loaded) : undefined,
+      timed(deps, 'redundancy', () => redundancyFn(deps, m, pool, asked)),
+      cfg.selector.type === 'voi' ? timed(deps, 'belief', () => voiContext(deps, m, cfg, loaded)) : undefined,
+    ]);
     const sel = await timed(deps, 'select', () =>
       selector.select({
         pool,
@@ -286,18 +339,41 @@ async function serveWithPredictions(
         coverage: (q) => questionCoverage(counts, q),
         redundancy,
         rng,
-        ...(hypotheses
-          ? {
-              hypotheses,
-              explore: primarySpec.startsWith('jev:')
-                ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'select.bald'))
-                : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'select.bald')),
-            }
-          : {}),
+        sessionTarget: cfg.session.target,
+        ...(hyp ? { hypotheses: hyp.hypotheses, hypothesisWeights: hyp.weights, explore } : {}),
+        ...(voi ?? {}),
       }),
     );
     chosen = sel.question as QuestionRecord;
     primaryResult = sel.primary;
+    selection = { selector: cfg.selector.type, ...sel.diagnostics };
+    if (hyp && sel.hypothesisPreds) {
+      selection.hypothesisWeights = hyp.weights.map((w) => Math.round(w * 1000) / 1000);
+      for (const h of sel.hypothesisPreds) {
+        hypothesisStates.push(h.state);
+        hypothesisRows.push({
+          id: deps.newId(),
+          questionId: chosen.id,
+          mimicId: m.id,
+          predictorId: primarySpec,
+          role: 'hypothesis',
+          dist: h.result.dist,
+          confidence: h.result.confidence ?? null,
+          stateHash: h.state.meta.stateHash,
+          evidenceSeqMax: h.state.meta.evidenceSeqMax,
+          configHash: m.configHash,
+          promptVersion: promptVersionOf(primarySpec),
+          modelSnapshot: h.result.modelSnapshot,
+          costUsd: h.result.costUsd,
+          latencyMs: h.result.latencyMs,
+          ok: h.result.ok,
+          error: h.result.error ?? null,
+          fallback: false,
+          hypothesis: hypothesisTag(hyp.seqUpTo, h.index),
+          createdAt: deps.clock(),
+        });
+      }
+    }
   }
   const baselines = await timed(deps, 'baseline', () => baselinePromise);
   const baselineResult = baselines[pool.indexOf(chosen)]!;
@@ -333,33 +409,38 @@ async function serveWithPredictions(
     stateHash: s.meta.stateHash,
     evidenceSeqMax: s.meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: predictorId.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
+    promptVersion: promptVersionOf(predictorId),
     modelSnapshot: r.modelSnapshot,
     costUsd: r.costUsd,
     latencyMs: r.latencyMs,
     ok: r.ok,
     error: r.error ?? null,
+    errorKind: r.ok ? null : (r.errorKind ?? null),
     fallback: isFallback,
     createdAt: now,
   });
   const predictions = [
     pred('primary', primaryId, state, primaryResult, fallback),
     pred('baseline', primarySpec, baseState, baselineResult),
+    // The chosen question's prediction under each persona hypothesis feeds the hypothesis posterior (§6); not scored.
+    ...hypothesisRows,
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
-  const ok = await timed(deps, 'persist', () =>
-    deps.store.serveQuestion({
+  const at = await timed(deps, 'persist', () =>
+    serveAtFreeSeq(deps, {
       questionId: chosen.id,
       mimicId: m.id,
       seq,
       servedAt: now,
       stateAt,
       predictions,
+      selection,
     }),
   );
-  if (!ok) return raced(deps, m.id);
+  if (at === null) return raced(deps, m.id);
 
-  // The sealed states must exist before shadow jobs read them; both can finish after the response.
+  // The sealed states must exist before shadow jobs read them; both can finish after the response. Hypothesis
+  // states are written too, so every stored prediction resolves to its state (ADR-0010).
   await deferred(deps, async () => {
     await Promise.all([
       deps.blobs.put(stateBlobKey(m.id, state.meta.stateHash), JSON.stringify(state), 'application/json'),
@@ -368,6 +449,9 @@ async function serveWithPredictions(
         JSON.stringify(baseState),
         'application/json',
       ),
+      ...hypothesisStates.map((s) =>
+        deps.blobs.put(stateBlobKey(m.id, s.meta.stateHash), JSON.stringify(s), 'application/json'),
+      ),
     ]);
     await Promise.all(
       cfg.predictor.shadows.map((s) =>
@@ -375,18 +459,101 @@ async function serveWithPredictions(
       ),
     );
   });
-  return { status: 'question', question: toPublic({ ...chosen, seq, status: 'served' }), progress };
+  return { status: 'question', question: toPublic({ ...chosen, seq: at, status: 'served' }), progress };
 }
 
-export async function loadHypotheses(deps: EngineDeps, mimicId: string): Promise<string[] | undefined> {
+export interface HypothesisSet {
+  /** The evidence seq the hypotheses were written from; their posterior counts answers after it. */
+  seqUpTo: number;
+  hypotheses: string[];
+}
+
+export async function loadHypotheses(deps: EngineDeps, mimicId: string): Promise<HypothesisSet | undefined> {
   const raw = await deps.kv.get(`hyp:${mimicId}`);
   if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as { hypotheses?: string[] };
-    return parsed.hypotheses;
+    const parsed = JSON.parse(raw) as { seqUpTo?: number; hypotheses?: string[] };
+    if (!Array.isArray(parsed.hypotheses)) return undefined;
+    return { seqUpTo: parsed.seqUpTo ?? 0, hypotheses: parsed.hypotheses };
   } catch {
     return undefined;
   }
+}
+
+/** `predictions.hypothesis` for hypothesis `index` of the set written at `seqUpTo`. */
+export function hypothesisTag(seqUpTo: number, index: number): string {
+  return `${seqUpTo}:${index}`;
+}
+
+export function parseHypothesisTag(tag: string): { seqUpTo: number; index: number } | null {
+  const m = /^(\d+):(\d+)$/.exec(tag);
+  return m ? { seqUpTo: Number(m[1]), index: Number(m[2]) } : null;
+}
+
+/**
+ * The current hypothesis set with its posterior weights (docs/SELECTION.md §6): each hypothesis's likelihood of the
+ * answers given since the set was written, read from the stored `role = hypothesis` rows. No mutable state.
+ */
+export async function loadHypothesisSet(
+  deps: EngineDeps,
+  m: MimicRecord,
+  loaded: LoadedMimic,
+): Promise<(HypothesisSet & { weights: number[] }) | undefined> {
+  const set = await loadHypotheses(deps, m.id);
+  if (!set || set.hypotheses.length < 2) return undefined;
+  const rows = await deps.store.listPredictions({ mimicId: m.id, roles: ['hypothesis'] });
+  const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
+  const obs: Array<{ index: number; pAnswer: number }> = [];
+  for (const r of rows) {
+    if (!r.ok || !r.hypothesis) continue;
+    const tag = parseHypothesisTag(r.hypothesis);
+    if (!tag || tag.seqUpTo !== set.seqUpTo) continue;
+    const a = answerByQ.get(r.questionId);
+    if (!a) continue;
+    obs.push({ index: tag.index, pAnswer: r.dist[a.value] ?? 0 });
+  }
+  return { ...set, weights: hypothesisPosterior(obs, set.hypotheses.length) };
+}
+
+/**
+ * `item_stats` changes hourly (`stats.refresh`) and is read on every `/next`, so it is cached per isolate for a
+ * short while, like question vectors. `stats.refresh` invalidates the cache of its own isolate; other isolates see
+ * the new rows within ITEM_STATS_TTL_MS.
+ */
+export const ITEM_STATS_TTL_MS = 5 * 60 * 1000;
+let ITEM_STATS_CACHE: { at: number; byKey: Map<string, ItemStatRecord> } | null = null;
+
+export function invalidateItemStatsCache(): void {
+  ITEM_STATS_CACHE = null;
+}
+
+async function itemStatsByKey(deps: EngineDeps): Promise<Map<string, ItemStatRecord>> {
+  const now = deps.clock();
+  if (ITEM_STATS_CACHE && now - ITEM_STATS_CACHE.at < ITEM_STATS_TTL_MS && now >= ITEM_STATS_CACHE.at)
+    return ITEM_STATS_CACHE.byKey;
+  const byKey = new Map((await deps.store.listItemStats()).map((s) => [s.key, s]));
+  ITEM_STATS_CACHE = { at: now, byKey };
+  return byKey;
+}
+
+/** Belief state and population prior for the `voi` selector. */
+async function voiContext(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  loaded: LoadedMimic,
+): Promise<Pick<SelectContext, 'belief' | 'population'>> {
+  const wantStats = cfg.selector.type === 'voi' && cfg.selector.piPopulation > 0;
+  const [facets, sources, byKey] = await Promise.all([
+    facetsFor(deps, m, cfg),
+    loadBeliefSources(deps, m),
+    wantStats ? itemStatsByKey(deps) : Promise.resolve(new Map<string, ItemStatRecord>()),
+  ]);
+  const belief = beliefFromLoaded(loaded, facets, cfg, sources);
+  return {
+    belief,
+    population: (q) => (byKey.size ? populationScore(q, byKey) : null),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -435,53 +602,69 @@ export async function submitAnswer(
     if (existing.mimicId !== m.id) throw new EngineError('conflict', 'Idempotency key reused');
     return replayResult(deps, m, cfg, existing);
   }
-  const q = await deps.store.getQuestion(input.questionId);
-  if (!q || q.mimicId !== m.id) throw new EngineError('not_found', 'Question not found');
-  if (q.status === 'answered') throw new EngineError('conflict', 'Question already answered');
-  if (q.status !== 'served' || q.seq === null)
-    throw new EngineError('conflict', 'Question is not being asked');
-  if (!q.options.some((o) => o.key === input.value)) throw new EngineError('invalid', 'Unknown option');
+  // Feedback given while this question is served moves it to a later seq (ADR-0032); an answer that raced the
+  // move is recorded again at the question's new seq.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const q = await deps.store.getQuestion(input.questionId);
+    if (!q || q.mimicId !== m.id) throw new EngineError('not_found', 'Question not found');
+    if (q.status === 'answered') throw new EngineError('conflict', 'Question already answered');
+    if (q.status !== 'served' || q.seq === null)
+      throw new EngineError('conflict', 'Question is not being asked');
+    if (!q.options.some((o) => o.key === input.value)) throw new EngineError('invalid', 'Unknown option');
 
-  const now = deps.clock();
-  const predictions = q.kind === 'repeat' ? [] : await deps.store.listPredictions({ questionId: q.id });
-  const primary = predictions.find((p) => p.role === 'primary' && p.ok);
-  const reveal =
-    cfg.reveal === 'after_answer' && input.revealShown !== false && q.kind !== 'repeat' && primary
-      ? revealOf(q, primary)
-      : null;
-  const answer: AnswerRecord = {
-    id: deps.newId(),
-    questionId: q.id,
-    mimicId: m.id,
-    seq: q.seq,
-    value: input.value,
-    why: input.why?.length ? input.why : null,
-    latencyMs: input.latencyMs,
-    revealedPrediction: reveal !== null,
-    idempotencyKey: input.idempotencyKey,
-    createdAt: now,
-  };
-  if (reveal) reveal.match = reveal.optionKey === input.value;
-  const scores = predictions
-    .filter((p) => p.ok)
-    .map((p) => ({
-      predictionId: p.id,
-      answerId: answer.id,
-      ...scorePrediction(q.type, p.dist, input.value),
+    const now = deps.clock();
+    const predictions = q.kind === 'repeat' ? [] : await deps.store.listPredictions({ questionId: q.id });
+    const primary = predictions.find((p) => p.role === 'primary' && p.ok);
+    const reveal =
+      cfg.reveal === 'after_answer' && input.revealShown !== false && q.kind !== 'repeat' && primary
+        ? revealOf(q, primary)
+        : null;
+    const answer: AnswerRecord = {
+      id: deps.newId(),
+      questionId: q.id,
+      mimicId: m.id,
+      seq: q.seq,
+      value: input.value,
+      why: input.why?.length ? input.why : null,
+      latencyMs: input.latencyMs,
+      revealedPrediction: reveal !== null,
+      idempotencyKey: input.idempotencyKey,
       createdAt: now,
-    }));
-  await timed(deps, 'record', () => deps.store.recordAnswer({ answer, scores }));
+    };
+    if (reveal) reveal.match = reveal.optionKey === input.value;
+    // Hypothesis rows are exploration artifacts, not predictors: they are never scored (docs/SELECTION.md §6).
+    const scores = predictions
+      .filter((p) => p.ok && p.role !== 'hypothesis')
+      .map((p) => ({
+        predictionId: p.id,
+        answerId: answer.id,
+        ...scorePrediction(q.type, p.dist, input.value),
+        createdAt: now,
+      }));
+    if (!(await timed(deps, 'record', () => deps.store.recordAnswer({ answer, scores })))) {
+      const dup = await deps.store.getAnswerByIdempotencyKey(input.idempotencyKey);
+      if (dup?.mimicId === m.id) return replayResult(deps, m, cfg, dup);
+      continue;
+    }
+    return afterAnswer(deps, m, q, q.seq, reveal);
+  }
+  throw new EngineError('conflict', 'Busy; try again');
+}
 
-  const seqAnswered = q.seq;
-  const fidelity =
-    q.kind === 'playground'
-      ? null
-      : await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seqAnswered));
-  if (q.kind === 'anchor' || q.kind === 'adaptive') {
-    const seq = q.seq;
+async function afterAnswer(
+  deps: EngineDeps,
+  m: MimicRecord,
+  q: QuestionRecord,
+  seq: number,
+  reveal: Reveal | null,
+): Promise<AnswerResult> {
+  const fidelity = isSessionKind(q.kind)
+    ? await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seq))
+    : null;
+  if (learnsFrom(q.kind)) {
     await deferred(deps, () => deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq }));
   }
-  return { reveal, fidelity, seq: q.seq };
+  return { reveal, fidelity, seq };
 }
 
 function revealOf(q: QuestionRecord, p: PredictionRecord): Reveal {
@@ -551,10 +734,7 @@ export function fidelityInput(
   answers: AnswerRecord[],
 ): { scored: Array<{ itemAcc: number; baselineItemAcc: number | null }>; repeatAgreements: number[] } {
   const primaries = scored
-    .filter(
-      (r) =>
-        r.prediction.role === 'primary' && (r.question.kind === 'anchor' || r.question.kind === 'adaptive'),
-    )
+    .filter((r) => r.prediction.role === 'primary' && isScoredKind(r.question.kind))
     .sort((a, b) => (a.question.seq ?? 0) - (b.question.seq ?? 0));
   const baselineByQ = new Map(
     scored.filter((r) => r.prediction.role === 'baseline').map((r) => [r.question.id, r.score.itemAcc]),

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { answerToDistribution, isTransientError, predictionQuestion } from '@mimic/core';
+import { answerToDistribution, isTimeoutError, isTransientError, predictionQuestion } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
   ExaPeopleSearch,
@@ -207,6 +207,40 @@ describe('OpenRouter chat', () => {
     expect((e429 as HttpError).status).toBe(429);
   });
 
+  it('treats a provider failing mid-generation (finish_reason "error") as a failed call', async () => {
+    const { fetch } = replay({
+      json: {
+        model: 'm',
+        choices: [{ message: { content: '' }, finish_reason: 'error', error: { message: 'upstream reset' } }],
+      },
+    });
+    const err = await new OpenRouterChat({ fetch })
+      .chat({ model: 'm', messages: [] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).status).toBe(502);
+    expect(String(err)).toContain('upstream reset');
+    expect(isTransientError(err)).toBe(true);
+  });
+
+  it("doesn't retry a chat call that timed out (the model was too slow), and reports attempts", async () => {
+    let calls = 0;
+    const slow: FetchLike = async () => {
+      calls++;
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    };
+    const err = await new OpenRouterChat({ fetch: slow }).chat({ model: 'm', messages: [] }).catch((e) => e);
+    expect(calls).toBe(1);
+    expect(isTimeoutError(err)).toBe(true);
+    // Other requests still retry timeouts, and a rate limit still retries in chat.
+    calls = 0;
+    await requestJson({ fetch: slow, retries: 1 }, 'https://x.dev/a', { body: {} }).catch(() => {});
+    expect(calls).toBe(2);
+    const limited = replay({ status: 429, json: {} }, { json: fixture('openrouter-chat-json-schema.json') });
+    const ok = await new OpenRouterChat({ fetch: limited.fetch }).chat({ model: 'm', messages: [] });
+    expect(ok.attempts).toBe(2);
+  });
+
   it('only pins providers it has a preference for', () => {
     const body = new OpenRouterChat().buildBody({ model: 'openai/gpt-6-luna', messages: [] });
     expect(body).not.toHaveProperty('provider');
@@ -243,6 +277,38 @@ describe('Exa people search', () => {
       url: 'https://www.linkedin.com/in/avery-quinn-example',
     });
     expect(r.candidates[0]!.summary).toContain('Contoso');
+  });
+
+  it("looks up the person's own link with /contents and keeps their exact URL", async () => {
+    const { fetch, calls } = replay({ json: fixture('exa-contents.json') });
+    const link = 'https://linkedin.com/in/avery-quinn-example/';
+    const r = await new ExaPeopleSearch({ fetch, apiKey: 'exa' }).lookup(link);
+    expect(calls[0]!.url).toBe('https://api.exa.ai/contents');
+    expect(calls[0]!.headers['x-api-key']).toBe('exa');
+    expect(calls[0]!.body).toMatchObject({ urls: [link] });
+    expect(r.costUsd).toBe(0.001);
+    expect(r.candidates).toEqual([
+      expect.objectContaining({
+        provider: 'exa',
+        name: 'Avery Quinn',
+        headline: 'Senior Software Engineer at Northwind Labs',
+        location: 'San Francisco, California, United States',
+        url: link,
+      }),
+    ]);
+  });
+
+  it('gives no candidate for a link Exa cannot read', async () => {
+    const { fetch } = replay({
+      json: {
+        requestId: 'x',
+        results: [],
+        statuses: [{ id: 'https://linkedin.com/in/nobody', status: 'error', error: { httpStatusCode: 404 } }],
+        costDollars: { total: 0 },
+      },
+    });
+    const r = await new ExaPeopleSearch({ fetch }).lookup('https://linkedin.com/in/nobody');
+    expect(r.candidates).toEqual([]);
   });
 });
 

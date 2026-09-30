@@ -37,7 +37,10 @@ export interface ModelCallRecord {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /** The attempt that answered; earlier attempts that got a transient error are counted in `attempts`. */
   latencyMs: number;
+  /** HTTP attempts the call took (ADR-0034); 1 when omitted. */
+  attempts?: number;
   ok: boolean;
   error: string | null;
   configHash: string | null;
@@ -83,12 +86,23 @@ export const TRANSIENT_HTTP_STATUS: ReadonlySet<number> = new Set([
   408, 425, 429, 500, 502, 503, 504, 524, 529,
 ]);
 
+/** A call that ran out of time (`AbortSignal.timeout`): the model didn't answer in time. */
+export function isTimeoutError(e: unknown): boolean {
+  const x = e as { name?: unknown; message?: unknown } | null;
+  return (
+    x?.name === 'TimeoutError' ||
+    (typeof x?.message === 'string' && x.message.includes('aborted due to timeout'))
+  );
+}
+
 /**
- * Whether a failed provider call may succeed if retried later: timeouts, network errors, transient statuses and
- * malformed provider responses are; the budget guard and other HTTP statuses (bad request, unknown model) are not.
+ * Whether a failed provider call may succeed if retried later: network errors, transient statuses and malformed
+ * provider responses may. The budget guard, other HTTP statuses (bad request, unknown model) and timeouts (a slow
+ * model, which a retry would only hide) won't. Queued retries are bounded (MAX_JOB_ATTEMPTS), so a permanent fault
+ * that looks transient is stored after the last attempt.
  */
 export function isTransientError(e: unknown): boolean {
-  if (e instanceof BudgetExceededError) return false;
+  if (e instanceof BudgetExceededError || isTimeoutError(e)) return false;
   const status = (e as { status?: unknown } | null)?.status;
   if (typeof status === 'number') return TRANSIENT_HTTP_STATUS.has(status);
   return true;
@@ -105,6 +119,7 @@ interface CallOutcome {
   usage: Usage;
   modelSnapshot: string | null;
   latencyMs: number;
+  attempts?: number;
   raw: unknown;
 }
 
@@ -162,6 +177,7 @@ export async function withModelCall<T extends CallOutcome>(
         outputTokens: out.usage.outputTokens,
         costUsd: out.usage.costUsd,
         latencyMs: out.latencyMs,
+        attempts: out.attempts ?? 1,
         ok: true,
         error: null,
       },
@@ -239,6 +255,26 @@ export class Gateway {
       { query, numResults },
       async () => {
         const r = await s.search(query, { numResults });
+        return { ...r, usage: { inputTokens: 0, outputTokens: 0, costUsd: r.costUsd }, modelSnapshot: null };
+      },
+    );
+  }
+
+  /** True when the people search provider can resolve a profile URL directly. */
+  get canLookupPeople(): boolean {
+    return typeof this.deps.search?.lookup === 'function';
+  }
+
+  async lookupPerson(ctx: CallContext, url: string): Promise<PeopleSearchResult> {
+    const s = this.deps.search;
+    if (!s?.lookup) throw new Error('No profile lookup configured');
+    const lookup = s.lookup.bind(s);
+    return withModelCall(
+      this.deps,
+      { ...ctx, provider: s.provider, model: `${s.provider}:contents` },
+      { url },
+      async () => {
+        const r = await lookup(url);
         return { ...r, usage: { inputTokens: 0, outputTokens: 0, costUsd: r.costUsd }, modelSnapshot: null };
       },
     );

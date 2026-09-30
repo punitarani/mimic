@@ -2,8 +2,31 @@ import { z } from 'zod';
 
 export const QType = z.enum(['choice', 'noul', 'score']);
 export type QType = z.infer<typeof QType>;
-export const QKind = z.enum(['anchor', 'adaptive', 'repeat', 'playground']);
+export const QKind = z.enum(['anchor', 'adaptive', 'repeat', 'playground', 'feedback']);
 export type QKind = z.infer<typeof QKind>;
+
+/**
+ * Kinds whose answers the mimic learns from: they enter sealed states, trait reads and reflection. `feedback` is a
+ * question the person wrote and answered themselves on the mimic page, with no prediction (ADR-0032).
+ */
+export function learnsFrom(kind: QKind): boolean {
+  return kind === 'anchor' || kind === 'adaptive' || kind === 'feedback';
+}
+
+/** Kinds the session serves. `playground` and `feedback` are written by the person on the mimic page instead. */
+export function isSessionKind(kind: QKind): boolean {
+  return kind === 'anchor' || kind === 'adaptive' || kind === 'repeat';
+}
+
+/** Kinds scored for fidelity, shadows and backfill (PLAN §9.10): the session's new questions. */
+export function isScoredKind(kind: QKind): kind is 'anchor' | 'adaptive' {
+  return kind === 'anchor' || kind === 'adaptive';
+}
+
+/** Kinds served with sealed primary and baseline predictions (PLAN §3.2). Repeats and feedback carry none. */
+export function isPredictedKind(kind: QKind): boolean {
+  return kind === 'anchor' || kind === 'adaptive' || kind === 'playground';
+}
 export const Domain = z.enum(['core', 'casual', 'professional']);
 export type Domain = z.infer<typeof Domain>;
 
@@ -88,6 +111,11 @@ export interface StateEvidence {
   options: string[];
   answer: string;
   why?: string;
+  /**
+   * With `stateBuilder.latencyHints`: 'quick' when answered in under half the person's median latency (a decisive
+   * answer), 'slow' when over twice it (a torn one). Docs/SELECTION.md §8.
+   */
+  pace?: 'quick' | 'slow';
 }
 
 export interface PersonState {
@@ -100,6 +128,8 @@ export interface PersonState {
   meta: { evidenceSeqMax: number; stateHash: string; builder: string; tokens: number };
 }
 
+export type PredictionErrorKind = 'transport' | 'output' | 'timeout';
+
 export interface PredictionResult {
   dist: Distribution;
   confidence?: number;
@@ -109,10 +139,16 @@ export interface PredictionResult {
   ok: boolean;
   error?: string;
   /**
-   * The call itself failed (timeout, network, a transient HTTP status), so the model never answered. A queued
-   * prediction retries instead of storing this as the model's failure (ADR-0027).
+   * Why it failed (set on failures only; stored with the prediction, ADR-0034):
+   * - `output`: the model answered but the answer was unusable (the prompt's or model's fault);
+   * - `timeout`: the model didn't answer within the call's timeout (too slow; the model's failure, never redone);
+   * - `transport`: the call failed before the model answered (provider error, rate limit, network, budget guard).
    */
+  errorKind?: PredictionErrorKind;
+  /** `transport` only: the call may succeed if retried later (a transient status or network error). */
   retryable?: boolean;
+  /** Raw model output (LLM only, truncated). Kept in memory for eval traces; never persisted with the prediction. */
+  raw?: string;
 }
 
 export interface Predictor {
@@ -148,7 +184,10 @@ export interface DecisionResponse {
   modelSnapshot: string;
   answers: Record<string, DecisionAnswer>;
   usage: Usage;
+  /** The attempt that returned this response, excluding earlier failed attempts and retry backoff. */
   latencyMs: number;
+  /** HTTP attempts it took (1 unless an earlier one got a transient error). */
+  attempts?: number;
   raw: unknown;
 }
 
@@ -183,6 +222,8 @@ export interface ChatResponse {
   usage: Usage;
   /** The attempt that returned this response, excluding earlier failed attempts and retry backoff. */
   latencyMs: number;
+  /** HTTP attempts it took (1 unless an earlier one got a transient error). */
+  attempts?: number;
   raw: unknown;
 }
 
@@ -212,6 +253,8 @@ export interface PeopleSearchResult {
 export interface PeopleSearch {
   readonly provider: string;
   search(query: string, opts: { numResults: number }): Promise<PeopleSearchResult>;
+  /** Resolves a profile URL the person gave into a candidate (none if the page can't be read). */
+  lookup?(url: string): Promise<PeopleSearchResult>;
 }
 
 export interface EnrichedFact {
@@ -244,6 +287,7 @@ export interface EmbedResult {
   model: string;
   usage: Usage;
   latencyMs: number;
+  attempts?: number;
 }
 
 export interface Embedder {

@@ -1,21 +1,30 @@
+import { fill, INCUMBENT_COMPONENTS, type PredictComponents } from './components';
 import { normalizeDist, optionKeys } from './distribution';
 import type { DecisionAnswer, DecisionQuestion, Distribution, Facet, Question } from './types';
 
-/** PLAN §9.6 Jev templates. */
-export function predictionQuestion(q: Pick<Question, 'type' | 'prompt' | 'options'>): DecisionQuestion {
-  const instructions = `Predict how the person described in the state would answer this question, based only on the state: "${q.prompt}"`;
+/** PLAN §9.6 Jev templates, from the prompt components (incumbent: `jev-predict.v1`). */
+export function predictionQuestion(
+  q: Pick<Question, 'type' | 'prompt' | 'options'>,
+  c: Pick<
+    PredictComponents,
+    'jev.instructions' | 'jev.choice' | 'jev.noul.true' | 'jev.noul.false'
+  > = INCUMBENT_COMPONENTS,
+): DecisionQuestion {
+  const instructions = fill(c['jev.instructions'], { prompt: q.prompt });
   switch (q.type) {
     case 'choice':
       return {
         type: 'choice',
         instructions,
-        criteria: Object.fromEntries(q.options.map((o) => [o.key, `The person would choose: ${o.label}`])),
+        criteria: Object.fromEntries(
+          q.options.map((o) => [o.key, fill(c['jev.choice'], { label: o.label })]),
+        ),
       };
     case 'noul':
       return {
         type: 'noul',
         instructions,
-        criteria: { true: 'The person would answer yes', false: 'The person would answer no' },
+        criteria: { true: c['jev.noul.true'], false: c['jev.noul.false'] },
       };
     case 'score':
       return { type: 'score', instructions, criteria: q.options.map((o) => o.label) };

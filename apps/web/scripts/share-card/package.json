@@ -1,0 +1,10 @@
+{
+  "name": "@mimic/share-card",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Renders apps/web/public/share-card.png and apple-touch-icon.png. Installed on demand, outside the workspace, so CI never installs Playwright.",
+  "dependencies": {
+    "playwright": "1.56.1"
+  }
+}

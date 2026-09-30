@@ -1,15 +1,21 @@
 // node --test scripts/*.test.mjs (part of `pnpm test`). No network: OpenRouter, D1, the queue and the local worker
 // are fakes behind the same interfaces. packages/eval/test/backfill.test.ts runs the SQL against the real schema.
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
   backfill,
   backfillJobs,
   checkModel,
+  checkPromptVersion,
   DEFAULT_RATE,
   errorsQuery,
+  inFlightQuery,
   inlineParams,
   localTarget,
+  MAX_JOBS,
   missingQuery,
   PENDING_WINDOW_MS,
   parseBackfillArgs,
@@ -52,6 +58,14 @@ describe('backfill arguments', () => {
     const o = parseBackfillArgs(['--predictor', MIMO, '--rate', '12', '--retry-failed']);
     assert.equal(o.rate, 12);
     assert.equal(o.retryFailed, true);
+    // Prompt variants (ADR-0028) are accepted; anything that could break out of the inlined SQL is not.
+    assert.deepEqual(parseBackfillArgs(['--predictor', 'jev:typesafe/jev-1.13@jev-predict.v2']).predictors, [
+      'jev:typesafe/jev-1.13@jev-predict.v2',
+    ]);
+    assert.throws(
+      () => parseBackfillArgs(['--predictor', `${MIMO}@v2'; drop`]),
+      /--predictor must look like/,
+    );
   });
 
   it('takes several predictors, repeated or as a list', () => {
@@ -69,42 +83,45 @@ describe('backfill arguments', () => {
     assert.throws(() => parseBackfillArgs(['--predictor', MIMO, '--env', 'staging']), /--env/);
     assert.throws(() => parseBackfillArgs(['--predictor', MIMO, '--mimic', 'abc']), /not a mimic ID/);
     assert.throws(() => parseBackfillArgs(['--predictor', MIMO, '--force']), /unknown argument/);
-    for (const r of ['0', '-3', 'fast', '1000'])
+    for (const r of ['0', '-3', 'fast', '1000', '2.5'])
       assert.throws(() => parseBackfillArgs(['--predictor', MIMO, '--rate', r]), /--rate/);
   });
 });
 
 describe('backfill plan', () => {
-  it('counts served, sealed questions without the predictor, scoped like the worker', () => {
+  it('counts served, sealed questions without the predictor or a job in flight, scoped like the worker', () => {
     const q = missingQuery({ predictor: MIMO, consented: true, mimics: [M1], retryFailed: false }, NOW);
     assert.match(q.sql, /q\.kind IN \('anchor', 'adaptive'\)/);
     assert.match(q.sql, /p\.role = 'primary'/);
-    assert.match(q.sql, /p\.predictor_id = \?1 \)/);
+    assert.match(q.sql, /p\.predictor_id = \?1 AND p\.role != 'hypothesis' \)/);
     assert.match(q.sql, /q\.served_at < \?2/);
+    assert.match(q.sql, /AND NOT EXISTS \(SELECT 1 FROM jobs j WHERE j\.key IN/);
+    assert.match(q.sql, /j\.updated_at >= \?3/);
     assert.match(q.sql, /m\.consent_research = 1/);
-    assert.match(q.sql, /q\.mimic_id IN \(\?3\)/);
-    assert.deepEqual(q.params, [MIMO, NOW - PENDING_WINDOW_MS, M1]);
+    assert.match(q.sql, /q\.mimic_id IN \(\?4\)/);
+    // Strings only: the D1 HTTP API's params are strings.
+    assert.deepEqual(q.params, [MIMO, String(NOW - PENDING_WINDOW_MS), String(NOW - 15 * 60_000), M1]);
     assert.doesNotMatch(
       missingQuery({ predictor: MIMO, consented: false, mimics: [], retryFailed: false }, NOW).sql,
       /consent|IN \(\?/,
     );
   });
 
-  it('with --retry-failed, counts a failed call as missing but never unusable output', () => {
+  it('with --retry-failed, counts a failed call as missing, from the stored error kind', () => {
     const { sql } = missingQuery({ predictor: MIMO, consented: false, mimics: [], retryFailed: true }, NOW);
+    assert.match(sql, /AND NOT \(p\.role = 'shadow' AND p\.ok = 0 AND p\.error_kind = 'transport'\)\)/);
+  });
+
+  it('reports failures by kind, and backfill predictions in flight', () => {
     assert.match(
-      sql,
-      /AND NOT \(p\.role = 'shadow' AND p\.ok = 0 AND NOT COALESCE\(p\.error IN \('invalid JSON/,
+      statsQuery(MIMO).sql,
+      /AS unusable,.*AS timeouts,.*AS failed_calls,.*AS redoable,.*AS avg_cost/s,
     );
-    assert.match(sql, /'output cut off at max_tokens%'/);
+    assert.match(errorsQuery(MIMO).sql, /GROUP BY 1, 2 ORDER BY n DESC/);
+    assert.deepEqual(inFlightQuery(MIMO, NOW).params, [MIMO, String(NOW - 15 * 60_000)]);
   });
 
-  it('reports failures by kind and message', () => {
-    assert.match(statsQuery(MIMO).sql, /AS unusable,.*AS failed_calls,.*AS avg_cost/s);
-    assert.match(errorsQuery(MIMO).sql, /GROUP BY 1 ORDER BY n DESC/);
-  });
-
-  it('inlines parameters for wrangler, quoting strings and keeping numbers numeric', () => {
+  it('inlines parameters for wrangler, quoting strings', () => {
     assert.equal(
       inlineParams('a = ?1 AND b IN (?2) AND c < ?3', ["x'y", M1, 42]),
       `a = 'x''y' AND b IN ('${M1}') AND c < 42`,
@@ -121,27 +138,15 @@ describe('backfill plan', () => {
       { mimic: M1, missing: 10 },
       { mimic: M2, missing: 4 },
     ];
+    const base = { type: 'backfill.mimic', runId: 'R', predictorId: MIMO, perMinute: 20, retryFailed: true };
     assert.deepEqual(backfillJobs(named, rows, 'R'), [
-      {
-        type: 'backfill.mimic',
-        runId: 'R',
-        mimicId: M1,
-        predictorId: MIMO,
-        perMinute: 20,
-        retryFailed: true,
-        offsetSeconds: 0,
-      },
+      { ...base, mimicId: M1, offsetSeconds: 0 },
       // M1's 10 predictions take 30 s at 20 a minute, so M2 starts after them.
-      {
-        type: 'backfill.mimic',
-        runId: 'R',
-        mimicId: M2,
-        predictorId: MIMO,
-        perMinute: 20,
-        retryFailed: true,
-        offsetSeconds: 30,
-      },
+      { ...base, mimicId: M2, offsetSeconds: 30 },
     ]);
+    // --consented with named mimics: their predictions check consent again when they run.
+    const consented = backfillJobs({ ...named, consented: true }, rows.slice(0, 1), 'R');
+    assert.equal(consented[0].consentedOnly, true);
   });
 
   it('accepts only OpenRouter models with structured outputs', async () => {
@@ -149,17 +154,43 @@ describe('backfill plan', () => {
     await assert.rejects(checkModel('llm:acme/typo', openRouter), /not an OpenRouter model/);
     await assert.rejects(checkModel('llm:acme/plain', openRouter), /structured outputs/);
     assert.match(await checkModel('jev:typesafe/jev-1.13', openRouter), /Jev/);
+    // A prompt variant must be registered (mirrored to docs/prompts/variants/) and not the incumbent.
+    await assert.rejects(checkModel(`${MIMO}@predict.v9`, openRouter), /not a registered prompt variant/);
+    await assert.rejects(checkModel(`${MIMO}@predict.v1`, openRouter), /names the incumbent prompt/);
+    await assert.rejects(checkModel(`${MIMO}@jev-predict.v1`, openRouter), /incumbent|not a llm/);
+    const dir = mkdtempSync(join(tmpdir(), 'variants-'));
+    mkdirSync(join(dir, 'docs/prompts/variants'), { recursive: true });
+    writeFileSync(join(dir, 'docs/prompts/variants/predict.v2.md'), '- Predictor kind: `llm` (use as …)\n');
+    assert.equal(checkPromptVersion(`${MIMO}@predict.v2`, dir), 'predict.v2');
+    assert.throws(
+      () => checkPromptVersion('jev:typesafe/jev-1.13@predict.v2', dir),
+      /not a jev prompt variant/,
+    );
   });
 });
 
-const STATS = { n: 20, ok: 12, unusable: 5, failed_calls: 3, charged: 17, avg_cost: 0.0002 };
+const STATS = {
+  n: 20,
+  ok: 12,
+  unusable: 4,
+  timeouts: 1,
+  failed_calls: 3,
+  redoable: 3,
+  charged: 16,
+  avg_cost: 0.0002,
+};
 const ERRORS = [
-  { error: 'output cut off at max_tokens (3000; 3000 output tokens)', n: 5, unusable: 1 },
-  { error: 'HTTP 429 from openrouter.ai: rate limited', n: 3, unusable: 0 },
+  { kind: 'output', error: 'output cut off at max_tokens (3000; 3000 output tokens)', n: 4 },
+  { kind: 'transport', error: 'HTTP 429 from openrouter.ai: rate limited', n: 3 },
 ];
 
-/** A deployed environment: D1 answers the three queries; the queue records what was pushed. */
-function fakeRemote({ missing = [{ mimic: M1, missing: 12 }], stats = STATS, errors = ERRORS } = {}) {
+/** A deployed environment: D1 answers the four queries; the queue records what was pushed. */
+function fakeRemote({
+  missing = [{ mimic: M1, missing: 12 }],
+  stats = STATS,
+  errors = ERRORS,
+  flight = { n: 0, last: null },
+} = {}) {
   const pushed = [];
   const queries = [];
   const fetchImpl = async (url, init = {}) => {
@@ -173,11 +204,18 @@ function fakeRemote({ missing = [{ mimic: M1, missing: 12 }], stats = STATS, err
       ]);
     if (path === '/d1/database/db1/query') {
       queries.push(body);
-      const results = body.sql.startsWith('SELECT COUNT(*) AS n')
+      assert.ok(
+        body.params.every((x) => typeof x === 'string'),
+        'D1 HTTP params are strings',
+      );
+      const sql = body.sql;
+      const results = sql.startsWith('SELECT COUNT(*) AS n, COALESCE')
         ? [stats]
-        : body.sql.startsWith('SELECT substr')
+        : sql.startsWith('SELECT COALESCE(p.error_kind')
           ? errors
-          : missing;
+          : sql.startsWith('SELECT COUNT(*) AS n, MAX(j.updated_at)')
+            ? [flight]
+            : missing;
       return ok([{ results }]);
     }
     if (path === '/queues') return ok([{ queue_id: 'q1', queue_name: 'mimic-jobs-prod' }]);
@@ -207,14 +245,41 @@ describe('backfill run', () => {
         `no line with "${s}" in:\n${lines.join('\n')}`,
       );
     has('so far: 20 prediction(s), 8 failed (40.0%)');
-    has("unusable output (the model's; kept): 5");
-    has("failed calls (not the model's): 3, redo with --retry-failed");
-    has('5 × output cut off at max_tokens');
+    has("the model's (kept): 4 unusable output, 1 timed out");
+    has("failed calls (not the model's): 3; --retry-failed redoes 3");
+    has('4 × output: output cut off at max_tokens');
+    has('3 × transport: HTTP 429');
     has('missing: 12 prediction(s) across 1 mimic(s)');
-    has('$0.00020 per prediction over 17 so far');
+    has('$0.00020 per prediction over 16 so far');
     has('about $0.0024 for these');
     has('pace: 30 a minute, under a minute');
+    assert.ok(!lines.some((l) => l.includes('in flight')));
+    assert.ok(!lines.some((l) => l.includes('re-run for the rest')));
     assert.ok(lines.at(-1).startsWith('Dry run'));
+  });
+
+  it('says what is already in flight, and when a run stops at its cap', async () => {
+    const { target } = fakeRemote({
+      missing: [{ mimic: M1, missing: MAX_JOBS + 700 }],
+      flight: { n: 40, last: NOW + 20 * 60_000 },
+    });
+    const lines = [];
+    await backfill(parseBackfillArgs(['--predictor', MIMO, '--env', 'prod', '--rate', '600']), target, {
+      fetchImpl: openRouter,
+      log: (l) => lines.push(l),
+      now: NOW,
+    });
+    assert.ok(lines.some((l) => l.includes('in flight: 40 queued or retrying, due within about 20 min')));
+    assert.ok(lines.some((l) => l.includes(`this run enqueues the first ${MAX_JOBS}`)));
+    // At 1 a minute, 12 h holds 721 predictions.
+    const slow = fakeRemote({ missing: [{ mimic: M1, missing: 800 }] });
+    const slowLines = [];
+    await backfill(parseBackfillArgs(['--predictor', MIMO, '--env', 'prod', '--rate', '1']), slow.target, {
+      fetchImpl: openRouter,
+      log: (l) => slowLines.push(l),
+    });
+    assert.ok(slowLines.some((l) => l.includes('this run enqueues the first 721')));
+    assert.ok(slowLines.some((l) => l.includes('pace: 1 a minute, about 12.0 h')));
   });
 
   it('with --yes publishes one paced job to the environment queue', async () => {
@@ -309,7 +374,7 @@ describe('backfill run', () => {
     await backfill(opts, localTarget({ fetchImpl, exec }), { fetchImpl, log: quiet, runId: 'R', now: NOW });
     const missing = calls.find((s) => s.startsWith('SELECT q.mimic_id'));
     assert.ok(missing.includes(`p.predictor_id = '${MIMO}'`), 'parameters are inlined');
-    assert.ok(missing.includes(`q.served_at < ${NOW - PENDING_WINDOW_MS}`), 'numbers stay numbers');
+    assert.ok(missing.includes(`q.served_at < '${NOW - PENDING_WINDOW_MS}'`), 'numbers go as strings');
     assert.deepEqual(posted, [
       [
         'http://127.0.0.1:8787/__jobs',

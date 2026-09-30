@@ -8,7 +8,7 @@ import type {
   QuestionRecord,
   TraitRecord,
 } from '../store';
-import type { PersonState, Question } from '../types';
+import { isScoredKind, learnsFrom, type PersonState, type Question } from '../types';
 import type { EngineDeps } from './deps';
 
 export interface LoadedMimic {
@@ -48,6 +48,7 @@ function assemble(
       options: q.options,
       answer: a.value,
       facetIds: q.facetIds,
+      latencyMs: a.latencyMs,
     };
     if (a.why) item.why = a.why;
     evidence.push(item);
@@ -93,7 +94,8 @@ export async function loadMimicData(deps: EngineDeps, m: MimicRecord): Promise<L
  * The mimic's data with its derived parts as they stood at `at` (ADR-0017): trait estimates from the append-only
  * history, insights created by then and not yet superseded, facts created by then and never re-activated after it. Serving builds sealed
  * states from this view and records `at` as the question's `stateAt`, so replay can rebuild them exactly from an
- * export. Evidence is not time-filtered; sealing by seq happens in the state builder.
+ * export. Evidence is sealed by seq in the state builder, and only feedback is also time-filtered: it is written
+ * without a serve, so it can take a seq below a question that was already predicted (ADR-0032).
  */
 export async function loadMimicDataAt(
   deps: EngineDeps,
@@ -108,6 +110,7 @@ export async function loadMimicDataAt(
     deps.store.listTraitsAsOf(m.id, at, beforeSeq),
     deps.store.listInsights(m.id),
   ]);
+  const kindOf = new Map(questions.map((q) => [q.id, q.kind]));
   return assemble(m, {
     facts: facts
       .filter((f) => f.createdAt <= at)
@@ -118,7 +121,7 @@ export async function loadMimicDataAt(
           f.userState === 'removed' || (f.userStateAt !== null && f.userStateAt > at) ? 'removed' : 'active',
       })),
     questions,
-    answers,
+    answers: answers.filter((a) => kindOf.get(a.questionId) !== 'feedback' || a.createdAt <= at),
     traits,
     insights: insights.filter(
       (i) =>
@@ -139,6 +142,7 @@ export function stateOptions(
     strategy: cfg.stateBuilder.strategy,
     retrievalK: cfg.stateBuilder.retrievalK,
     recentN: cfg.stateBuilder.recentN,
+    ...(cfg.stateBuilder.latencyHints ? { latencyHints: true } : {}),
     ...extra,
   };
 }
@@ -162,9 +166,7 @@ export async function sealedState(
 ): Promise<PersonState> {
   const opts = stateOptions(cfg, beforeSeq, { forQuestions });
   const first = buildState(loaded.data, opts);
-  const eligible = loaded.data.evidence.filter(
-    (e) => e.seq < beforeSeq && (e.kind === 'anchor' || e.kind === 'adaptive'),
-  );
+  const eligible = loaded.data.evidence.filter((e) => e.seq < beforeSeq && learnsFrom(e.kind));
   if (first.evidence.length >= eligible.length || cfg.stateBuilder.strategy === 'structured') return first;
   try {
     const ids = eligible.map((e) => vectorId.qa(loaded.data.mimicId, e.seq));
@@ -196,7 +198,7 @@ export function stateBlobKey(mimicId: string, stateHash: string): string {
 export function facetCounts(questions: QuestionRecord[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const q of questions) {
-    if (q.kind !== 'anchor' && q.kind !== 'adaptive') continue;
+    if (!isScoredKind(q.kind)) continue;
     if (q.status !== 'answered' && q.status !== 'served') continue;
     for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
   }

@@ -1,12 +1,15 @@
 import {
   type AnswerRecord,
   type CandidateRecord,
+  type CandidateStatus,
   type ConfigRecord,
   type EvalRunRecord,
   type ExperimentRecord,
   type FactRecord,
   type FidelityRecord,
+  type IdentityState,
   type InsightRecord,
+  type ItemStatRecord,
   type JobRecord,
   type KgEdgeRecord,
   type KgNodeRecord,
@@ -14,10 +17,16 @@ import {
   type MimicRecord,
   type ModelCallRecord,
   Option,
+  PersonaCuration,
+  type PersonaCurationRecord,
+  PersonaDraft,
+  type PersonaDraftRecord,
   type PredictionRecord,
   type PredictionRole,
+  type QKind,
   type QuestionRecord,
   type QuestionStatus,
+  type ScoredItemSource,
   type ScoredPredictionRow,
   type ScoreRecord,
   type SnapshotRecord,
@@ -65,6 +74,14 @@ type PRow = typeof s.predictions.$inferSelect;
 type MRow = typeof s.mimics.$inferSelect;
 type TRow = typeof s.traitEstimates.$inferSelect;
 
+/** A MimicRecord patch as column values (`links` is stored as JSON). */
+function mimicPatch(patch: Partial<Omit<MimicRecord, 'id'>>): Partial<typeof s.mimics.$inferInsert> {
+  const { links, ...rest } = patch;
+  const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
+  if (links) set.linksJson = JSON.stringify(links);
+  return set;
+}
+
 const toMimic = (r: MRow): MimicRecord => ({
   id: r.id,
   participantId: r.participantId,
@@ -89,6 +106,11 @@ const toMimic = (r: MRow): MimicRecord => ({
   updatedAt: r.updatedAt,
 });
 
+/** A write lost a race on a unique index (seq, idempotency key or primary key); D1 and libSQL word it alike. */
+function isUniqueViolation(e: unknown): boolean {
+  return /UNIQUE constraint failed/i.test(String((e as { cause?: unknown }).cause ?? e));
+}
+
 const toQuestion = (r: QRow): QuestionRecord => {
   const q: QuestionRecord = {
     id: r.id,
@@ -109,6 +131,7 @@ const toQuestion = (r: QRow): QuestionRecord => {
   };
   if (r.repeatOf) q.repeatOf = r.repeatOf;
   if (r.itemKey) q.itemKey = r.itemKey;
+  if (r.selectionJson) q.selection = parse(Obj, r.selectionJson, null as Record<string, unknown> | null);
   return q;
 };
 
@@ -132,6 +155,7 @@ const fromQuestion = (q: QuestionRecord): typeof s.questions.$inferInsert => ({
   createdAt: q.createdAt,
   servedAt: q.servedAt,
   stateAt: q.stateAt,
+  selectionJson: q.selection ? JSON.stringify(q.selection) : null,
 });
 
 const toPrediction = (r: PRow): PredictionRecord => ({
@@ -151,12 +175,18 @@ const toPrediction = (r: PRow): PredictionRecord => ({
   latencyMs: r.latencyMs,
   ok: r.ok,
   error: r.error,
+  errorKind: r.errorKind,
   fallback: r.fallback,
+  hypothesis: r.hypothesis,
   createdAt: r.createdAt,
 });
 
+/** 21 columns per row (D1's 100-parameter limit bounds the batch size below). */
+const PREDICTION_COLS = 21;
 const fromPrediction = (p: PredictionRecord): typeof s.predictions.$inferInsert => ({
   ...p,
+  hypothesis: p.hypothesis ?? null,
+  errorKind: p.errorKind ?? null,
   distJson: JSON.stringify(p.dist),
 });
 
@@ -267,10 +297,20 @@ export class DrizzleStore implements Store {
     return rows.map(toMimic);
   }
   async updateMimic(id: string, patch: Partial<Omit<MimicRecord, 'id'>>) {
-    const { links, ...rest } = patch;
-    const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
-    if (links) set.linksJson = JSON.stringify(links);
+    const set = mimicPatch(patch);
     if (Object.keys(set).length) await this.db.update(s.mimics).set(set).where(eq(s.mimics.id, id));
+  }
+  async transitionIdentity(
+    id: string,
+    from: readonly IdentityState[],
+    patch: Partial<Omit<MimicRecord, 'id'>>,
+  ) {
+    const r = await this.db
+      .update(s.mimics)
+      .set(mimicPatch(patch))
+      .where(and(eq(s.mimics.id, id), inArray(s.mimics.identityState, [...from])))
+      .returning({ id: s.mimics.id });
+    return r.length > 0;
   }
   async addSpend(id: string, usd: number) {
     await this.db
@@ -299,8 +339,18 @@ export class DrizzleStore implements Store {
       .orderBy(asc(s.identityCandidates.rank))
       .all();
   }
-  async updateCandidate(id: string, patch: Partial<Pick<CandidateRecord, 'status' | 'jevSamePersonP'>>) {
-    await this.db.update(s.identityCandidates).set(patch).where(eq(s.identityCandidates.id, id));
+  async setCandidateStatus(mimicId: string, ids: readonly string[], status: CandidateStatus) {
+    for (let i = 0; i < ids.length; i += 90) {
+      await this.db
+        .update(s.identityCandidates)
+        .set({ status })
+        .where(
+          and(
+            eq(s.identityCandidates.mimicId, mimicId),
+            inArray(s.identityCandidates.id, ids.slice(i, i + 90)),
+          ),
+        );
+    }
   }
   async insertFacts(recs: FactRecord[]) {
     await this.insertChunked(s.facts, recs);
@@ -330,14 +380,16 @@ export class DrizzleStore implements Store {
     const r = await this.db.select().from(s.questions).where(eq(s.questions.id, id)).get();
     return r ? toQuestion(r) : null;
   }
-  async listQuestions(mimicId: string, status?: QuestionStatus[]) {
+  async listQuestions(mimicId: string, status?: QuestionStatus[], kinds?: QKind[]) {
     const rows = await this.db
       .select()
       .from(s.questions)
       .where(
-        status?.length
-          ? and(eq(s.questions.mimicId, mimicId), inArray(s.questions.status, status))
-          : eq(s.questions.mimicId, mimicId),
+        and(
+          eq(s.questions.mimicId, mimicId),
+          status?.length ? inArray(s.questions.status, status) : undefined,
+          kinds?.length ? inArray(s.questions.kind, kinds) : undefined,
+        ),
       )
       .orderBy(asc(s.questions.createdAt))
       .all();
@@ -353,24 +405,31 @@ export class DrizzleStore implements Store {
     servedAt: number;
     stateAt: number | null;
     predictions: PredictionRecord[];
+    selection?: Record<string, unknown> | null;
   }) {
     const stmts: BatchItem<'sqlite'>[] = [
       this.db
         .update(s.questions)
-        .set({ seq: args.seq, status: 'served', servedAt: args.servedAt, stateAt: args.stateAt })
+        .set({
+          seq: args.seq,
+          status: 'served',
+          servedAt: args.servedAt,
+          stateAt: args.stateAt,
+          selectionJson: args.selection ? JSON.stringify(args.selection) : null,
+        })
         .where(and(eq(s.questions.id, args.questionId), eq(s.questions.status, 'pooled'))),
       this.db
         .update(s.mimics)
         .set({ seqMax: sql`max(${s.mimics.seqMax}, ${args.seq})`, updatedAt: args.servedAt })
         .where(eq(s.mimics.id, args.mimicId)),
     ];
-    for (const part of chunk(args.predictions.map(fromPrediction), 19)) {
+    for (const part of chunk(args.predictions.map(fromPrediction), PREDICTION_COLS)) {
       stmts.push(this.db.insert(s.predictions).values(part));
     }
     try {
       await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
     } catch (e) {
-      if (/UNIQUE constraint failed/i.test(String((e as { cause?: unknown }).cause ?? e))) return false;
+      if (isUniqueViolation(e)) return false;
       throw e;
     }
     const q = await this.getQuestion(args.questionId);
@@ -381,25 +440,24 @@ export class DrizzleStore implements Store {
   async insertPredictions(recs: PredictionRecord[]) {
     await this.insertChunked(s.predictions, recs.map(fromPrediction));
   }
-  async replaceFailedShadows(removeIds: string[], recs: PredictionRecord[]) {
-    const stmts: BatchItem<'sqlite'>[] = [];
-    for (const part of chunk(removeIds, 2)) {
-      stmts.push(
-        this.db
-          .delete(s.predictions)
-          .where(
-            and(
-              inArray(s.predictions.id, part),
-              eq(s.predictions.role, 'shadow'),
-              eq(s.predictions.ok, false),
-            ),
-          ),
-      );
-    }
-    for (const part of chunk(recs.map(fromPrediction), 19)) {
-      stmts.push(this.db.insert(s.predictions).values(part));
-    }
-    if (stmts.length) await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  async insertShadow(rec: PredictionRecord, replaceIds: string[] = []) {
+    const stmts: BatchItem<'sqlite'>[] = chunk(replaceIds, 2).map((part) =>
+      this.db
+        .delete(s.predictions)
+        .where(
+          and(inArray(s.predictions.id, part), eq(s.predictions.role, 'shadow'), eq(s.predictions.ok, false)),
+        ),
+    );
+    const insert = this.db
+      .insert(s.predictions)
+      .values(fromPrediction({ ...rec, role: 'shadow' }))
+      .onConflictDoNothing()
+      .returning({ id: s.predictions.id });
+    const results = await this.db.batch([...stmts, insert] as unknown as [
+      BatchItem<'sqlite'>,
+      ...BatchItem<'sqlite'>[],
+    ]);
+    return (results.at(-1) as Array<{ id: string }>).length > 0;
   }
   async listPredictions(filter: { mimicId?: string; questionId?: string; roles?: PredictionRole[] }) {
     const conds = [];
@@ -441,7 +499,53 @@ export class DrizzleStore implements Store {
     ];
     const scoreRows = args.scores.map((x) => ({ ...x, mimicId: args.answer.mimicId }));
     for (const part of chunk(scoreRows, 8)) stmts.push(this.db.insert(s.scores).values(part));
-    await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    try {
+      await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    } catch (e) {
+      if (isUniqueViolation(e)) return false;
+      throw e;
+    }
+    return true;
+  }
+  async recordFeedback(args: {
+    question: QuestionRecord;
+    answer: AnswerRecord;
+    move?: { questionId: string; toSeq: number };
+  }) {
+    const { question: q, answer: a, move } = args;
+    const stmts: BatchItem<'sqlite'>[] = [];
+    // If the moved question was answered meanwhile it keeps its seq, and the insert below fails on it.
+    if (move)
+      stmts.push(
+        this.db
+          .update(s.questions)
+          .set({ seq: move.toSeq })
+          .where(
+            and(
+              eq(s.questions.id, move.questionId),
+              eq(s.questions.status, 'served'),
+              eq(s.questions.seq, a.seq),
+            ),
+          ),
+      );
+    stmts.push(
+      this.db.insert(s.questions).values(fromQuestion(q)),
+      this.db
+        .update(s.mimics)
+        .set({
+          seqMax: sql`max(${s.mimics.seqMax}, ${Math.max(a.seq, move?.toSeq ?? 0)})`,
+          updatedAt: a.createdAt,
+        })
+        .where(eq(s.mimics.id, a.mimicId)),
+      this.db.insert(s.answers).values(a),
+    );
+    try {
+      await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    } catch (e) {
+      if (isUniqueViolation(e)) return false;
+      throw e;
+    }
+    return true;
   }
   async insertScores(recs: ScoreRecord[]) {
     if (!recs.length) return;
@@ -654,6 +758,116 @@ export class DrizzleStore implements Store {
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
   }
 
+  // Persona.md (ADR-0033)
+  async insertPersonaDraft(rec: PersonaDraftRecord) {
+    const { draft, ...row } = rec;
+    await this.db
+      .insert(s.personaDrafts)
+      .values({ ...row, draftJson: JSON.stringify(PersonaDraft.parse(draft)) });
+  }
+  async latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null> {
+    const row = await this.db
+      .select()
+      .from(s.personaDrafts)
+      .where(eq(s.personaDrafts.mimicId, mimicId))
+      .orderBy(desc(s.personaDrafts.createdAt), desc(s.personaDrafts.id))
+      .get();
+    if (!row) return null;
+    const { draftJson, ...rest } = row;
+    return { ...rest, draft: parse(PersonaDraft, draftJson, { summary: '', statements: [] }) };
+  }
+  async getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null> {
+    const row = await this.db
+      .select()
+      .from(s.personaCurations)
+      .where(eq(s.personaCurations.mimicId, mimicId))
+      .get();
+    if (!row) return null;
+    return {
+      mimicId: row.mimicId,
+      curation: parse(PersonaCuration, row.json, PersonaCuration.parse({})),
+      rev: row.rev,
+      updatedAt: row.updatedAt,
+    };
+  }
+  async putPersonaCuration(rec: PersonaCurationRecord) {
+    const json = JSON.stringify(PersonaCuration.parse(rec.curation));
+    const rows = await this.db
+      .insert(s.personaCurations)
+      .values({ mimicId: rec.mimicId, json, rev: rec.rev, updatedAt: rec.updatedAt })
+      .onConflictDoUpdate({
+        target: s.personaCurations.mimicId,
+        set: { json, rev: rec.rev, updatedAt: rec.updatedAt },
+        // Out-of-order saves (a slow request, a keepalive flush on leaving the page) never overwrite a newer one.
+        setWhere: lt(s.personaCurations.rev, rec.rev),
+      })
+      .returning({ rev: s.personaCurations.rev })
+      .all();
+    return rows.length > 0;
+  }
+
+  // cross-person item statistics (ADR-0027)
+  async listScoredForStats(filter: { consentResearch: boolean; split: 'dev' | 'test' }) {
+    const rows = await this.db
+      .select({
+        mimicId: s.predictions.mimicId,
+        questionId: s.predictions.questionId,
+        role: s.predictions.role,
+        fallback: s.predictions.fallback,
+        itemAcc: s.scores.itemAcc,
+        logLoss: s.scores.logLoss,
+        kind: s.questions.kind,
+        type: s.questions.type,
+        domain: s.questions.domain,
+        facetIdsJson: s.questions.facetIdsJson,
+        optionsJson: s.questions.optionsJson,
+        itemKey: s.questions.itemKey,
+        value: s.answers.value,
+        latencyMs: s.answers.latencyMs,
+      })
+      .from(s.scores)
+      .innerJoin(s.predictions, eq(s.predictions.id, s.scores.predictionId))
+      .innerJoin(s.questions, eq(s.questions.id, s.predictions.questionId))
+      .innerJoin(s.answers, eq(s.answers.questionId, s.predictions.questionId))
+      .innerJoin(s.mimics, eq(s.mimics.id, s.predictions.mimicId))
+      .where(
+        and(
+          eq(s.mimics.consentResearch, filter.consentResearch),
+          eq(s.mimics.split, filter.split),
+          inArray(s.predictions.role, ['primary', 'baseline']),
+          inArray(s.questions.kind, ['anchor', 'adaptive']),
+        ),
+      )
+      .all();
+    return rows.map(
+      (r): ScoredItemSource => ({
+        mimicId: r.mimicId,
+        questionId: r.questionId,
+        role: r.role as 'primary' | 'baseline',
+        fallback: r.fallback,
+        itemAcc: r.itemAcc,
+        logLoss: r.logLoss,
+        question: {
+          kind: r.kind,
+          type: r.type,
+          domain: r.domain,
+          facetIds: parse(StrArr, r.facetIdsJson, []),
+          options: parse(Options, r.optionsJson, []),
+          ...(r.itemKey ? { itemKey: r.itemKey } : {}),
+        },
+        answer: { value: r.value, latencyMs: r.latencyMs },
+      }),
+    );
+  }
+  async replaceItemStats(recs: ItemStatRecord[]) {
+    const stmts: BatchItem<'sqlite'>[] = [this.db.delete(s.itemStats)];
+    for (const part of chunk(recs, 11)) stmts.push(this.db.insert(s.itemStats).values(part));
+    await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+  async listItemStats(): Promise<ItemStatRecord[]> {
+    return this.db.select().from(s.itemStats).orderBy(asc(s.itemStats.key)).all();
+  }
+
   // jobs
   async getJob(key: string) {
     return (await this.db.select().from(s.jobs).where(eq(s.jobs.key, key)).get()) ?? null;
@@ -673,11 +887,40 @@ export class DrizzleStore implements Store {
       });
   }
 
+  async putJobs(recs: JobRecord[]) {
+    const stmts = chunk(recs, 6).map((part) =>
+      this.db
+        .insert(s.jobs)
+        .values(part)
+        .onConflictDoUpdate({
+          target: s.jobs.key,
+          set: {
+            status: sql`excluded.status`,
+            attempts: sql`excluded.attempts`,
+            lastError: sql`excluded.last_error`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        }),
+    );
+    if (stmts.length)
+      await this.db.batch(stmts as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+
+  async listJobs(prefix: string) {
+    // A key range, so the primary-key index serves it (the cron asks for every active mimic).
+    const end = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+    return this.db
+      .select()
+      .from(s.jobs)
+      .where(and(gte(s.jobs.key, prefix), lt(s.jobs.key, end)))
+      .all();
+  }
+
   async listStaleJobs(before: number, limit: number) {
     return this.db
       .select()
       .from(s.jobs)
-      .where(and(inArray(s.jobs.status, ['running', 'failed']), lt(s.jobs.updatedAt, before)))
+      .where(and(inArray(s.jobs.status, ['queued', 'running', 'failed']), lt(s.jobs.updatedAt, before)))
       .orderBy(asc(s.jobs.updatedAt))
       .limit(limit)
       .all();

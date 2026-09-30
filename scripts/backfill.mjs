@@ -6,31 +6,44 @@
 // prediction runs on the sealed state blob the primary used, like a live shadow, so it is sealed (PLAN §3.1), logged
 // through the gateway (as `predict.backfill`, outside the mimic's session budget), and scored against the answer.
 //
-// A dry run by default: checks the model, reports how this predictor has done so far (failures split into unusable
-// output, which is the model's, and failed calls, which aren't), counts the missing predictions per mimic, and
-// estimates cost and duration from what this predictor has cost so far (never a hardcoded price). `--yes` enqueues
-// one job per predictor (or per named mimic); the worker spaces the predictions `--rate` a minute (ADR-0027) so they
-// see the load a live shadow sees. Re-running is safe and shows what's left: the count falls to 0 as the queue drains.
+// A dry run by default: checks the model, reports how this predictor has done so far (failures split into the
+// model's, unusable output or a timeout, and failed calls, which aren't), counts the missing predictions per mimic,
+// and estimates cost and duration from what this predictor has cost so far (never a hardcoded price). `--yes`
+// enqueues one job per predictor (or per named mimic); the worker spaces the predictions `--rate` a minute
+// (ADR-0034), so they see the load a live shadow sees. Re-running is safe: predictions already queued or being
+// retried are skipped, and the count falls to 0 as the queue drains.
 //
-//   --retry-failed  also redo this predictor's failed calls (timeouts, rate limits, provider errors, the budget
-//                   guard), which were stored as failures before ADR-0027. Unusable output is kept: it is the model's.
+//   --retry-failed  also redo this predictor's failed calls (rate limits and provider errors that outlasted every
+//                   retry, or the budget guard). Unusable output and timeouts are kept: they are the model's.
 //
 //   local           the `pnpm dev` worker (POST /__jobs) and the local D1
 //   preview, prod   the Cloudflare Queues and D1 HTTP APIs; needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
 //                   (`doppler run -- pnpm backfill ...`)
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cloudflareFromEnv, envBlock, ROOT, readConfig, WORKER_CONFIG } from './deploy/lib.mjs';
 
 const ENVS = ['local', 'preview', 'prod'];
-/** `llm:<vendor>/<model>` or `jev:<vendor>/<model>`. Strict, since the local path inlines it into SQL. */
-export const PREDICTOR_ID = /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*$/i;
+/**
+ * `llm:<vendor>/<model>` or `jev:<vendor>/<model>`, optionally `@<promptVersion>` for a registered prediction prompt
+ * variant (ADR-0028; the worker rejects an unregistered one). Strict, since the local path inlines it into SQL.
+ */
+export const PREDICTOR_ID =
+  /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*(@[a-z0-9][a-z0-9._-]*)?$/i;
 const MIMIC_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const LOCAL_WORKER = 'http://127.0.0.1:8787';
-/** BACKFILL_PER_MINUTE in packages/core/src/engine/jobs.ts. */
+// Mirrors of packages/core (engine/jobs.ts, engine/lab.ts); packages/eval/test/backfill.test.ts checks them.
+/** BACKFILL_PER_MINUTE */
 export const DEFAULT_RATE = 30;
-/** PENDING_WINDOW_MS in packages/core/src/engine/lab.ts: newer questions are left to the live shadows. */
+/** BACKFILL_MAX_JOBS and BACKFILL_MAX_DELAY_SECONDS: what one run enqueues at most. */
+export const MAX_JOBS = 5000;
+export const MAX_DELAY_SECONDS = 12 * 3600;
+/** PENDING_WINDOW_MS: newer questions are left to the live shadows. */
 export const PENDING_WINDOW_MS = 15 * 60 * 1000;
+/** MAX_JOB_ATTEMPTS and STALE_JOB_MS: a shadow job is in flight until it's done, out of attempts, or stale. */
+export const MAX_ATTEMPTS = 5;
+export const STALE_JOB_MS = 15 * 60 * 1000;
 
 export function parseBackfillArgs(argv) {
   const out = {
@@ -55,37 +68,52 @@ export function parseBackfillArgs(argv) {
     else throw new Error(`unknown argument: ${a}`);
   }
   if (!out.predictors.length || !out.predictors.every((p) => PREDICTOR_ID.test(p)))
-    throw new Error('--predictor must look like llm:<vendor>/<model> or jev:<vendor>/<model>');
+    throw new Error(
+      '--predictor must look like llm:<vendor>/<model> or jev:<vendor>/<model>, optionally @<promptVersion>',
+    );
   out.predictors = [...new Set(out.predictors)];
   if (!ENVS.includes(out.env)) throw new Error(`--env must be one of ${ENVS.join(', ')}`);
   for (const m of out.mimics) if (!MIMIC_ID.test(m ?? '')) throw new Error(`--mimic ${m} is not a mimic ID`);
   out.mimics = [...new Set(out.mimics)];
-  if (!(out.rate > 0 && out.rate <= 600))
-    throw new Error('--rate must be a number of predictions a minute, 1–600');
+  if (!(Number.isInteger(out.rate) && out.rate >= 1 && out.rate <= 600))
+    throw new Error('--rate must be a whole number of predictions a minute, 1–600');
   return out;
 }
 
-// Mirrors isOutputFailure / isFailedCall in packages/core (predictors.ts, engine/jobs.ts): a failed prediction whose
-// output was unusable is the model's failure and stands; any other failed shadow is a failed call, which may be redone.
-const OUTPUT_FAILURE = `COALESCE(p.error IN ('invalid JSON output', 'output does not cover every option')
-  OR p.error LIKE 'output cut off at max_tokens%' OR p.error LIKE 'missing answer for %', 0)`;
-const FAILED_CALL = `(p.role = 'shadow' AND p.ok = 0 AND NOT ${OUTPUT_FAILURE})`;
+/** How many predictions one run enqueues at this rate (backfillLimit in packages/core/src/engine/jobs.ts). */
+export function runLimit(rate) {
+  return Math.min(MAX_JOBS, Math.floor((MAX_DELAY_SECONDS * rate) / 60) + 1);
+}
+
+/** A failed shadow whose call failed before the model answered (isFailedCall in packages/core). */
+const FAILED_CALL = "(p.role = 'shadow' AND p.ok = 0 AND p.error_kind = 'transport')";
+
+/** A shadow job for (question q, predictor ?1) that is queued, running or being retried, and not stale (?3). */
+const IN_FLIGHT = [
+  'EXISTS (SELECT 1 FROM jobs j WHERE j.key IN',
+  "('predict.shadow:' || q.mimic_id || ':' || q.id || ':' || ?1, 'backfill.shadow:' || q.mimic_id || ':' || q.id || ':' || ?1)",
+  `AND j.status != 'done' AND NOT (j.status = 'failed' AND j.attempts >= ${MAX_ATTEMPTS}) AND j.updated_at >= ?3)`,
+].join(' ');
 
 /**
- * Served anchor and adaptive questions with a primary (so a sealed state) and no prediction from this predictor (a
- * failed call counts as none with `retryFailed`), per mimic. Questions served in the last PENDING_WINDOW_MS are left
- * to the live path. The same rule as `missingPredictions` in packages/core/src/engine/jobs.ts.
+ * Served anchor and adaptive questions with a primary (so a sealed state), no prediction from this predictor (a
+ * failed call counts as none with `retryFailed`) and none in flight, per mimic. Questions served in the last
+ * PENDING_WINDOW_MS are left to the live path. The same rule as `missingPredictions` in
+ * packages/core/src/engine/jobs.ts. Parameters are strings: the D1 HTTP API takes only strings, and SQLite compares
+ * them with the integer columns as numbers.
  */
 export function missingQuery({ predictor, consented, mimics, retryFailed }, now = Date.now()) {
-  const params = [predictor, now - PENDING_WINDOW_MS, ...mimics];
+  const params = [predictor, String(now - PENDING_WINDOW_MS), String(now - STALE_JOB_MS), ...mimics];
   const sql = [
     'SELECT q.mimic_id AS mimic, COUNT(*) AS missing FROM questions q JOIN mimics m ON m.id = q.mimic_id',
     "WHERE q.seq IS NOT NULL AND q.served_at IS NOT NULL AND q.served_at < ?2 AND q.kind IN ('anchor', 'adaptive')",
     "AND EXISTS (SELECT 1 FROM predictions p WHERE p.question_id = q.id AND p.role = 'primary')",
     'AND NOT EXISTS (SELECT 1 FROM predictions p WHERE p.question_id = q.id AND p.predictor_id = ?1',
+    "AND p.role != 'hypothesis'",
     retryFailed ? `AND NOT ${FAILED_CALL})` : ')',
+    `AND NOT ${IN_FLIGHT}`,
     consented ? 'AND m.consent_research = 1' : '',
-    mimics.length ? `AND q.mimic_id IN (${mimics.map((_, i) => `?${i + 3}`).join(', ')})` : '',
+    mimics.length ? `AND q.mimic_id IN (${mimics.map((_, i) => `?${i + 4}`).join(', ')})` : '',
     'GROUP BY q.mimic_id ORDER BY q.mimic_id',
   ]
     .filter(Boolean)
@@ -94,18 +122,22 @@ export function missingQuery({ predictor, consented, mimics, retryFailed }, now 
 }
 
 /**
- * How this predictor has done so far, in this environment: predictions, the two kinds of failure, and what the
- * charged ones cost (provider usage.cost). Unusable outputs are charged too, so they count toward the estimate.
+ * How this predictor has done so far, in this environment: predictions, failures by kind (stored with each one),
+ * the failed calls `--retry-failed` would redo, and what the charged ones cost (provider usage.cost; unusable
+ * output is charged too).
  */
 export function statsQuery(predictor) {
+  const count = (cond) => `COALESCE(SUM(CASE WHEN ${cond} THEN 1 ELSE 0 END), 0)`;
   return {
     sql: [
       'SELECT COUNT(*) AS n, COALESCE(SUM(p.ok), 0) AS ok,',
-      `COALESCE(SUM(CASE WHEN p.ok = 0 AND ${OUTPUT_FAILURE} THEN 1 ELSE 0 END), 0) AS unusable,`,
-      `COALESCE(SUM(CASE WHEN ${FAILED_CALL} THEN 1 ELSE 0 END), 0) AS failed_calls,`,
-      `SUM(CASE WHEN p.ok = 1 OR ${OUTPUT_FAILURE} THEN 1 ELSE 0 END) AS charged,`,
-      `AVG(CASE WHEN p.ok = 1 OR ${OUTPUT_FAILURE} THEN p.cost_usd END) AS avg_cost`,
-      'FROM predictions p WHERE p.predictor_id = ?1',
+      `${count("p.ok = 0 AND p.error_kind = 'output'")} AS unusable,`,
+      `${count("p.ok = 0 AND p.error_kind = 'timeout'")} AS timeouts,`,
+      `${count("p.ok = 0 AND (p.error_kind = 'transport' OR p.error_kind IS NULL)")} AS failed_calls,`,
+      `${count(FAILED_CALL)} AS redoable,`,
+      `${count("p.ok = 1 OR p.error_kind = 'output'")} AS charged,`,
+      "AVG(CASE WHEN p.ok = 1 OR p.error_kind = 'output' THEN p.cost_usd END) AS avg_cost",
+      "FROM predictions p WHERE p.predictor_id = ?1 AND p.role != 'hypothesis'",
     ].join(' '),
     params: [predictor],
   };
@@ -115,11 +147,24 @@ export function statsQuery(predictor) {
 export function errorsQuery(predictor) {
   return {
     sql: [
-      "SELECT substr(COALESCE(p.error, '(none)'), 1, 60) AS error, COUNT(*) AS n,",
-      `MAX(CASE WHEN ${OUTPUT_FAILURE} THEN 1 ELSE 0 END) AS unusable`,
-      'FROM predictions p WHERE p.predictor_id = ?1 AND p.ok = 0 GROUP BY 1 ORDER BY n DESC LIMIT 4',
+      "SELECT COALESCE(p.error_kind, 'transport') AS kind, substr(COALESCE(p.error, '(none)'), 1, 60) AS error,",
+      "COUNT(*) AS n FROM predictions p WHERE p.predictor_id = ?1 AND p.ok = 0 AND p.role != 'hypothesis'",
+      'GROUP BY 1, 2 ORDER BY n DESC LIMIT 4',
     ].join(' '),
     params: [predictor],
+  };
+}
+
+/** Backfill predictions of this predictor queued or being retried (not stale, ?2): a re-run skips them. */
+export function inFlightQuery(predictor, now = Date.now()) {
+  return {
+    sql: [
+      'SELECT COUNT(*) AS n, MAX(j.updated_at) AS last FROM jobs j',
+      "WHERE j.key >= 'backfill.shadow:' AND j.key < 'backfill.shadow;'",
+      "AND substr(j.key, length(j.key) - length(?1)) = ':' || ?1",
+      `AND j.status != 'done' AND NOT (j.status = 'failed' AND j.attempts >= ${MAX_ATTEMPTS}) AND j.updated_at >= ?2`,
+    ].join(' '),
+    params: [predictor, String(now - STALE_JOB_MS)],
   };
 }
 
@@ -144,6 +189,7 @@ export function backfillJobs({ predictor, consented, mimics, rate, retryFailed }
   let before = 0;
   for (const r of rows) {
     const offsetSeconds = Math.round((before * 60) / rate);
+    if (offsetSeconds > MAX_DELAY_SECONDS) break; // past one run's horizon: the next run picks these up
     jobs.push({
       type: 'backfill.mimic',
       runId,
@@ -151,19 +197,50 @@ export function backfillJobs({ predictor, consented, mimics, rate, retryFailed }
       predictorId: predictor,
       ...opts,
       offsetSeconds,
+      ...(consented ? { consentedOnly: true } : {}),
     });
     before += Number(r.missing);
   }
   return jobs;
 }
 
+const INCUMBENT = { llm: 'predict.v1', jev: 'jev-predict.v1' };
+
+/**
+ * A `@<version>` must be a registered prompt variant of the right kind, and not the incumbent (which would store a
+ * second ID for the same predictor). The registry in packages/core/src/components.ts is mirrored to
+ * docs/prompts/variants/ (checked by a test), which this dependency-free script can read. Throws, or returns a label.
+ */
+export function checkPromptVersion(predictor, root = ROOT) {
+  const kind = predictor.slice(0, predictor.indexOf(':'));
+  const at = predictor.lastIndexOf('@');
+  if (at < 0) return null;
+  const version = predictor.slice(at + 1);
+  const bare = predictor.slice(0, at);
+  if (version === INCUMBENT[kind]) throw new Error(`${predictor} names the incumbent prompt; use ${bare}`);
+  let doc;
+  try {
+    doc = readFileSync(join(root, 'docs/prompts/variants', `${version}.md`), 'utf8');
+  } catch {
+    throw new Error(
+      `${version} is not a registered prompt variant (packages/core/src/components.ts); merge it first`,
+    );
+  }
+  if (!doc.includes(`Predictor kind: \`${kind}\``))
+    throw new Error(`${version} is not a ${kind} prompt variant`);
+  return version;
+}
+
 /** An LLM shadow must exist on OpenRouter and support structured outputs (predict.v1 is a JSON-schema call). */
 export async function checkModel(predictor, fetchImpl = fetch) {
+  const version = checkPromptVersion(predictor);
+  // A prompt variant (`@<promptVersion>`) runs on the same model, so check the bare model.
   const [kind, model] = [
     predictor.slice(0, predictor.indexOf(':')),
-    predictor.slice(predictor.indexOf(':') + 1),
+    predictor.slice(predictor.indexOf(':') + 1).replace(/@[^@]*$/, ''),
   ];
-  if (kind !== 'llm') return `${model} (Jev decisions API)`;
+  const suffix = version ? `, prompt ${version}` : '';
+  if (kind !== 'llm') return `${model} (Jev decisions API${suffix})`;
   const res = await fetchImpl('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`OpenRouter model list: ${res.status}`);
   const found = ((await res.json()).data ?? []).find((m) => m.id === model);
@@ -171,7 +248,7 @@ export async function checkModel(predictor, fetchImpl = fetch) {
   const params = found.supported_parameters ?? [];
   if (!params.includes('structured_outputs') && !params.includes('response_format'))
     throw new Error(`${model} doesn't support structured outputs, which predict.v1 needs`);
-  return `${found.name ?? model} on OpenRouter (structured outputs)`;
+  return `${found.name ?? model} on OpenRouter (structured outputs${suffix})`;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -296,13 +373,18 @@ export async function backfill(opts, target, { fetchImpl = fetch, log = console.
       const failed = n - Number(stats.ok);
       log(`  so far: ${n} prediction(s), ${failed} failed (${pct(failed, n)})`);
       if (failed) {
-        log(`    unusable output (the model's; kept): ${stats.unusable}`);
-        log(
-          `    failed calls (not the model's): ${stats.failed_calls}${Number(stats.failed_calls) > 0 && !opts.retryFailed ? ', redo with --retry-failed' : ''}`,
-        );
+        log(`    the model's (kept): ${stats.unusable} unusable output, ${stats.timeouts} timed out`);
+        const redo = Number(stats.redoable);
+        const hint = redo && !opts.retryFailed ? `; --retry-failed redoes ${redo}` : '';
+        log(`    failed calls (not the model's): ${stats.failed_calls}${hint}`);
         for (const e of await target.query(errorsQuery(predictor)))
-          log(`      ${String(e.n).padStart(5)} × ${e.error}`);
+          log(`      ${String(e.n).padStart(5)} × ${e.kind}: ${e.error}`);
       }
+    }
+    const [flight] = await target.query(inFlightQuery(predictor, now));
+    if (Number(flight?.n) > 0) {
+      const due = Math.max(0, (Number(flight.last) - (now ?? Date.now())) / 60_000);
+      log(`  in flight: ${flight.n} queued or retrying, due within ${duration(due)}; this run skips them`);
     }
 
     const rows = await target.query(missingQuery(one, now));
@@ -323,7 +405,11 @@ export async function backfill(opts, target, { fetchImpl = fetch, log = console.
       log('  nothing to backfill');
       continue;
     }
-    log(`  pace: ${opts.rate} a minute, ${duration(count / opts.rate)}`);
+    const limit = runLimit(opts.rate);
+    const planned = Math.min(count, limit);
+    log(`  pace: ${opts.rate} a minute, ${duration(planned / opts.rate)}`);
+    if (count > limit)
+      log(`  this run enqueues the first ${planned} (at most ${MAX_JOBS}, within 12 h); re-run for the rest`);
     if (opts.yes) {
       const jobs = backfillJobs(one, rows, id);
       for (const job of jobs) await target.publish(job);

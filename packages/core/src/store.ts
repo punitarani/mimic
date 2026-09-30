@@ -1,5 +1,14 @@
 import type { FidelityState } from './fidelity';
-import type { Distribution, Facet, Insight, Question, TraitEstimate } from './types';
+import type { PersonaCuration, PersonaDraft } from './persona';
+import type {
+  Distribution,
+  Facet,
+  Insight,
+  PredictionErrorKind,
+  QKind,
+  Question,
+  TraitEstimate,
+} from './types';
 
 export type MimicStatus = 'intake' | 'identity' | 'learning' | 'paused' | 'archived';
 /** ADR-0007: sub-state of identity resolution, so the UI can show progress. */
@@ -46,6 +55,8 @@ export interface QuestionRecord extends Question {
   servedAt: number | null;
   /** As-of time of the derived data in this question's sealed states; replay rebuilds them from it (ADR-0017). */
   stateAt: number | null;
+  /** The selector's diagnostics for the winning score, written when served (ADR-0027). */
+  selection?: Record<string, unknown> | null;
 }
 
 export interface PredictionRecord {
@@ -65,8 +76,12 @@ export interface PredictionRecord {
   latencyMs: number;
   ok: boolean;
   error: string | null;
+  /** Failed predictions only: `output`, `timeout` (the model's) or `transport` (the call's); ADR-0034. */
+  errorKind?: PredictionErrorKind | null;
   /** True when the primary came from the LLM fallback because Jev errored (PLAN §16). */
   fallback: boolean;
+  /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (docs/SELECTION.md §6). */
+  hypothesis?: string | null;
   createdAt: number;
 }
 
@@ -121,9 +136,12 @@ export interface CandidateRecord {
   summary: string;
   jevSamePersonP: number | null;
   r2Key: string | null;
-  status: 'proposed' | 'confirmed' | 'rejected';
+  /** `superseded`: set aside by a newer search, not judged by the person (ADR-0029). */
+  status: CandidateStatus;
   createdAt: number;
 }
+
+export type CandidateStatus = 'proposed' | 'confirmed' | 'rejected' | 'superseded';
 
 export interface TraitRecord extends TraitEstimate {
   mimicId: string;
@@ -189,6 +207,28 @@ export interface SnapshotRecord {
   createdAt: number;
 }
 
+/** A `persona.v1` draft (ADR-0033): derived from the evidence up to `seqUpTo`, versioned, recomputable. */
+export interface PersonaDraftRecord {
+  id: string;
+  mimicId: string;
+  seqUpTo: number;
+  configHash: string;
+  promptVersion: string;
+  model: string;
+  modelSnapshot: string;
+  draft: PersonaDraft;
+  createdAt: number;
+}
+
+/** The person's choices for Persona.md: one row per mimic. */
+export interface PersonaCurationRecord {
+  mimicId: string;
+  curation: PersonaCuration;
+  /** The client's revision of this curation; a save with a lower or equal rev never overwrites a newer one. */
+  rev: number;
+  updatedAt: number;
+}
+
 export interface ConfigRecord {
   hash: string;
   json: string;
@@ -218,7 +258,11 @@ export interface EvalRunRecord {
 export interface JobRecord {
   key: string;
   type: string;
-  status: 'running' | 'done' | 'failed';
+  /**
+   * `queued`: enqueued to run at `updatedAt` (a paced backfill, ADR-0034), so a re-run knows it's in flight; a
+   * queued job still not done 15 minutes after its time is stale and the cron requeues it.
+   */
+  status: 'queued' | 'running' | 'done' | 'failed';
   attempts: number;
   lastError: string | null;
   updatedAt: number;
@@ -235,6 +279,18 @@ export interface ScoredPredictionRow {
   prediction: PredictionRecord;
   score: ScoreRecord;
   question: Pick<QuestionRecord, 'id' | 'kind' | 'type' | 'seq' | 'itemKey'>;
+}
+
+/** One scored primary or baseline with what the item statistics need (ADR-0027). */
+export interface ScoredItemSource {
+  mimicId: string;
+  questionId: string;
+  role: 'primary' | 'baseline';
+  fallback: boolean;
+  itemAcc: number;
+  logLoss: number;
+  question: Pick<QuestionRecord, 'kind' | 'type' | 'domain' | 'facetIds' | 'options' | 'itemKey'>;
+  answer: { value: string; latencyMs: number };
 }
 
 /** Persistence port used by the engine. Implemented with Drizzle over D1 (Workers) and libSQL (Node CLI). */
@@ -255,13 +311,20 @@ export interface Store {
   addSpend(id: string, usd: number): Promise<void>;
   /** Removes every row for the mimic across all tables. */
   deleteMimic(id: string): Promise<void>;
+  /**
+   * Applies the patch only if the mimic's identity state is one of `from`, in one statement. False when it isn't,
+   * for example because a concurrent request moved it first.
+   */
+  transitionIdentity(
+    id: string,
+    from: readonly IdentityState[],
+    patch: Partial<Omit<MimicRecord, 'id'>>,
+  ): Promise<boolean>;
   // identity
   insertCandidates(recs: CandidateRecord[]): Promise<void>;
   listCandidates(mimicId: string): Promise<CandidateRecord[]>;
-  updateCandidate(
-    id: string,
-    patch: Partial<Pick<CandidateRecord, 'status' | 'jevSamePersonP'>>,
-  ): Promise<void>;
+  /** Sets the status of the mimic's candidates with these IDs. */
+  setCandidateStatus(mimicId: string, ids: readonly string[], status: CandidateStatus): Promise<void>;
   insertFacts(recs: FactRecord[]): Promise<void>;
   listFacts(mimicId: string): Promise<FactRecord[]>;
   updateFact(
@@ -272,7 +335,7 @@ export interface Store {
   // questions
   insertQuestions(recs: QuestionRecord[]): Promise<void>;
   getQuestion(id: string): Promise<QuestionRecord | null>;
-  listQuestions(mimicId: string, status?: QuestionStatus[]): Promise<QuestionRecord[]>;
+  listQuestions(mimicId: string, status?: QuestionStatus[], kinds?: QKind[]): Promise<QuestionRecord[]>;
   updateQuestionStatus(id: string, status: QuestionStatus): Promise<void>;
   /**
    * Atomically marks a question served at `seq` and persists its sealed predictions (PLAN §3.2). Returns false
@@ -285,14 +348,16 @@ export interface Store {
     servedAt: number;
     stateAt: number | null;
     predictions: PredictionRecord[];
+    selection?: Record<string, unknown> | null;
   }): Promise<boolean>;
   // predictions & answers
   insertPredictions(recs: PredictionRecord[]): Promise<void>;
   /**
-   * Atomically inserts `recs` and deletes the predictions `removeIds`, but only those that are failed shadows (the
-   * backfill redoing a failed call, ADR-0027). Primary and baseline predictions are never deleted.
+   * Stores one shadow unless this question already has one from this predictor (a unique index, so concurrent runs
+   * can't both insert), first deleting `replaceIds` if they are failed shadows (a backfill redoing a failed call,
+   * ADR-0034). Primary and baseline rows are never deleted. True if `rec` was stored.
    */
-  replaceFailedShadows(removeIds: string[], recs: PredictionRecord[]): Promise<void>;
+  insertShadow(rec: PredictionRecord, replaceIds?: string[]): Promise<boolean>;
   listPredictions(filter: {
     mimicId?: string;
     questionId?: string;
@@ -301,8 +366,22 @@ export interface Store {
   getAnswerByIdempotencyKey(key: string): Promise<AnswerRecord | null>;
   getAnswerForQuestion(questionId: string): Promise<AnswerRecord | null>;
   listAnswers(mimicId: string): Promise<AnswerRecord[]>;
-  /** Atomically stores the answer, marks the question answered and writes the scores. */
-  recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<void>;
+  /**
+   * Atomically stores the answer, marks the question answered and writes the scores. Returns false, writing
+   * nothing, if the answer's seq or idempotency key is already taken (the question moved, or a duplicate raced).
+   */
+  recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<boolean>;
+  /**
+   * Atomically inserts a question the person wrote and answered themselves (`kind = feedback`, ADR-0032) at
+   * `answer.seq`, with its answer, and advances the mimic's `seqMax`. With `move`, the served session question at
+   * that seq first moves to `move.toSeq`, so it is answered after the feedback. Returns false, writing nothing, if a
+   * seq was already taken, the moved question was answered meanwhile, or the idempotency key was used.
+   */
+  recordFeedback(args: {
+    question: QuestionRecord;
+    answer: AnswerRecord;
+    move?: { questionId: string; toSeq: number };
+  }): Promise<boolean>;
   insertScores(recs: ScoreRecord[]): Promise<void>;
   listScoredPredictions(mimicId: string, roles: PredictionRole[]): Promise<ScoredPredictionRow[]>;
   // derived state
@@ -325,10 +404,29 @@ export interface Store {
   insertSnapshot(rec: SnapshotRecord): Promise<void>;
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
+  // Persona.md (ADR-0033)
+  insertPersonaDraft(rec: PersonaDraftRecord): Promise<void>;
+  latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null>;
+  getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null>;
+  /** Writes only if `rec.rev` is newer than the stored rev; returns whether it wrote. */
+  putPersonaCuration(rec: PersonaCurationRecord): Promise<boolean>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
+  // cross-person item statistics (aggregate only; ADR-0027)
+  /** Every scored primary and baseline of the matching mimics' anchor and adaptive questions, in one query. */
+  listScoredForStats(filter: {
+    consentResearch: boolean;
+    split: 'dev' | 'test';
+  }): Promise<ScoredItemSource[]>;
+  /** Replaces the whole table atomically, so keys absent from `recs` are removed. */
+  replaceItemStats(recs: import('./population').ItemStatRecord[]): Promise<void>;
+  listItemStats(): Promise<import('./population').ItemStatRecord[]>;
   // jobs ledger
   getJob(key: string): Promise<JobRecord | null>;
   putJob(rec: JobRecord): Promise<void>;
+  /** Upserts many ledger rows in few statements. */
+  putJobs(recs: JobRecord[]): Promise<void>;
+  /** Ledger rows whose key starts with `prefix` (e.g. every shadow job of one mimic). */
+  listJobs(prefix: string): Promise<JobRecord[]>;
   /** Jobs not done whose last update is older than `before`. */
   listStaleJobs(before: number, limit: number): Promise<JobRecord[]>;
   // observability

@@ -1,5 +1,6 @@
-// A deploy that isn't checked is a hope. After each deploy: the landing page is the real page, /api/health
-// reaches D1, R2 and the queue, and the lab is behind Access (never a 200 without a login).
+// A deploy that isn't checked is a hope. After each deploy: the landing page is the real page, its link preview
+// points at a card served on this host, /api/health reaches D1, R2 and the queue, and the lab is behind Access
+// (never a 200 without a login).
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -17,6 +18,23 @@ export async function smoke(
         if (res.status !== 200) return `returned ${res.status}`;
         // A Next error boundary also answers 200; the landing copy proves the real page rendered.
         if (!text.includes('Build your mimic')) return '200 without the landing copy';
+        return null;
+      },
+    },
+    {
+      name: 'Link preview',
+      async run() {
+        const html = await fetchImpl(`${base}/`).then((r) => r.text());
+        const image = html
+          .match(/<meta property="og:image" content="([^"]+)"/)?.[1]
+          ?.replaceAll('&amp;', '&');
+        if (!image) return 'no og:image on /';
+        // A build without SITE_URL points previews at localhost (ADR-0031).
+        if (!image.startsWith(`${base}/`)) return `og:image is ${image}, not on ${base}`;
+        const res = await fetchImpl(image);
+        const type = res.headers.get('content-type') ?? '';
+        if (res.status !== 200 || !type.startsWith('image/png'))
+          return `${image} returned ${res.status} ${type}`;
         return null;
       },
     },
