@@ -3,7 +3,8 @@ import type { PipelineConfig } from '../config';
 import { hashJson, seededRng, sha256Hex, shuffle } from '../hash';
 import { samePersonQuestion } from '../jev';
 import { isWebLink, profileKey } from '../links';
-import { getAnchorSet } from '../ontology';
+import { getAnchorSet, getOntology } from '../ontology';
+import { blockedFacetIds, DEFAULT_SCOPE, MimicScope, normalizeScope, questionAllowed } from '../scope';
 import type {
   CandidateRecord,
   FactRecord,
@@ -51,6 +52,8 @@ export const IntakeInput = z.object({
   attestSelf: z.literal(true),
   consentSearch: z.boolean(),
   consentResearch: z.boolean(),
+  /** Categories and sensitive consents (ADR-0040); absent means every category and no sensitive area. */
+  scope: MimicScope.optional(),
 });
 export type IntakeInput = z.infer<typeof IntakeInput>;
 
@@ -92,6 +95,8 @@ export async function createMimic(
     consentApp: true,
     consentSearch: input.consentSearch,
     consentResearch: input.consentResearch,
+    scope: normalizeScope(input.scope ?? DEFAULT_SCOPE, input.consentResearch),
+    scopeAt: null,
     split: splitFor(id),
     seqMax: 0,
     evidenceEpoch: 0,
@@ -108,17 +113,20 @@ export async function createMimic(
   return m;
 }
 
-/** Anchors are inserted up front in a per-person random order, encoded in createdAt (PLAN §9.3). */
+/**
+ * Anchors are inserted up front in a per-person random order, encoded in createdAt (PLAN §9.3). Anchors touching a
+ * category the person deselected are left out, so fewer are seeded (ADR-0040); the order of the rest is unchanged.
+ */
 function anchorQuestions(
   deps: EngineDeps,
   m: MimicRecord,
   cfg: PipelineConfig,
   now: number,
 ): QuestionRecord[] {
-  const items = shuffle(getAnchorSet(cfg.anchors.setId), seededRng(`anchors:${m.id}`)).slice(
-    0,
-    cfg.anchors.count,
-  );
+  const blocked = blockedFacetIds(m.scope, getOntology(cfg.ontologyVersion));
+  const items = shuffle(getAnchorSet(cfg.anchors.setId), seededRng(`anchors:${m.id}`))
+    .filter((item) => questionAllowed(item, blocked))
+    .slice(0, cfg.anchors.count);
   return items.map((item, i) => ({
     id: deps.newId(),
     mimicId: m.id,

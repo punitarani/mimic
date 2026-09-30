@@ -33,7 +33,10 @@ export interface ModelCallRecord {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  /** The attempt that answered; earlier attempts that got a transient error are counted in `attempts`. */
   latencyMs: number;
+  /** HTTP attempts the call took (ADR-0037); 1 when omitted. */
+  attempts?: number;
   ok: boolean;
   error: string | null;
   configHash: string | null;
@@ -69,7 +72,7 @@ export interface BudgetLedger {
  * - `session`: background session and research work, held to the session's share so it never draws on the reserve.
  * - `serve`: the calls that serve a session question. `/next` admits a serve only under the session's share, and the
  *   guard then holds its calls to the whole cap, so a serve that starts under the share is never cut off halfway.
- * - `page`: asking, teaching, Persona.md and learning from answers, held to the whole cap.
+ * - `page`: asking, teaching, SOUL.md and learning from answers, held to the whole cap.
  */
 export type SpendScope = 'session' | 'serve' | 'page';
 
@@ -80,6 +83,7 @@ export const SPEND_SCOPES: Readonly<Record<string, SpendScope>> = {
   'predict.fallback': 'serve',
   'select.bald': 'serve',
   'predict.shadow': 'session',
+  'predict.backfill': 'session',
   'pool.generate': 'session',
   'pool.gate': 'session',
   'embed.question': 'session',
@@ -97,7 +101,7 @@ export const SPEND_SCOPES: Readonly<Record<string, SpendScope>> = {
   'playground.predict': 'page',
   'playground.baseline': 'page',
   'playground.rationale': 'page',
-  'persona.draft': 'page',
+  'soul.draft': 'page',
 };
 
 /** An unlisted purpose is held to the session's share, so a new call can't spend the reserve by accident. */
@@ -116,6 +120,33 @@ export class BudgetExceededError extends Error {
   }
 }
 
+/** HTTP statuses worth retrying: timeouts, rate limits and upstream/provider errors. */
+export const TRANSIENT_HTTP_STATUS: ReadonlySet<number> = new Set([
+  408, 425, 429, 500, 502, 503, 504, 524, 529,
+]);
+
+/** A call that ran out of time (`AbortSignal.timeout`): the model didn't answer in time. */
+export function isTimeoutError(e: unknown): boolean {
+  const x = e as { name?: unknown; message?: unknown } | null;
+  return (
+    x?.name === 'TimeoutError' ||
+    (typeof x?.message === 'string' && x.message.includes('aborted due to timeout'))
+  );
+}
+
+/**
+ * Whether a failed provider call may succeed if retried later: network errors, transient statuses and malformed
+ * provider responses may. The budget guard, other HTTP statuses (bad request, unknown model) and timeouts (a slow
+ * model, which a retry would only hide) won't. Queued retries are bounded (MAX_JOB_ATTEMPTS), so a permanent fault
+ * that looks transient is stored after the last attempt.
+ */
+export function isTransientError(e: unknown): boolean {
+  if (e instanceof BudgetExceededError || isTimeoutError(e)) return false;
+  const status = (e as { status?: unknown } | null)?.status;
+  if (typeof status === 'number') return TRANSIENT_HTTP_STATUS.has(status);
+  return true;
+}
+
 export interface CallDeps {
   log: CallLog;
   budget?: BudgetLedger;
@@ -127,6 +158,7 @@ interface CallOutcome {
   usage: Usage;
   modelSnapshot: string | null;
   latencyMs: number;
+  attempts?: number;
   raw: unknown;
 }
 
@@ -186,6 +218,7 @@ export async function withModelCall<T extends CallOutcome>(
         outputTokens: out.usage.outputTokens,
         costUsd: out.usage.costUsd,
         latencyMs: out.latencyMs,
+        attempts: out.attempts ?? 1,
         ok: true,
         error: null,
       },

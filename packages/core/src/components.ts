@@ -139,7 +139,7 @@ export interface PredictHarness {
 
 /**
  * The harness settings a registered variant may set per model (`modelHarness`): how the model reasons and its token
- * cap, which are measured per model (ADR-0037). Everything else describes the prompt and applies to every model.
+ * cap, which are measured per model (ADR-0041). Everything else describes the prompt and applies to every model.
  */
 export const PER_MODEL_HARNESS_KEYS = ['reasoningEffort', 'reasoningMaxTokens', 'maxTokens'] as const;
 
@@ -231,8 +231,16 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
     harness: {},
     source: 'PLAN §9.6',
   },
+  'predict.v1-direct': {
+    id: 'predict.v1-direct',
+    kind: 'llm',
+    title: 'LLM predictor, reasoning off (for models that ignore low effort)',
+    components: {},
+    harness: { reasoningEffort: 'none' },
+    source: 'ADR-0038: Qwen3.8 Flash reasons 1-4.5K tokens at effort low; off, it answers in about 2 s',
+  },
   /**
-   * ADR-0037: the incumbent prompt with reasoning controls and caps set per model from measured usage, and option
+   * ADR-0041: the incumbent prompt with reasoning controls and caps set per model from measured usage, and option
    * labels accepted as keys. Every model reasons at a low setting: an effort level where the model honours one, a
    * 1,024-token budget where it only takes a budget. A cap is about twice the largest completion measured (at least
    * 1,500), twice the budget for a budget model, so reasoning can't eat the answer. A truncated call is billed for its
@@ -252,10 +260,10 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
       'xiaomi/mimo-v2.6-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
       'qwen/qwen3.8-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
     },
-    source: 'ADR-0037: reasoning usage measured per model on long states',
+    source: 'ADR-0041: reasoning usage measured per model on long states',
   },
   /**
-   * ADR-0037: the incumbent Jev templates with a calibration temperature of 4. Fitted on the prod dev person and
+   * ADR-0041: the incumbent Jev templates with a calibration temperature of 4. Fitted on the prod dev person and
    * checked on the two test people, it cut their log loss from 1.80 to 1.12 and calibration error from 0.27 to
    * 0.10. It only rescales Jev's answer, so it is not a default shadow (a second identical Jev call per question):
    * `evaluate --from stored` derives it from the stored primary for free. Promotion to primary goes through a config.
@@ -266,7 +274,7 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
     title: 'Jev prediction templates, calibrated (temperature 4)',
     components: {},
     harness: { calibrationTemperature: 4 },
-    source: 'ADR-0037: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)',
+    source: 'ADR-0041: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)',
   },
 };
 

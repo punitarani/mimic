@@ -944,19 +944,226 @@ fidelity counts the re-answer like any answer.
 Schema: `answer_rewinds`, `mimics.evidence_epoch`, `facts.seq_up_to`, `insights.superseded_seq`
 (migration `0005_answer_rewinds`).
 
-## ADR-0037 — Reasoning budgets and caps per model; calibrated Jev as a shadow (2026-09-30)
+## ADR-0037 — Backfill accuracy: failure kinds, bounded retries, paced and deduplicated runs (2026-09-30)
+
+After the ADR-0025 backfill, the lab showed Qwen3.8 Flash with 142 failed predictions (78%) and a p50 of 35 s, and
+MiMo V2.6 Flash at 7.8 s. Some of that is the models, and some was how the backfill ran and what it recorded.
+
+**What was the model.** Live `predict.v1` calls, sent one at a time on 8 sealed states from an offline session,
+measured:
+
+| Model | Latency | Result |
+| --- | --- | --- |
+| Qwen3.8 Flash (`effort: low`, 3000 max tokens) | 21–67 s | 3 of 8 spent all 3000 tokens on reasoning and returned no content (`finish_reason: length`) |
+| Qwen3.8 Flash (`effort: low`, 8000 max tokens) | 18–104 s | 7 of 7 valid, with up to 4.5K reasoning tokens; plus one HTTP 429 from Alibaba |
+| Qwen3.8 Flash (`effort: none`) | 1.7–2.7 s | 8 of 8 valid, no reasoning tokens |
+| MiMo V2.6 Flash | 3–11 s | one of 8 was "Provider returned an empty response", in a 200 |
+| GLM 5.3 Flash | 1–3.5 s | 8 of 8 valid |
+
+So Qwen's latency is real at `effort: low`: its provider doesn't cap reasoning at that effort. Its failures were
+mostly the 3000-token cap, recorded as "invalid JSON output". Whether to give it more tokens, run it with reasoning
+off (a prompt variant, ADR-0028) or drop it is a separate decision; this ADR doesn't change the predictor.
+
+**What was the backfill.**
+
+1. **Failed calls were stored as the model failing, forever.** A 429 or a provider error made `LlmPredictor` return
+   a failed prediction, and `runShadow` stored it and marked the job done, so nothing ever retried it. The budget
+   guard did the same on a mimic near its $0.50 session cap.
+2. **Latency counted retries.** Adapters timed a call from before the first attempt, so a success after a 429
+   included the failed attempt and the backoff.
+3. **No pacing.** Each run enqueued every prediction at once, which draws rate limits and slower answers, and queues
+   ahead of live sessions' jobs.
+
+**Decisions.**
+
+- **Failures have a kind, stored with the prediction** (`predictions.error_kind`, main's `errorKind` plus one):
+  - `output`: the model answered but the answer was unusable. Invalid JSON, options not covered, Jev's missing or
+    wrong-typed answer, and now named cutoffs: `output cut off at max_tokens (…)` when `finish_reason` is `length`,
+    and the provider's content filter.
+  - `timeout`: the model didn't answer within the call's timeout. Chat calls no longer retry a timeout in-request
+    (`retryTimeouts: false`): a retry bills a second generation and would record only the fast answers.
+  - `transport`: the call failed before the model answered. `retryable` says whether it may succeed later: rate
+    limits, 5xx, network errors, malformed responses, a 200 carrying an OpenRouter `error` body or a choice with
+    `finish_reason: error`. The budget guard and other 4xx are not.
+  - `output` and `timeout` are the model's: stored at once, counted, never redone. The optimizer still treats a
+    timeout as transient, as before.
+- **Retries are bounded.** A retryable failure makes `runShadow` throw so the queue retries it with backoff. On the
+  last attempt (`MAX_JOB_ATTEMPTS`, from the ledger) it's stored as a `transport` failure instead. The cron's
+  missing-shadow repair then sees the row and stops; it also skips a live shadow whose job used up its attempts.
+- **Latency is the attempt that answered.** `requestJson` returns it with `attempts`, and `model_calls.attempts`
+  records how many HTTP attempts each call took, so retry pressure stays visible.
+- **Backfill predictions are `backfill.shadow` jobs, keyed without a run** (`backfill.shadow:{mimic}:{question}:
+  {predictor}`), so the ledger dedupes them across runs. They are logged as `predict.backfill`.
+- **Pacing.** `backfill.predictor` enqueues them for every (consented) mimic, `60 / perMinute` seconds apart as one
+  stream (default 30 a minute per predictor, `--rate`), through `enqueueBatch` (Queues' `sendBatch`, 100 at a
+  time). `backfill.mimic` does the same for one named mimic from `offsetSeconds`; the CLI staggers several.
+- **Run limits.** A run enqueues at most 5,000, and nothing delayed past 12 h (`backfillLimit`). The CLI says when
+  a run stops there, and a re-run enqueues the rest. The options are part of the job keys, so a job the cron
+  requeues from the ledger keeps its rate.
+- **In flight.** Each prediction is written to the ledger as `queued` (a new status) due at its time before it's
+  sent. The missing rule, in the engine and the CLI, skips a question whose live or backfill shadow job is queued,
+  running or being retried, and not stale. So a re-run never doubles the pace, and neither the cron nor a backfill
+  races a live shadow. A queued job still not done 15 minutes after its time is stale, and the cron requeues it,
+  which also repairs a lost message.
+- **One shadow per question and predictor.** The partial unique index `predictions_shadow_uq` makes a concurrent
+  second run of the same shadow a no-op (`Store.insertShadow` returns whether it stored). The migration first
+  keeps the best of any existing duplicates: ok first, then the earliest.
+- **Legacy failures are classified in the migration:** Jev's `Error: Expected …`, the two LlmPredictor messages and
+  a missing answer are `output`; anything that timed out is `timeout`; the rest is `transport`.
+- **Backfills are held to the session's share of the budget, like shadows** (ADR-0035). A mimic that has spent it
+  is skipped when a run is planned, and a backfilled prediction it refuses is skipped, not stored. The calls are
+  logged as `predict.backfill` (session scope).
+- **Consent is checked again when each prediction runs**, since a paced run can span hours. Named mimics
+  (`--mimic`) skip the check unless `--consented`.
+- **`--retry-failed`** redoes this predictor's `transport` failures, carried on each job. `insertShadow` deletes
+  the failed row and stores the new one atomically, and deletes only failed shadow rows, never primary or baseline
+  ones.
+- **The dry run explains failures.** It splits them by kind and lists the most common messages. It also reports
+  predictions in flight, estimates cost from every charged prediction (unusable output included), and gives the
+  duration and any run limit at the chosen rate. `packages/eval/test/backfill.test.ts` runs the CLI's SQL against
+  the real schema, checks it against the engine's rule, and checks the CLI's copies of the engine's constants.
+- **Queue batches still run all their jobs at once.** Capping them would make live jobs wait behind slow shadows.
+  Pacing keeps backfill batches small; a live burst larger than six calls waiting on headers can still add a
+  little queueing to a shadow's latency.
+
+## ADR-0038 — Qwen3.8 Flash runs with reasoning off: `predict.v1-direct` and `cfg.default.v5` (2026-09-30)
+
+ADR-0025 added `llm:qwen/qwen3.8-flash` as a shadow after one live call. At the incumbent harness (`reasoning.effort:
+low`, 3000 max tokens) its provider doesn't honor low effort. ADR-0037's measurements on 8 sealed states:
+
+| Qwen3.8 Flash | Valid | p50 | $ per 1k |
+| --- | --- | --- | --- |
+| effort low, 3000 max tokens (`predict.v1`) | 5 of 8; the rest spent all 3000 tokens reasoning | 59 s | $1.07 |
+| effort low, 8000 max tokens | 7 of 7 | 49 s | $1.20 |
+| reasoning off (`predict.v1-direct`, through `LlmPredictor`) | 7 of 8; one keyed an option by its label | 1.8 s | $0.07 |
+
+The prod lab agreed: 78% failed, 35 s p50 over what did succeed. Almost every failure is the token cap, which also
+makes the successes a biased sample: the questions Qwen happened to reason about briefly.
+
+**Decision.**
+- **A registered prompt variant, `predict.v1-direct`:** the incumbent `predict.v1` text with `harness.reasoningEffort:
+  'none'`. It changes nothing but the effort, so it is addressable for any model as `llm:<model>@predict.v1-direct`
+  (ADR-0028), and every prediction stores it as its prompt version (invariant 4).
+- **`cfg.default.v5` is `cfg.default.v4` with the Qwen shadow as `llm:qwen/qwen3.8-flash@predict.v1-direct`.** The
+  other shadows are unchanged. At effort low they reason for only tens to a few hundred tokens, so reasoning off is
+  the closest match for Qwen to the condition they run in. Configs are immutable: mimics created under v3 and v4 keep
+  `llm:qwen/qwen3.8-flash`, and its predictions stay in the record (with their failures now marked `output`,
+  ADR-0037).
+- **Backfill the new predictor** over served questions (`pnpm backfill --predictor
+  llm:qwen/qwen3.8-flash@predict.v1-direct`, ADR-0024), so the lab compares it on the same questions as the others.
+
+Whether reasoning helps Qwen's accuracy at all is left to the lab. `llm:qwen/qwen3.8-flash` remains as a
+predictor ID, and the 8000-token harness can be registered as its own variant if that comparison is wanted.
+
+## ADR-0039 — SOUL.md: Persona.md renamed, and redesigned from research (2026-09-30)
+
+`Persona.md` (ADR-0033) is now `SOUL.md`. The rename came with a research pass on what the file should hold. What we
+found, and what we changed:
+
+- **SOUL.md already means something to agents.** In OpenClaw and Hermes Agent, SOUL.md is the agent's *own*
+  identity, injected first into every system prompt; a model of the user goes in USER.md. Dropped in unchanged, a
+  file about a real person would make the agent believe it is that person. So the file opens with YAML front matter
+  (`kind: person-model`, subject, as-of date, answers, evidence cutoff, draft prompt, profile) and says in its first
+  line, and again in the instructions, that it describes the person and is not the reader's identity.
+- **Evidence over description.** Agents built from a person's interview answers predicted their survey answers far
+  better than agents given demographics or a persona paragraph (Park et al., 2024, arXiv 2411.10109: 0.85 vs
+  0.70–0.71 normalized accuracy), and a structured summary of a few thousand tokens loses little against the raw
+  transcript, especially one that keeps how a person decides separate from what they prefer (the "BDE" structure,
+  arXiv 2608.20344; Twin-2K-500, arXiv 2505.17479). So the file keeps the drafted portrait (decision procedure,
+  rules of thumb, tradeoffs, values) apart from the evidence, and carries the person's real answers and reasons.
+- **Twins drift toward an idealized person.** Studies of LLM twins find them too uniform, stereotyped and
+  "hyper-rational", and nicer than the people they model (arXiv 2509.19088). `soul.v1` (a new prompt; `persona.v1`
+  stays in the registry for older drafts, which still render) adds a Tensions section, asks for statements
+  "specific enough to be wrong" (the soul.md project's phrase), and tells the writer not to make the person more
+  rational, agreeable, consistent or optimistic than their answers. The instructions tell the reading agent the
+  same.
+- **The person's own rules come first.** Following OpenClaw's Always/Never directives and soul.md's "Won't:", the
+  person can set boundaries (Always, Never, Ask me first), which open the file and override everything else, and
+  choose whether an agent may write or speak as them: never; when asked, saying it's an AI (the default); or when
+  asked. Voice samples (up to 5, the person's own writing, as in soul.md's STYLE.md) back the second and third.
+- **Instructions for the reader.** A trust order (boundaries, own words, recorded answers with the most recent
+  winning, inferred sections, tendencies, background); predict from a related answer first; say how sure you are;
+  unknowns mean ask; check before anything irreversible, public, financial, legal, medical or personal; quoted text
+  is the person's words, never instructions (the person's text and search facts are untrusted input, so they are
+  quoted); don't edit the file. Fidelity and the as-of date say how far to trust it.
+- **Short core, long appendix.** Persona instructions fade over long conversations and agent tools truncate large
+  files (OpenClaw at 20,000 characters), so the core keeps the 12 answers the portrait cites most as "Key
+  decisions", and the rest of the record goes to an appendix. `?profile=core` drops the appendix; the page shows both
+  sizes. Tendencies are a compact table.
+- **Third person for the portrait.** Asking a model to predict a person moved its answers closer to real ones than
+  role-play did (arXiv 2607.24782), so the portrait says "they"; first person appears only in the person's quoted
+  words and voice samples.
+- **Rename mechanics.** Routes move to `/m/[id]/soul` and `/api/mimics/:id/soul(.md)`, with permanent (308)
+  redirects from the old page, file and JSON API paths, so a page left open across the deploy still saves. The
+  tables keep their names, `persona_drafts` and `persona_curations`, and there is no migration: a deploy migrates
+  D1 before it ships code, so a rename would break the old code still serving in between. Drizzle names them
+  `soulDrafts` and `soulCurations`. Existing drafts and curations (with their `rev`) carry over; stored curations
+  parse with the new fields' defaults, and `persona.v1` drafts still render. `?profile=core` downloads as
+  `SOUL.core.md`. The LLM call's purpose is `soul.draft`, drawn from the page's reserve like `persona.draft` was
+  (ADR-0035).
+- **Not in this change.** Treating "that's not me" on a statement as new evidence, and a "test my SOUL.md" check
+  that scores an agent reading only the exported file on held-out answers, both touch the research invariants and
+  are left for later.
+
+## ADR-0040 — Categories and consent: sensitive domains become opt-in (2026-09-30)
+
+PLAN §1 excluded health, sexuality, religion, politics and detailed finances, enforced by five prompt rules and the
+`sensitive` Jev gate. The project owner now wants them, gathered as fully as each person permits, and wants people to
+steer what they are asked about. This ADR lifts the non-goal and records the contract; `docs/CATEGORIES.md` is the
+full policy.
+
+- **Four categories.** Every facet has a `category`: Personality and psychology, Values beliefs and politics,
+  Relationships sexuality and life, Work and money. All are selected by default and each can be deselected at intake
+  or later; at least one stays. Question domains stay a separate axis (the kind of scenario, not what is measured).
+  In v1, `spending_style` is "Work and money" although its group is Everyday, so a facet keeps one category across
+  ontology versions; occupation facets are always "Work and money".
+- **Five opt-in areas,** each a separate consent under its category: politics, religion, sexuality, health, money.
+  A facet with `sensitive` set is reachable only with its area consented. Each consent carries a one-line reason and
+  "Your answers stay yours: they are only used to build your mimic."
+- **Special-category data** (politics, religion, sexuality, health) leaves research exports unless the person also
+  consents to research use of that area; money follows plain research consent. None of it is ever taken from web
+  search or enrichment: those fields are never requested, and a lexicon drops any fact that reveals one before it is
+  stored. Hard delete covers it like everything else.
+- **Direct questions only.** A sensitive facet is populated only by answers to questions that ask about it directly;
+  nothing is inferred from other answers or from facts. The reflector is told so and code enforces it (ADR-0042).
+- **Stored as a `MimicScope`** in `mimics.categories_json`, `consents_json`, `research_consents_json` (NOT NULL with
+  constant defaults, so existing rows read as every category and no sensitive consent, which is what they were asked)
+  and `scope_at` (migration 0007). `normalizeScope` keeps categories in canonical order, only `true` flags, drops
+  consents of deselected categories (reselecting asks again) and research consents without the area's consent or
+  research consent overall.
+- **Enforced in code, from one place.** `facetsFor` returns scoped facets by default; `{ scoped: false }` is only for
+  code that must know what is blocked. The loaders build a `ScopeView` and leave out answers to questions touching a
+  blocked facet, blocked trait estimates, insights naming a blocked facet or citing a hidden answer, and reflection
+  facts citing a hidden answer, so no state, belief, snapshot or view sees them. With the default scope nothing is
+  blocked and every state hash is unchanged. Anchors are seeded only inside the scope (a person without "Relationships,
+  sexuality and life" gets eight), and serving filters anchors, repeat sources, the pool and the reserve bank. The
+  generator sees only scoped facets, and `validateDraft` rejects a draft tagging a blocked facet instead of dropping
+  the tag. Occupation facets are generated only with "Work and money" selected.
+- **Changing it later** (`setScope`). Narrowing stamps `scope_at` and discards every pooled or served-but-unanswered
+  question now out of reach; what was learned in that area is hidden from then on (rows stay until hard delete).
+  Widening changes no stored data. Hidden data is not time-travelled back into rebuilt states (privacy over replay,
+  as for removed facts in ADR-0017); replay reports states served before `scope_at` as `rescoped`.
+- **Scripted people are marked.** `runSession` gives scripted mimics a `script:` participant id (Twin imports already
+  use `twin2k:`), so reports can keep real people apart (rubric R10).
+- **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0044); PLAN §14 lists them
+  and the rubric each is scored on.
+
+## ADR-0041 — Reasoning budgets and caps per model, pinned option keys, calibrated Jev derived: `cfg.default.v6` (2026-09-30)
 
 **Why.** The first Actions → Optimize report on prod data (3 consented people, 232 scored questions) showed two things:
 
-- **Qwen3.8 Flash failed most of its predictions**: 59 of 78 on the dev person and 20 of 154 on the test people. It
-  ignores `reasoning.effort` and reasons without a limit, so on long states its thinking ran past the shared 3,000
-  `max_tokens` cap and the JSON never arrived.
+- **Qwen3.8 Flash failed most of its predictions**: only 59 of 78 on the dev person and 20 of 154 on the test people
+  succeeded. It ignores `reasoning.effort` and reasons without a limit, so on long states its thinking ran past the
+  shared 3,000 `max_tokens` cap and the JSON never arrived (ADR-0037 measured the same).
 - **Jev is overconfident.** A calibration temperature of 4 (the top of the old grid), fitted on the dev person, took
   held-out log loss from 1.804 to 1.124 nats per question and ECE from 0.267 to 0.098 on the two test people. The
   LLM shadows' fitted temperatures were all 0.9–1.2, so they need no calibration.
 
-Reasoning stays on for every model. Each model gets one setting chosen for cost and accuracy together, so the shadows
-compare like with like.
+ADR-0038 answered the first by turning Qwen's reasoning off (`cfg.default.v5`). This ADR keeps reasoning on for
+every model instead, at one low setting each, chosen for cost and accuracy together. Where a model ignores the effort
+level, it gets a token budget. That way the shadows compare like with like. v5's reasoning-off Qwen stays in v6 as a
+control arm, so real answers show whether reasoning helps Qwen. ADR-0038 left that question to the lab, and the
+control costs about $0.00007 a question.
 
 **Measured.** 8 long states (seq 45–72, from two scripted 72-turn sessions) per model and setting. The response cap
 was 8,000 so nothing truncated. These runs measure token use, latency and whether the JSON is valid; they say nothing
@@ -1065,9 +1272,11 @@ Both key problems come from the schema, which let `key` be any string. With the 
     Those rows appear in every table (by split, person and question type, with accuracy and lift), at no cost and
     with no noise.
   - It remains the seed for Jev template search, and the version to name when calibration is promoted to primary.
-- **`cfg.default.v5`** is v4 with the five LLM shadows on `@predict.v2`. The primary stays uncalibrated Jev.
+- **`cfg.default.v6`** is v5 (ADR-0038) with its five LLM shadows on `@predict.v2`, plus v5's
+  `llm:qwen/qwen3.8-flash@predict.v1-direct` kept as the reasoning-off control. The primary stays uncalibrated Jev.
+  `predict.v1-direct` sets no per-model settings, so it stays valid for any model.
 
-  New mimics get v5. Existing mimics keep their config, and `pnpm backfill` gives their served questions the new
+  New mimics get v6. Existing mimics keep their config, and `pnpm backfill` gives their served questions the new
   shadows (ADR-0024).
 - **The calibration grid in `evaluate --from stored` now runs 0.25–16 (46 steps).** This is because the old top of 4
   was the fitted value. Pooling fits pair the primary with LLM shadows only, since a Jev shadow pooled with the Jev
@@ -1093,6 +1302,13 @@ on score questions. Promoting it later is a one-line config change (`primary: je
 The pooling fits also put almost no weight on the primary against any LLM shadow, which is worth revisiting once
 `predict.v2` has been backfilled.
 
-**Cost.** At the table's prices, the five v5 shadows cost about $0.0023 per scored question together. That is about a
-quarter less than the five v4 shadows ($0.0031), because Qwen's unbounded reasoning was the costliest. Calibrated Jev
-costs nothing. Backfilling the five over the 232 questions served so far costs about $0.53.
+**Cost.** At the table's prices, the v6 shadows cost about $0.0023 per scored question together:
+
+| Config | Shadows' cost per question | Compared with v6 |
+| --- | --- | --- |
+| v4 | $0.0031 | a quarter more, because Qwen's unbounded reasoning was the costliest |
+| v5 | $0.0019 | $0.0004 less, because Qwen doesn't reason |
+| v6 | $0.0023 | — |
+
+Calibrated Jev costs nothing. Backfilling the five `predict.v2` shadows over the 232 questions served so far costs
+about $0.53.

@@ -71,9 +71,11 @@ describe.skipIf(!LIVE)('live providers', () => {
   }, 60_000);
 
   // One prediction per LLM shadow in the default config, through the real LlmPredictor: its prompt version's text,
-  // schema (with the option-key enum), reasoning control and cap for that model (ADR-0037).
-  const shadows = DEFAULT_CONFIG.predictor.shadows.map(parsePredictorId).filter((p) => p.kind === 'llm');
-  it.each(shadows.map((s) => [s.model, s] as const))(
+  // schema (with the option-key enum under predict.v2), reasoning control and cap for that model (ADR-0041).
+  const shadows = DEFAULT_CONFIG.predictor.shadows
+    .map((id) => ({ id, spec: parsePredictorId(id) }))
+    .filter((s) => s.spec.kind === 'llm');
+  it.each(shadows.map((s) => [s.id, s.spec] as const))(
     'shadow %s returns a valid distribution',
     async (_, spec) => {
       const gateway = new Gateway({

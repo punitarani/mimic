@@ -4,6 +4,7 @@ import {
   type CandidateRecord,
   type CandidateStatus,
   type ConfigRecord,
+  DEFAULT_SCOPE,
   type DerivedRollback,
   type EvalRunRecord,
   type ExperimentRecord,
@@ -17,12 +18,9 @@ import {
   type KgNodeRecord,
   type MimicFacetRecord,
   type MimicRecord,
+  MimicScope,
   type ModelCallRecord,
   Option,
-  PersonaCuration,
-  type PersonaCurationRecord,
-  PersonaDraft,
-  type PersonaDraftRecord,
   type PredictionRecord,
   type PredictionRole,
   type QKind,
@@ -33,6 +31,10 @@ import {
   type ScoreRecord,
   SESSION_KINDS,
   type SnapshotRecord,
+  SoulCuration,
+  type SoulCurationRecord,
+  SoulDraft,
+  type SoulDraftRecord,
   StaleEvidenceError,
   type Store,
   type TraitRecord,
@@ -96,11 +98,24 @@ type TRow = typeof s.traitEstimates.$inferSelect;
 
 /** A MimicRecord patch as column values (`links` is stored as JSON). */
 function mimicPatch(patch: Partial<Omit<MimicRecord, 'id'>>): Partial<typeof s.mimics.$inferInsert> {
-  const { links, ...rest } = patch;
+  const { links, scope, ...rest } = patch;
   const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
   if (links) set.linksJson = JSON.stringify(links);
+  if (scope) Object.assign(set, scopeColumns(scope));
   return set;
 }
+
+function scopeColumns(scope: MimicScope) {
+  return {
+    categoriesJson: JSON.stringify(scope.categories),
+    consentsJson: JSON.stringify(scope.consents),
+    researchConsentsJson: JSON.stringify(scope.researchConsents),
+  };
+}
+
+const ScopeCategories = MimicScope.shape.categories;
+const ScopeConsents = MimicScope.shape.consents.unwrap();
+const ScopeResearch = MimicScope.shape.researchConsents.unwrap();
 
 const toMimic = (r: MRow): MimicRecord => ({
   id: r.id,
@@ -118,6 +133,12 @@ const toMimic = (r: MRow): MimicRecord => ({
   consentApp: r.consentApp,
   consentSearch: r.consentSearch,
   consentResearch: r.consentResearch,
+  scope: {
+    categories: parse(ScopeCategories, r.categoriesJson, [...DEFAULT_SCOPE.categories]),
+    consents: parse(ScopeConsents, r.consentsJson, {}),
+    researchConsents: parse(ScopeResearch, r.researchConsentsJson, {}),
+  },
+  scopeAt: r.scopeAt,
   split: r.split,
   seqMax: r.seqMax,
   evidenceEpoch: r.evidenceEpoch,
@@ -207,16 +228,18 @@ const toPrediction = (r: PRow): PredictionRecord => ({
   latencyMs: r.latencyMs,
   ok: r.ok,
   error: r.error,
+  errorKind: r.errorKind,
   fallback: r.fallback,
   hypothesis: r.hypothesis,
   createdAt: r.createdAt,
 });
 
-/** 20 columns per row (D1's 100-parameter limit bounds the batch size below). */
-const PREDICTION_COLS = 20;
+/** 21 columns per row (D1's 100-parameter limit bounds the batch size below). */
+const PREDICTION_COLS = 21;
 const fromPrediction = (p: PredictionRecord): typeof s.predictions.$inferInsert => ({
   ...p,
   hypothesis: p.hypothesis ?? null,
+  errorKind: p.errorKind ?? null,
   distJson: JSON.stringify(p.dist),
 });
 
@@ -363,8 +386,10 @@ export class DrizzleStore implements Store {
 
   // mimics
   async insertMimic(m: MimicRecord) {
-    const { links, ...rest } = m;
-    await this.db.insert(s.mimics).values({ ...rest, linksJson: JSON.stringify(links) });
+    const { links, scope, ...rest } = m;
+    await this.db
+      .insert(s.mimics)
+      .values({ ...rest, linksJson: JSON.stringify(links), ...scopeColumns(scope) });
   }
   async getMimic(id: string) {
     const r = await this.db.select().from(s.mimics).where(eq(s.mimics.id, id)).get();
@@ -527,6 +552,25 @@ export class DrizzleStore implements Store {
   // predictions & answers
   async insertPredictions(recs: PredictionRecord[]) {
     await this.insertChunked(s.predictions, recs.map(fromPrediction));
+  }
+  async insertShadow(rec: PredictionRecord, replaceIds: string[] = []) {
+    const stmts: BatchItem<'sqlite'>[] = chunk(replaceIds, 2).map((part) =>
+      this.db
+        .delete(s.predictions)
+        .where(
+          and(inArray(s.predictions.id, part), eq(s.predictions.role, 'shadow'), eq(s.predictions.ok, false)),
+        ),
+    );
+    const insert = this.db
+      .insert(s.predictions)
+      .values(fromPrediction({ ...rec, role: 'shadow' }))
+      .onConflictDoNothing()
+      .returning({ id: s.predictions.id });
+    const results = await this.db.batch([...stmts, insert] as unknown as [
+      BatchItem<'sqlite'>,
+      ...BatchItem<'sqlite'>[],
+    ]);
+    return (results.at(-1) as Array<{ id: string }>).length > 0;
   }
   async deletePredictions(ids: string[]) {
     for (const part of idChunks(ids))
@@ -799,10 +843,10 @@ export class DrizzleStore implements Store {
             notInArray(s.kgNodes.id, edgesOf(s.kgEdges.src)),
           ),
         ),
-      // Persona drafts cite the evidence up to their seq (ADR-0033); the page drafts again on request.
+      // SOUL.md drafts cite the evidence up to their seq (ADR-0033); the page drafts again on request.
       this.db
-        .delete(s.personaDrafts)
-        .where(and(eq(s.personaDrafts.mimicId, mimicId), gte(s.personaDrafts.seqUpTo, fromSeq))),
+        .delete(s.soulDrafts)
+        .where(and(eq(s.soulDrafts.mimicId, mimicId), gte(s.soulDrafts.seqUpTo, fromSeq))),
     );
     return { stmts, factsAt };
   }
@@ -1053,52 +1097,50 @@ export class DrizzleStore implements Store {
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
   }
 
-  // Persona.md (ADR-0033)
-  async insertPersonaDraft(rec: PersonaDraftRecord) {
+  // SOUL.md (ADR-0039)
+  async insertSoulDraft(rec: SoulDraftRecord) {
     const { draft, ...row } = rec;
     await this.write([
-      this.db
-        .insert(s.personaDrafts)
-        .values({ ...row, draftJson: JSON.stringify(PersonaDraft.parse(draft)) }),
+      this.db.insert(s.soulDrafts).values({ ...row, draftJson: JSON.stringify(SoulDraft.parse(draft)) }),
     ]);
   }
-  async latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null> {
+  async latestSoulDraft(mimicId: string): Promise<SoulDraftRecord | null> {
     const row = await this.db
       .select()
-      .from(s.personaDrafts)
-      .where(eq(s.personaDrafts.mimicId, mimicId))
-      .orderBy(desc(s.personaDrafts.createdAt), desc(s.personaDrafts.id))
+      .from(s.soulDrafts)
+      .where(eq(s.soulDrafts.mimicId, mimicId))
+      .orderBy(desc(s.soulDrafts.createdAt), desc(s.soulDrafts.id))
       .get();
     if (!row) return null;
     const { draftJson, ...rest } = row;
-    return { ...rest, draft: parse(PersonaDraft, draftJson, { summary: '', statements: [] }) };
+    return { ...rest, draft: parse(SoulDraft, draftJson, { summary: '', statements: [] }) };
   }
-  async getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null> {
+  async getSoulCuration(mimicId: string): Promise<SoulCurationRecord | null> {
     const row = await this.db
       .select()
-      .from(s.personaCurations)
-      .where(eq(s.personaCurations.mimicId, mimicId))
+      .from(s.soulCurations)
+      .where(eq(s.soulCurations.mimicId, mimicId))
       .get();
     if (!row) return null;
     return {
       mimicId: row.mimicId,
-      curation: parse(PersonaCuration, row.json, PersonaCuration.parse({})),
+      curation: parse(SoulCuration, row.json, SoulCuration.parse({})),
       rev: row.rev,
       updatedAt: row.updatedAt,
     };
   }
-  async putPersonaCuration(rec: PersonaCurationRecord) {
-    const json = JSON.stringify(PersonaCuration.parse(rec.curation));
+  async putSoulCuration(rec: SoulCurationRecord) {
+    const json = JSON.stringify(SoulCuration.parse(rec.curation));
     const rows = await this.db
-      .insert(s.personaCurations)
+      .insert(s.soulCurations)
       .values({ mimicId: rec.mimicId, json, rev: rec.rev, updatedAt: rec.updatedAt })
       .onConflictDoUpdate({
-        target: s.personaCurations.mimicId,
+        target: s.soulCurations.mimicId,
         set: { json, rev: rec.rev, updatedAt: rec.updatedAt },
         // Out-of-order saves (a slow request, a keepalive flush on leaving the page) never overwrite a newer one.
-        setWhere: lt(s.personaCurations.rev, rec.rev),
+        setWhere: lt(s.soulCurations.rev, rec.rev),
       })
-      .returning({ rev: s.personaCurations.rev })
+      .returning({ rev: s.soulCurations.rev })
       .all();
     return rows.length > 0;
   }
@@ -1184,11 +1226,40 @@ export class DrizzleStore implements Store {
       });
   }
 
+  async putJobs(recs: JobRecord[]) {
+    const stmts = chunk(recs, 6).map((part) =>
+      this.db
+        .insert(s.jobs)
+        .values(part)
+        .onConflictDoUpdate({
+          target: s.jobs.key,
+          set: {
+            status: sql`excluded.status`,
+            attempts: sql`excluded.attempts`,
+            lastError: sql`excluded.last_error`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        }),
+    );
+    if (stmts.length)
+      await this.db.batch(stmts as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+
+  async listJobs(prefix: string) {
+    // A key range, so the primary-key index serves it (the cron asks for every active mimic).
+    const end = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+    return this.db
+      .select()
+      .from(s.jobs)
+      .where(and(gte(s.jobs.key, prefix), lt(s.jobs.key, end)))
+      .all();
+  }
+
   async listStaleJobs(before: number, limit: number) {
     return this.db
       .select()
       .from(s.jobs)
-      .where(and(inArray(s.jobs.status, ['running', 'failed']), lt(s.jobs.updatedAt, before)))
+      .where(and(inArray(s.jobs.status, ['queued', 'running', 'failed']), lt(s.jobs.updatedAt, before)))
       .orderBy(asc(s.jobs.updatedAt))
       .limit(limit)
       .all();

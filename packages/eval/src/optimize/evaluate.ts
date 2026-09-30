@@ -205,7 +205,8 @@ export function toRecord(
     modelSnapshot: r.modelSnapshot,
     ok: r.ok,
     error: r.ok ? null : (r.error ?? 'failed'),
-    transient: !r.ok && r.errorKind === 'transport',
+    // A timeout counts as transient here, as it did before timeouts had their own kind (ADR-0037).
+    transient: !r.ok && (r.errorKind === 'transport' || r.errorKind === 'timeout'),
     dist,
     answer: inst.answer,
     logLoss: s.logLoss,
@@ -471,7 +472,7 @@ export function storedRecords(instances: EvalInstance[]): EvalRecord[] {
 /**
  * Registered Jev variants that differ from a stored primary only by calibration temperature (same model, templates
  * and state format): their prediction is the primary's answer rescaled, so the stored report derives it for free,
- * with no noise, instead of a second Jev call per question (ADR-0037). Rows carry the role `derived`.
+ * with no noise, instead of a second Jev call per question (ADR-0041). Rows carry the role `derived`.
  */
 export function derivedCalibrations(primaryId: string): Array<{ predictorId: string; t: number }> {
   const spec = parsePredictorId(primaryId);
@@ -610,7 +611,7 @@ export function noiseSd(
 // Post-hoc calibration and pooling on stored predictions (M11; no model calls)
 // ---------------------------------------------------------------------------------------------------------------
 
-/** Moved to core (ADR-0037): a registered prompt variant applies it online. */
+/** Moved to core (ADR-0041): a registered prompt variant applies it online. */
 export { temperatureScale };
 
 /** Log-linear pool: p ∝ a^w · b^(1−w). */
@@ -713,7 +714,7 @@ function fitParam(
  */
 export function calibrationFits(instances: EvalInstance[]): FitRow[] {
   const rows: FitRow[] = [];
-  // 0.25 to 16: the first prod report put Jev's best temperature at the old top of 4 (ADR-0037).
+  // 0.25 to 16: the first prod report put Jev's best temperature at the old top of 4 (ADR-0041).
   const temps = Array.from({ length: 46 }, (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000);
   const unit = Array.from({ length: 21 }, (_, i) => i / 20);
   const byPredictor = new Map<string, Pair[]>();

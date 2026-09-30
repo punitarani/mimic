@@ -203,7 +203,7 @@ describe('prediction prompt components (ADR-0028)', () => {
   });
 });
 
-describe('per-model reasoning budgets and calibration (ADR-0037)', () => {
+describe('per-model reasoning budgets and calibration (ADR-0041)', () => {
   const chatGateway = (seen: ChatRequest[], content: string) =>
     new Gateway({
       decisions: {
@@ -275,7 +275,7 @@ describe('per-model reasoning budgets and calibration (ADR-0037)', () => {
     expect(resolvePredictPrompt('predict.v2', 'llm', 'qwen/qwen3.8-flash').components).toEqual(
       INCUMBENT_COMPONENTS,
     );
-    // Every LLM shadow in the default config has measured settings (ADR-0037).
+    // Every LLM shadow in the default config has measured settings (ADR-0041).
     for (const id of DEFAULT_CONFIG.predictor.shadows) {
       const spec = parsePredictorId(id);
       if (spec.kind === 'llm') expect(PREDICT_PROMPTS['predict.v2']!.modelHarness).toHaveProperty(spec.model);

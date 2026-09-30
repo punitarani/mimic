@@ -620,7 +620,7 @@ export function variantSnippet(r: OptimizeResult, runId: string): string | null 
   // A registered variant overrides the incumbent, not the seed's base variant, so diff against the incumbent.
   const incumbent = DEFAULT_PROMPT_VERSION[c.kind];
   // The seed variant's harness structure plus this run's changes. Reasoning control and caps are measured per model
-  // (ADR-0037), so a change to them is scoped to the model it was optimized on, and the seed's entries for other
+  // (ADR-0041), so a change to them is scoped to the model it was optimized on, and the seed's entries for other
   // models are kept; any other harness change (schema, keys, calibration) describes the prompt and is shared.
   let harnessLines = `harness: ${JSON.stringify(changedHarness(c, incumbent))},`;
   if (c.kind === 'llm') {

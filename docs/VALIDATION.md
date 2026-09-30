@@ -277,13 +277,40 @@ only; scripted answers say nothing about real people. The whole live smoke cost 
   - its Twin-2K-500 step, since Hugging Face is blocked in this environment. That step is best-effort, and the run
     continues without it.
 
-## Reasoning budgets per model and calibrated Jev (ADR-0037)
+## M9: categories, consent and scoped facets (ADR-0040)
+
+Offline fakes only (deterministic; the generator tags whatever it is told to target), so nothing below is a research
+result. It validates the machinery. Scripted people now carry a `script:` participant id.
+
+- Unit tests (`packages/core/test/scope.test.ts`, 9 tests): the allowance truth table (category, sensitive area,
+  consent), normalisation (canonical order, consents dropped with their category, research consents only with the
+  area's consent and research consent overall), `scopeShrank`, the scope view on mixed-facet, pooled, unknown-facet
+  and sensitive questions, hidden insights and reflection facts, `validateDraft` rejecting blocked tags, every v1
+  facet categorised, and the special-category fact lexicon (hits: church choir, Sunday mass, a party campaign,
+  diabetes advocacy, a cancer survivor headline, an LGBTQ+ network; misses: trail running, Temple University, an
+  employer in mental health, an oncology nurse title, "democratic decision-making").
+- Integration (`packages/eval/test/scope.test.ts`, 2 people × 20 turns with only psychology and values, 1 person × 22
+  turns with every category):
+  - seven anchors seeded instead of ten, in the same per-person order;
+  - no served question, trait history row, insight, knowledge-graph facet node, snapshot facet or occupation facet
+    touches "Relationships, sexuality and life" or "Work and money";
+  - no generator call lists a blocked facet in its ontology block or targets, and no trait read asks about one
+    (read from the model-call traces);
+  - narrowing the scope mid-session discards the out-of-scope pool, stamps `scope_at`, hides the answered work
+    anchor from the loaded view while keeping its rows, and nothing from the withdrawn category is served in the next
+    ten questions; widening back stamps nothing.
+- Every existing suite passes unchanged under the default scope (core, db, eval, worker, web), including the offline
+  online-reproduction test (`eval.test.ts`), so default-scope state hashes are unchanged. Config hashes v1–v4 are
+  unchanged (no config change in M9).
+- Not measured: anything about real people; the UI (M11); sensitive facets (they arrive with ontology v2 in M10).
+
+## Reasoning budgets per model and calibrated Jev (ADR-0041)
 
 Checked in the Claude Code environment on states from two scripted 72-turn sessions. These runs measure token use,
 failures and cost, and say nothing about accuracy. Everything live, probe included, cost about $0.70.
 
 - **Probe:** 8 long states per model and setting (seq 45 to 72), with an 8,000-token cap so nothing truncated. The
-  table in ADR-0037 has the numbers. Medium effort bought nothing over low. Qwen Flash ignores effort, and a
+  table in ADR-0041 has the numbers. Medium effort bought nothing over low. Qwen Flash ignores effort, and a
   1,024-token budget was the smallest that kept every answer valid.
 - **End to end, first round:** `pnpm eval -- evaluate --predictor <shadow>` ran over 120 states for each shadow,
   and for Jev with and without calibration. There were 8 failures in 720 calls:
@@ -295,7 +322,7 @@ failures and cost, and say nothing about accuracy. Everything live, probe includ
 - **Second round, Qwen and GLM:** one failure each in 120.
   - GLM reasoned past the 1,500 cap once more. That run used the old cap, before it was raised to 3,000.
   - Qwen fell into a degenerate list of invented keys that ran to the cap.
-- **Final round, after the xhigh review of #18:** the five v5 shadows, with the option keys as an enum in the schema,
+- **Final round, after the xhigh review of #18:** the five `predict.v2` shadows, with the option keys as an enum in the schema,
   ran over the same 120 states each. The results, across 602 calls:
   - 0 failures;
   - 0 truncations;
@@ -316,6 +343,7 @@ failures and cost, and say nothing about accuracy. Everything live, probe includ
     LLM shadows;
   - the optimizer stops at a wall-clock deadline;
   - a winner's snippet scopes reasoning and caps to its model and shares every other setting;
-  - the v4 hash is unchanged, and v5 is v4 with its shadows on `predict.v2`;
-  - the 30-turn session test runs 1 primary, 1 baseline and 5 shadows per scored question, each recording its
+  - the v4 and v5 hashes are unchanged, and v6 is v5 with its LLM shadows on `predict.v2` plus the reasoning-off Qwen
+    control;
+  - the 30-turn session test runs 1 primary, 1 baseline and 6 shadows per scored question, each recording its
     prompt version.

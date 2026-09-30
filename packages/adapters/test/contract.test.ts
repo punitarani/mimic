@@ -1,12 +1,19 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { answerToDistribution, type ProviderCallRunner, predictionQuestion } from '@mimic/core';
+import {
+  answerToDistribution,
+  isTimeoutError,
+  isTransientError,
+  type ProviderCallRunner,
+  predictionQuestion,
+} from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
   ExaEnricher,
   ExaPeopleSearch,
   exaCandidate,
   type FetchLike,
+  HttpError,
   JevDecisions,
   OpenAiDecisionsStub,
   OpenRouterChat,
@@ -176,6 +183,71 @@ describe('OpenRouter chat', () => {
     expect(res.modelSnapshot).toBe('deepseek/deepseek-v4.1-flash@Wafer');
     expect(res.usage.costUsd).toBe(5.172e-5);
     expect(res.usage.inputTokens).toBe(69);
+    expect(res.finishReason).toBe('stop');
+  });
+
+  it('reports why generation stopped, so a max_tokens cutoff is distinguishable from bad JSON', async () => {
+    const cut = {
+      model: 'qwen/qwen3.8-flash',
+      provider: 'Alibaba',
+      choices: [{ message: { content: '' }, finish_reason: 'length' }],
+      usage: { prompt_tokens: 1127, completion_tokens: 3000, cost: 0.0016 },
+    };
+    const { fetch } = replay({ json: cut });
+    const res = await new OpenRouterChat({ fetch }).chat({ model: 'qwen/qwen3.8-flash', messages: [] });
+    expect(res.finishReason).toBe('length');
+    expect(res.content).toBe('');
+    expect(res.usage.outputTokens).toBe(3000);
+  });
+
+  it('turns a 200 carrying an error body into a transient HTTP error', async () => {
+    const { fetch } = replay({ json: { error: { message: 'Provider returned an empty response' } } });
+    const err = await new OpenRouterChat({ fetch })
+      .chat({ model: 'xiaomi/mimo-v2.6-flash', messages: [] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).status).toBe(502);
+    expect(isTransientError(err)).toBe(true);
+    expect(String(err)).toContain('Provider returned an empty response');
+    const limited = replay({ json: { error: { code: 429, message: 'Rate limit exceeded' } } });
+    const e429 = await new OpenRouterChat({ fetch: limited.fetch })
+      .chat({ model: 'm', messages: [] })
+      .catch((e: unknown) => e);
+    expect((e429 as HttpError).status).toBe(429);
+  });
+
+  it('treats a provider failing mid-generation (finish_reason "error") as a failed call', async () => {
+    const { fetch } = replay({
+      json: {
+        model: 'm',
+        choices: [{ message: { content: '' }, finish_reason: 'error', error: { message: 'upstream reset' } }],
+      },
+    });
+    const err = await new OpenRouterChat({ fetch })
+      .chat({ model: 'm', messages: [] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).status).toBe(502);
+    expect(String(err)).toContain('upstream reset');
+    expect(isTransientError(err)).toBe(true);
+  });
+
+  it("doesn't retry a chat call that timed out (the model was too slow), and reports attempts", async () => {
+    let calls = 0;
+    const slow: FetchLike = async () => {
+      calls++;
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    };
+    const err = await new OpenRouterChat({ fetch: slow }).chat({ model: 'm', messages: [] }).catch((e) => e);
+    expect(calls).toBe(1);
+    expect(isTimeoutError(err)).toBe(true);
+    // Other requests still retry timeouts, and a rate limit still retries in chat.
+    calls = 0;
+    await requestJson({ fetch: slow, retries: 1 }, 'https://x.dev/a', { body: {} }).catch(() => {});
+    expect(calls).toBe(2);
+    const limited = replay({ status: 429, json: {} }, { json: fixture('openrouter-chat-json-schema.json') });
+    const ok = await new OpenRouterChat({ fetch: limited.fetch }).chat({ model: 'm', messages: [] });
+    expect(ok.attempts).toBe(2);
   });
 
   it('only pins providers it has a preference for', () => {
@@ -458,12 +530,10 @@ describe('http', () => {
 
   it('retries transient statuses and gives up on client errors', async () => {
     const flaky = replay({ status: 429, json: {} }, { json: { ok: 1 } });
-    await expect(
-      requestJson({ fetch: flaky.fetch, retries: 2 }, 'https://x.dev/a', { body: {} }),
-    ).resolves.toEqual({
-      json: { ok: 1 },
-      status: 200,
-    });
+    const ok = await requestJson({ fetch: flaky.fetch, retries: 2 }, 'https://x.dev/a', { body: {} });
+    expect(ok).toMatchObject({ json: { ok: 1 }, status: 200, attempts: 2 });
+    // Latency is the attempt that answered, not the failed attempt plus the 250 ms backoff before it.
+    expect(ok.latencyMs).toBeLessThan(200);
     expect(flaky.calls).toHaveLength(2);
     const bad = replay({ status: 400, json: { error: 'no' } });
     await expect(

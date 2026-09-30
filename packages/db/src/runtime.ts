@@ -6,6 +6,7 @@ import {
   type Job,
   type JobQueue,
   parseSpendLimits,
+  type QueuedJob,
   type SpendLimits,
   ulid,
 } from '@mimic/core';
@@ -38,10 +39,22 @@ export interface MimicBindings extends ProviderEnv {
   BUDGET_SESSION_SHARE?: string | number;
 }
 
+/** Queues' sendBatch limit. */
+const SEND_BATCH = 100;
+
 export class CfQueue implements JobQueue {
   constructor(private readonly q: Queue<Job>) {}
   async enqueue(job: Job, opts?: { delaySeconds?: number }) {
     await this.q.send(job, opts?.delaySeconds ? { delaySeconds: opts.delaySeconds } : undefined);
+  }
+  async enqueueBatch(items: readonly QueuedJob[]) {
+    for (let i = 0; i < items.length; i += SEND_BATCH) {
+      await this.q.sendBatch(
+        items
+          .slice(i, i + SEND_BATCH)
+          .map((x) => (x.delaySeconds ? { body: x.job, delaySeconds: x.delaySeconds } : { body: x.job })),
+      );
+    }
   }
 }
 
@@ -74,9 +87,16 @@ export class RoutedQueue implements JobQueue {
     private readonly main: JobQueue,
     private readonly identity: JobQueue | null,
   ) {}
+  private laneOf(job: Job): JobQueue {
+    return this.identity && IDENTITY_JOB_TYPES.has(job.type) ? this.identity : this.main;
+  }
   enqueue(job: Job, opts?: { delaySeconds?: number }) {
-    const q = this.identity && IDENTITY_JOB_TYPES.has(job.type) ? this.identity : this.main;
-    return q.enqueue(job, opts);
+    return this.laneOf(job).enqueue(job, opts);
+  }
+  async enqueueBatch(items: readonly QueuedJob[]) {
+    const lanes = new Map<JobQueue, QueuedJob[]>();
+    for (const i of items) lanes.set(this.laneOf(i.job), [...(lanes.get(this.laneOf(i.job)) ?? []), i]);
+    for (const [q, batch] of lanes) await q.enqueueBatch(batch);
   }
 }
 

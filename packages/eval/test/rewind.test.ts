@@ -6,12 +6,14 @@ import {
   hashJson,
   jobKey,
   loadHypotheses,
+  ONTOLOGY_V1,
   type PersonState,
   type PublicQuestion,
   rewindLastAnswer,
   runHypotheses,
   runJob,
   serveNext,
+  setScope,
   submitAnswer,
   submitFeedback,
   uiSnapshot,
@@ -582,9 +584,7 @@ describe('undo the latest answer (ADR-0036)', () => {
     const shadows = engine.queue.drain().filter((j) => j.type === 'predict.shadow');
     expect(shadows.length).toBeGreaterThan(0);
     // The undo commits after the shadow read the primary but before it inserts.
-    const racing = interleave('insertPredictions', () =>
-      rewindLastAnswer(engine.deps, id, { questionId: q3.id }),
-    );
+    const racing = interleave('insertShadow', () => rewindLastAnswer(engine.deps, id, { questionId: q3.id }));
     await runJob(racing, shadows[0]!);
     for (const j of shadows.slice(1)) await runJob(engine.deps, j);
     expect(await store.getQuestion(next.question.id)).toMatchObject({ status: 'discarded' });
@@ -701,7 +701,7 @@ describe('undo the latest answer (ADR-0036)', () => {
     expect(await engine.deps.store.getAnswerForQuestion(q1.id)).not.toBeNull();
   }, 30_000);
 
-  it('rolls back persona drafts that cover the undone answer (ADR-0033)', async () => {
+  it('rolls back SOUL.md drafts that cover the undone answer (ADR-0033, ADR-0039)', async () => {
     const id = await start();
     const { store } = engine.deps;
     await answerMany(id, 2);
@@ -718,10 +718,25 @@ describe('undo the latest answer (ADR-0036)', () => {
       draft: { summary: `Up to ${seqUpTo}`, statements: [] },
       createdAt: Date.now() + seqUpTo,
     });
-    await store.insertPersonaDraft(draft(2));
-    await store.insertPersonaDraft(draft(3));
+    await store.insertSoulDraft(draft(2));
+    await store.insertSoulDraft(draft(3));
     await rewindLastAnswer(engine.deps, id, { questionId: q3.id });
-    expect((await store.latestPersonaDraft(id))?.seqUpTo).toBe(2);
+    expect((await store.latestSoulDraft(id))?.seqUpTo).toBe(2);
+  }, 30_000);
+
+  it('refuses to undo an answer about a topic turned off since (ADR-0040)', async () => {
+    const id = await start();
+    const q = await serve(id);
+    await answer(id, q);
+    const stored = (await engine.deps.store.listQuestions(id)).find((x) => x.id === q.id)!;
+    const category = ONTOLOGY_V1.find((f) => f.id === stored.facetIds[0])!.category;
+    const m = (await engine.deps.store.getMimic(id))!;
+    await setScope(engine.deps, id, {
+      ...m.scope,
+      categories: m.scope.categories.filter((c) => c !== category),
+    });
+    await expectConflict(rewindLastAnswer(engine.deps, id, { questionId: q.id }), /turned this topic off/);
+    expect(await engine.deps.store.listAnswerRewinds(id)).toEqual([]);
   }, 30_000);
 
   it('hard delete removes rewinds too', async () => {

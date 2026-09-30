@@ -39,7 +39,7 @@ export interface UiSnapshot {
     createdAt: number;
     spendUsd: number;
     /**
-     * The whole cap: asking, teaching and Persona.md work until spend reaches it. The session stops earlier, at its
+     * The whole cap: asking, teaching and SOUL.md work until spend reaches it. The session stops earlier, at its
      * share, and says so through `/next` (ADR-0035).
      */
     budgetUsd: number;

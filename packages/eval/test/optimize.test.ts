@@ -502,7 +502,7 @@ describe('optimize (GEPA loop, offline)', () => {
     expect([...seen].sort()).toEqual(['a', 'b']);
   });
 
-  it("keeps an LLM winner's reasoning settings with its model in the variant snippet (ADR-0037)", () => {
+  it("keeps an LLM winner's reasoning settings with its model in the variant snippet (ADR-0041)", () => {
     const snippet = (predictor: string, v: string) =>
       variantSnippet(
         {

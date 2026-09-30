@@ -18,6 +18,3 @@ export function getAnchorSet(setId: string): ItemTemplate[] {
   if (!a) throw new Error(`Unknown anchor set: ${setId}`);
   return a;
 }
-
-/** Topics the generator must avoid and the Jev sensitivity gate checks (PLAN §1 non-goals, §15). */
-export const SENSITIVE_TOPICS = ['health', 'sexuality', 'religion', 'politics', 'detailed personal finances'];

@@ -19,7 +19,7 @@ export function predictorIdProblem(id: string): string | null {
   const v = PREDICT_PROMPTS[spec.promptVersion];
   if (!v) return `unknown prediction prompt version in ${id}`;
   if (v.kind !== spec.kind) return `${spec.promptVersion} is a ${v.kind} prompt, not ${spec.kind}`;
-  // Reasoning settings and caps are measured per model (ADR-0037): no silent fallback for a model a variant doesn't list.
+  // Reasoning settings and caps are measured per model (ADR-0041): no silent fallback for a model a variant doesn't list.
   if (v.modelHarness && !Object.hasOwn(v.modelHarness, spec.model))
     return `${spec.promptVersion} has no measured reasoning settings for ${spec.model} (it lists ${Object.keys(v.modelHarness).join(', ')}); register a version that lists it`;
   const problems = harnessProblems(resolvePredictPrompt(spec.promptVersion, spec.kind, spec.model).harness);
@@ -154,9 +154,7 @@ export const DEFAULT_CONFIG_V3: PipelineConfig = {
 
 /**
  * `cfg.default.v4` (ADR-0027): v3 with the value-of-information selector, belief-driven generation (`gen.v2`) and
- * latency hints in the state. Configs are immutable, so older mimics keep the config they were created with;
- * `pnpm backfill` adds new shadows to their served questions. Deviation (ADR-0004): generator and reflector default
- * to DeepSeek V4.1 Flash, not GPT-6 Luna.
+ * latency hints in the state. Kept so its hash stays pinned; mimics created under it keep it.
  */
 export const DEFAULT_CONFIG_V4: PipelineConfig = {
   ...DEFAULT_CONFIG_V3,
@@ -166,26 +164,49 @@ export const DEFAULT_CONFIG_V4: PipelineConfig = {
 };
 
 /**
- * `cfg.default.v5` (ADR-0037): v4 with every LLM shadow on `predict.v2` (reasoning set per model: a low effort, or a
- * 1,024-token budget for models that only take one, caps sized from measured usage, and the answer's keys pinned to
- * the options). The primary is unchanged; calibrated Jev (`jev-predict.v2`) is measured from the stored primary for
- * free rather than by a second Jev call. Older mimics keep their config; `pnpm backfill` adds the new shadows to
- * questions already served.
+ * `cfg.default.v5` (ADR-0038): v4 with the Qwen3.8 Flash shadow run with reasoning off (`predict.v1-direct`). At
+ * effort low it reasoned for 1–4.5K tokens (about a minute, and often past max_tokens); off, it answers in about 2 s.
+ * Configs are immutable, so older mimics keep the config they were created with; `pnpm backfill` adds new shadows to
+ * their served questions. Deviation (ADR-0004): generator and reflector default to DeepSeek V4.1 Flash, not GPT-6
+ * Luna.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V5: PipelineConfig = {
   ...DEFAULT_CONFIG_V4,
   predictor: {
-    primary: `jev:${JEV_MODEL}`,
+    ...DEFAULT_CONFIG_V4.predictor,
+    shadows: [
+      `llm:${LLM.luna}`,
+      `llm:${LLM.deepseek}`,
+      `llm:${LLM.glm}`,
+      `llm:${LLM.mimoFlash}`,
+      `llm:${LLM.qwenFlash}@predict.v1-direct`,
+    ],
+  },
+};
+
+/**
+ * `cfg.default.v6` (ADR-0041): every LLM shadow on `predict.v2`, which keeps reasoning on at a low setting per model (an
+ * effort, or a 1,024-token budget for models that only take one), caps sized from measured usage, and the answer's
+ * keys pinned to the options. v5's reasoning-off Qwen stays as a control arm, so real answers show what reasoning buys
+ * (about $0.00007 a question). The primary is unchanged; calibrated Jev (`jev-predict.v2`) is measured from the stored
+ * primary for free rather than by a second Jev call. Older mimics keep their config; `pnpm backfill` adds the new
+ * shadows to questions already served.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V5,
+  predictor: {
+    ...DEFAULT_CONFIG_V5.predictor,
     shadows: [
       `llm:${LLM.luna}@predict.v2`,
       `llm:${LLM.deepseek}@predict.v2`,
       `llm:${LLM.glm}@predict.v2`,
       `llm:${LLM.mimoFlash}@predict.v2`,
       `llm:${LLM.qwenFlash}@predict.v2`,
+      `llm:${LLM.qwenFlash}@predict.v1-direct`,
     ],
   },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v5';
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v6';
 
 /**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never
@@ -210,7 +231,7 @@ export const STANDARD_CONFIG_BUDGET_USD = 0.5;
 export interface SpendCaps {
   /** Nothing is spent past this: the gateway refuses every call for the mimic. */
   totalUsd: number;
-  /** The session stops here, keeping the rest for asking, teaching and Persona.md. */
+  /** The session stops here, keeping the rest for asking, teaching and SOUL.md. */
   sessionUsd: number;
 }
 

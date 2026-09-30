@@ -1,8 +1,9 @@
 import { z } from 'zod';
+import { blockedFacetIds, questionAllowed } from '../scope';
 import type { AnswerRewindRecord, DerivedRollback, FactRecord, MimicRecord } from '../store';
 import { isSessionKind } from '../types';
 import { loadMimicData, qaText, vectorId } from './data';
-import { ctxFor, type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
+import { ctxFor, type EngineDeps, EngineError, facetsFor, loadConfig, requireMimic } from './deps';
 import {
   copyQuestionVectors,
   loadHypotheses,
@@ -41,7 +42,7 @@ export function citedSeqs(sourceRef: string | null): number[] {
 
 /**
  * What a retraction at `fromSeq` invalidates, beyond what the store selects by seq (traits, insights, reflection
- * facts by `seq_up_to`, persona drafts, fidelity): reflection facts written before `seq_up_to` existed, found by the
+ * facts by `seq_up_to`, SOUL.md drafts, fidelity): reflection facts written before `seq_up_to` existed, found by the
  * evidence they cite.
  */
 export function derivedRollback(mimicId: string, fromSeq: number, facts: FactRecord[]): DerivedRollback {
@@ -107,6 +108,11 @@ export async function rewindLastAnswer(
     throw new EngineError('conflict', 'Only your latest answer can be undone');
   }
   const q = qById.get(latest.questionId)!;
+  // A topic turned off since (ADR-0040): the question is hidden and must not be asked again.
+  const blocked = blockedFacetIds(m.scope, await facetsFor(deps, m, cfg, { scoped: false }));
+  if (!questionAllowed(q, blocked)) {
+    throw new EngineError('conflict', "You've turned this topic off since, so this answer can't be undone");
+  }
   const later = questions.filter((x) => x.seq !== null && x.seq > latest.seq);
   // Asked or taught on the mimic page since (ADR-0032): that prediction or learning used this answer.
   if (later.some((x) => !isSessionKind(x.kind))) {

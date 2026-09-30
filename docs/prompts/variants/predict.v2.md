@@ -3,7 +3,7 @@
 > Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0028).
 
 - Predictor kind: `llm` (use as `llm:<model>@predict.v2`)
-- Source: ADR-0037: reasoning usage measured per model on long states
+- Source: ADR-0041: reasoning usage measured per model on long states
 - Harness (every model): `{"schema":"probs","jevState":"json","calibrationTemperature":1,"keyEnum":true,"labelKeys":true}`
 - Models: only those listed below.
 

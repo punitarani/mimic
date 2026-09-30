@@ -3,7 +3,7 @@
 > Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0028).
 
 - Predictor kind: `jev` (use as `jev:<model>@jev-predict.v2`)
-- Source: ADR-0037: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)
+- Source: ADR-0041: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)
 - Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":4,"keyEnum":false,"labelKeys":false}`
 
 ## jev.instructions (incumbent)

@@ -1,4 +1,11 @@
-import { BudgetExceededError, configHash, DEFAULT_CONFIG, Gateway, type MimicRecord } from '@mimic/core';
+import {
+  BudgetExceededError,
+  configHash,
+  DEFAULT_CONFIG,
+  DEFAULT_SCOPE,
+  Gateway,
+  type MimicRecord,
+} from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import { StoreBudget, StoreCallLog } from '../src/bindings';
 import { MemoryBlobs, openLocalDb } from '../src/local';
@@ -20,6 +27,8 @@ function mimic(id: string, cfg: string): MimicRecord {
     consentApp: true,
     consentSearch: false,
     consentResearch: false,
+    scope: DEFAULT_SCOPE,
+    scopeAt: null,
     split: 'dev',
     seqMax: 0,
     evidenceEpoch: 0,

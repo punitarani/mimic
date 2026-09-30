@@ -1,4 +1,5 @@
 import type { PipelineConfig } from '../config';
+import { factHidden, insightHidden, type ScopeView, scopeView } from '../scope';
 import {
   type BuildOptions,
   buildState,
@@ -14,13 +15,17 @@ import type {
   QuestionRecord,
   TraitRecord,
 } from '../store';
-import { isScoredKind, learnsFrom, type PersonState, type Question } from '../types';
-import type { EngineDeps } from './deps';
+import { type Facet, isScoredKind, learnsFrom, type PersonState, type Question } from '../types';
+import { type EngineDeps, facetsFor, loadConfig } from './deps';
 
 export interface LoadedMimic {
+  /** Evidence, traits, insights and facts within the person's scope (ADR-0040). */
   data: MimicData;
+  /** Every question and answer, in or out of scope (seq bookkeeping, repeats, fidelity). */
   questions: QuestionRecord[];
   answers: AnswerRecord[];
+  /** What the scope hides: served views and states never include it. */
+  scope: ScopeView;
 }
 
 /**
@@ -29,8 +34,14 @@ export interface LoadedMimic {
  */
 export const STATE_SETTLE_MS = 2_000;
 
+/**
+ * Builds the loaded view and applies the person's current scope (ADR-0040): answers to questions touching a blocked
+ * facet, trait estimates of blocked facets, insights naming a blocked facet or citing a hidden answer, and reflection
+ * facts citing a hidden answer are left out. With the default scope nothing is blocked and the view is unchanged.
+ */
 function assemble(
   m: MimicRecord,
+  facets: Facet[],
   rows: {
     facts: FactRecord[];
     questions: QuestionRecord[];
@@ -39,12 +50,16 @@ function assemble(
     insights: InsightRecord[];
   },
 ): LoadedMimic {
-  const { facts, questions, answers, traits, insights } = rows;
+  const { questions, answers } = rows;
+  const view = scopeView(m.scope, facets, questions);
+  const facts = rows.facts.filter((f) => !factHidden(view, f));
+  const traits = rows.traits.filter((t) => !view.blocked.has(t.facetId));
+  const insights = rows.insights.filter((i) => !insightHidden(view, i));
   const qById = new Map(questions.map((q) => [q.id, q]));
   const evidence: EvidenceItem[] = [];
   for (const a of answers) {
     const q = qById.get(a.questionId);
-    if (!q) continue;
+    if (!q || view.hiddenQuestionIds.has(q.id)) continue;
     const item: EvidenceItem = {
       seq: a.seq,
       questionId: q.id,
@@ -75,19 +90,26 @@ function assemble(
     },
     questions,
     answers,
+    scope: view,
   };
+}
+
+/** Every facet the mimic's config knows, in scope or not: what the scope view classifies. */
+async function allFacets(deps: EngineDeps, m: MimicRecord): Promise<Facet[]> {
+  return facetsFor(deps, m, await loadConfig(deps, m.configHash), { scoped: false });
 }
 
 /** Loads everything the state builder needs, as it stands now. Evidence is the raw source of truth (PLAN §3.3). */
 export async function loadMimicData(deps: EngineDeps, m: MimicRecord): Promise<LoadedMimic> {
-  const [facts, questions, answers, traits, insights] = await Promise.all([
+  const [facts, questions, answers, traits, insights, facets] = await Promise.all([
     deps.store.listFacts(m.id),
     deps.store.listQuestions(m.id),
     deps.store.listAnswers(m.id),
     deps.store.listTraits(m.id),
     deps.store.listInsights(m.id),
+    allFacets(deps, m),
   ]);
-  return assemble(m, {
+  return assemble(m, facets, {
     facts,
     questions,
     answers,
@@ -109,15 +131,18 @@ export async function loadMimicDataAt(
   at: number,
   beforeSeq: number,
 ): Promise<LoadedMimic> {
-  const [facts, questions, answers, traits, insights] = await Promise.all([
+  const [facts, questions, answers, traits, insights, facets] = await Promise.all([
     deps.store.listFacts(m.id),
     deps.store.listQuestions(m.id),
     deps.store.listAnswers(m.id),
     deps.store.listTraitsAsOf(m.id, at, beforeSeq),
     deps.store.listInsights(m.id),
+    allFacets(deps, m),
   ]);
   const kindOf = new Map(questions.map((q) => [q.id, q.kind]));
-  return assemble(m, {
+  // The scope is today's, never time-travelled: what the person withdrew stays out of rebuilt states too (ADR-0040,
+  // as fact removal in ADR-0017). Replay reports states served before `scopeAt` as rescoped.
+  return assemble(m, facets, {
     facts: facts
       .filter((f) => f.createdAt <= at)
       .map((f) => ({

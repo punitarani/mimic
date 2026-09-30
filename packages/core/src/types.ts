@@ -31,6 +31,31 @@ export function isPredictedKind(kind: QKind): boolean {
 export const Domain = z.enum(['core', 'casual', 'professional']);
 export type Domain = z.infer<typeof Domain>;
 
+/**
+ * The four person-facing categories a mimic can be asked about (docs/CATEGORIES.md, ADR-0040). Every facet belongs to
+ * exactly one; a person can deselect any of them, and a deselected category is never asked about or learned.
+ */
+export const Category = z.enum(['psychology', 'values', 'life', 'work']);
+export type Category = z.infer<typeof Category>;
+export const CATEGORIES: readonly Category[] = Category.options;
+
+/** Sensitive areas: opt-in, each under its own consent (ADR-0040). */
+export const SensitiveArea = z.enum(['politics', 'religion', 'sexuality', 'health', 'money']);
+export type SensitiveArea = z.infer<typeof SensitiveArea>;
+export const SENSITIVE_AREAS: readonly SensitiveArea[] = SensitiveArea.options;
+
+/**
+ * Special-category areas (political opinion, religion, sexual orientation and sex life, health): excluded from research
+ * exports unless the person separately consents to research on them, and never taken from web search. `money` is
+ * sensitive but not special-category, so plain research consent covers it.
+ */
+export const SpecialArea = z.enum(['politics', 'religion', 'sexuality', 'health']);
+export type SpecialArea = z.infer<typeof SpecialArea>;
+export const SPECIAL_AREAS: readonly SpecialArea[] = SpecialArea.options;
+export function isSpecialArea(a: SensitiveArea): a is SpecialArea {
+  return (SPECIAL_AREAS as readonly string[]).includes(a);
+}
+
 export const Option = z.object({
   key: z.string().min(1).max(32),
   label: z.string().min(1).max(200),
@@ -80,6 +105,12 @@ export interface Facet {
   high: string;
   /** 5 ordered labels for trait reads, low → high. */
   labels: [string, string, string, string, string];
+  /** The person-facing category the facet belongs to (ADR-0040). */
+  category: Category;
+  /** Set on opt-in facets: asked and learned only with the person's consent for this area (ADR-0040). */
+  sensitive?: SensitiveArea;
+  /** The research instrument or finding the facet is anchored in (ontology v2; docs/ontology/v2.sources.md). */
+  source?: string;
   /** Present for per-mimic occupation facets. */
   occupation?: boolean;
 }
@@ -129,6 +160,8 @@ export interface PersonState {
   meta: { evidenceSeqMax: number; stateHash: string; builder: string; tokens: number };
 }
 
+export type PredictionErrorKind = 'transport' | 'output' | 'timeout';
+
 export interface PredictionResult {
   dist: Distribution;
   confidence?: number;
@@ -138,10 +171,14 @@ export interface PredictionResult {
   ok: boolean;
   error?: string;
   /**
-   * Why it failed: `transport` (the provider errored or timed out; worth retrying) or `output` (the model answered but
-   * the answer was unusable; the prompt's fault). Set on failures only.
+   * Why it failed (set on failures only; stored with the prediction, ADR-0037):
+   * - `output`: the model answered but the answer was unusable (the prompt's or model's fault);
+   * - `timeout`: the model didn't answer within the call's timeout (too slow; the model's failure, never redone);
+   * - `transport`: the call failed before the model answered (provider error, rate limit, network, budget guard).
    */
-  errorKind?: 'transport' | 'output';
+  errorKind?: PredictionErrorKind;
+  /** `transport` only: the call may succeed if retried later (a transient status or network error). */
+  retryable?: boolean;
   /** Raw model output (LLM only, truncated). Kept in memory for eval traces; never persisted with the prediction. */
   raw?: string;
 }
@@ -179,7 +216,10 @@ export interface DecisionResponse {
   modelSnapshot: string;
   answers: Record<string, DecisionAnswer>;
   usage: Usage;
+  /** The attempt that returned this response, excluding earlier failed attempts and retry backoff. */
   latencyMs: number;
+  /** HTTP attempts it took (1 unless an earlier one got a transient error). */
+  attempts?: number;
   raw: unknown;
 }
 
@@ -214,8 +254,13 @@ export interface ChatResponse {
   content: string;
   modelSnapshot: string;
   provider?: string;
+  /** Why generation stopped, as the provider reports it: 'stop', 'length' (hit maxTokens), ... */
+  finishReason?: string;
   usage: Usage;
+  /** The attempt that returned this response, excluding earlier failed attempts and retry backoff. */
   latencyMs: number;
+  /** HTTP attempts it took (1 unless an earlier one got a transient error). */
+  attempts?: number;
   raw: unknown;
 }
 
@@ -309,6 +354,7 @@ export interface EmbedResult {
   model: string;
   usage: Usage;
   latencyMs: number;
+  attempts?: number;
 }
 
 export interface Embedder {

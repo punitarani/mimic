@@ -52,10 +52,13 @@ export { MAX_PROMPT_WORDS };
 export function validateDraft(
   raw: unknown,
   facetIds: ReadonlySet<string>,
+  /** Facets outside the person's scope (ADR-0040): a draft tagging any of them is rejected, not quietly retagged. */
+  blocked: ReadonlySet<string> = new Set(),
 ): DraftQuestion | { error: string } {
   const p = RawDraft.safeParse(raw);
   if (!p.success) return { error: 'schema' };
   const d = p.data;
+  if (d.facetIds.some((f) => blocked.has(f))) return { error: 'out of scope' };
   const prompt = d.prompt.trim().replace(/\s+/g, ' ');
   if (prompt.split(' ').length > MAX_PROMPT_WORDS) return { error: 'too long' };
   const facets = [...new Set(d.facetIds.filter((f) => facetIds.has(f)))];
@@ -99,6 +102,8 @@ export interface GenerateInput {
   traitSummary: string;
   recentPrompts: string[];
   n: number;
+  /** Facet ids outside the person's scope (ADR-0040): drafts tagging them are rejected. */
+  blocked?: ReadonlySet<string>;
 }
 
 function targetLines(input: GenerateInput): string {
@@ -169,7 +174,7 @@ export async function generateCandidates(
   const drafts: DraftQuestion[] = [];
   const rejected: Array<{ error: string }> = [];
   for (const raw of list) {
-    const v = validateDraft(raw, known);
+    const v = validateDraft(raw, known, input.blocked);
     if ('error' in v) rejected.push(v);
     else drafts.push(v);
   }
@@ -450,6 +455,7 @@ export async function generateOccupationFacets(
     out.push({
       id: `occ_${slug}`,
       group: 'Work',
+      category: 'work',
       name: f.data.name,
       low: f.data.low,
       high: f.data.high,

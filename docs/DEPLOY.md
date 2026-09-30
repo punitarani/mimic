@@ -89,11 +89,12 @@ pnpm deploy:dry-run                              # what CI's build job runs: Ope
 doppler run -- pnpm deploy:preflight             # the preflight checks only
 doppler run -- pnpm deploy:config --env prod     # write wrangler.deploy.jsonc without deploying
 doppler run --config stg -- pnpm deploy:preview  # preview, from a Doppler config of your choice
-doppler run -- pnpm backfill --predictor llm:<vendor>/<model> --env prod [--yes]  # new predictor (ADR-0024)
+doppler run -- pnpm backfill --predictor llm:<vendor>/<model> --env prod [--yes]  # new predictor (ADR-0024, ADR-0037)
 ```
 
 To backfill a new predictor on prod without local credentials, open Actions → Backfill → Run workflow. It runs the
-same script with the repository secrets and is a dry run unless "enqueue" is checked.
+same script with the repository secrets and is a dry run unless "enqueue" is checked. Predictions run at "rate" a
+minute (default 30), and "retry failed" also redoes failed calls, such as rate limits and provider errors (ADR-0037).
 
 `deploy:config` is needed before the eval CLI's remote commands, `pnpm eval -- export --env prod` and
 `report --to prod`, because the checked-in configs hold `REPLACE_ME_*` placeholders instead of resource IDs.

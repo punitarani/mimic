@@ -7,7 +7,7 @@ reported; see ADR-0028 and "What is built" below. M12 (re-derivation) and M13 (g
 
 | Piece | Where | Notes |
 | --- | --- | --- |
-| Prompt components and registered variants | `packages/core/src/components.ts`, `docs/prompts/variants/` | `predict.system`, `predict.user`, `state.evidence.line`, `jev.instructions`, `jev.choice`, `jev.noul.true`, `jev.noul.false`; harness: reasoning effort or budget, max tokens, `probs`/`reasoned` schema, Jev state as JSON or text, calibration temperature; per-model harness overrides (ADR-0037) |
+| Prompt components and registered variants | `packages/core/src/components.ts`, `docs/prompts/variants/` | `predict.system`, `predict.user`, `state.evidence.line`, `jev.instructions`, `jev.choice`, `jev.noul.true`, `jev.noul.false`; harness: reasoning effort or budget, max tokens, `probs`/`reasoned` schema, Jev state as JSON or text, calibration temperature; per-model harness overrides (ADR-0041) |
 | Variant predictor IDs | `parsePredictorId`, `makePredictor`, `pnpm backfill` | `llm:<model>@<version>`, `jev:<model>@<version>`; unsuffixed IDs unchanged |
 | `mimic-eval evaluate` | `packages/eval/src/optimize/` | `--from stored` (free: per predictor, split, person and type; self-consistency; temperature, shrinkage and pooling fits) or live candidates with paired deltas and `--repeat` for the noise floor |
 | `mimic-eval diagnose` | same | One reflection-model call over the costliest misses of a stored predictor; local only |
@@ -44,10 +44,11 @@ variant's shared harness and other `modelHarness` entries are carried over, so o
 | Version | What changes | Why |
 | --- | --- | --- |
 | `predict.v1`, `jev-predict.v1` | Nothing: the incumbent prompts and harness | The default for unsuffixed IDs |
-| `predict.v2` | Reasoning and caps per model: a low effort for GPT-6 Luna, DeepSeek and GLM; a 1,024-token budget for MiMo Flash and Qwen Flash, which take no effort level; caps at about twice the largest measured completion. The answer's keys are an enum of the options, with labels re-keyed as a fallback. Runs only on the five models it lists | ADR-0037: Qwen truncated on long states under the old 3,000 cap; medium effort bought nothing measurable; Qwen and GLM sometimes keyed a scale by its labels |
-| `jev-predict.v2` | Jev's distribution softened by a calibration temperature of 4 (same top pick; accuracy on score questions can move) | ADR-0037: fitted on the prod dev person, held-out log loss 1.804 → 1.124 and ECE 0.267 → 0.098 |
+| `predict.v1-direct` | Reasoning off (`effort: none`) | ADR-0038: Qwen Flash reasoned 1–4.5K tokens at effort low; kept in v6 as the reasoning-off control |
+| `predict.v2` | Reasoning and caps per model: a low effort for GPT-6 Luna, DeepSeek and GLM; a 1,024-token budget for MiMo Flash and Qwen Flash, which take no effort level; caps at about twice the largest measured completion. The answer's keys are an enum of the options, with labels re-keyed as a fallback. Runs only on the five models it lists | ADR-0041: Qwen truncated on long states under the old 3,000 cap; medium effort bought nothing measurable; Qwen and GLM sometimes keyed a scale by its labels |
+| `jev-predict.v2` | Jev's distribution softened by a calibration temperature of 4 (same top pick; accuracy on score questions can move) | ADR-0041: fitted on the prod dev person, held-out log loss 1.804 → 1.124 and ECE 0.267 → 0.098 |
 
-`cfg.default.v5` runs every LLM shadow on `predict.v2`; the primary is unchanged. `jev-predict.v2` is not a shadow
+`cfg.default.v6` runs every LLM shadow on `predict.v2`, plus `predict.v1-direct` for Qwen (reasoning off, ADR-0038) as a control; the primary is unchanged. `jev-predict.v2` is not a shadow
 (that would be a second identical Jev call): `evaluate --from stored` derives it from the stored primary as rows with
 the role `derived`, for free. It also seeds Actions → Optimize, and it is the version to name when calibration is
 promoted to primary.

@@ -1,6 +1,22 @@
-import type { Facet } from '../types';
+import type { Category, Facet } from '../types';
 
 type L5 = [string, string, string, string, string];
+
+/**
+ * The category of each v1 group (ADR-0040). `spending_style` sits in Everyday but belongs to "Work and money", so a
+ * facet keeps one category across ontology versions (it moves to the Money group in v2).
+ */
+const GROUP_CATEGORY: Record<string, Category> = {
+  Personality: 'psychology',
+  Decisions: 'psychology',
+  Values: 'values',
+  Social: 'life',
+  Everyday: 'life',
+  Communication: 'life',
+  Work: 'work',
+};
+const CATEGORY_OVERRIDE: Record<string, Category> = { spending_style: 'work' };
+
 const f = (id: string, group: string, name: string, low: string, high: string, labels: L5): Facet => ({
   id,
   group,
@@ -8,6 +24,7 @@ const f = (id: string, group: string, name: string, low: string, high: string, l
   low,
   high,
   labels,
+  category: CATEGORY_OVERRIDE[id] ?? GROUP_CATEGORY[group]!,
 });
 
 /** Ontology v1 (PLAN Appendix C). Labels are written from the poles, as in PLAN B.2. */

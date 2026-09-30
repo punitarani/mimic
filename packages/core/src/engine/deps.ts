@@ -13,6 +13,7 @@ import { BudgetExceededError, type CallContext, type Gateway } from '../gateway'
 import { unitHash } from '../hash';
 import type { JobQueue } from '../jobs';
 import { getOntology } from '../ontology';
+import { scopedFacets } from '../scope';
 import type { BlobStore, KvStore, MimicRecord, Store, VectorIndex } from '../store';
 import type { Facet } from '../types';
 
@@ -104,7 +105,7 @@ export function allocateArm<T extends { weight: number }>(
   return arms[arms.length - 1]!;
 }
 
-/** This mimic's caps: the session stops at `sessionUsd`; asking, teaching and Persona.md run to `totalUsd`. */
+/** This mimic's caps: the session stops at `sessionUsd`; asking, teaching and SOUL.md run to `totalUsd`. */
 export function capsFor(deps: EngineDeps, cfg: PipelineConfig): SpendCaps {
   return spendCaps(cfg, deps.spend);
 }
@@ -181,10 +182,26 @@ export function ctxFor(
   return { purpose, mimicId: m.id, configHash: m.configHash, jobKey: jobKey ?? null };
 }
 
-export async function facetsFor(deps: EngineDeps, m: MimicRecord, cfg: PipelineConfig): Promise<Facet[]> {
+/**
+ * The mimic's facets: the config's ontology plus its occupation facets, limited to what the person's scope allows
+ * (ADR-0040). This is the single source every generator, gate, trait read, reflection, hypothesis, belief and view
+ * uses, so a deselected category or a sensitive area without consent never reaches any of them. `scoped: false` is
+ * for code that needs to know what is blocked (the loaders, the export scrub) or what already exists.
+ */
+export async function facetsFor(
+  deps: EngineDeps,
+  m: Pick<MimicRecord, 'id' | 'scope'>,
+  cfg: PipelineConfig,
+  opts: { scoped?: boolean } = {},
+): Promise<Facet[]> {
   const base = getOntology(cfg.ontologyVersion);
   const extra = await deps.store.listMimicFacets(m.id);
-  return [...base, ...extra.map((e) => e.facet)];
+  // Occupation facets stored before ADR-0040 carry no category; they are always "Work and money".
+  const all = [
+    ...base,
+    ...extra.map((e) => ({ ...e.facet, category: e.facet.category ?? ('work' as const) })),
+  ];
+  return opts.scoped === false ? all : scopedFacets(m.scope, all);
 }
 
 export async function requireMimic(deps: EngineDeps, id: string): Promise<MimicRecord> {
