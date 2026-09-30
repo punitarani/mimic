@@ -550,9 +550,9 @@ What to ask about (ADR-0040, `docs/CATEGORIES.md`):
 
 - Four categories, all selected by default, each deselectable: Personality and psychology; Values, beliefs and
   politics; Relationships, sexuality and life; Work and money. A deselected category is never asked about or learned.
-- Five sensitive areas, each an opt-in consent under its category with a one-line reason and "Your answers stay
+- Five sensitive areas, each its own consent under its category with a one-line reason and "Your answers stay
   yours: they are only used to build your mimic": political views, religion and worldview, sexuality and intimate
-  relationships, health and body, money in detail.
+  relationships, health and body, money in detail. All ticked by default; each can be turned off (ADR-0049).
 - With research consent on, a separate opt-in per special-category area (politics, religion, sexuality, health)
   allows its answers in research exports.
 - All of it can be changed later from the session menu.

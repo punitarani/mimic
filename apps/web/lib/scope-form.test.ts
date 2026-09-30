@@ -1,4 +1,10 @@
-import { DEFAULT_SCOPE, type MimicScope, normalizeScope } from '@mimic/core/scope';
+import {
+  DEFAULT_SCOPE,
+  INTAKE_SCOPE,
+  type MimicScope,
+  normalizeScope,
+  SENSITIVE_AREAS,
+} from '@mimic/core/scope';
 import { describe, expect, it } from 'vitest';
 import { canSave, narrows, notAsked, sameScope, setCategory, setConsent, setResearch } from './scope-form';
 
@@ -9,6 +15,13 @@ const all: MimicScope = {
 };
 
 describe('scope form (ADR-0043)', () => {
+  it('intake starts with every topic and sensitive area on, and research use off (ADR-0049)', () => {
+    expect(INTAKE_SCOPE.categories).toEqual(['psychology', 'values', 'life', 'work']);
+    for (const a of SENSITIVE_AREAS) expect(INTAKE_SCOPE.consents[a]).toBe(true);
+    expect(INTAKE_SCOPE.researchConsents).toEqual({});
+    expect(sameScope(normalizeScope(INTAKE_SCOPE, true), INTAKE_SCOPE)).toBe(true);
+  });
+
   it('turning a category off forgets its sensitive consents and their research use; on again asks again', () => {
     const off = setCategory(all, 'values', false);
     expect(off.categories).toEqual(['psychology', 'life', 'work']);

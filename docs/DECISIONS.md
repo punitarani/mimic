@@ -1631,3 +1631,19 @@ plus about $0.70 of earlier smoke tests.
 
 **Next.** The limit is how few real people there are, not the search. Re-run the optimizer once there are six or more
 dev people, so the split is by person and validation measures new people.
+
+## ADR-0049 — Intake starts with every topic on (2026-09-30)
+
+ADR-0040 had intake start with the four categories on and the five sensitive areas off, each ticked only by choice.
+Intake now starts from `INTAKE_SCOPE` (`packages/core/src/scope.ts`): every category and every sensitive area ticked,
+with the copy "Turn off anything you'd rather not share. All topics are enabled by default."
+
+- **Only the form's starting point changes.** Each area still has its own checkbox, reason and self-only note, and
+  the person can turn any of it off at intake or later from the session menu. The sensitive-facet rules in
+  `docs/CATEGORIES.md` still hold: only direct questions under a given consent populate a sensitive facet.
+- **Absent still means no.** `DEFAULT_SCOPE` keeps no sensitive consents, so an API call without a scope and mimics
+  created before ADR-0040 are unchanged.
+- **Research use stays opt-in.** Special-category answers still leave research exports unless the person ticks each
+  area under research consent.
+- **Trade-off.** Pre-ticked boxes are weaker evidence of consent than ticked ones; GDPR art. 9 data (politics,
+  religion, sexuality, health) generally needs an affirmative act. Revisit before opening sign-ups beyond invites.

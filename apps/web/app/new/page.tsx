@@ -1,6 +1,6 @@
 'use client';
 import { withScheme } from '@mimic/core/links';
-import { DEFAULT_SCOPE, type MimicScope } from '@mimic/core/scope';
+import { INTAKE_SCOPE, type MimicScope } from '@mimic/core/scope';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import { AutocompleteInput } from '@/components/autocomplete';
@@ -57,7 +57,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
   const [attest, setAttest] = useState(false);
   const [search, setSearch] = useState(true);
   const [research, setResearch] = useState(false);
-  const [scope, setScope] = useState<MimicScope>(DEFAULT_SCOPE);
+  const [scope, setScope] = useState<MimicScope>(INTAKE_SCOPE);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const setValue = (k: keyof typeof f) => (v: string) => setF((prev) => ({ ...prev, [k]: v }));

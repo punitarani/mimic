@@ -42,8 +42,18 @@ export const MimicScope = z.object({
 });
 export type MimicScope = z.infer<typeof MimicScope>;
 
-/** Every category, no sensitive area: what intake starts from and what mimics created before ADR-0040 read as. */
+/** Every category, no sensitive area: what an API call without a scope and mimics created before ADR-0040 read as. */
 export const DEFAULT_SCOPE: MimicScope = { categories: [...CATEGORIES], consents: {}, researchConsents: {} };
+
+/**
+ * What the intake form starts from (ADR-0049): every category and every sensitive area ticked, so the person turns off
+ * what they'd rather not share. Research use of special-category answers stays opt-in.
+ */
+export const INTAKE_SCOPE: MimicScope = {
+  categories: [...CATEGORIES],
+  consents: Object.fromEntries(SENSITIVE_AREAS.map((a) => [a, true])),
+  researchConsents: {},
+};
 
 export interface CategoryInfo {
   name: string;

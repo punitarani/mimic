@@ -30,8 +30,7 @@ export function ScopeTopics({
     <fieldset className="space-y-5">
       <legend className="text-[15px] font-medium text-graphite">What to ask about</legend>
       <p className="-mt-2 text-[13px] text-muted">
-        Turn off anything you&apos;d rather not be asked about. Sensitive topics are off until you choose
-        them.
+        Turn off anything you&apos;d rather not share. All topics are enabled by default.
       </p>
       {CATEGORIES.map((c) => {
         const info = CATEGORY_INFO[c];
