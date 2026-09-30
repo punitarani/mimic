@@ -223,6 +223,26 @@ export class Gateway {
     );
   }
 
+  /** True when the people search provider can resolve a profile URL directly. */
+  get canLookupPeople(): boolean {
+    return typeof this.deps.search?.lookup === 'function';
+  }
+
+  async lookupPerson(ctx: CallContext, url: string): Promise<PeopleSearchResult> {
+    const s = this.deps.search;
+    if (!s?.lookup) throw new Error('No profile lookup configured');
+    const lookup = s.lookup.bind(s);
+    return withModelCall(
+      this.deps,
+      { ...ctx, provider: s.provider, model: `${s.provider}:contents` },
+      { url },
+      async () => {
+        const r = await lookup(url);
+        return { ...r, usage: { inputTokens: 0, outputTokens: 0, costUsd: r.costUsd }, modelSnapshot: null };
+      },
+    );
+  }
+
   async enrich(ctx: CallContext, subject: Parameters<Enricher['enrich']>[0]): Promise<EnrichmentResult> {
     const en = this.deps.enricher;
     if (!en) throw new Error('No enricher configured');

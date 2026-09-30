@@ -26,7 +26,13 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
     credentials: 'same-origin',
   });
   const text = await res.text();
-  const json = text ? (JSON.parse(text) as unknown) : null;
+  let json: unknown = null;
+  try {
+    json = text ? (JSON.parse(text) as unknown) : null;
+  } catch {
+    // An edge error page (HTML) rather than our route: report the status instead of a parse error.
+    if (res.ok) throw new ApiError(res.status, 'Unexpected response.');
+  }
   if (!res.ok) {
     const msg = (json as { error?: string } | null)?.error ?? `Request failed (${res.status})`;
     throw new ApiError(res.status, msg);
@@ -57,7 +63,10 @@ export interface IdentityView {
     source: string;
     provider: string;
     samePerson: number | null;
-    status: 'proposed' | 'confirmed' | 'rejected';
+    /** The profile at a link the person gave. */
+    fromLink: boolean;
+    /** Only the latest search's candidates are listed: open or confirmed. */
+    status: 'proposed' | 'confirmed';
   }>;
   facts: Array<{
     id: string;
@@ -102,6 +111,8 @@ export const api = {
   confirm: (id: string, candidateId: string | null) =>
     call<{ ok: true }>('POST', `/api/mimics/${id}/identity/confirm`, { candidateId }),
   finishIdentity: (id: string) => call<{ ok: true }>('POST', `/api/mimics/${id}/identity/finish`),
+  searchAgain: (id: string, link: string) =>
+    call<{ ok: true }>('POST', `/api/mimics/${id}/identity/search`, { link }),
   setFact: (id: string, factId: string, userState: 'active' | 'removed') =>
     call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
   next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),

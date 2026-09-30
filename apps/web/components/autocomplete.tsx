@@ -1,46 +1,63 @@
 'use client';
 import { useCombobox } from 'downshift';
-import { type ChangeEvent, type InputHTMLAttributes, useEffect, useMemo, useState } from 'react';
+import {
+  type ChangeEvent,
+  type InputHTMLAttributes,
+  type KeyboardEvent,
+  useCallback,
+  useDeferredValue,
+  useMemo,
+  useState,
+} from 'react';
 import { cn, Input } from '@/components/ui';
 import type { Finder, Suggestion } from '@/lib/autocomplete';
 
 /**
  * A text field with suggestions (WAI-ARIA combobox via downshift). Picking a suggestion fills the field; anything
- * typed is kept as is, so places and titles outside the list still work. `load` runs once on mount; if it fails the
- * field is a plain input.
+ * typed is kept as is, so places and titles outside the list still work. The dataset loads when the field is first
+ * focused; until then, or if it fails, the field is a plain input.
  */
 export function AutocompleteInput({
   id,
+  labelId,
   value,
   onChange,
   load,
   ...inputProps
 }: {
   id: string;
+  /** The id of the visible label, which names the input and the list. */
+  labelId: string;
   value: string;
   onChange: (value: string) => void;
   load: () => Promise<Finder>;
 } & Omit<InputHTMLAttributes<HTMLInputElement>, 'id' | 'value' | 'onChange'>) {
   const [find, setFind] = useState<Finder | null>(null);
-  useEffect(() => {
-    let live = true;
+  const ensureLoaded = useCallback(() => {
+    if (find) return;
     load().then(
-      (f) => live && setFind(() => f),
-      () => {}, // no suggestions; the field still takes free text
+      (f) => setFind(() => f),
+      () => {}, // logged by the loader; the next focus tries again
     );
-    return () => {
-      live = false;
-    };
-  }, [load]);
+  }, [find, load]);
 
-  const items = useMemo(() => (find && value.trim() ? find(value) : []), [find, value]);
+  // The menu counts as open only while it shows something. downshift would otherwise treat an empty, hidden menu as
+  // open: Enter wouldn't submit the form and aria-expanded would be wrong.
+  const [wantsOpen, setWantsOpen] = useState(false);
+  const query = useDeferredValue(value); // typing stays responsive while the list catches up
+  const items = useMemo(
+    () => (find && wantsOpen && query.trim() ? find(query) : []),
+    [find, wantsOpen, query],
+  );
 
   const { isOpen, highlightedIndex, getMenuProps, getInputProps, getItemProps } = useCombobox<Suggestion>({
     items,
     inputId: id,
-    labelId: `${id}-label`,
+    labelId,
     // Only the text is controlled. A controlled selectedItem makes downshift reset the text after every pick.
     inputValue: value,
+    isOpen: wantsOpen && items.length > 0,
+    onIsOpenChange: ({ isOpen: open }) => setWantsOpen(Boolean(open)),
     itemToString: (item) => item?.value ?? '',
     // downshift reports changes from an effect, a render late: fast typing would land on the stale value. Typing
     // updates the parent from the input's own onChange below; this only carries picks.
@@ -48,34 +65,40 @@ export function AutocompleteInput({
       if (type !== useCombobox.stateChangeTypes.InputChange) onChange(inputValue ?? '');
     },
     stateReducer: (state, { type, changes }) => {
-      // Leaving the field or pressing Escape keeps what was typed rather than taking or clearing a suggestion.
-      if (
-        type === useCombobox.stateChangeTypes.InputBlur ||
-        type === useCombobox.stateChangeTypes.InputKeyDownEscape
-      )
+      // Escape closes the list and keeps what was typed, rather than clearing the field.
+      if (type === useCombobox.stateChangeTypes.InputKeyDownEscape)
         return { ...changes, inputValue: state.inputValue };
       return changes;
     },
   });
 
-  const open = isOpen && items.length > 0;
   return (
     <div className="relative">
       <Input
         {...getInputProps({
           ...inputProps,
           spellCheck: false,
-          onChange: (e: ChangeEvent<HTMLInputElement>) => onChange(e.currentTarget.value),
+          onFocus: ensureLoaded,
+          onChange: (e: ChangeEvent<HTMLInputElement>) => {
+            ensureLoaded();
+            onChange(e.currentTarget.value);
+          },
+          onKeyDown: (
+            e: KeyboardEvent<HTMLInputElement> & { nativeEvent: { preventDownshiftDefault?: boolean } },
+          ) => {
+            // With no suggestion highlighted, Enter submits the form as in a plain field.
+            if (e.key === 'Enter' && highlightedIndex < 0) e.nativeEvent.preventDownshiftDefault = true;
+          },
         })}
       />
       <ul
         {...getMenuProps()}
         className={cn(
           'absolute inset-x-0 top-full z-20 mt-1 max-h-72 overflow-auto rounded-[10px] border border-line bg-raised py-1 shadow-[var(--shadow-card)]',
-          !open && 'hidden',
+          !isOpen && 'hidden',
         )}
       >
-        {open
+        {isOpen
           ? items.map((item, index) => (
               <li
                 key={item.value}

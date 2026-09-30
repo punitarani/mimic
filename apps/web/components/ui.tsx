@@ -63,6 +63,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
       ref={ref}
       className={cn(
         'h-11 w-full rounded-[10px] border border-line bg-raised px-3 text-[15px] placeholder:text-muted/70 hover:border-line-strong',
+        'disabled:cursor-not-allowed disabled:bg-surface disabled:text-muted disabled:hover:border-line',
         className,
       )}
       {...props}
@@ -77,6 +78,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
         ref={ref}
         className={cn(
           'w-full rounded-[10px] border border-line bg-raised px-3 py-2 text-[15px] placeholder:text-muted/70 hover:border-line-strong',
+          'disabled:cursor-not-allowed disabled:bg-surface disabled:text-muted disabled:hover:border-line',
           className,
         )}
         {...props}
@@ -84,6 +86,11 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
     );
   },
 );
+
+/** The id `Field` gives its label, for inputs that name themselves with aria-labelledby. */
+export function fieldLabelId(htmlFor: string): string {
+  return `${htmlFor}-label`;
+}
 
 export function Field({
   label,
@@ -100,7 +107,7 @@ export function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label id={`${htmlFor}-label`} htmlFor={htmlFor} className="block text-sm font-medium text-graphite">
+      <label id={fieldLabelId(htmlFor)} htmlFor={htmlFor} className="block text-sm font-medium text-graphite">
         {label}
         {required ? (
           <span className="text-rust"> *</span>

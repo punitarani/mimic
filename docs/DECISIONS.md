@@ -360,30 +360,246 @@ new shadows reach questions served earlier through `pnpm backfill`, which now ta
 `--predictor` flags, or a comma-separated list, which is also what the Actions workflow takes. Every model is checked
 before anything is enqueued, and each predictor gets its own job.
 
-## ADR-0026 — Location and occupation autocomplete on `/new` (2026-09-30)
+## ADR-0026 — Invite links (2026-09-30)
+
+An invite can be shared as a link instead of a code to type: `/new?invite=CODE`, or `/?invite=CODE`, where the
+landing page's button carries it to `/new`.
+
+- **The field is filled in and disabled.** The person sees the code and a hint that it came from the link, but
+  can't edit it. Any failed submit (an invalid code is a 403 on `POST /api/mimics`, but also a 400 or a 429)
+  unlocks the field and focuses it, so a stale link is recoverable without leaving the page.
+- **Still checked server-side only.** The link changes nothing about `INVITE_CODES` or the route handler. The
+  query value is trimmed and otherwise passed through as typed input would be.
+- **Codes in links are low-secrecy.** A code in a URL lands in browser history, the same-origin Referer and the
+  Workers invocation logs (ADR-0023 records URLs, not bodies). `INVITE_CODES` gates a private cohort, not data,
+  and is rotated by a deploy; treat a link as shareable as the code itself.
+- **`/new` stays prerendered** (ADR-0023). Reading the query string happens in a client component under a
+  Suspense boundary whose fallback is the same form with no code, so the static HTML is what it was before, and
+  hydration only fills the field in.
+- Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
+
+## ADR-0027 — Value-of-information selection, belief-driven generation and cross-person item statistics (2026-09-30)
+
+The adaptive loop asked what the predictor was unsure about. That over-selects noisy questions, ignores what the
+person's own answers contradict, ignores where the mimic is actually wrong, and learns nothing from other people.
+`docs/SELECTION.md` sets out the replacement and the research behind it (adaptive testing, expected information
+gain, BALD, the digital-twin mega-study, response-time evidence, survey satisficing, hierarchical priors). This
+ADR records the decisions.
+
+- **Belief state** (`packages/core/src/belief.ts`): per facet, uncertainty (trait-read entropy and confidence),
+  conflict (Jev vs psychometric reads, superseded insights, repeat flips, torn answers), weakness (the sealed
+  primary's recent error on the facet, shrunk toward the person's overall error), coverage and exposure; per
+  domain, share and weakness; per person, median latency, speeding and straightlining. Pure and deterministic;
+  never in a prompt or a state.
+- **`voi` selector** (`selector.type = 'voi'`): `info + λ·gap + β·conflict + γ·weakness + π·(pop − ½) − μ·redundancy
+  − ν·burden`, with exposure control (a facet may take at most 35% of the adaptive questions once 4 are answered).
+  `info` is on one scale per selection: posterior-weighted hypothesis mutual information when any candidate has
+  ≥ 2 hypothesis predictions (0 for a candidate whose exploration calls failed), else predictive entropy for every
+  candidate. Exposure control is shared with the generator (`overExposed`) and starts after 4 adaptive answers.
+  The chosen question's sealed primary is still the plain-state prediction from the batched call. The winning
+  score's components go to `questions.selection_json`.
+- **Persona posterior.** The chosen question's per-hypothesis predictions are stored as `role = hypothesis` rows
+  tagged `{set seqUpTo}:{index}` (`predictions.hypothesis`), with their states in R2 like every other prediction
+  (ADR-0010). They are never scored. On each serve the weights are recomputed from those rows and the answers
+  given since the set was written (uniform prior, likelihoods floored at 1e-4). `hypotheses.refresh` now runs
+  for `voi` as well as `bald`. Backfill and the missing-shadow repair ignore hypothesis rows.
+- **`gen.v2`**: targets are the five facets with the highest need, each with why (unexplored, uncertain,
+  conflicted, weak) and the person's current reading, so the generator pitches trade-offs at that reading (the
+  adaptive-testing rule that an item is most informative where its difficulty matches the estimate). Facets over
+  the exposure cap are listed to avoid; the domain quota is tilted toward the weakest domains. Pooled candidates
+  count toward coverage so a refill does not pile onto facets the pool already has.
+- **Latency hints** (`stateBuilder.latencyHints`, builder `full.v2`): evidence carries `pace: quick | slow` for
+  answers under half or over twice the person's median latency over the sealed evidence, costed against the
+  budget as rendered. A latency of 0 means "not recorded" everywhere (no pace, never speeding). Deterministic
+  from exported data (`answers.latency_ms`), so replay still reproduces states. Optional and undefaulted in the schema,
+  so configs written before it keep their hashes (v3 is pinned in a test next to v4).
+- **Item statistics** (`item_stats`, migration 0003, `stats.refresh` from the cron hourly): aggregate rows per
+  `item_key` and per `facet | domain | type` archetype over research-consented dev-split mimics, read in one join
+  query and written by replacing the whole table atomically, so a deleted mimic or a withdrawn consent drops out
+  at the next run and no stale key survives. Groups with fewer than 5 people are never written, so no stored row
+  is one person's numbers. `pop(q)` is `½·answer entropy + ½·baseline error` for items, or the mean over the
+  question's facets' archetypes of `½·surprise + ½·baseline error`, shrunk toward ½ with a prior of 20 answers.
+  It ranks candidates only, never enters a prompt or a state (PLAN §3.8), and its weight π is bounded. The test
+  split never feeds it. `/next` reads the table through a per-isolate cache with a 5-minute TTL.
+- **Guardrails against getting worse with use**: every term is bounded; coverage, uncertainty and conflict decay
+  on their own; the exposure cap stops a noisy facet from monopolising a session; weakness is prequential; burden
+  grows with session length; population statistics are a shrunk, bounded prior that cannot override the person's
+  own terms and are reported as a separate ablation (`pnpm eval -- select --selector entropy,voi` and
+  `--no-population`).
+- **Default config `cfg.default.v4`** = v3 + `voi`, `gen.v2` and latency hints. Mimics created under v1–v3 keep
+  their configs. Not done: one-step lookahead EIG on the pool (exact but |pool| × |options| Jev calls), a shared
+  bank of generated questions (needs a leakage check), Twin-2K-500 item statistics as a cold-start prior.
+
+## ADR-0028 — Prediction prompt variants, the eval loop and GEPA-style optimization (2026-09-30)
+
+`docs/OPTIMIZATION.md` is the design; this records what was built and the choices made.
+
+**Prompt components and variants.** The prediction prompts are named text components
+(`packages/core/src/components.ts`): the LLM predictor's system prompt and user template, the evidence line of the state
+text, and Jev's instructions and criteria templates. The incumbents render byte for byte what the old literals did
+(pinned by a test). A registered variant is addressable as `llm:<model>@<version>` or `jev:<model>@<version>`
+(`parsePredictorId`), so it can be a config's primary or shadow, and `pnpm backfill` can run it over served questions
+on the primary's sealed states. `predictions.prompt_version` now comes from the predictor ID instead of a literal.
+Without a suffix nothing changes: the IDs, prompts and config hashes of v1–v3 are untouched. Variants are mirrored to
+`docs/prompts/variants/`. A variant may also set harness options: reasoning effort, max tokens, an output schema with
+a short rationale before the probabilities, and Jev receiving the state as the LLMs' text rendering.
+
+**Evaluator.** `mimic-eval evaluate` scores candidates on sealed instances: each served question with its state rebuilt
+as served (ADR-0017), or, for Twin-2K-500 people, their first k answers against the held-out wave. Each record carries
+log loss, item accuracy, Brier, the stored baseline's accuracy on the same question, and textual feedback (the answer,
+the person's reason, the profile-only guess, related earlier answers, repeat agreement). `--from stored` reports on the
+predictions already stored, with no model calls, and fits a temperature per predictor, shrinkage toward the baseline
+and Jev + LLM log-linear pools on dev people, checked on test people.
+
+**Optimizer.** `mimic-eval optimize` is a TypeScript GEPA loop over the real engine code (no Python, no second copy of
+the prompts): Pareto parent sampling over per-instance validation scores, one component rewritten per iteration by a
+reflection model reading a minibatch of cases, acceptance only when the child beats its parent on the minibatch by
+more than the measured noise floor, then a full validation pass. Choices:
+
+- *Objective:* −log loss per question, so calibration counts; a failed output scores as a uniform guess minus 1 nat.
+- *Splits:* dev people train and validate (by person with 6 or more dev people, otherwise by question); test people
+  are a holdout evaluated once, after selection (PLAN §12.4). "Improved" needs the validation gain above twice the
+  noise standard error, a 90% bootstrap CI above zero, and no loss on the holdout beyond that margin.
+- *Leakage lint:* a child is rejected if it adds a 6-word sequence from any question, reason or insight in the data, or
+  an identity detail (name, location, employer, fact). Instruction-only optimization with no real-person demos keeps
+  invariant 8.
+- *Reflection model:* `anthropic/claude-sonnet-5.5` by default ($2/$10 per million tokens at the time), low reasoning
+  effort. It is offline tooling, logged through the gateway as `eval.reflect`, never in a production config.
+- *Budgets:* hard caps on predictions (`--max-metric-calls`, default 400) and dollars (`--max-usd`, default 2); an
+  iteration that could not be validated within either is not started. Runs are resumable from `--run-dir`.
+- *Cost:* Jev components are the default target because Jev bills input only (about $0.0001 per question), so a run
+  is dominated by reflection calls.
+- *One person per reflection:* each minibatch is drawn from one person, and `diagnose` makes one call per person, so
+  no prompt mixes people's answers (invariant 8). Names are left out of the cases as well. These are offline analysis
+  calls on consented, scrubbed data, and their output passes the leakage lint before it can reach a product prompt.
+- *Tooling prompts are versioned:* the reflection and diagnosis prompts (`optimize.reflect.v1`,
+  `optimize.diagnose.v1`) live in `packages/eval/src/optimize/reflect.ts`, are recorded on each run and mirrored to
+  `docs/prompts/optimize/` with a sync test. A reply that breaks a rule gets one repair turn naming the problems.
+- *Transport failures are not scores:* predictors label a failure `transport` or `output`. Only the failed questions
+  are retried once. A transport failure is never cached. If it persists, the optimizer stops gracefully rather than
+  let an outage decide an acceptance, the Pareto front or the holdout; the run can be resumed. A malformed output is
+  the candidate's fault and is scored as a failure.
+- *Batching and margins:* Jev questions that share a state go in one request, split only near the 32K context. The
+  minibatch margin uses the size of the minibatch actually drawn. With six or more dev people, a balanced, seeded
+  half of them validate. A run directory refuses to resume against different data, since exports re-salt IDs.
+- *Validation at the edges:* `PipelineConfig` rejects an unregistered or incumbent-aliased `@<version>`, so `/lab`
+  can't register a config that would break `/next`. `pnpm backfill` checks a version against
+  `docs/prompts/variants/` before enqueueing. Published metrics are compacted to fit one D1 statement; the full report
+  is in R2.
+
+**Shipping.** A winner is never deployed by the optimizer. It writes the candidate and a `PREDICT_PROMPTS` entry to
+paste; registering it is a code change reviewed like any other, then `pnpm backfill --predictor <id>@<version>` gives a
+within-person comparison on identical sealed states in `/lab`, and promotion to primary goes through a config and an
+experiment arm. Calibration post-processing is reported but not applied online yet (a later config field).
+
+**Where it runs.** `.github/workflows/optimize.yml` (Actions → Optimize), like the backfill: export prod (consented,
+scrubbed), optionally add Twin-2K-500 people, report on stored predictions for free, and optionally optimize. Only
+aggregates and prompt text leave the runner: the step summary, `/lab`, and an artifact with the candidate. Hugging
+Face is blocked in the Claude Code environment, so the Twin step runs only in Actions and is best-effort there.
+
+## ADR-0029 — Identity search: plain queries, the person's link, a name filter and search again (2026-09-30)
+
+Two real people tried identity search in prod and neither was offered: a software engineer with a rare name got two
+strangers, and a recent graduate with a common name got nothing. Replaying their intakes against Exa found the causes.
+
+- **Quoted names.** Every query was `"{name}" …`, as PLAN §9.2 suggested. Exa's people index is semantic and has no
+  phrase operator: the quoted query returned strangers (both engineers, neither named like the person) or zero
+  results. Unquoted, the engineer is Exa's first result for every variant tried. Queries are now plain descriptions
+  that lead with the name: `{name}, {occupation} at {employer}, {location}`, the same without the location, and the
+  name alone. The graduate's profile shows up when the query includes her school or field; the name alone is buried
+  under namesakes.
+- **The link was never used.** Intake says a link "makes finding you much more accurate", but search ignored it. Now
+  the link is read with Exa `/contents` (a LinkedIn URL resolves to the same person entity as search; any other page
+  gives its title and text) and that profile is always kept and listed first. It's logged as `identity.lookup`.
+- **A merge that favoured the first query.** Results were concatenated in query order and cut to 8 before Jev saw
+  them. They're now merged by reciprocal rank, deduped by profile URL and cut to 10, the most the screen lists.
+  `profileKey` (`@mimic/core/links`, shared with the browser) ignores the scheme, `www.`, a trailing slash and
+  tracking parameters, and treats every LinkedIn host (country and mobile) as one with case-insensitive paths.
+  Other query parameters count (`profile.php?id=…`).
+- **No name check.** Strangers were offered. A profile with no name part in common with the intake is dropped,
+  ignoring accents, apostrophes (O'Brien = OBrien), other punctuation and suffixes (Jr., PhD). A last initial that
+  ends the name counts, since LinkedIn shows "First L." outside someone's network, which is exactly how the
+  graduate's profile appears; a middle initial doesn't.
+- **Blank fields.** Intake stored a blank occupation as `''`, and `??` let it hide the employer from every query.
+  Blank optional fields are now absent, and queries use `||`.
+- **A cache that kept failures.** The KV key covered only name, location and occupation, and an empty or partial
+  result was cached for 7 days. The key is now `search:v2:` over every intake field plus the link. Only complete,
+  non-empty results are cached. Hard delete removes every key a mimic may have written, including the old format.
+- **No way back.** The screen told people to add a link "when you start", after they had started. "Search with a
+  link" (`POST /api/mimics/:id/identity/search`) now works while a choice is pending, with search consent, for up to
+  4 distinct links. It moves `identity_state` to `searching` in one conditional statement
+  (`Store.transitionIdentity`), so two requests at once start one search. Then it marks the open candidates
+  `superseded`, puts the link first in `links`, and enqueues `identity.search` with an `attempt`, which gets its own
+  ledger key.
+  - `superseded` is a new candidate status. Those candidates weren't judged, so they never read as "not me"
+    (`rejected`) in the data.
+  - If the enqueue fails there is no ledger row for the cron to requeue, so the candidates and state are put back.
+  - Only the newest link's profile leads the list and is tagged "Your link".
+  - Confirming also moves the state in one statement, from `candidates` only, and only a candidate from the latest
+    search can be confirmed. Status changes are one statement each, not one per row.
+  - A redelivered search job that finds its candidates already in place finishes the move to `candidates`, so a
+    run that failed after inserting them doesn't leave the person on the spinner.
+- **Intake.** "Employer" is now "Employer or school", since a school is what finds a student. The column is still
+  `employer`, and states and prompts are unchanged.
+
+Jev ranking was already sound given the right profile: 0.93 and 0.68 for the two people, with at most 0.49 for
+anyone else. Live after the change, five intakes for the two people (different wording, with and without the
+employer or school) found the right profile every time: first in four, second in one. In that one, the school was
+entered by a short name that is also a nearby city, and Jev preferred a local namesake. The screen therefore has no
+"likely you" badge; order alone carries the ranking. Cost is unchanged at about $0.021 per search, 3 Exa queries
+plus 10 Jev calls, and $0.001 more for a link.
+
+The picker is a radio group (select, then "This is me"). Profiles below p = 0.2 are behind "Show more". The link
+search sits under the list and on the "couldn't find" screen.
+
+## ADR-0030 — Location and occupation autocomplete on `/new` (2026-09-30)
 
 The location and occupation fields on `/new` suggest as you type. A location can be a city, a state or province, or a
-country, e.g. "Cambridge, Massachusetts, United States", "Bavaria, Germany" or "Portugal". Suggestions only fill the
-text field. Anything typed is kept, so a village or a job title that isn't listed still works. The API and the
-`mimics` columns don't change: both are still free text.
+country: "Cambridge, Massachusetts, United States", "Bavaria, Germany" or "Portugal". Suggestions only fill the text
+field, and anything typed is kept, so a village or a title that isn't listed still works. The API and the `mimics`
+columns don't change: both fields are still free text.
 
-- **Data.** `apps/web/scripts/gen-autocomplete.mjs` (`pnpm --filter @mimic/web gen:autocomplete`) builds two static
-  files in `apps/web/public/autocomplete/`, which are committed and deterministic:
-  - `places.v1.json`: 250 countries and 5,306 subdivisions from `@countrystatecity/countries` (dr5hn, ODbL), plus
-    24,696 cities from `all-the-cities` (GeoNames, CC BY 4.0), about 355 KB gzipped. The cities are those with 15,000+
-    people, plus capitals. Each city takes its state from the nearest same-named dr5hn city, so the names agree. The
-    United Kingdom uses England, Scotland, Wales and Northern Ireland instead of counties. Taiwan and Kosovo are
-    listed only as countries.
-  - `occupations.v1.json`: 6,814 titles from O*NET 30.3 "Sample of Reported Titles" (USDOL/ETA, CC BY 4.0), plus a
-    short list of titles O*NET lacks (student, founder, retired, data scientist…). O*NET isn't on npm, so pass the
-    downloaded text file with `--onet`. The form carries the O*NET and ODbL attribution.
-- **Search.** The browser fetches a file when the field mounts and searches it in memory (`apps/web/lib/autocomplete.ts`,
-  a few ms per keystroke). Matches rank as: the whole name, then the start of a name or alias, then a word inside the
-  name, then a name followed by its region or country ("cambridge ma", "paris, france"). Within a rank, larger places
-  come first. Country codes and common aliases (UK, USA, UAE) match when typed in full.
-- **UI.** `components/autocomplete.tsx` is a WAI-ARIA combobox built on `downshift`'s `useCombobox`. It keeps the text
-  on blur and Escape rather than taking or clearing a suggestion.
+This departs from PLAN §9.1, which asked for "city and country". A country-only location makes the identity queries
+(`"{name}, {role}, {location}"`, ADR-0029) and the baseline's context less specific, so the hint asks for a city first
+and a state or country is the fallback for people who don't want to give one.
 
-Rejected: a geocoding API (Photon, Mapbox). It would send what people type to a third party, add a network dependency
-and a key, and this environment's egress blocks it. Serving the data from a Worker route would put ~1 MB into the web
-Worker bundle for no gain.
+- **Data.** `apps/web/scripts/autocomplete/gen.mjs` (`pnpm --filter @mimic/web gen:autocomplete`) writes two static
+  files to `apps/web/public/autocomplete/`, plus `lib/autocomplete-sources.json`, which is the attribution the form
+  shows. All three are committed and deterministic. The script's directory is its own package, outside the
+  workspace. It installs its ~80 MB of source data only when run, so CI and deploys never download it.
+  - `places.v1.json` (~350 KB gzipped) holds 250 countries and 5,076 subdivisions from `@countrystatecity/countries`
+    (dr5hn, ODbL). It also holds 24,686 cities from GeoNames via `all-the-cities` (CC BY 4.0): those with 15,000+
+    people, plus capitals.
+    - Each city takes its state from the nearest same-named dr5hn city, so the names agree.
+    - The UK keeps only England, Scotland, Wales and Northern Ireland as its subdivisions.
+    - A subdivision that is also listed as a country (Hong Kong SAR, Macau SAR, Puerto Rico, Taiwan, Kosovo) is left
+      out, and so is a city that is its own country (Singapore, Monaco).
+    - A few cities carry the names people type (NYC, SF, Bangalore, Kiev, DC). US, Canadian and Australian states
+      match their abbreviations (TX, ON, NSW).
+  - `occupations.v1.json` holds 6,813 titles from O*NET 30.3 "Sample of Reported Titles" (USDOL/ETA, CC BY 4.0).
+    Titles longer than the 120 characters the server accepts are dropped. A short list O*NET lacks is added:
+    student, founder, retired, data scientist… O*NET isn't on npm, so pass its text file with `--onet`.
+- **Search** (`apps/web/lib/autocomplete.ts`). A field fetches its file the first time it is focused, validates it
+  (zod/mini), indexes it (~150 ms once) and searches in memory. A lookup takes about 1 ms because only names with a
+  word starting with the query's first two letters are scored.
+  - Matching folds case, accents and letters like ł, ø and ı (`lib/norm.mjs`, which the generator shares), so
+    "lodz" finds Łódź.
+  - Tiers, best first: the start of a name or alias; a word inside a name; then a name followed by its region or
+    country ("cambridge ma", "paris, france") or the words in any order ("engineer software").
+  - Within a tier, bigger places rank first. A whole-name match counts three times its population, except for
+    states, and a state weighs 0.4 of the population of its cities. So "new york" puts the city first and
+    "georgia" the country.
+  - Country codes are used only to narrow a search ("paris fr"), never to match on their own. If they did, "ma" or
+    "to" would put Morocco or Tonga first.
+- **UI** (`apps/web/components/autocomplete.tsx`). A WAI-ARIA combobox on downshift's `useCombobox`:
+  - The menu counts as open only while it shows suggestions, so Enter submits the form unless a suggestion is
+    highlighted.
+  - Tab takes the highlighted suggestion; Escape keeps the typed text.
+  - Typing updates the form synchronously. downshift's `onInputValueChange` runs one render late and dropped fast
+    keystrokes.
+  - The browser's own autofill is off on both fields (downshift sets `autocomplete="off"`); its popup would cover
+    the list.
+
+Rejected: a geocoding API (Photon, Mapbox). It sends what people type to a third party and needs a key and a network
+dependency, and this environment's egress blocks it. Serving the data from a Worker route would add ~1 MB to the web
+Worker for no gain.

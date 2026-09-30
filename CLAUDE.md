@@ -21,13 +21,19 @@ pnpm db:migrate:local       # remote migrations run as part of each deploy
 pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Workers (CI's build job)
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
-pnpm eval -- <export|replay|select|import|report|session> ...
+pnpm eval -- <export|replay|select|import|report|session|evaluate|diagnose|optimize> ...
 pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--yes]   # run new predictors over served questions (ADR-0024)
 ```
 
 `pnpm dev` serves the web app on http://localhost:3000 and the worker on http://localhost:8787. It copies
-`.dev.vars.example` to `.dev.vars` in both apps on first run (dev invite code: `mimic-dev`).
+`.dev.vars.example` to `.dev.vars` in both apps on first run (dev invite code: `mimic-dev`, or open
+http://localhost:3000/new?invite=mimic-dev).
 It also fires the worker's cron every 10 minutes (stale-job requeue, missing shadows, snapshots; ADR-0019).
+
+Prompt optimization (ADR-0028, docs/OPTIMIZATION.md): `pnpm eval -- evaluate --from stored --data x.sqlite` reports on
+stored predictions for free; `pnpm eval -- optimize --data x.sqlite --predictor jev:typesafe/jev-1.13 --max-usd 2` runs a
+capped GEPA loop. In prod, run Actions → Optimize. A winner ships only as a registered variant
+(`llm:<model>@<version>`, `packages/core/src/components.ts`), first as a shadow via `pnpm backfill`.
 
 Eval loop on dev data: `pnpm eval -- export --env local --out data/x.sqlite`, then `replay --data data/x.sqlite`, then
 `report --data … --run <id> --to local` (shown in `/lab`). Reproducing online predictions needs an export made with
@@ -70,7 +76,8 @@ If a task seems to require breaking one of these, stop and ask.
 - Queue handlers are idempotent (use the `jobs` ledger). Derived-state writes are monotonic by `seqUpTo`.
 - Pin Jev to `typesafe/jev-1.13`. Batch all Jev questions that share a state into one request, and keep states within the §9.9 token budget (Jev context is 32K).
 - Don't send `temperature` to any LLM. Use `reasoning.effort`. JSON-schema calls set `provider.require_parameters: true`.
-- Default LLM is `deepseek/deepseek-v4.1-flash`, routed to Wafer first (ADR-0004); GPT-6 Luna and GLM 5.3 Flash are alternatives and shadows, as are MiMo V2.6 Flash and Qwen3.8 Flash (`cfg.default.v3`, ADR-0025). Adding a predictor means a new config plus `pnpm backfill` for questions already served (ADR-0024).
+- Default LLM is `deepseek/deepseek-v4.1-flash`, routed to Wafer first (ADR-0004); GPT-6 Luna and GLM 5.3 Flash are alternatives and shadows, as are MiMo V2.6 Flash and Qwen3.8 Flash (ADR-0025). Adding a predictor means a new config plus `pnpm backfill` for questions already served (ADR-0024).
+- Question selection is `voi` (value of information) since `cfg.default.v4`: a belief state per person (uncertainty, conflict, weakness, coverage, exposure) scores pooled candidates; `gen.v2` targets the facets with the highest need; cross-person `item_stats` rank candidates and never enter a prompt or a state. Spec: `docs/SELECTION.md`, ADR-0027. `entropy`, `bald`, `coverage` and `random` stay as controls.
 - Order prompts for caching: stable prefix (system, ontology, rules) first, variable content last.
 - Test with Vitest, using recorded fixtures in `packages/adapters/fixtures/`. CI makes no live calls. Worker code tests use `@cloudflare/vitest-pool-workers`.
 - Use simulated users for smoke tests only. Never report metrics from LLM-simulated users.
