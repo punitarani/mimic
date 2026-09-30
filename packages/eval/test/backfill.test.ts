@@ -105,7 +105,7 @@ async function cliRow(q: { sql: string; params: string[] }) {
 
 const backfillShadows = () => engine.queue.pending.filter((p) => p.job.type === 'backfill.shadow');
 
-describe('backfilling a new predictor (ADR-0024, ADR-0036)', () => {
+describe('backfilling a new predictor (ADR-0024, ADR-0037)', () => {
   it("shares the engine's pace, caps and windows with the CLI", () => {
     expect(cli.DEFAULT_RATE).toBe(BACKFILL_PER_MINUTE);
     expect(cli.MAX_JOBS).toBe(BACKFILL_MAX_JOBS);
@@ -263,7 +263,7 @@ describe('backfilling a new predictor (ADR-0024, ADR-0036)', () => {
   });
 });
 
-describe('failed calls vs. the model failing (ADR-0036)', () => {
+describe('failed calls vs. the model failing (ADR-0037)', () => {
   const FLAKY = 'llm:acme/flaky';
 
   it('retries a failed call, stores it after the last attempt, and --retry-failed redoes it', async () => {

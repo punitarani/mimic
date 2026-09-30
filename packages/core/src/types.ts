@@ -14,8 +14,9 @@ export function learnsFrom(kind: QKind): boolean {
 }
 
 /** Kinds the session serves. `playground` and `feedback` are written by the person on the mimic page instead. */
+export const SESSION_KINDS = ['anchor', 'adaptive', 'repeat'] as const satisfies readonly QKind[];
 export function isSessionKind(kind: QKind): boolean {
-  return kind === 'anchor' || kind === 'adaptive' || kind === 'repeat';
+  return (SESSION_KINDS as readonly QKind[]).includes(kind);
 }
 
 /** Kinds scored for fidelity, shadows and backfill (PLAN §9.10): the session's new questions. */
@@ -139,7 +140,7 @@ export interface PredictionResult {
   ok: boolean;
   error?: string;
   /**
-   * Why it failed (set on failures only; stored with the prediction, ADR-0036):
+   * Why it failed (set on failures only; stored with the prediction, ADR-0037):
    * - `output`: the model answered but the answer was unusable (the prompt's or model's fault);
    * - `timeout`: the model didn't answer within the call's timeout (too slow; the model's failure, never redone);
    * - `transport`: the call failed before the model answered (provider error, rate limit, network, budget guard).

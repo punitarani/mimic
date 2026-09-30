@@ -11,7 +11,7 @@
 // model's, unusable output or a timeout, and failed calls, which aren't), counts the missing predictions per mimic,
 // and estimates cost and duration from what this predictor has cost so far (never a hardcoded price). `--yes`
 // enqueues one job per predictor (or per named mimic); the worker spaces the predictions `--rate` a minute
-// (ADR-0036), so they see the load a live shadow sees. Re-running is safe: predictions already queued or being
+// (ADR-0037), so they see the load a live shadow sees. Re-running is safe: predictions already queued or being
 // retried are skipped, and the count falls to 0 as the queue drains.
 //
 //   --retry-failed  also redo this predictor's failed calls (rate limits and provider errors that outlasted every

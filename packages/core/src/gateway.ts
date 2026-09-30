@@ -35,7 +35,7 @@ export interface ModelCallRecord {
   costUsd: number;
   /** The attempt that answered; earlier attempts that got a transient error are counted in `attempts`. */
   latencyMs: number;
-  /** HTTP attempts the call took (ADR-0036); 1 when omitted. */
+  /** HTTP attempts the call took (ADR-0037); 1 when omitted. */
   attempts?: number;
   ok: boolean;
   error: string | null;

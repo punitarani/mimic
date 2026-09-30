@@ -165,6 +165,14 @@ export async function timed<T>(deps: EngineDeps, phase: string, fn: () => Promis
   }
 }
 
+/**
+ * `deps` whose store refuses derived writes and serves once an undo moves the mimic's evidence past what `m` saw
+ * (ADR-0036). Use it for anything built from data read along with `m`.
+ */
+export function guardedDeps(deps: EngineDeps, m: Pick<MimicRecord, 'id' | 'evidenceEpoch'>): EngineDeps {
+  return { ...deps, store: deps.store.guarded(m.id, m.evidenceEpoch) };
+}
+
 export function ctxFor(
   m: Pick<MimicRecord, 'id' | 'configHash'>,
   purpose: string,

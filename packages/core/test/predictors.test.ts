@@ -57,7 +57,7 @@ function predictor(chat: () => Promise<ChatResponse>, budget?: BudgetLedger) {
 
 const httpError = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status });
 
-describe('LLM predictor failures (ADR-0036)', () => {
+describe('LLM predictor failures (ADR-0037)', () => {
   it('returns a normalized distribution with the call latency and cost', async () => {
     const [r] = await predictor(async () => reply({})).predict(state, [q]);
     expect(r).toMatchObject({ ok: true, latencyMs: 1200, costUsd: 0.0002, dist: { a: 0.7, b: 0.3 } });

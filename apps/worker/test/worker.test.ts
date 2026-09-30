@@ -77,7 +77,7 @@ describe('queue consumer', () => {
   });
 });
 
-describe('D1 store: backfill ledger and shadows (ADR-0036)', () => {
+describe('D1 store: backfill ledger and shadows (ADR-0037)', () => {
   const store = () => engineDeps(env).store;
   const shadow = (id: string, ok: boolean): PredictionRecord => ({
     id,
