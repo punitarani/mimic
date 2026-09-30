@@ -787,7 +787,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | Route | Purpose |
 |---|---|
 | `/` | One sentence on what Mimic does, and one button: "Build your mimic". |
-| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and locks the field. Location and occupation suggest as you type (ADR-0030). |
+| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and hides the field (ADR-0047). Location and occupation suggest as you type (ADR-0030). |
 | `/m/[id]/identity` | Search progress, "Is one of these you?", then fact review with remove toggles. "Skip" is always available. |
 | `/m/[id]` | The session. |
 | `/m/[id]/mimic` | Talk to your mimic (§9.11): ask it, or teach it an answer; download `SOUL.md` and `mimic.json`; delete the mimic. |
@@ -817,7 +817,7 @@ is kept as a rewind, not as evidence (ADR-0036).
 1. **Headline fidelity,** with its CI and state, a rolling sparkline, and lift over baseline.
 2. **Facet bars,** grouped as Personality, Values, Decisions, Work, Everyday and Communication. Each bar shows a mean marker and a certainty band. Hovering a bar shows the answers that support it.
 3. **"What it's learned":** the latest cited insights, each linked to its evidence.
-4. **Mini knowledge graph** (canvas force layout, at most 60 nodes): you, connected to organizations, places, skills, interests and facets.
+4. **Your map** (ADR-0046): the knowledge graph as a network of the things in the person's life (work, places, interests, skills, traits), clustered by category, with typed links inferred between them and a confidence threshold; at most 60 nodes.
 5. **Coverage:** facets not yet explored.
 
 **Lab** (`/lab`):
@@ -837,7 +837,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 - **Color carries meaning.** Graphite is the person's answers; one cool ink color is the mimic's predictions; muted green and rust mark match and miss. Use a cool neutral background, not cream.
 - **Typography.** Question prompts use a readable text serif at a large size, because they are sentences to think about. UI chrome uses one neutral sans. Sentence case, plain verbs, no eyebrow labels.
 - **Motion.** Only the reveal and the fidelity update animate, and reduced-motion settings are respected.
-- **Components.** shadcn/ui with Tailwind; visx (or Recharts) for charts; react-force-graph-2d for the graph.
+- **Components.** shadcn/ui with Tailwind; visx (or Recharts) for charts; d3-force with an SVG renderer for the map (ADR-0046).
 
 ---
 
@@ -864,7 +864,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
-**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and locks the field, and unlocks it only if the server rejects the code (ADR-0026). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
+**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and hides the field, and shows it only if the server rejects the code (ADR-0026, ADR-0047). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
 **Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: `BUDGET_USD` (default $1) for configs on the standard budget, else the config's own `session.budgetUsd`. Session work (serving, shadows, refills, hypotheses) stops at `BUDGET_SESSION_SHARE` of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and SOUL.md (ADR-0035).
 

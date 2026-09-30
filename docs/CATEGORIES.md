@@ -148,7 +148,7 @@ The facet list every stage uses comes from one place, `facetsFor`, which is scop
 | Gates | gates.v3: `sensitive` asks about every area the draft is not tagged with; `demeaning` and `concrete` on every draft | M10 |
 | Workplace scenes | None without "Work and money": professional quota zero, professional drafts and reserve items rejected | M10 |
 | Web search and enrichment | Special-category facts dropped before they are stored, graphed or indexed; revealing sentences stripped from candidate summaries before ranking; the enrichment schema asks for none | M11 |
-| Views, `mimic.json` and SOUL.md | Scoped facets, insights, facts, evidence and graph (`scopedKg`) only; basics count only seeded anchors | M9 / M11 |
+| Views, `mimic.json` and SOUL.md | Scoped facets, insights, facts, evidence and graph (`scopedKg`, `uiKg`) only; basics count only seeded anchors | M9 / M11 |
 | Item statistics | Special-category rows only with research consent for the area | M11 |
 | Research export | Special-category rows scrubbed without research consent for the area | M11 |
 | Scope changes | `setScope` discards out-of-scope pooled and waiting questions and refills the pool; `PATCH /api/mimics/:id/scope`; "Topics and consent" in the session menu | M9 / M11 |
