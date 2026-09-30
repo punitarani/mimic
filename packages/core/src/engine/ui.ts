@@ -5,7 +5,7 @@ import { toStateEvidence } from '../state-builder';
 import type { IdentityState, MimicStatus } from '../store';
 import { isScoredKind, isSessionKind } from '../types';
 import { facetCounts, loadMimicData } from './data';
-import { type EngineDeps, facetsFor, loadConfig, requireMimic } from './deps';
+import { capsFor, type EngineDeps, facetsFor, loadConfig, requireMimic } from './deps';
 import { fidelityFromRecord, MIN_POOL } from './session';
 
 export interface UiFacet {
@@ -38,7 +38,10 @@ export interface UiSnapshot {
     arm: string | null;
     createdAt: number;
     spendUsd: number;
+    /** The whole cap: asking, teaching and Persona.md work until spend reaches it (ADR-0034). */
     budgetUsd: number;
+    /** The session's share of the cap; it stops serving questions here. */
+    sessionBudgetUsd: number;
     snapshotVersion: number;
   };
   /** `basics`: the anchor battery size; the panel shows "Learning the basics" until that many are answered. */
@@ -75,6 +78,7 @@ export const KG_MAX_NODES = 60;
 export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiSnapshot> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
+  const caps = capsFor(deps, cfg);
   const [loaded, fid, kg, facets] = await Promise.all([
     loadMimicData(deps, m),
     deps.store.listFidelity(m.id),
@@ -140,7 +144,8 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       arm: m.arm,
       createdAt: m.createdAt,
       spendUsd: m.spendUsd,
-      budgetUsd: cfg.session.budgetUsd,
+      budgetUsd: caps.totalUsd,
+      sessionBudgetUsd: caps.sessionUsd,
       snapshotVersion: m.snapshotVersion,
     },
     progress: {

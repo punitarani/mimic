@@ -11,6 +11,7 @@ import {
   stateOptions,
   submitAnswer,
   submitFeedback,
+  uiSnapshot,
 } from '@mimic/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type LocalEngine, openLocalEngine } from '../src/local';
@@ -208,6 +209,36 @@ describe('feedback robustness (ADR-0032)', () => {
     expect((await engine.deps.store.listModelCalls({ mimicId: m.id, limit: 10_000 })).length).toBe(before);
     const doc = await exportMimic(engine.deps, m.id);
     expect(doc.evidence.find((e) => e.kind === 'feedback')?.seq).toBe(fb.question.seq);
+  });
+
+  it("keeps the budget's last 20% for the mimic page once the session has spent its share (ADR-0034)", async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await session(2);
+    const ask = {
+      type: 'choice' as const,
+      prompt: 'Would you take a spontaneous day off?',
+      options: [
+        { key: 'a', label: 'Yes, today' },
+        { key: 'b', label: 'No, I would wait' },
+      ],
+      rationale: false,
+    };
+    // cfg.default.v4's $0.50 cap: the session stops at $0.40, the page runs to $0.50.
+    await engine.deps.store.updateMimic(m.id, { spendUsd: 0.45 });
+    expect((await serveNext(engine.deps, m.id)).status).toBe('budget');
+    const snap = await uiSnapshot(engine.deps, m.id);
+    expect(snap.mimic).toMatchObject({ budgetUsd: 0.5, sessionBudgetUsd: 0.4 });
+    expect((await predictPlayground(engine.deps, m.id, ask)).guess).toBeDefined();
+    expect((await submitFeedback(engine.deps, m.id, teach('reserve'))).learns).toBe(true);
+
+    // A deploy that raises the cap reopens the session under the new share.
+    engine.deps.spend = { budgetUsd: 0.75 };
+    expect((await serveNext(engine.deps, m.id)).status).toBe('question');
+    delete engine.deps.spend;
+
+    await engine.deps.store.updateMimic(m.id, { spendUsd: 0.5 });
+    await expect(predictPlayground(engine.deps, m.id, ask)).rejects.toMatchObject({ code: 'budget' });
+    expect((await submitFeedback(engine.deps, m.id, teach('spent'))).learns).toBe(false);
   });
 
   it('serves an asked question at the next free seq when feedback takes its seq, keeping its predictions', async () => {

@@ -758,3 +758,26 @@ beliefs, opinions and biases, and above all how the person thinks and decides. P
   location and sourced facts.
 - **Synchronous.** Drafting is a route handler call like the playground's, not a queue job: the person is waiting
   on the page for it, and it is one LLM call.
+
+## ADR-0034 — Spend caps: a session share and a reserve for the mimic page (2026-09-30)
+
+The budget guard stopped everything at `session.budgetUsd` ($0.50). A session that spent all of it left nothing for
+the mimic page, so a person who finished the session could no longer ask their mimic a question or draft Persona.md,
+the two things they finish the session to do.
+
+- **Two caps from one budget.** The session spends up to a share of the cap (`BUDGET_SESSION_SHARE`, default 0.8).
+  At that point `/next` returns `budget`, and pool refills and hypothesis refreshes stop, since they only feed the
+  session. Asking, teaching (`kind = feedback`), Persona.md drafts and learning from answers run to the whole cap,
+  so an answer taught on the page after the session still updates traits and insights. The gateway guard enforces
+  only the whole cap; the session's share is enforced where the engine knows what the work is for.
+- **Deploy settings, not config.** `BUDGET_USD` overrides `session.budgetUsd` for every mimic. The caps change what a
+  mimic may spend, never what a prediction sees, so they stay out of `PipelineConfig` and every config hash stays
+  valid (a config field would have meant `cfg.default.v5` and a new label on every question for a limit change).
+  Configs still carry `session.budgetUsd` as the fallback when the setting is unset, as in tests and the eval CLI.
+  Mimics created earlier get the new caps too, so one that stopped at $0.50 reopens its session under a higher cap.
+- **Defaults.** `BUDGET_USD = 0.75` (50% above the old cap) and `BUDGET_SESSION_SHARE = 0.8`, so the session gets
+  $0.60 and the page keeps at least $0.15, in each environment's `vars` in both `wrangler.jsonc` files. Doppler
+  overrides them like the provider settings; preflight refuses a non-number, a cap at or below 0, or a share
+  outside (0, 1]. At runtime an invalid value is ignored, so its default applies.
+- **UI.** The session's end says the rest of the budget is kept for the mimic page. The page's own budget note
+  appears only once the whole cap is spent.

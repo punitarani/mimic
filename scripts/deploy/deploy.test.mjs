@@ -202,6 +202,23 @@ describe('config', () => {
     ]);
   });
 
+  it('gives both Workers the same spend caps, and refuses caps that are not numbers in range', () => {
+    for (const env of ['preview', 'prod']) {
+      const w = resolveSettings(worker, env, {}).vars;
+      const s = resolveSettings(web, env, {}).vars;
+      assert.equal(w.BUDGET_USD, s.BUDGET_USD);
+      assert.equal(w.BUDGET_SESSION_SHARE, s.BUDGET_SESSION_SHARE);
+    }
+    const ok = resolveSettings(web, 'prod', { BUDGET_USD: ' 1.5 ', BUDGET_SESSION_SHARE: '0.75' });
+    assert.deepEqual(ok.problems, []);
+    assert.equal(ok.vars.BUDGET_USD, '1.5');
+    const { problems } = resolveSettings(worker, 'prod', { BUDGET_USD: '0', BUDGET_SESSION_SHARE: '80%' });
+    assert.deepEqual(problems, [
+      'BUDGET_USD must be a number of US dollars above 0',
+      'BUDGET_SESSION_SHARE must be a number above 0 and at most 1',
+    ]);
+  });
+
   it('keeps logs and traces on for both Workers, in every environment', () => {
     for (const c of [web, worker]) {
       // Top-level observability is inherited by env.preview and env.prod unless they override it.

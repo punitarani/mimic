@@ -1,5 +1,13 @@
 import { makeProviders, type ProviderEnv } from '@mimic/adapters';
-import { EMBEDDING_MODEL, type EngineDeps, Gateway, type Job, type JobQueue, ulid } from '@mimic/core';
+import {
+  EMBEDDING_MODEL,
+  type EngineDeps,
+  Gateway,
+  type Job,
+  type JobQueue,
+  parseSpendLimits,
+  ulid,
+} from '@mimic/core';
 import { CfKv, R2Blobs, SqlVectors, StoreBudget, StoreCallLog, VectorizeVectors } from './bindings';
 import { retryer } from './busy';
 import { d1Db } from './index';
@@ -21,6 +29,10 @@ export interface MimicBindings extends ProviderEnv {
   SESSION_SECRET?: string;
   ADMIN_EMAILS?: string;
   INVITE_CODES?: string;
+  /** Total spend cap per mimic in USD; unset keeps each config's `session.budgetUsd` (ADR-0034). */
+  BUDGET_USD?: string;
+  /** Share of the cap the session may spend (0–1, default 0.8); the rest is kept for the mimic page. */
+  BUDGET_SESSION_SHARE?: string;
 }
 
 export class CfQueue implements JobQueue {
@@ -46,10 +58,11 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
     ...(env.AI ? { ai: env.AI } : {}),
   });
   const clock = () => Date.now();
+  const spend = parseSpendLimits(env);
   const gateway = new Gateway({
     ...providers,
     log: new StoreCallLog(store, blobs),
-    budget: new StoreBudget(store),
+    budget: new StoreBudget(store, spend),
     clock,
     newId: () => ulid(),
   });
@@ -63,6 +76,7 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
     jobs: queueFor(env),
     clock,
     newId: () => ulid(),
+    spend,
     ...overrides,
   };
 }

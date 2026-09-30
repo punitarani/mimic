@@ -14,7 +14,15 @@ import type { PersonaCurationRecord as CurationRecord, MimicRecord, PersonaDraft
 import type { Facet } from '../types';
 import { mimicDocParts } from './artifact';
 import { loadMimicData } from './data';
-import { ctxFor, type EngineDeps, EngineError, facetsFor, loadConfig, requireMimic } from './deps';
+import {
+  budgetSpent,
+  ctxFor,
+  type EngineDeps,
+  EngineError,
+  facetsFor,
+  loadConfig,
+  requireMimic,
+} from './deps';
 
 /**
  * Persona.md (ADR-0033). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
@@ -106,7 +114,7 @@ export async function curatePersona(
 export async function draftPersona(deps: EngineDeps, mimicId: string): Promise<PersonaView> {
   const m = await requireMimic(deps, mimicId);
   const loaded = await load(deps, m);
-  if (m.spendUsd >= loaded.cfg.session.budgetUsd) throw new EngineError('budget', 'Budget reached');
+  if (budgetSpent(deps, m, loaded.cfg)) throw new EngineError('budget', 'Budget reached');
   if (loaded.source.evidence.length < PERSONA_MIN_ANSWERS)
     throw new EngineError('invalid', `Answer at least ${PERSONA_MIN_ANSWERS} questions first.`);
   const model = loaded.cfg.reflector.model ?? loaded.cfg.generator.model;

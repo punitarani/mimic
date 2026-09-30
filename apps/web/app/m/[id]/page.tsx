@@ -438,7 +438,7 @@ export default function SessionPage() {
               <Done
                 id={id}
                 title="Your mimic has learned all it can for now"
-                body="This session reached its spending limit."
+                body="This session used its share of the budget. The rest is kept for your mimic's page, where you can ask it questions, teach it and curate Persona.md."
               />
             ) : (
               <div className="flex items-center gap-3 py-16 text-[16px] text-slate" aria-live="polite">

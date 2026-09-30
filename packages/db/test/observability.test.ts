@@ -70,4 +70,17 @@ describe('model call logging and budget guard on the real schema', () => {
     expect(await store.listModelCalls({ mimicId: 'm1' })).toHaveLength(2);
     close();
   });
+
+  it("caps at BUDGET_USD instead of the config's budget when it is set (ADR-0034)", async () => {
+    const { store, close } = await openLocalDb(':memory:');
+    const hash = configHash(DEFAULT_CONFIG);
+    await store.putConfig({ hash, json: JSON.stringify(DEFAULT_CONFIG), label: 'default', createdAt: 1 });
+    await store.insertMimic({ ...mimic('m1', hash), spendUsd: 0.6 });
+    expect(await new StoreBudget(store).get('m1')).toEqual({ spendUsd: 0.6, budgetUsd: 0.5 });
+    expect(await new StoreBudget(store, { budgetUsd: 0.75 }).get('m1')).toEqual({
+      spendUsd: 0.6,
+      budgetUsd: 0.75,
+    });
+    close();
+  });
 });

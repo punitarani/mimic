@@ -359,7 +359,7 @@ export const PipelineConfig = z.object({
 | Reflector | GPT-6 Luna, every 5 answers |
 | Repeats | Every 8 questions, minimum gap 6 |
 | Reveal | `after_answer` |
-| Session | Target 30 questions, budget $0.50 |
+| Session | Target 30 questions, budget $0.50 (deploys override it with `BUDGET_USD`, $0.75; the session spends 80% of it, ADR-0034) |
 
 ---
 
@@ -795,7 +795,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 
 **Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and locks the field, and unlocks it only if the server rejects the code (ADR-0026). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
-**Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd ≥ session.budgetUsd`.
+**Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: the `BUDGET_USD` setting, else `session.budgetUsd`. The session stops serving questions at `BUDGET_SESSION_SHARE` of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and Persona.md (ADR-0034).
 
 ---
 

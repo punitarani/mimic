@@ -3,12 +3,15 @@ import {
   BudgetExceededError,
   type BudgetLedger,
   type CallLog,
+  DEFAULT_CONFIG,
   type DecisionProvider,
   Gateway,
   type LlmClient,
   type ModelCallRecord,
   type ModelCallTrace,
+  parseSpendLimits,
   redact,
+  spendCaps,
   traceKey,
 } from '../src';
 
@@ -137,5 +140,32 @@ describe('budget guard', () => {
     const budget = new MemBudget(1, 0.5);
     const { g } = gateway({ budget });
     await expect(g.decide({ purpose: 'x' }, req)).resolves.toBeDefined();
+  });
+});
+
+describe('spend caps (ADR-0034)', () => {
+  it("keeps 20% of the config's budget for the mimic page by default", () => {
+    expect(spendCaps(DEFAULT_CONFIG)).toEqual({ totalUsd: 0.5, sessionUsd: 0.4 });
+  });
+
+  it('lets the deploy settings override the total and the session share', () => {
+    const caps = spendCaps(
+      DEFAULT_CONFIG,
+      parseSpendLimits({ BUDGET_USD: '0.75', BUDGET_SESSION_SHARE: '0.8' }),
+    );
+    expect(caps.totalUsd).toBe(0.75);
+    expect(caps.sessionUsd).toBeCloseTo(0.6, 10);
+    expect(spendCaps(DEFAULT_CONFIG, { sessionShare: 1 })).toEqual({ totalUsd: 0.5, sessionUsd: 0.5 });
+  });
+
+  it('ignores unset or invalid values, so the defaults apply', () => {
+    expect(parseSpendLimits({})).toEqual({});
+    expect(parseSpendLimits({ BUDGET_USD: ' ', BUDGET_SESSION_SHARE: '' })).toEqual({});
+    expect(parseSpendLimits({ BUDGET_USD: '-1', BUDGET_SESSION_SHARE: '1.5' })).toEqual({});
+    expect(parseSpendLimits({ BUDGET_USD: 'abc', BUDGET_SESSION_SHARE: '0' })).toEqual({});
+    expect(parseSpendLimits({ BUDGET_USD: ' 2 ', BUDGET_SESSION_SHARE: '0.5' })).toEqual({
+      budgetUsd: 2,
+      sessionShare: 0.5,
+    });
   });
 });

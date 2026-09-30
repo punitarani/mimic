@@ -161,6 +161,55 @@ export const DEFAULT_CONFIG: PipelineConfig = {
 };
 export const DEFAULT_CONFIG_LABEL = 'cfg.default.v4';
 
+/**
+ * Runtime spend limits (ADR-0034). Deploy settings, not pipeline config: they change what a mimic may spend, never
+ * what a prediction sees, so changing them keeps every config hash.
+ */
+export interface SpendLimits {
+  /** Total cap per mimic in USD; overrides the config's `session.budgetUsd`. */
+  budgetUsd?: number;
+  /** Share of the cap the learning session may spend; the rest is kept for the mimic page. */
+  sessionShare?: number;
+}
+
+export const DEFAULT_SESSION_SHARE = 0.8;
+
+export interface SpendCaps {
+  /** Nothing is spent past this: the gateway refuses every call for the mimic. */
+  totalUsd: number;
+  /** The session stops serving questions here, keeping the rest for asking, teaching and Persona.md. */
+  sessionUsd: number;
+}
+
+export function spendCaps(cfg: PipelineConfig, limits: SpendLimits = {}): SpendCaps {
+  const totalUsd = limits.budgetUsd ?? cfg.session.budgetUsd;
+  return { totalUsd, sessionUsd: totalUsd * (limits.sessionShare ?? DEFAULT_SESSION_SHARE) };
+}
+
+const SpendEnv = z.object({
+  BUDGET_USD: z.coerce.number().positive(),
+  BUDGET_SESSION_SHARE: z.coerce.number().gt(0).max(1),
+});
+
+/**
+ * `BUDGET_USD` and `BUDGET_SESSION_SHARE` from a Worker's vars. An unset or invalid value is left out, so its default
+ * applies; deploy preflight refuses invalid values before they get here (scripts/deploy/settings.mjs).
+ */
+export function parseSpendLimits(env: { BUDGET_USD?: string; BUDGET_SESSION_SHARE?: string }): SpendLimits {
+  const read = <K extends keyof typeof SpendEnv.shape>(k: K) => {
+    const raw = env[k]?.trim();
+    if (!raw) return undefined;
+    const r = SpendEnv.shape[k].safeParse(raw);
+    return r.success ? r.data : undefined;
+  };
+  const budgetUsd = read('BUDGET_USD');
+  const sessionShare = read('BUDGET_SESSION_SHARE');
+  return {
+    ...(budgetUsd !== undefined ? { budgetUsd } : {}),
+    ...(sessionShare !== undefined ? { sessionShare } : {}),
+  };
+}
+
 export function configHash(config: PipelineConfig): string {
   return sha256Hex(canonicalJson(PipelineConfig.parse(config)));
 }

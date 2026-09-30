@@ -22,7 +22,17 @@ import { type Domain, isScoredKind, learnsFrom, type PersonState } from '../type
 import { writeSnapshot } from './artifact';
 import { beliefFromLoaded, loadBeliefSources } from './belief';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
-import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
+import {
+  budgetSpent,
+  ctxFor,
+  type EngineDeps,
+  EngineError,
+  facetsFor,
+  jevModel,
+  loadConfig,
+  requireMimic,
+  sessionSpent,
+} from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
 import { invalidateItemStatsCache, MAX_POOL, MIN_POOL } from './session';
 
@@ -325,7 +335,8 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   const loaded = await loadMimicData(deps, m);
   const pool = loaded.questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled');
   if (pool.length >= MIN_POOL) return;
-  if (m.spendUsd >= cfg.session.budgetUsd) return;
+  // Candidates only feed the session, so refills stop with it and never draw on the page's reserve.
+  if (sessionSpent(deps, m, cfg)) return;
   const facets = await facetsFor(deps, m, cfg);
   const n = Math.min(cfg.generator.batchSize, MAX_POOL - pool.length + 4);
   const mix = cfg.generator.domainMix;
@@ -485,9 +496,10 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
       { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
     );
 
-  // Over budget every model call is refused, and the job would retry until dropped. The answer is kept as evidence
-  // and goes into the snapshot; only the reads that need a model are skipped.
-  if (m.spendUsd >= cfg.session.budgetUsd) return snapshot();
+  // Learning runs to the whole cap, so answers taught on the mimic page after the session still count (ADR-0034).
+  // Over it every model call is refused, and the job would retry until dropped. The answer is kept as evidence and
+  // goes into the snapshot; only the reads that need a model are skipped.
+  if (budgetSpent(deps, m, cfg)) return snapshot();
 
   // 1) Embed the Q&A (plus the "why").
   try {
@@ -696,6 +708,8 @@ export async function runHypotheses(
   const sel = cfg.selector;
   const k = sel.type === 'bald' || sel.type === 'voi' ? sel.k : 0;
   if (k < 2) return;
+  // Hypotheses only steer session selection, so they stop with the session's share.
+  if (sessionSpent(deps, m, cfg)) return;
   const cur = await deps.kv.get(`hyp:${m.id}`);
   if (cur) {
     try {

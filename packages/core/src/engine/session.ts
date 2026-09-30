@@ -54,6 +54,7 @@ import {
   fallbackModel,
   loadConfig,
   requireMimic,
+  sessionSpent,
   timed,
 } from './deps';
 
@@ -140,7 +141,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
   const current = questions.find((q) => q.status === 'served' && isSessionKind(q.kind));
   if (current) return { status: 'question', question: toPublic(current), progress };
   if (m.status !== 'learning') return { status: 'identity', progress };
-  if (m.spendUsd >= cfg.session.budgetUsd) return { status: 'budget', progress };
+  if (sessionSpent(deps, m, cfg)) return { status: 'budget', progress };
 
   const seq = maxSeq(questions) + 1;
   const rng = seededRng(`select:${m.id}:${seq}`);

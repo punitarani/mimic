@@ -59,7 +59,8 @@ Required:
 | `INVITE_CODES` | Comma-separated invite codes for the cohort |
 | `ADMIN_EMAILS` | Comma-separated emails allowed into `/lab` (the Access policy and the in-app check both use it) |
 
-Settings (optional; each unset one keeps the default in `apps/worker/wrangler.jsonc`), and the key each choice needs:
+Settings (optional; each unset one keeps the default in `apps/worker/wrangler.jsonc`, and the `BUDGET_*` defaults are
+repeated in `apps/web/wrangler.jsonc`), and the key each choice needs:
 
 | Name | Allowed | Default | Needs |
 | --- | --- | --- | --- |
@@ -67,6 +68,8 @@ Settings (optional; each unset one keeps the default in `apps/worker/wrangler.js
 | `ENRICH_PROVIDER` | `parallel`, `none` | `parallel` | `PARALLEL_API_KEY` for `parallel` |
 | `EMBEDDINGS_PROVIDER` | `workers-ai`, `openrouter` | `workers-ai` | — (the same 768-d bge-base model either way) |
 | `VECTOR_BACKEND` | `vectorize`, `sql` | `vectorize` | — |
+| `BUDGET_USD` | A number of US dollars above 0 | `0.75` | — (the spend cap per mimic; ADR-0034) |
+| `BUDGET_SESSION_SHARE` | A number above 0, at most 1 | `0.8` | — (the session's share of the cap; the rest is for the mimic page) |
 
 Fixtures and the hash embedder are for tests only, so preflight refuses them. Doppler's own metadata
 (`DOPPLER_CONFIG`, `DOPPLER_ENVIRONMENT`, `DOPPLER_PROJECT`) and any other synced names are ignored. A value moves

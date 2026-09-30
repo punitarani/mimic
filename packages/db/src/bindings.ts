@@ -7,6 +7,7 @@ import {
   type ModelCallRecord,
   type ModelCallTrace,
   PipelineConfig,
+  type SpendLimits,
   type Store,
   type VectorIndex,
   type VectorRecord,
@@ -202,13 +203,21 @@ export class StoreCallLog implements CallLog {
   }
 }
 
-/** Budget guard backed by `mimics.spend_usd` and the mimic's config `session.budgetUsd`. */
+/**
+ * Budget guard backed by `mimics.spend_usd` and the whole cap: `BUDGET_USD` when set, else the mimic's config
+ * `session.budgetUsd` (ADR-0034). The session's smaller share is enforced by the engine, which knows what a call is for.
+ */
 export class StoreBudget implements BudgetLedger {
   private readonly budgets = new Map<string, number>();
-  constructor(private readonly store: Store) {}
+  constructor(
+    private readonly store: Store,
+    private readonly limits: SpendLimits = {},
+  ) {}
   async get(mimicId: string) {
     const m = await this.store.getMimic(mimicId);
     if (!m) return null;
+    if (this.limits.budgetUsd !== undefined)
+      return { spendUsd: m.spendUsd, budgetUsd: this.limits.budgetUsd };
     let budget = this.budgets.get(m.configHash);
     if (budget === undefined) {
       const c = await this.store.getConfig(m.configHash);

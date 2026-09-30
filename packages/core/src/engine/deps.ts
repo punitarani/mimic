@@ -1,4 +1,14 @@
-import { configHash, DEFAULT_CONFIG, DEFAULT_CONFIG_LABEL, JEV_MODEL, LLM, PipelineConfig } from '../config';
+import {
+  configHash,
+  DEFAULT_CONFIG,
+  DEFAULT_CONFIG_LABEL,
+  JEV_MODEL,
+  LLM,
+  PipelineConfig,
+  type SpendCaps,
+  type SpendLimits,
+  spendCaps,
+} from '../config';
 import type { CallContext, Gateway } from '../gateway';
 import { unitHash } from '../hash';
 import type { JobQueue } from '../jobs';
@@ -26,6 +36,8 @@ export interface EngineDeps {
   defer?: (task: () => Promise<void>) => void;
   /** Receives phase timings (ms), e.g. for Server-Timing headers. */
   timing?: (phase: string, ms: number) => void;
+  /** Deploy-time spend limits (ADR-0034); unset fields fall back to the config's budget and an 80% session share. */
+  spend?: SpendLimits;
 }
 
 export class EngineError extends Error {
@@ -90,6 +102,29 @@ export function allocateArm<T extends { weight: number }>(
     if (u < 0) return arm;
   }
   return arms[arms.length - 1]!;
+}
+
+/** This mimic's caps: the session stops at `sessionUsd`; asking, teaching and Persona.md run to `totalUsd`. */
+export function capsFor(deps: EngineDeps, cfg: PipelineConfig): SpendCaps {
+  return spendCaps(cfg, deps.spend);
+}
+
+/** True once the session has spent its share: no new session questions, pool refills or hypotheses. */
+export function sessionSpent(
+  deps: EngineDeps,
+  m: Pick<MimicRecord, 'spendUsd'>,
+  cfg: PipelineConfig,
+): boolean {
+  return m.spendUsd >= capsFor(deps, cfg).sessionUsd;
+}
+
+/** True once the whole cap is spent; the gateway refuses every call for the mimic from here. */
+export function budgetSpent(
+  deps: EngineDeps,
+  m: Pick<MimicRecord, 'spendUsd'>,
+  cfg: PipelineConfig,
+): boolean {
+  return m.spendUsd >= capsFor(deps, cfg).totalUsd;
 }
 
 export function jevModel(deps: EngineDeps): string {
