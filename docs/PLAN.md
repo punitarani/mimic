@@ -732,7 +732,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
-**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and locks the field, and unlocks it only if the server rejects the code (ADR-0025). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
+**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and locks the field, and unlocks it only if the server rejects the code (ADR-0026). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
 **Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd ≥ session.budgetUsd`.
 

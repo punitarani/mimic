@@ -335,7 +335,32 @@ Checked on local dev data: one mimic's 9 missing MiMo predictions ran through th
 All 9 used the primary's sealed state, and 8 were scored; the ninth question was served but never answered. A
 re-run reported 0 missing.
 
-## ADR-0025 — Invite links (2026-09-30)
+## ADR-0025 — Flash-tier shadows: MiMo V2.6 Flash and Qwen3.8 Flash replace MiMo V2.6 Pro (2026-09-30)
+
+After the prod backfill, the lab showed MiMo V2.6 Pro essentially tied with GLM 5.3 Flash:
+
+| Model | Accuracy | Lift | Log loss | ECE | $ per 1k predictions | p50 latency |
+| --- | --- | --- | --- | --- | --- | --- |
+| MiMo V2.6 Pro | 62.3% | +6.4 | 1.088 | 0.053 | $1.57 | 12.0 s |
+| GLM 5.3 Flash | 62.2% | +6.3 | 1.091 | 0.117 | $0.60 | 1.5 s |
+
+That was on n = 147 and 152 questions, where the gap is noise. MiMo Pro cost 2.6× as much and was 8× slower. It did
+have the best calibration (ECE 0.053), so it stays in the record.
+
+`cfg.default.v3` keeps the v1 shadows and replaces MiMo V2.6 Pro with two Flash-tier models:
+
+- `xiaomi/mimo-v2.6-flash`, at $0.14 and $0.28 per million input and output tokens;
+- `qwen/qwen3.8-flash`, at $0.15 and $0.47.
+
+Both support structured outputs, and each returned a valid `predict.v1` distribution in a live call. The live test
+covers every shadow in the default config.
+
+Configs are immutable, so mimics created under v2 keep MiMo Pro and its predictions stay. New mimics get v3. The two
+new shadows reach questions served earlier through `pnpm backfill`, which now takes several predictors: repeated
+`--predictor` flags, or a comma-separated list, which is also what the Actions workflow takes. Every model is checked
+before anything is enqueued, and each predictor gets its own job.
+
+## ADR-0026 — Invite links (2026-09-30)
 
 An invite can be shared as a link instead of a code to type: `/new?invite=CODE`, or `/?invite=CODE`, where the
 landing page's button carries it to `/new`.

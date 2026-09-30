@@ -157,20 +157,24 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v2 (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v3 (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(
-      'c597daa8c51b8105827893241dfcbf8396ca4dc4e0f3aa8d197447aca3f7d15c',
+      '076c57200e027d35b7a23582003c1161501b635469800fd1189c369d97160993',
     );
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
-    // v2 is v1 plus the MiMo shadow (ADR-0024); mimics created under v1 still resolve to v1's row.
-    const v1: PipelineConfig = {
+    // Older defaults differ only in their shadows, and mimics created under them still resolve to their rows.
+    const withShadows = (shadows: string[]): PipelineConfig => ({
       ...DEFAULT_CONFIG,
-      predictor: {
-        ...DEFAULT_CONFIG.predictor,
-        shadows: DEFAULT_CONFIG.predictor.shadows.filter((s) => s !== 'llm:xiaomi/mimo-v2.6-pro'),
-      },
-    };
-    expect(configHash(v1)).toBe('913b29e8d48a8ba54702cb7878cc1e9079e379a0c784e5a213328a015b10843e');
+      predictor: { ...DEFAULT_CONFIG.predictor, shadows },
+    });
+    const v1 = DEFAULT_CONFIG.predictor.shadows.slice(0, 3);
+    expect(configHash(withShadows(v1))).toBe(
+      '913b29e8d48a8ba54702cb7878cc1e9079e379a0c784e5a213328a015b10843e',
+    );
+    // v2 (ADR-0024) added MiMo V2.6 Pro; v3 (ADR-0025) replaced it with MiMo V2.6 Flash and Qwen3.8 Flash.
+    expect(configHash(withShadows([...v1, 'llm:xiaomi/mimo-v2.6-pro']))).toBe(
+      'c597daa8c51b8105827893241dfcbf8396ca4dc4e0f3aa8d197447aca3f7d15c',
+    );
   });
 
   it('unitHash is stable and in [0, 1)', () => {

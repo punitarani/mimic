@@ -1,6 +1,6 @@
 /**
  * Invite links. `/new?invite=CODE` fills the invite code in and locks the field; `/?invite=CODE` carries the code
- * through the landing page's button (PLAN §11, ADR-0025). The code is only ever checked server-side.
+ * through the landing page's button (PLAN §11, ADR-0026). The code is only ever checked server-side.
  */
 
 export const INVITE_PARAM = 'invite';

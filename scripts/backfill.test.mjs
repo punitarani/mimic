@@ -26,6 +26,7 @@ const openRouter = async () =>
         name: 'Xiaomi: MiMo-V2.6-Pro',
         supported_parameters: ['structured_outputs'],
       },
+      { id: 'qwen/qwen3.8-flash', name: 'Qwen: Qwen3.8 Flash', supported_parameters: ['structured_outputs'] },
       { id: 'acme/plain', name: 'Plain', supported_parameters: ['temperature'] },
     ],
   });
@@ -33,13 +34,22 @@ const openRouter = async () =>
 describe('backfill arguments', () => {
   it('parses a predictor, environment, scope and confirmation', () => {
     assert.deepEqual(parseBackfillArgs(['--predictor', MIMO, '--env', 'prod', '--consented', '--yes']), {
-      predictor: MIMO,
+      predictors: [MIMO],
       env: 'prod',
       consented: true,
       mimics: [],
       yes: true,
     });
     assert.equal(parseBackfillArgs(['--predictor', MIMO]).env, 'local');
+  });
+
+  it('takes several predictors, repeated or as a list', () => {
+    const QWEN = 'llm:qwen/qwen3.8-flash';
+    assert.deepEqual(parseBackfillArgs(['--predictor', `${MIMO}, ${QWEN}`]).predictors, [MIMO, QWEN]);
+    assert.deepEqual(
+      parseBackfillArgs(['--predictor', MIMO, '--predictor', QWEN, '--predictor', MIMO]).predictors,
+      [MIMO, QWEN],
+    );
   });
 
   it('refuses malformed predictors, environments and mimic IDs', () => {
@@ -135,6 +145,28 @@ describe('backfill run', () => {
     assert.deepEqual(pushed, [
       { body: { type: 'backfill.predictor', runId: 'R', predictorId: MIMO, consentedOnly: true } },
     ]);
+  });
+
+  it('enqueues one job per predictor, and nothing at all if any model fails its check', async () => {
+    const QWEN = 'llm:qwen/qwen3.8-flash';
+    const { target, pushed } = fakeRemote();
+    const opts = parseBackfillArgs(['--predictor', `${MIMO},${QWEN}`, '--env', 'prod', '--yes']);
+    assert.deepEqual(await backfill(opts, target, { fetchImpl: openRouter, log: quiet, runId: 'R' }), {
+      missing: 24,
+      enqueued: 2,
+    });
+    assert.deepEqual(
+      pushed.map((p) => p.body.predictorId),
+      [MIMO, QWEN],
+    );
+
+    const bad = fakeRemote();
+    const withTypo = parseBackfillArgs(['--predictor', `${MIMO},llm:acme/typo`, '--env', 'prod', '--yes']);
+    await assert.rejects(
+      backfill(withTypo, bad.target, { fetchImpl: openRouter, log: quiet }),
+      /not an OpenRouter/,
+    );
+    assert.equal(bad.pushed.length, 0);
   });
 
   it('does nothing when nothing is missing, even with --yes', async () => {

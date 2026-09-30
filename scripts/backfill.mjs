@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// `pnpm backfill --predictor <id> [--env local|preview|prod] [--consented] [--mimic <id>]... [--yes]`
+// `pnpm backfill --predictor <id>[,<id>...] [--env local|preview|prod] [--consented] [--mimic <id>]... [--yes]`
 //
-// Adds a predictor (usually a new shadow model) to questions that were served before it existed (ADR-0024). Each
+// Adds predictors (usually new shadow models) to questions that were served before they existed (ADR-0024). Each
 // prediction runs on the sealed state blob the primary used, through the same `predict.shadow` job as a live shadow,
 // so it is sealed (PLAN §3.1), logged through the gateway, and scored against the answer.
 //
 // A dry run by default: checks the model, counts the missing predictions per mimic, and estimates cost from what
-// this predictor has cost so far (never a hardcoded price). `--yes` enqueues one job; the worker fans it out per
+// this predictor has cost so far (never a hardcoded price). `--yes` enqueues one job per predictor; the worker fans it out per
 // mimic. Re-running is safe and shows what's left: the count falls to 0 as the queue drains.
 //
 //   local           the `pnpm dev` worker (POST /__jobs) and the local D1
@@ -23,18 +23,20 @@ const MIMIC_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const LOCAL_WORKER = 'http://127.0.0.1:8787';
 
 export function parseBackfillArgs(argv) {
-  const out = { predictor: null, env: 'local', consented: false, mimics: [], yes: false };
+  const out = { predictors: [], env: 'local', consented: false, mimics: [], yes: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--predictor') out.predictor = argv[++i];
+    // Repeatable, or comma- or space-separated (as the Actions workflow passes a list).
+    if (a === '--predictor') out.predictors.push(...(argv[++i] ?? '').split(/[\s,]+/).filter(Boolean));
     else if (a === '--env') out.env = argv[++i];
     else if (a === '--mimic') out.mimics.push(argv[++i]);
     else if (a === '--consented') out.consented = true;
     else if (a === '--yes') out.yes = true;
     else throw new Error(`unknown argument: ${a}`);
   }
-  if (!out.predictor || !PREDICTOR_ID.test(out.predictor))
+  if (!out.predictors.length || !out.predictors.every((p) => PREDICTOR_ID.test(p)))
     throw new Error('--predictor must look like llm:<vendor>/<model> or jev:<vendor>/<model>');
+  out.predictors = [...new Set(out.predictors)];
   if (!ENVS.includes(out.env)) throw new Error(`--env must be one of ${ENVS.join(', ')}`);
   for (const m of out.mimics) if (!MIMIC_ID.test(m ?? '')) throw new Error(`--mimic ${m} is not a mimic ID`);
   return out;
@@ -188,43 +190,49 @@ export function remoteTarget(env, cf, workerConfig = readConfig(WORKER_CONFIG)) 
 
 const usd = (x) => (x === 0 ? '$0' : `$${x < 0.01 ? x.toPrecision(2) : x.toFixed(2)}`);
 
+/** Plans (and with --yes enqueues) each predictor in turn. Every model is checked before anything is enqueued. */
 export async function backfill(opts, target, { fetchImpl = fetch, log = console.log, runId } = {}) {
   const scope = opts.mimics.length
     ? `${opts.mimics.length} named mimic(s)`
     : opts.consented
       ? 'consented mimics only'
       : 'every mimic';
-  log(`Backfill ${opts.predictor} on ${target.name} (${scope})`);
-  log(`  model: ${await checkModel(opts.predictor, fetchImpl)}`);
+  const models = [];
+  for (const predictor of opts.predictors) models.push(await checkModel(predictor, fetchImpl));
 
-  const rows = await target.query(missingQuery(opts));
-  const missing = rows.reduce((s, r) => s + Number(r.missing), 0);
-  log(`  missing: ${missing} prediction(s) across ${rows.length} mimic(s)`);
-  const [cost] = await target.query(costQuery(opts.predictor));
-  if (cost && Number(cost.n) > 0) {
-    const avg = Number(cost.avg);
-    const estimate = missing ? `, so about ${usd(avg * missing)} for these` : '';
-    log(`  cost: ${usd(avg)} per prediction over ${cost.n} so far${estimate}`);
-  } else {
-    log(
-      '  cost: no predictions from this model yet, so no estimate (it is charged per call, from usage.cost)',
-    );
-  }
-
-  if (!missing) {
-    log('Nothing to backfill.');
-    return { missing, enqueued: 0 };
-  }
-  if (!opts.yes) {
-    log('Dry run: nothing enqueued. Re-run with --yes to enqueue.');
-    return { missing, enqueued: 0 };
-  }
   const id = runId ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
-  const jobs = backfillJobs(opts, id);
-  for (const job of jobs) await target.publish(job);
-  log(`Enqueued ${jobs.length} ${jobs[0].type} job(s) (run ${id}). The worker fans out per mimic;`);
-  log('re-run without --yes to watch the missing count fall to 0.');
-  return { missing, enqueued: jobs.length };
+  let missing = 0;
+  let enqueued = 0;
+  for (const [i, predictor] of opts.predictors.entries()) {
+    const one = { ...opts, predictor };
+    log(`Backfill ${predictor} on ${target.name} (${scope})`);
+    log(`  model: ${models[i]}`);
+    const rows = await target.query(missingQuery(one));
+    const n = rows.reduce((s, r) => s + Number(r.missing), 0);
+    missing += n;
+    log(`  missing: ${n} prediction(s) across ${rows.length} mimic(s)`);
+    const [cost] = await target.query(costQuery(predictor));
+    if (cost && Number(cost.n) > 0) {
+      const avg = Number(cost.avg);
+      const estimate = n ? `, so about ${usd(avg * n)} for these` : '';
+      log(`  cost: ${usd(avg)} per prediction over ${cost.n} so far${estimate}`);
+    } else {
+      log(
+        '  cost: no predictions from this model yet, so no estimate (it is charged per call, from usage.cost)',
+      );
+    }
+    if (!n) {
+      log('  nothing to backfill');
+    } else if (opts.yes) {
+      const jobs = backfillJobs(one, id);
+      for (const job of jobs) await target.publish(job);
+      enqueued += jobs.length;
+      log(`  enqueued ${jobs.length} ${jobs[0].type} job(s) (run ${id}); the worker fans out per mimic`);
+    }
+  }
+  if (missing && !opts.yes) log('Dry run: nothing enqueued. Re-run with --yes to enqueue.');
+  if (enqueued) log('Re-run without --yes to watch the missing counts fall to 0.');
+  return { missing, enqueued };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
