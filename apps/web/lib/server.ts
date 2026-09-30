@@ -1,14 +1,30 @@
 import 'server-only';
 import { BudgetExceededError, type EngineDeps, EngineError, type MimicRecord, ulid } from '@mimic/core';
 import { engineDeps, type MimicBindings } from '@mimic/db/runtime';
-import { getCloudflareContext } from '@opennextjs/cloudflare';
+import { getCloudflareContext, initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 import { cookies, headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
 export const PID_COOKIE = 'mimic_pid';
 
+const CONTEXT = Symbol.for('__cloudflare-context__');
+const DEV_INIT = Symbol.for('mimic.dev-context-init');
+
+/**
+ * In `next dev`, bindings come from wrangler's getPlatformProxy. OpenNext's own fallback would persist to
+ * apps/web/.wrangler; this makes every Next process use the state dir shared with the worker's `wrangler dev`,
+ * and initializes it once per process.
+ */
+async function devContext(): Promise<void> {
+  const g = globalThis as unknown as Record<symbol, unknown>;
+  if (g[CONTEXT]) return;
+  g[DEV_INIT] ??= initOpenNextCloudflareForDev({ persist: { path: '../../.wrangler/state/v3' } });
+  await g[DEV_INIT];
+}
+
 export async function env(): Promise<CloudflareEnv> {
+  if (process.env.NODE_ENV === 'development') await devContext();
   return (await getCloudflareContext({ async: true })).env;
 }
 

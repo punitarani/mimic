@@ -9,3 +9,6 @@ SESSION_SECRET=dev-only-session-secret-change-me
 ADMIN_EMAILS=dev@localhost
 INVITE_CODES=mimic-dev
 DEV_MODE=1
+# Offline identity demo with fictional people: uncomment both.
+# SEARCH_PROVIDER=fixture
+# ENRICH_PROVIDER=fixture

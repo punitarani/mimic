@@ -1,5 +1,11 @@
 import { join } from 'node:path';
-import { HashEmbedder, makeProviders } from '@mimic/adapters';
+import {
+  FixtureEnricher,
+  FixturePeopleSearch,
+  HashEmbedder,
+  makeProviders,
+  type Providers,
+} from '@mimic/adapters';
 import { EMBEDDING_MODEL, type EngineDeps, Gateway, type Job, MemoryQueue, runJob, ulid } from '@mimic/core';
 import { SqlVectors, StoreBudget, StoreCallLog } from '@mimic/db';
 import { FsBlobs, MemoryBlobs, MemoryKv, openLocalDb } from '@mimic/db/local';
@@ -7,6 +13,7 @@ import { FakeDecisions, FakeLlm } from './fakes';
 
 export interface LocalEngine {
   deps: EngineDeps;
+  providers: Providers;
   queue: MemoryQueue;
   close: () => void;
   /** Runs queued jobs inline until the queue is empty (delays are ignored). */
@@ -28,7 +35,7 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
   const { db, store, close } = await openLocalDb(opts.db);
   const blobs = opts.blobsDir ? new FsBlobs(opts.blobsDir) : new MemoryBlobs();
   const clock = opts.clock ?? (() => Date.now());
-  const providers =
+  const providers: Providers =
     opts.providers === 'live'
       ? makeProviders(
           { ...process.env, EMBEDDINGS_PROVIDER: process.env.EMBEDDINGS_PROVIDER ?? 'openrouter' },
@@ -36,7 +43,13 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
             embeddingModel: EMBEDDING_MODEL,
           },
         )
-      : { decisions: new FakeDecisions(), llm: new FakeLlm(), embedder: new HashEmbedder() };
+      : {
+          decisions: new FakeDecisions(),
+          llm: new FakeLlm(),
+          embedder: new HashEmbedder(),
+          search: new FixturePeopleSearch(),
+          enricher: new FixtureEnricher(),
+        };
   const gateway = new Gateway({
     ...providers,
     log: new StoreCallLog(store, blobs),
@@ -71,7 +84,7 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
     }
     return n;
   };
-  return { deps, queue, close, drain };
+  return { deps, providers, queue, close, drain };
 }
 
 export function defaultDataPath(name: string): string {

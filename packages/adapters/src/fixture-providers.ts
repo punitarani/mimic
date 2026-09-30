@@ -1,0 +1,37 @@
+import type { Enricher, EnrichmentResult, PeopleSearch, PeopleSearchResult } from '@mimic/core';
+import exaFixture from '../fixtures/exa-people-search.json';
+import parallelFixture from '../fixtures/parallel-task-result.json';
+import { exaCandidate, parallelFacts } from './search';
+
+/**
+ * Offline providers backed by the recorded fixtures (fictional people). For demos, screenshots and working without
+ * search keys: `SEARCH_PROVIDER=fixture`, `ENRICH_PROVIDER=fixture`. Never used unless selected explicitly.
+ */
+export class FixturePeopleSearch implements PeopleSearch {
+  readonly provider = 'fixture';
+  calls = 0;
+  async search(_query: string, opts: { numResults: number }): Promise<PeopleSearchResult> {
+    this.calls++;
+    const results = (exaFixture as { results: Parameters<typeof exaCandidate>[0][] }).results;
+    return {
+      candidates: results.slice(0, opts.numResults).map(exaCandidate),
+      costUsd: 0,
+      latencyMs: 0,
+      raw: exaFixture,
+    };
+  }
+}
+
+export class FixtureEnricher implements Enricher {
+  readonly provider = 'fixture';
+  calls = 0;
+  async enrich(): Promise<EnrichmentResult> {
+    this.calls++;
+    return {
+      facts: parallelFacts(parallelFixture as Parameters<typeof parallelFacts>[0]),
+      costUsd: 0,
+      latencyMs: 0,
+      raw: parallelFixture,
+    };
+  }
+}

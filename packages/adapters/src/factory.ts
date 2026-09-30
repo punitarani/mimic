@@ -1,4 +1,5 @@
 import type { DecisionProvider, Embedder, Enricher, LlmClient, PeopleSearch } from '@mimic/core';
+import { FixtureEnricher, FixturePeopleSearch } from './fixture-providers';
 import type { FetchLike } from './http';
 import { HashEmbedder, WorkersAiEmbedder } from './misc';
 import { JevDecisions, OpenRouterChat, OpenRouterEmbedder } from './openrouter';
@@ -13,9 +14,9 @@ export interface ProviderEnv {
   EGRESS_RELAY?: string;
   /** 'workers-ai' | 'openrouter' | 'hash'. Defaults to Workers AI when the AI binding exists. */
   EMBEDDINGS_PROVIDER?: string;
-  /** People search provider: 'exa' (default) | 'perplexity' | 'none'. */
+  /** People search provider: 'exa' (default) | 'perplexity' | 'fixture' | 'none'. */
   SEARCH_PROVIDER?: string;
-  /** Enrichment provider: 'parallel' (default) | 'none'. */
+  /** Enrichment provider: 'parallel' (default) | 'fixture' | 'none'. */
   ENRICH_PROVIDER?: string;
 }
 
@@ -51,13 +52,16 @@ export function makeProviders(
   const searchProvider = env.SEARCH_PROVIDER ?? 'exa';
   if (searchProvider === 'exa')
     p.search = new ExaPeopleSearch({ ...http, ...(env.EXA_API_KEY ? { apiKey: env.EXA_API_KEY } : {}) });
+  else if (searchProvider === 'fixture') p.search = new FixturePeopleSearch();
   else if (searchProvider === 'perplexity') {
     p.search = new PerplexityPeopleSearch({
       ...http,
       ...(env.PERPLEXITY_API_KEY ? { apiKey: env.PERPLEXITY_API_KEY } : {}),
     });
   }
-  if ((env.ENRICH_PROVIDER ?? 'parallel') === 'parallel') {
+  const enrichProvider = env.ENRICH_PROVIDER ?? 'parallel';
+  if (enrichProvider === 'fixture') p.enricher = new FixtureEnricher();
+  else if (enrichProvider === 'parallel') {
     p.enricher = new ParallelEnricher({
       ...http,
       ...(env.PARALLEL_API_KEY ? { apiKey: env.PARALLEL_API_KEY } : {}),

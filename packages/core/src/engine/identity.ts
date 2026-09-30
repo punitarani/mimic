@@ -189,6 +189,7 @@ export const MAX_CANDIDATES = 8;
 export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKey?: string): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   if (!m.consentSearch) return; // declining search makes zero search calls
+  if (m.identityState !== 'searching') return; // skipped (or already done) before the job ran
   if ((await deps.store.listCandidates(m.id)).length > 0) return;
   const now = deps.clock();
 
@@ -274,6 +275,8 @@ export async function runIdentitySearch(deps: EngineDeps, mimicId: string, jobKe
     createdAt: now,
   }));
   await deps.store.insertCandidates(recs);
+  const latest = await requireMimic(deps, m.id);
+  if (latest.identityState !== 'searching') return; // the person skipped while we searched
   await deps.store.updateMimic(m.id, {
     identityState: recs.length ? 'candidates' : 'none_found',
     updatedAt: deps.clock(),

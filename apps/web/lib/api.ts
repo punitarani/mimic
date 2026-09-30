@@ -1,0 +1,106 @@
+import type { AnswerResult, NextResult, PlaygroundPrediction, PublicQuestion, UiSnapshot } from '@mimic/core';
+
+/** Browser → our route handlers only. Keys stay server-side (PLAN §3.10). */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    headers: body === undefined ? {} : { 'content-type': 'application/json' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    credentials: 'same-origin',
+  });
+  const text = await res.text();
+  const json = text ? (JSON.parse(text) as unknown) : null;
+  if (!res.ok) {
+    const msg = (json as { error?: string } | null)?.error ?? `Request failed (${res.status})`;
+    throw new ApiError(res.status, msg);
+  }
+  return json as T;
+}
+
+export interface IntakeRequest {
+  inviteCode: string;
+  name: string;
+  location: string;
+  occupation?: string;
+  employer?: string;
+  link?: string;
+  attestSelf: true;
+  consentSearch: boolean;
+  consentResearch: boolean;
+}
+
+export interface IdentityView {
+  status: UiSnapshot['mimic']['identityState'];
+  candidates: Array<{
+    id: string;
+    name: string;
+    headline: string | null;
+    location: string | null;
+    url: string;
+    source: string;
+    provider: string;
+    samePerson: number | null;
+    status: 'proposed' | 'confirmed' | 'rejected';
+  }>;
+  facts: Array<{
+    id: string;
+    predicate: string;
+    object: string;
+    source: string;
+    sourceUrl: string | null;
+    userState: 'active' | 'removed';
+  }>;
+}
+
+export interface AnswerRequest {
+  questionId: string;
+  value: string;
+  why?: string;
+  latencyMs: number;
+  idempotencyKey: string;
+}
+
+export interface Draft {
+  type: PublicQuestion['type'];
+  prompt: string;
+  options: PublicQuestion['options'];
+}
+
+export const api = {
+  createMimic: (b: IntakeRequest) => call<{ mimicId: string; identity: boolean }>('POST', '/api/mimics', b),
+  listMimics: () =>
+    call<{
+      mimics: Array<{
+        id: string;
+        displayName: string;
+        status: string;
+        identityState: string;
+        createdAt: number;
+      }>;
+    }>('GET', '/api/mimics'),
+  snapshot: (id: string) => call<UiSnapshot>('GET', `/api/mimics/${id}`),
+  identity: (id: string) => call<IdentityView>('GET', `/api/mimics/${id}/identity`),
+  confirm: (id: string, candidateId: string | null) =>
+    call<{ ok: true }>('POST', `/api/mimics/${id}/identity/confirm`, { candidateId }),
+  finishIdentity: (id: string) => call<{ ok: true }>('POST', `/api/mimics/${id}/identity/finish`),
+  setFact: (id: string, factId: string, userState: 'active' | 'removed') =>
+    call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
+  next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),
+  answer: (id: string, b: AnswerRequest) => call<AnswerResult>('POST', `/api/mimics/${id}/answers`, b),
+  draft: (id: string, scenario: string) =>
+    call<{ draft: Draft }>('POST', `/api/mimics/${id}/ask`, { scenario }),
+  predict: (id: string, question: Draft & { rationale: boolean }) =>
+    call<PlaygroundPrediction>('POST', `/api/mimics/${id}/ask`, { question }),
+  stop: (id: string) => call<{ snapshotVersion: number | null }>('POST', `/api/mimics/${id}/stop`),
+  remove: (id: string) => call<{ deleted: true }>('DELETE', `/api/mimics/${id}`),
+};

@@ -6,3 +6,6 @@ PARALLEL_API_KEY=
 PERPLEXITY_API_KEY=
 EGRESS_RELAY=http://127.0.0.1:8790
 DEV_MODE=1
+# Offline identity demo with fictional people: uncomment both.
+# SEARCH_PROVIDER=fixture
+# ENRICH_PROVIDER=fixture

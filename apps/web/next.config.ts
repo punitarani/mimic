@@ -1,4 +1,3 @@
-import { initOpenNextCloudflareForDev } from '@opennextjs/cloudflare';
 import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
@@ -10,5 +9,5 @@ const nextConfig: NextConfig = {
 
 export default nextConfig;
 
-// Local bindings (D1/R2/KV/Queues) shared with `wrangler dev` of apps/worker via the same persist dir.
-initOpenNextCloudflareForDev({ persist: { path: '../../.wrangler/state/v3' } });
+// Local bindings are initialized lazily in lib/server.ts (see devContext) so every Next process shares
+// ../../.wrangler/state with `wrangler dev` of apps/worker.

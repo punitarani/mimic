@@ -1,1 +1,95 @@
 @import "tailwindcss";
+
+/*
+ * PLAN §10.2 — a portrait being drawn from answers. Color carries meaning:
+ * graphite = the person's answers, ink = the mimic's predictions, moss / rust = match / miss.
+ * Cool neutral background (not cream). Serif for prompts; one neutral sans for chrome.
+ */
+@theme {
+  --color-canvas: #eef1f4;
+  --color-surface: #f8f9fb;
+  --color-raised: #ffffff;
+  --color-line: #d9dee5;
+  --color-line-strong: #b9c1cc;
+  --color-muted: #66707d;
+  --color-graphite: #262a31;
+  --color-graphite-soft: #454b55;
+  --color-ink: #2d4fb3;
+  --color-ink-soft: #dfe6f7;
+  --color-ink-strong: #213c8c;
+  --color-moss: #4a7f62;
+  --color-moss-soft: #deebe3;
+  --color-rust: #a9543a;
+  --color-rust-soft: #f3e2dc;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif:
+    "Iowan Old Style", "Palatino Linotype", Palatino, "Source Serif 4", "Source Serif Pro", Georgia, serif;
+
+  --radius-card: 14px;
+  --shadow-card: 0 1px 2px rgb(20 30 45 / 0.05), 0 4px 16px rgb(20 30 45 / 0.04);
+}
+
+html {
+  background: var(--color-canvas);
+  color: var(--color-graphite);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100dvh;
+}
+
+::selection {
+  background: var(--color-ink-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.prompt {
+  font-family: var(--font-serif);
+  font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.15rem);
+  line-height: 1.22;
+  letter-spacing: -0.005em;
+  text-wrap: balance;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Only the reveal and the fidelity update animate (PLAN §10.2). */
+@keyframes reveal-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-reveal {
+  animation: reveal-in 180ms ease-out both;
+}
+.fidelity-motion {
+  transition:
+    cx 600ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    r 600ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-reveal {
+    animation: none;
+  }
+  .fidelity-motion {
+    transition: none;
+  }
+}
