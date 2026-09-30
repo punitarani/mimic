@@ -45,14 +45,16 @@ export const LLM = {
   luna: 'openai/gpt-6-luna',
   deepseek: 'deepseek/deepseek-v4.1-flash',
   glm: 'z-ai/glm-5.3-flash',
-  mimo: 'xiaomi/mimo-v2.6-pro',
+  mimoFlash: 'xiaomi/mimo-v2.6-flash',
+  qwenFlash: 'qwen/qwen3.8-flash',
 } as const;
 export const EMBEDDING_MODEL = 'baai/bge-base-en-v1.5';
 
 /**
- * `cfg.default.v2`: `cfg.default.v1` plus the MiMo V2.6 Pro shadow (ADR-0024). Configs are immutable, so mimics
- * created under v1 keep v1; `pnpm backfill` adds the new shadow to their served questions. Deviation (ADR-0004):
- * generator and reflector default to DeepSeek V4.1 Flash, not GPT-6 Luna.
+ * `cfg.default.v3`: the v1 shadows plus MiMo V2.6 Flash and Qwen3.8 Flash (ADR-0025). v2 added MiMo V2.6 Pro
+ * (ADR-0024); v3 drops it, since Flash-tier models cost a fraction as much. Configs are immutable, so older mimics keep
+ * the config they were created with; `pnpm backfill` adds new shadows to their served questions. Deviation
+ * (ADR-0004): generator and reflector default to DeepSeek V4.1 Flash, not GPT-6 Luna.
  */
 export const DEFAULT_CONFIG: PipelineConfig = {
   version: 1,
@@ -68,7 +70,13 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   selector: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
   predictor: {
     primary: `jev:${JEV_MODEL}`,
-    shadows: [`llm:${LLM.luna}`, `llm:${LLM.deepseek}`, `llm:${LLM.glm}`, `llm:${LLM.mimo}`],
+    shadows: [
+      `llm:${LLM.luna}`,
+      `llm:${LLM.deepseek}`,
+      `llm:${LLM.glm}`,
+      `llm:${LLM.mimoFlash}`,
+      `llm:${LLM.qwenFlash}`,
+    ],
   },
   stateBuilder: { strategy: 'full', budgetTokens: 8000, retrievalK: 12, recentN: 6 },
   traitReader: { type: 'jev', everyN: 1 },
@@ -78,7 +86,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   session: { target: 30, budgetUsd: 0.5 },
   embedding: { model: EMBEDDING_MODEL },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v2';
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v3';
 
 export function configHash(config: PipelineConfig): string {
   return sha256Hex(canonicalJson(PipelineConfig.parse(config)));

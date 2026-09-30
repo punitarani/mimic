@@ -1,6 +1,6 @@
 # Mimic: guide for Claude Code
 
-Mimic learns a person from a short, adaptive Q&A session and persists a "mimic" that predicts their decisions. It is also a research platform for comparing cheap LLMs (GPT-6 Luna, DeepSeek V4.1 Flash, GLM 5.3 Flash) against a decision model (TypeSafe Jev) at that task.
+Mimic learns a person from a short, adaptive Q&A session and persists a "mimic" that predicts their decisions. It is also a research platform for comparing cheap LLMs (GPT-6 Luna, DeepSeek V4.1 Flash, GLM 5.3 Flash, MiMo V2.6 Flash, Qwen3.8 Flash) against a decision model (TypeSafe Jev) at that task.
 
 - Spec (source of truth): `docs/PLAN.md`
 - Decision log: `docs/DECISIONS.md`. Add one short ADR per deviation from the plan.
@@ -22,7 +22,7 @@ pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Worke
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
 pnpm eval -- <export|replay|select|import|report|session> ...
-pnpm backfill --predictor <id> [--env local|prod] [--yes]   # run a new predictor over served questions (ADR-0024)
+pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--yes]   # run new predictors over served questions (ADR-0024)
 ```
 
 `pnpm dev` serves the web app on http://localhost:3000 and the worker on http://localhost:8787. It copies
@@ -70,7 +70,7 @@ If a task seems to require breaking one of these, stop and ask.
 - Queue handlers are idempotent (use the `jobs` ledger). Derived-state writes are monotonic by `seqUpTo`.
 - Pin Jev to `typesafe/jev-1.13`. Batch all Jev questions that share a state into one request, and keep states within the §9.9 token budget (Jev context is 32K).
 - Don't send `temperature` to any LLM. Use `reasoning.effort`. JSON-schema calls set `provider.require_parameters: true`.
-- Default LLM is `deepseek/deepseek-v4.1-flash`, routed to Wafer first (ADR-0004); GPT-6 Luna and GLM 5.3 Flash are alternatives and shadows, and MiMo V2.6 Pro is a shadow (`cfg.default.v2`). Adding a predictor means a new config plus `pnpm backfill` for questions already served (ADR-0024).
+- Default LLM is `deepseek/deepseek-v4.1-flash`, routed to Wafer first (ADR-0004); GPT-6 Luna and GLM 5.3 Flash are alternatives and shadows, as are MiMo V2.6 Flash and Qwen3.8 Flash (`cfg.default.v3`, ADR-0025). Adding a predictor means a new config plus `pnpm backfill` for questions already served (ADR-0024).
 - Order prompts for caching: stable prefix (system, ontology, rules) first, variable content last.
 - Test with Vitest, using recorded fixtures in `packages/adapters/fixtures/`. CI makes no live calls. Worker code tests use `@cloudflare/vitest-pool-workers`.
 - Use simulated users for smoke tests only. Never report metrics from LLM-simulated users.
