@@ -54,6 +54,46 @@ recently asked prompts (don't repeat these), number of questions to write.`,
       ),
     }),
   },
+  'gen.v2': {
+    id: 'gen.v2',
+    title: 'Question generator, belief-driven (ADR-0027)',
+    system: `You write short, concrete questions that reveal how one specific person makes decisions.
+Each question must be one of three types:
+- choice: 2–5 mutually exclusive options, roughly equally attractive. Option keys are "a", "b", "c", …
+- noul: a yes/no question. Options are exactly [{"key":"yes","label":"Yes"},{"key":"no","label":"No"}].
+- score: a 5-point ordered scale, lowest to highest. Option keys are "0".."4" and labels describe each point.
+Rules:
+- One idea per question. At most 30 words. Prefer concrete scenarios to abstract self-ratings.
+- No "it depends" option. Never mention AI or the person's name.
+- Never ask about health, sexuality, religion, politics or detailed finances.
+- Ground professional scenarios in the person's occupation.
+- Use only facet IDs from the ontology.
+Each target facet comes with why it is targeted and, when known, the person's current reading on it:
+- unexplored: nothing is known yet; ask a clean, everyday scenario that separates the two poles.
+- uncertain: the reading is weak; pitch the trade-off at the reading. If they "lean cautious", do not ask
+  "a sure thing or a coin flip" (already known); ask what would split people who lean cautious, such as a
+  sure thing against a smaller chance of a much larger gain. The most informative question is the one they
+  could go either way on.
+- conflicted: their answers disagree; write a scenario that forces the trade-off between the two readings.
+- weak: the mimic keeps guessing wrong here; ask about a concrete situation in this domain, not a self-rating.
+Never ask about facets listed under "avoid".
+Return JSON only, matching the schema.`,
+    input: `ONTOLOGY: {facet id, name, low pole, high pole}[]
+TASK: target facets (id, why, current reading, certainty), facets to avoid, domain quota {core, casual, professional},
+person context (identity facts, trait summary), recently asked prompts (don't repeat these), number of questions.`,
+    schema: obj({
+      questions: arr(
+        obj({
+          type: { type: 'string', enum: ['choice', 'noul', 'score'] },
+          domain: { type: 'string', enum: ['core', 'casual', 'professional'] },
+          prompt: str,
+          options: arr(obj({ key: str, label: str })),
+          facetIds: arr(str),
+          rationale: str,
+        }),
+      ),
+    }),
+  },
   'reflect.v1': {
     id: 'reflect.v1',
     title: 'Reflector',
@@ -144,6 +184,55 @@ the given option. Base it only on the state. This text is shown labeled as gener
 Return JSON only, matching the schema.`,
     input: 'STATE, QUESTION, PREDICTED OPTION',
     schema: obj({ sentence: str }),
+  },
+  'persona.v1': {
+    id: 'persona.v1',
+    title: 'Persona writer (Persona.md)',
+    system: `You write a portrait of one specific person from their own answers, so that another AI agent can represent how
+they think and decide. Decision-making comes first: how they weigh options, what they optimize for, and how they
+handle risk, uncertainty, time pressure and other people. Note where their behavior changes by context, such as work
+versus everyday life.
+Write statements in these sections:
+- decision_style: how they approach a decision: pace, gathering information, consulting others, gut versus analysis.
+- principles: their rules of thumb, phrased as "When …, they …".
+- tradeoffs: what they give up for what, phrased as "Prefers … over …", with how strong the preference is.
+- values: what they care about and protect.
+- beliefs: views they hold about work, people and how things should be done.
+- biases: systematic tendencies and blind spots (for example status quo bias, overconfidence or loss aversion). Name
+  the pattern and the situations where it shows up.
+- social: how they come across and communicate with others.
+Rules:
+- Every statement cites the seq numbers of the answers that support it, in evidenceSeqs only: never write seq
+  numbers or "#" references in the text. No citation, no statement.
+- Prefer patterns supported by several answers. A statement resting on one answer gets confidence below 0.5.
+- Be specific to this person. Leave out anything that would be true of almost anyone.
+- Describe behavior and reasoning, not identity labels. Where they wrote a "why", use it: it shows how they reason.
+- Refer to the person as "they". Never use a name.
+- Don't infer demographics, politics, religion, health, sexuality or finances. Beliefs are only views their answers show.
+- If answers conflict, say so in the statement instead of picking a side.
+- Write statements for every section the answers support, even when there are few answers: give thin ones low
+  confidence rather than leaving them out. Skip a section only when no answer bears on it.
+- At most 6 statements per section, one or two sentences each. Don't pad with statements the answers don't support.
+- The summary is 2–4 sentences on how this person thinks and decides.
+Return JSON only, matching the schema.`,
+    input: `CONTEXT: location, occupation, sourced facts (no name)
+TENDENCIES: {facet: label, low pole ↔ high pole, certainty}
+PATTERNS: earlier cited insights
+ANSWERS: #seq prompt [options] → answer (why)`,
+    schema: obj({
+      summary: str,
+      statements: arr(
+        obj({
+          section: {
+            type: 'string',
+            enum: ['decision_style', 'principles', 'tradeoffs', 'values', 'beliefs', 'biases', 'social'],
+          },
+          text: str,
+          evidenceSeqs: arr(int),
+          confidence: num,
+        }),
+      ),
+    }),
   },
 } as const satisfies Record<string, PromptSpec>;
 

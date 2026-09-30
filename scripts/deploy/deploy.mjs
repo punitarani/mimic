@@ -7,9 +7,10 @@
 //                     and the settings (settings.mjs)
 //   3. migrations     D1 migrations, before any code that expects them
 //   4. worker         queue consumer + cron, deployed with its secrets (--secrets-file)
-//   5. web            OpenNext build, then deployed with its secrets and custom domain
+//   5. web            OpenNext build against the environment's origin (link previews), then deployed with its
+//                     secrets and custom domain
 //   6. access         Cloudflare Access in front of /lab and /api/lab (custom-domain environments)
-//   7. smoke          the landing page, /api/health and the lab's Access gate
+//   7. smoke          the landing page, its link preview, /api/health and the lab's Access gate
 //
 // Secrets go up with the code (`--secrets-file`), which also works on a first deploy: wrangler refuses to create a
 // Worker whose `secrets.required` are unset, and `wrangler secret bulk` needs the Worker to exist already.
@@ -30,7 +31,7 @@ import {
   WORKER_CONFIG,
   withSecretsFile,
 } from './lib.mjs';
-import { customDomain, preflight, workerSecrets } from './preflight.mjs';
+import { customDomain, preflight, siteUrl, workerSecrets } from './preflight.mjs';
 import { prepareConfigs } from './resources.mjs';
 import { smoke } from './smoke.mjs';
 
@@ -84,7 +85,12 @@ async function deploy(env) {
 
   step('Web app (OpenNext)');
   const webSecrets = secretPayload(source, requiredSecrets(web, env));
-  await run('pnpm', ['exec', 'opennextjs-cloudflare', 'build'], { cwd: webDir });
+  const site = await siteUrl(web, env, cf);
+  console.log(`  for ${site}`);
+  await run('pnpm', ['exec', 'opennextjs-cloudflare', 'build'], {
+    cwd: webDir,
+    env: { ...process.env, SITE_URL: site },
+  });
   console.log(`  with secrets: ${Object.keys(webSecrets).join(', ')}`);
   await withSecretsFile(webSecrets, (file) =>
     run(

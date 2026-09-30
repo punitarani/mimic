@@ -1,4 +1,6 @@
-import type { UiSnapshot } from '@mimic/core';
+import type { Distribution, PublicQuestion, UiSnapshot } from '@mimic/core';
+import { certaintyTier, facetReading } from '@mimic/core/labels';
+import { hostLabel } from '@mimic/core/links';
 import type { IdentityView } from './api';
 
 /** View helpers for the session v2 design: readings, certainty tiers, fact rows and "What changed". */
@@ -7,6 +9,44 @@ export type Facet = UiSnapshot['facets'][number];
 export type Certainty = 'high' | 'medium' | 'low' | 'none';
 
 export const pct = (x: number) => Math.round(x * 100);
+
+/** Expected position (1–5) of a distribution over the ordered keys. */
+export function expectedPoint(keys: string[], dist: Record<string, number>): number {
+  const tot = keys.reduce((a, k) => a + (dist[k] ?? 0), 0) || 1;
+  return keys.reduce((a, k, i) => a + (dist[k] ?? 0) * (i + 1), 0) / tot;
+}
+
+export interface Verdict {
+  tone: 'moss' | 'slate' | 'rust';
+  /** One word for compact places: Matched, Close or Missed. */
+  word: 'Matched' | 'Close' | 'Missed';
+  text: string;
+}
+
+/**
+ * How the person's answer compares with the mimic's guess: matched, close (a scale within one step of the expected
+ * point) or missed. Shared by the session reveal and the mimic page.
+ */
+export function verdictOf(
+  q: Pick<PublicQuestion, 'type' | 'options'>,
+  guess: { optionKey: string; label: string; p: number; dist: Distribution },
+  picked: string,
+): Verdict {
+  const p = pct(guess.p);
+  const match = guess.optionKey === picked;
+  if (q.type === 'score') {
+    const keys = q.options.map((o) => o.key);
+    const exp = Math.round(expectedPoint(keys, guess.dist));
+    const mine = keys.indexOf(picked) + 1;
+    if (match)
+      return { tone: 'moss', word: 'Matched', text: `Matched. Your mimic guessed ${mine} too (${p}%).` };
+    if (Math.abs(mine - exp) <= 1)
+      return { tone: 'slate', word: 'Close', text: `Close. Your mimic expected about ${exp}.` };
+    return { tone: 'rust', word: 'Missed', text: `Missed. Your mimic expected about ${exp}.` };
+  }
+  if (match) return { tone: 'moss', word: 'Matched', text: `Matched. Your mimic guessed this too (${p}%).` };
+  return { tone: 'rust', word: 'Missed', text: `Missed. Your mimic guessed “${guess.label}” (${p}%).` };
+}
 
 export function sentence(s: string): string {
   return s ? s[0]!.toUpperCase() + s.slice(1) : s;
@@ -19,16 +59,13 @@ function lowerFirst(s: string): string {
 /** Jev's confidence in the trait read, shown as a tier (never as accuracy; PLAN §9.10). */
 export function certaintyOf(f: Facet): Certainty {
   if (f.mean === null || f.certainty === null) return 'none';
-  if (f.certainty >= 0.7) return 'high';
-  if (f.certainty >= 0.4) return 'medium';
-  return 'low';
+  return certaintyTier(f.certainty);
 }
 
 /** The facet's current reading, e.g. "leans toward the familiar". */
 export function readingOf(f: Facet): string {
   if (f.mean === null) return 'Not enough answers yet.';
-  const i = Math.max(0, Math.min(4, Math.round(f.mean * 4)));
-  return lowerFirst(f.labels[i] ?? '');
+  return facetReading(f.labels, f.mean);
 }
 
 /** Width of the certainty band on the 0–1 track: narrow when certain. */
@@ -60,14 +97,6 @@ export interface FactRow {
   removed: boolean;
 }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
-
 export function factRows(facts: Fact[]): { profile: FactRow[]; told: FactRow[] } {
   const row = (f: Fact): FactRow => ({
     id: f.id,
@@ -75,7 +104,7 @@ export function factRows(facts: Fact[]): { profile: FactRow[]; told: FactRow[] }
     source:
       f.source === 'search'
         ? f.sourceUrl
-          ? hostOf(f.sourceUrl)
+          ? hostLabel(f.sourceUrl)
           : 'Public profile'
         : f.source === 'intake'
           ? 'You, at sign-up'

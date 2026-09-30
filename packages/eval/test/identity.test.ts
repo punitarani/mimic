@@ -5,12 +5,14 @@ import {
   exportMimic,
   finishIdentity,
   runIdentitySearch,
+  searchCacheKey,
+  searchIdentityAgain,
   serveNext,
   setFactState,
   submitAnswer,
 } from '@mimic/core';
 import type { MemoryBlobs } from '@mimic/db/local';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 
 const intake = {
@@ -69,9 +71,143 @@ describe('identity (PLAN §9.2, M3)', () => {
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.every((c) => c.status === 'proposed' && c.jevSamePersonP !== null)).toBe(true);
     expect(search().calls).toBeGreaterThanOrEqual(2); // 2–3 query variants
+    // Exa's people index is semantic: a quoted name is not a phrase match and wrecked recall (ADR-0029).
+    expect(search().queries.every((q) => q.startsWith('Avery Quinn') && !q.includes('"'))).toBe(true);
+    // Profiles with no name in common with the intake (Rowan Ellis) are never offered.
+    expect(candidates.map((c) => c.name)).toEqual(['Avery Quinn']);
     expect(await engine.deps.blobs.list(`search/${m.id}/`)).not.toEqual([]);
     // The session can't start until the person decides.
     expect((await serveNext(engine.deps, m.id)).status).toBe('identity');
+  });
+
+  it("looks up the person's own link and leads with it", async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const link = 'https://linkedin.com/in/avery-quinn-example/';
+    const m = await createMimic(engine.deps, { ...intake, link, consentSearch: true }, 'p1');
+    await engine.drain();
+    expect(search().lookups).toBe(1);
+    const [top, ...rest] = await engine.deps.store.listCandidates(m.id);
+    // Deduped with the same profile from search, under the person's exact URL.
+    expect(top).toMatchObject({ name: 'Avery Quinn', url: link, rank: 1 });
+    expect(rest.map((c) => c.url)).not.toContain('https://www.linkedin.com/in/avery-quinn-example');
+    const calls = await engine.deps.store.listModelCalls({ mimicId: m.id });
+    expect(calls.filter((c) => c.purpose === 'identity.lookup')).toHaveLength(1);
+  });
+
+  it('never caches an empty search', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, name: 'Nobody Known', consentSearch: true }, 'p1');
+    await engine.drain();
+    const after = (await engine.deps.store.getMimic(m.id))!;
+    expect(after.identityState).toBe('none_found');
+    expect(await engine.deps.kv.get(searchCacheKey(after))).toBeNull();
+  });
+
+  it('searches again with a link: earlier candidates are set aside and the new search leads with it', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    const [first] = await engine.deps.store.listCandidates(m.id);
+    const link = 'https://www.linkedin.com/in/avery-quinn-example';
+
+    await searchIdentityAgain(engine.deps, m.id, link);
+    const searching = (await engine.deps.store.getMimic(m.id))!;
+    expect(searching).toMatchObject({ identityState: 'searching', links: [link] });
+    // A second request while that search runs is refused rather than queued twice.
+    await expect(searchIdentityAgain(engine.deps, m.id, link)).rejects.toMatchObject({ code: 'conflict' });
+    await engine.drain();
+
+    const all = await engine.deps.store.listCandidates(m.id);
+    const open = all.filter((c) => c.status === 'proposed');
+    // Set aside, not judged: "superseded" never reads as the person saying "not me".
+    expect(all.find((c) => c.id === first!.id)?.status).toBe('superseded');
+    expect(open[0]).toMatchObject({ url: link, name: 'Avery Quinn' });
+    expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('candidates');
+    // Only a candidate from the latest search can be confirmed.
+    await expect(confirmIdentity(engine.deps, m.id, first!.id)).rejects.toMatchObject({ code: 'not_found' });
+    await confirmIdentity(engine.deps, m.id, open[0]!.id);
+    expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('enriching');
+    const after = await engine.deps.store.listCandidates(m.id);
+    expect(after.find((c) => c.id === open[0]!.id)?.status).toBe('confirmed');
+    expect(
+      after.filter((c) => c.id !== open[0]!.id && open.some((o) => o.id === c.id)).map((c) => c.status),
+    ).toEqual(open.slice(1).map(() => 'rejected'));
+    expect(after.find((c) => c.id === first!.id)?.status).toBe('superseded'); // earlier searches stay as they were
+    // Once a profile is confirmed, the search is over.
+    await expect(searchIdentityAgain(engine.deps, m.id, link)).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('lets only one of two concurrent searches again start a search', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    engine.queue.drain(); // nothing pending
+    const results = await Promise.allSettled([
+      searchIdentityAgain(engine.deps, m.id, 'https://linkedin.com/in/a'),
+      searchIdentityAgain(engine.deps, m.id, 'https://linkedin.com/in/b'),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'conflict' } });
+    expect(engine.queue.drain().filter((j) => j.type === 'identity.search')).toHaveLength(1);
+  });
+
+  it('puts the choice back when the search job cannot be enqueued', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    const before = await engine.deps.store.listCandidates(m.id);
+    vi.spyOn(engine.deps.jobs, 'enqueue').mockRejectedValueOnce(new Error('queue unavailable'));
+    await expect(searchIdentityAgain(engine.deps, m.id, 'https://linkedin.com/in/a')).rejects.toThrow(
+      'queue unavailable',
+    );
+    // Not stuck in "searching" with no job: the person can pick from the same list, or try again.
+    expect(await engine.deps.store.getMimic(m.id)).toMatchObject({ identityState: 'candidates', links: [] });
+    expect(await engine.deps.store.listCandidates(m.id)).toEqual(before);
+    await searchIdentityAgain(engine.deps, m.id, 'https://linkedin.com/in/a');
+    expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('searching');
+  });
+
+  it('finishes a search whose candidates landed but whose state update was lost', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    const n = (await engine.deps.store.listCandidates(m.id)).length;
+    // As if the job failed right after inserting its candidates and was delivered again.
+    await engine.deps.store.updateMimic(m.id, { identityState: 'searching' });
+    await runIdentitySearch(engine.deps, m.id);
+    expect((await engine.deps.store.getMimic(m.id))!.identityState).toBe('candidates');
+    expect(await engine.deps.store.listCandidates(m.id)).toHaveLength(n); // no second set
+  });
+
+  it('confirms only while a choice is pending', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const m = await createMimic(engine.deps, { ...intake, consentSearch: true }, 'p1');
+    await engine.drain();
+    const [top] = await engine.deps.store.listCandidates(m.id);
+    await engine.deps.store.updateMimic(m.id, { identityState: 'searching' });
+    await expect(confirmIdentity(engine.deps, m.id, top!.id)).rejects.toMatchObject({ code: 'conflict' });
+    expect((await engine.deps.store.listCandidates(m.id)).every((c) => c.status === 'proposed')).toBe(true);
+  });
+
+  it('searches again only with consent and within a few links', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const off = await createMimic(engine.deps, { ...intake, consentSearch: false }, 'p1');
+    await expect(searchIdentityAgain(engine.deps, off.id, 'https://x.dev')).rejects.toMatchObject({
+      code: 'forbidden',
+    });
+    const m = await createMimic(engine.deps, { ...intake, name: 'Nobody Known', consentSearch: true }, 'p2');
+    await engine.drain();
+    for (const i of [1, 2, 3, 4]) {
+      await searchIdentityAgain(engine.deps, m.id, `https://site${i}.dev`);
+      await engine.drain();
+    }
+    expect((await engine.deps.store.getMimic(m.id))!.links).toHaveLength(4);
+    await expect(searchIdentityAgain(engine.deps, m.id, 'https://site5.dev')).rejects.toMatchObject({
+      code: 'conflict',
+    });
+    // Repeating a link it already has is fine.
+    await searchIdentityAgain(engine.deps, m.id, 'https://site2.dev');
+    expect((await engine.deps.store.getMimic(m.id))!.links[0]).toBe('https://site2.dev');
   });
 
   it('confirms a candidate, enriches with sourced facts, and lets the person skip', async () => {

@@ -1,4 +1,4 @@
-import { parsePredictorId } from '../config';
+import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
 import { type Job, jobFromKey, jobKey } from '../jobs';
@@ -12,18 +12,20 @@ import {
   runQualityGates,
 } from '../learning';
 import { getAnchorSet } from '../ontology';
-import { makePredictor } from '../predictors';
+import { computeItemStats, type ScoredItemRow } from '../population';
+import { assertPredictorId, makePredictor, promptVersionOf } from '../predictors';
 import { scorePrediction } from '../scoring';
-import { facetCoverage } from '../selectors';
+import { facetCoverage, usesHypotheses } from '../selectors';
 import { buildState, cosine, toStateEvidence } from '../state-builder';
 import type { FactRecord, InsightRecord, KgEdgeRecord, KgNodeRecord, QuestionRecord } from '../store';
-import type { Domain, PersonState } from '../types';
+import { type Domain, isScoredKind, learnsFrom, type PersonState } from '../types';
 import { writeSnapshot } from './artifact';
+import { beliefFromLoaded, loadBeliefSources } from './belief';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
 import { rollbackStaleLearn } from './rewind';
-import { JEV_PROMPT_VERSION, MAX_POOL, MIN_POOL } from './session';
+import { invalidateItemStatsCache, MAX_POOL, MIN_POOL } from './session';
 
 export const MAX_JOB_ATTEMPTS = 5;
 
@@ -119,13 +121,16 @@ export async function enqueueMissingPredictions(
     deps.store.listQuestions(mimicId),
     deps.store.listPredictions({ mimicId }),
   ]);
-  const have = new Set(predictions.map((p) => `${p.questionId}|${p.predictorId}`));
+  // Hypothesis rows carry the primary's predictor id but are exploration artifacts, not predictions of the question.
+  const have = new Set(
+    predictions.filter((p) => p.role !== 'hypothesis').map((p) => `${p.questionId}|${p.predictorId}`),
+  );
   // A shadow reads the primary's sealed state; without a primary there is nothing to predict from.
   const sealed = new Set(predictions.filter((p) => p.role === 'primary').map((p) => p.questionId));
   let n = 0;
   for (const q of questions) {
     if (q.seq === null || q.servedAt === null || q.servedAt >= servedBefore) continue;
-    if (q.kind !== 'anchor' && q.kind !== 'adaptive') continue;
+    if (!isScoredKind(q.kind)) continue;
     if (!sealed.has(q.id)) continue;
     for (const predictorId of predictorIds) {
       if (have.has(`${q.id}|${predictorId}`)) continue;
@@ -142,7 +147,8 @@ export async function enqueueMissingPredictions(
 
 function checkPredictorId(id: string): void {
   try {
-    parsePredictorId(id);
+    // The ID must parse and any `@<promptVersion>` must be registered (ADR-0028).
+    assertPredictorId(id);
   } catch (e) {
     throw new EngineError('invalid', e instanceof Error ? e.message : String(e));
   }
@@ -201,7 +207,49 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
     case 'backfill.mimic':
       await runBackfillMimic(deps, job);
       return;
+    case 'stats.refresh':
+      await runStatsRefresh(deps);
+      return;
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// stats.refresh (ADR-0027): cross-person item statistics over research-consented, dev-split mimics.
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Recomputes `item_stats` from scratch in one query and replaces the table atomically, so a deleted mimic (or a
+ * withdrawn consent) drops out at the next run and nothing stale survives. Aggregate only: groups below
+ * POP_MIN_PEOPLE are never written, no row names a person, and the result ranks pooled candidates without ever
+ * entering a prompt or a state (PLAN §3.8).
+ */
+export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
+  const sources = await deps.store.listScoredForStats({ consentResearch: true, split: 'dev' });
+  const baselineByQ = new Map(
+    sources.filter((r) => r.role === 'baseline').map((r) => [r.questionId, r.itemAcc]),
+  );
+  const rows: ScoredItemRow[] = [];
+  for (const r of sources) {
+    if (r.role !== 'primary' || r.fallback) continue;
+    if (!isScoredKind(r.question.kind)) continue;
+    rows.push({
+      mimicId: r.mimicId,
+      itemKey: r.question.itemKey ?? null,
+      facetIds: r.question.facetIds,
+      domain: r.question.domain,
+      type: r.question.type,
+      answer: r.answer.value,
+      nOptions: r.question.options.length,
+      primaryItemAcc: r.itemAcc,
+      primaryLogLoss: r.logLoss,
+      baselineItemAcc: baselineByQ.get(r.questionId) ?? null,
+      latencyMs: r.answer.latencyMs,
+    });
+  }
+  const stats = computeItemStats(rows, deps.clock());
+  await deps.store.replaceItemStats(stats);
+  invalidateItemStatsCache();
+  return stats.length;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -242,7 +290,7 @@ export async function runShadow(
     stateHash: meta.stateHash,
     evidenceSeqMax: meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: predictorId.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
+    promptVersion: promptVersionOf(predictorId),
     modelSnapshot: r!.modelSnapshot,
     costUsd: r!.costUsd,
     latencyMs: r!.latencyMs,
@@ -252,7 +300,7 @@ export async function runShadow(
     createdAt: now,
   };
   await deps.store.insertPredictions([rec]);
-  // Discarded by an undo while this ran (ADR-0027): its state held the retracted answer.
+  // Discarded by an undo while this ran (ADR-0034): its state held the retracted answer.
   if ((await deps.store.getQuestion(q.id))?.status === 'discarded') {
     await deps.store.deletePredictions([rec.id]);
     return;
@@ -285,29 +333,38 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   if (pool.length >= MIN_POOL) return;
   if (m.spendUsd >= cfg.session.budgetUsd) return;
   const facets = await facetsFor(deps, m, cfg);
-  const counts = facetCounts(loaded.questions);
-  for (const q of pool) for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
-  const traitConf = new Map(
-    loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t.confidence]),
-  );
-  const targets = [...facets]
-    .sort(
-      (a, b) =>
-        facetCoverage(counts, a.id) - facetCoverage(counts, b.id) ||
-        (traitConf.get(a.id) ?? 0) - (traitConf.get(b.id) ?? 0) ||
-        a.id.localeCompare(b.id),
-    )
-    .slice(0, 5)
-    .map((f) => f.id);
   const n = Math.min(cfg.generator.batchSize, MAX_POOL - pool.length + 4);
   const mix = cfg.generator.domainMix;
-  const total = mix.core + mix.casual + mix.professional || 1;
-  const quota: Record<Domain, number> = {
-    core: Math.round((n * mix.core) / total),
-    casual: Math.round((n * mix.casual) / total),
-    professional: 0,
-  };
-  quota.professional = Math.max(0, n - quota.core - quota.casual);
+  let targets: string[];
+  let quota: Record<Domain, number>;
+  let targetDetails: ReturnType<typeof targetFacets> | undefined;
+  let avoid: string[] | undefined;
+  if (cfg.generator.promptVersion === 'gen.v2') {
+    // Belief-driven targets (docs/SELECTION.md §5): the facets with the highest need, each with why and the
+    // person's current reading; the domain quota tilts toward the domains the mimic is weakest in.
+    const belief = beliefFromLoaded(loaded, facets, cfg, await loadBeliefSources(deps, m), { pooled: pool });
+    const cap = cfg.selector.type === 'voi' ? cfg.selector.exposureCap : 1;
+    targetDetails = targetFacets(belief, facets, 5, cap);
+    targets = targetDetails.map((t) => t.id);
+    avoid = facets.filter((f) => overExposed(belief, f.id, cap)).map((f) => f.id);
+    quota = domainQuota(belief, mix, n);
+  } else {
+    const counts = facetCounts(loaded.questions);
+    for (const q of pool) for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
+    const traitConf = new Map(
+      loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t.confidence]),
+    );
+    targets = [...facets]
+      .sort(
+        (a, b) =>
+          facetCoverage(counts, a.id) - facetCoverage(counts, b.id) ||
+          (traitConf.get(a.id) ?? 0) - (traitConf.get(b.id) ?? 0) ||
+          a.id.localeCompare(b.id),
+      )
+      .slice(0, 5)
+      .map((f) => f.id);
+    quota = splitQuota(mix, n);
+  }
 
   const state = buildState(
     loaded.data,
@@ -327,8 +384,11 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   const gen = await generateCandidates(deps.gateway, ctx, {
     model: cfg.generator.model,
     reasoningEffort: cfg.generator.reasoningEffort,
+    promptVersion: cfg.generator.promptVersion,
     facets,
     targets,
+    ...(targetDetails ? { targetDetails } : {}),
+    ...(avoid ? { avoid } : {}),
     quota,
     identity: state.identity,
     traitSummary,
@@ -418,7 +478,7 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
 export const SNAPSHOT_DEBOUNCE_SECONDS = 10;
 
 /**
- * `answerId` (absent on jobs queued before ADR-0027) names the answer being learned. If the person undid it, the job
+ * `answerId` (absent on jobs queued before ADR-0034) names the answer being learned. If the person undid it, the job
  * is a no-op; if they undo it while the job runs, the job rolls back what it wrote.
  */
 export async function runLearn(
@@ -433,9 +493,18 @@ export async function runLearn(
   const loaded = await loadMimicData(deps, m);
   if (answerId && !loaded.answers.some((a) => a.seq === seq && a.id === answerId)) return;
   const item = loaded.data.evidence.find((e) => e.seq === seq);
-  if (!item || (item.kind !== 'anchor' && item.kind !== 'adaptive')) return;
-  const learnable = loaded.data.evidence.filter((e) => e.kind === 'anchor' || e.kind === 'adaptive');
+  if (!item || !learnsFrom(item.kind)) return;
+  const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
   const nAnswered = learnable.filter((e) => e.seq <= seq).length;
+  const snapshot = () =>
+    deps.jobs.enqueue(
+      { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
+      { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
+    );
+
+  // Over budget every model call is refused, and the job would retry until dropped. The answer is kept as evidence
+  // and goes into the snapshot; only the reads that need a model are skipped.
+  if (m.spendUsd >= cfg.session.budgetUsd) return snapshot();
 
   // 1) Embed the Q&A (plus the "why").
   try {
@@ -507,7 +576,7 @@ export async function runLearn(
   // 3) Reflection every N answers, with the citation guard.
   if (cfg.reflector.model && cfg.reflector.everyN > 0 && nAnswered % cfg.reflector.everyN === 0) {
     await runReflection(deps, m.id, seq, key);
-    if (cfg.selector.type === 'bald')
+    if (usesHypotheses(cfg.selector))
       await deps.jobs.enqueue({ type: 'hypotheses.refresh', mimicId: m.id, seqUpTo: seq });
   }
 
@@ -539,10 +608,7 @@ export async function runLearn(
   }
 
   // 5) Debounced snapshot.
-  await deps.jobs.enqueue(
-    { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
-    { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
-  );
+  await snapshot();
 }
 
 export async function runReflection(
@@ -560,8 +626,8 @@ export async function runReflection(
   const facets = await facetsFor(deps, m, cfg);
   const lastReflected = existing.reduce((a, i) => Math.max(a, i.seqUpTo), 0);
   const learnable = loaded.data.evidence
-    .filter((e) => (e.kind === 'anchor' || e.kind === 'adaptive') && e.seq <= seq)
-    .map(toStateEvidence);
+    .filter((e) => learnsFrom(e.kind) && e.seq <= seq)
+    .map((e) => toStateEvidence(e));
   const newEvidence = learnable.filter((e) => e.seq > lastReflected);
   const earlier = learnable.filter((e) => e.seq <= lastReflected).slice(-20);
   const delta = await reflect(deps.gateway, ctxFor(m, 'reflect', key), {
@@ -651,7 +717,9 @@ export async function runHypotheses(
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  if (cfg.selector.type !== 'bald') return;
+  const sel = cfg.selector;
+  const k = sel.type === 'bald' || sel.type === 'voi' ? sel.k : 0;
+  if (k < 2) return;
   const cur = await deps.kv.get(`hyp:${m.id}`);
   if (cur) {
     try {
@@ -672,7 +740,7 @@ export async function runHypotheses(
     model: cfg.reflector.model ?? cfg.generator.model,
     state,
     lowFacets,
-    k: cfg.selector.k,
+    k,
   });
   if (hypotheses.length) await deps.kv.put(`hyp:${m.id}`, JSON.stringify({ seqUpTo, hypotheses }));
 }

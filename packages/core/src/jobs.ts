@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 export const Job = z.discriminatedUnion('type', [
   z.object({ type: z.literal('noop'), id: z.string() }),
-  z.object({ type: z.literal('identity.search'), mimicId: z.string() }),
+  /** `attempt` is set when the person searches again with a link, so the retry is its own job. */
+  z.object({ type: z.literal('identity.search'), mimicId: z.string(), attempt: z.number().int().optional() }),
   z.object({ type: z.literal('identity.enrich'), mimicId: z.string(), candidateId: z.string() }),
   z.object({ type: z.literal('pool.refill'), mimicId: z.string(), seq: z.number().int() }),
   z.object({
@@ -11,7 +12,7 @@ export const Job = z.discriminatedUnion('type', [
     questionId: z.string(),
     predictorId: z.string(),
   }),
-  /** `answerId` ties the job to one answer, so a re-answer after a rewind learns again (ADR-0027). */
+  /** `answerId` ties the job to one answer, so a re-answer after a rewind learns again (ADR-0034). */
   z.object({
     type: z.literal('learn.answer'),
     mimicId: z.string(),
@@ -34,6 +35,8 @@ export const Job = z.discriminatedUnion('type', [
     mimicId: z.string(),
     predictorId: z.string(),
   }),
+  /** Recomputes cross-person item statistics (ADR-0027); `bucket` (an hour) makes each run its own job. */
+  z.object({ type: z.literal('stats.refresh'), bucket: z.string() }),
 ]);
 export type Job = z.infer<typeof Job>;
 
@@ -43,7 +46,7 @@ export function jobKey(job: Job): string {
     case 'noop':
       return `noop:${job.id}`;
     case 'identity.search':
-      return `identity.search:${job.mimicId}`;
+      return `identity.search:${job.mimicId}${job.attempt === undefined ? '' : `:${job.attempt}`}`;
     case 'identity.enrich':
       return `identity.enrich:${job.mimicId}:${job.candidateId}`;
     case 'pool.refill':
@@ -61,6 +64,8 @@ export function jobKey(job: Job): string {
       return `backfill.predictor:${job.runId}:${job.consentedOnly ? 1 : 0}:${job.predictorId}`;
     case 'backfill.mimic':
       return `backfill.mimic:${job.runId}:${job.mimicId}:${job.predictorId}`;
+    case 'stats.refresh':
+      return `stats.refresh:${job.bucket}`;
   }
 }
 
@@ -73,7 +78,10 @@ export function jobFromKey(key: string): Job | null {
       job = { type, id: parts.join(':') };
       break;
     case 'identity.search':
-      job = { type, mimicId: parts[0] };
+      job =
+        parts[1] === undefined
+          ? { type, mimicId: parts[0] }
+          : { type, mimicId: parts[0], attempt: Number(parts[1]) };
       break;
     case 'identity.enrich':
       job = { type, mimicId: parts[0], candidateId: parts[1] };
@@ -96,6 +104,9 @@ export function jobFromKey(key: string): Job | null {
       break;
     case 'backfill.mimic':
       job = { type, runId: parts[0], mimicId: parts[1], predictorId: parts.slice(2).join(':') };
+      break;
+    case 'stats.refresh':
+      job = { type, bucket: parts.join(':') };
       break;
   }
   const r = Job.safeParse(job);

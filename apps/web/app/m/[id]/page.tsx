@@ -18,12 +18,12 @@ import { ModelPanel } from '@/components/session/model-panel';
 import { Kbd, NextButton } from '@/components/session/next-button';
 import { OptionButton } from '@/components/session/option-button';
 import { OverlapMark } from '@/components/session/overlap-mark';
-import { expectedPoint, ScaleControl } from '@/components/session/scale-control';
+import { ScaleControl } from '@/components/session/scale-control';
 import { SessionMenu } from '@/components/session/session-menu';
 import { cn, Spinner } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { enqueueAnswer, flushOutbox, newIdempotencyKey, pendingAnswers, sendAnswer } from '@/lib/outbox';
-import { changeFromHistory, pct, whatChanged } from '@/lib/session-view';
+import { changeFromHistory, pct, verdictOf, whatChanged } from '@/lib/session-view';
 
 type Progress = NextResult['progress'];
 
@@ -79,7 +79,7 @@ export default function SessionPage() {
     baseline: UiSnapshot;
   } | null>(null);
   const [guesses, setGuesses] = useGuesses(id);
-  /** The latest answer, while it can still be undone (ADR-0027): only the one sent from this page, and one step. */
+  /** The latest answer, while it can still be undone (ADR-0034): only the one sent from this page, and one step. */
   const [undoable, setUndoable] = useState<{ questionId: string; prompt: string; label: string } | null>(
     null,
   );
@@ -235,7 +235,7 @@ export default function SessionPage() {
   }, [answered, offline, qc, id]);
 
   /**
-   * Takes back the latest answer and shows its question again (ADR-0027). The server discards the question
+   * Takes back the latest answer and shows its question again (ADR-0034). The server discards the question
    * prefetched after it, so a prefetch still in flight is cancelled first and never shown.
    */
   const undo = useCallback(async () => {
@@ -729,28 +729,7 @@ function Status({
     tone = 'slate';
     text = notice;
   } else if (reveal && picked) {
-    const p = Math.round(reveal.p * 100);
-    if (q.type === 'score') {
-      const keys = q.options.map((o) => o.key);
-      const exp = Math.round(expectedPoint(keys, reveal.dist));
-      const mine = keys.indexOf(picked) + 1;
-      if (reveal.match) {
-        tone = 'moss';
-        text = `Matched. Your mimic guessed ${mine} too (${p}%).`;
-      } else if (Math.abs(mine - exp) <= 1) {
-        tone = 'slate';
-        text = `Close. Your mimic expected about ${exp}.`;
-      } else {
-        tone = 'rust';
-        text = `Missed. Your mimic expected about ${exp}.`;
-      }
-    } else if (reveal.match) {
-      tone = 'moss';
-      text = `Matched. Your mimic guessed this too (${p}%).`;
-    } else {
-      tone = 'rust';
-      text = `Missed. Your mimic guessed “${reveal.label}” (${p}%).`;
-    }
+    ({ tone, text } = verdictOf(q, reveal, picked));
   }
   if (!tone) return null;
   const Icon =

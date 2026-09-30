@@ -11,6 +11,7 @@ import {
   runJob,
   serveNext,
   submitAnswer,
+  submitFeedback,
   uiSnapshot,
   vectorId,
 } from '@mimic/core';
@@ -98,7 +99,7 @@ async function expectSealed(mimicId: string) {
   }
 }
 
-describe('undo the latest answer (ADR-0027)', () => {
+describe('undo the latest answer (ADR-0034)', () => {
   it('takes back the answer, discards the prefetched question and rolls back what was learned', async () => {
     const id = await start();
     const { store, vectors } = engine.deps;
@@ -201,7 +202,7 @@ describe('undo the latest answer (ADR-0027)', () => {
     const reScored = (await store.listScoredPredictions(id, ['primary', 'baseline', 'shadow'])).filter(
       (x) => x.question.id === q15.id,
     );
-    expect(reScored).toHaveLength(predsBefore.filter((p) => p.ok).length);
+    expect(reScored).toHaveLength(predsBefore.filter((p) => p.ok && p.role !== 'hypothesis').length);
     expect(new Set(reScored.map((x) => x.score.answerId)).size).toBe(1);
 
     // The next question is sealed on the new answer.
@@ -400,7 +401,9 @@ describe('undo the latest answer (ADR-0027)', () => {
       latencyMs: 900,
       idempotencyKey: 'k-r',
     });
-    const preds = (await store.listPredictions({ questionId: q.id })).filter((p) => p.ok);
+    const preds = (await store.listPredictions({ questionId: q.id })).filter(
+      (p) => p.ok && p.role !== 'hypothesis',
+    );
     const scored = (await store.listScoredPredictions(id, ['primary', 'baseline', 'shadow'])).filter(
       (r) => r.question.id === q.id,
     );
@@ -463,8 +466,54 @@ describe('undo the latest answer (ADR-0027)', () => {
         status: 'served',
       },
     ]);
-    await expectConflict(rewindLastAnswer(engine.deps, id, { questionId: q1.id }), /asked your mimic/);
+    await expectConflict(
+      rewindLastAnswer(engine.deps, id, { questionId: q1.id }),
+      /asked or taught your mimic/,
+    );
     expect(await engine.deps.store.getAnswerForQuestion(q1.id)).not.toBeNull();
+  }, 30_000);
+
+  it('refuses when the person taught their mimic something since (ADR-0032)', async () => {
+    const id = await start();
+    const q1 = await serve(id);
+    await answer(id, q1);
+    await submitFeedback(engine.deps, id, {
+      question: {
+        type: 'choice',
+        prompt: 'Would you rather spend a free Saturday hiking or reading at home?',
+        options: [
+          { key: 'x1', label: 'Hiking in the hills' },
+          { key: 'x2', label: 'Reading at home' },
+        ],
+      },
+      answer: 'x2',
+      idempotencyKey: 'fb-after-q1',
+    });
+    await expectConflict(rewindLastAnswer(engine.deps, id, { questionId: q1.id }), /taught your mimic/);
+    expect(await engine.deps.store.getAnswerForQuestion(q1.id)).not.toBeNull();
+  }, 30_000);
+
+  it('rolls back persona drafts that cover the undone answer (ADR-0033)', async () => {
+    const id = await start();
+    const { store } = engine.deps;
+    await answerMany(id, 2);
+    const q3 = await serve(id);
+    await answer(id, q3);
+    const draft = (seqUpTo: number) => ({
+      id: `pd-${seqUpTo}`,
+      mimicId: id,
+      seqUpTo,
+      configHash: 'c',
+      promptVersion: 'persona.v1',
+      model: 'm',
+      modelSnapshot: 'm',
+      draft: { summary: `Up to ${seqUpTo}`, statements: [] },
+      createdAt: Date.now() + seqUpTo,
+    });
+    await store.insertPersonaDraft(draft(2));
+    await store.insertPersonaDraft(draft(3));
+    await rewindLastAnswer(engine.deps, id, { questionId: q3.id });
+    expect((await store.latestPersonaDraft(id))?.seqUpTo).toBe(2);
   }, 30_000);
 
   it('hard delete removes rewinds too', async () => {

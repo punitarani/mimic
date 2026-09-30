@@ -5,7 +5,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./ontology": "./src/ontology/index.ts"
+    "./ontology": "./src/ontology/index.ts",
+    "./labels": "./src/labels.ts",
+    "./limits": "./src/limits.ts",
+    "./links": "./src/links.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { jobKey } from '../jobs';
 import type { AnswerRewindRecord, DerivedRollback, FactRecord, MimicRecord } from '../store';
+import { isSessionKind } from '../types';
 import { vectorId } from './data';
 import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
 import {
@@ -14,7 +15,7 @@ import {
 } from './session';
 
 /**
- * Undo the latest answer (ADR-0027). The person names the question they are taking back, so a double click or a
+ * Undo the latest answer (ADR-0034). The person names the question they are taking back, so a double click or a
  * stale tab can't undo an answer they didn't mean to.
  */
 export const RewindInput = z.object({ questionId: z.string().min(1).max(100) });
@@ -95,16 +96,23 @@ export async function rewindLastAnswer(
     deps.store.listAnswerRewinds(m.id),
   ]);
   const qById = new Map(questions.map((q) => [q.id, q]));
-  const latest = answers.filter((a) => qById.get(a.questionId)?.kind !== 'playground').at(-1);
+  const kindOf = (a: { questionId: string }) => qById.get(a.questionId)?.kind;
+  const latest = answers
+    .filter((a) => {
+      const k = kindOf(a);
+      return k !== undefined && isSessionKind(k);
+    })
+    .at(-1);
   if (!latest || latest.questionId !== input.questionId) {
     throw new EngineError('conflict', 'Only your latest answer can be undone');
   }
   const q = qById.get(latest.questionId)!;
   const later = questions.filter((x) => x.seq !== null && x.seq > latest.seq);
-  if (later.some((x) => x.kind === 'playground')) {
+  // Asked or taught on the mimic page since (ADR-0032): that prediction or learning used this answer.
+  if (later.some((x) => !isSessionKind(x.kind))) {
     throw new EngineError(
       'conflict',
-      "You've asked your mimic a question since, so this answer can't be undone",
+      "You've asked or taught your mimic something since, so this answer can't be undone",
     );
   }
   if (later.some((x) => x.status !== 'served'))
@@ -154,7 +162,7 @@ export async function rewindLastAnswer(
 }
 
 /**
- * Undoes a learn job's writes when its answer was retracted while it ran (ADR-0027). If the question has been
+ * Undoes a learn job's writes when its answer was retracted while it ran (ADR-0034). If the question has been
  * answered again meanwhile, that answer's learn job is queued again, since the rollback may have removed its work.
  */
 export async function rollbackStaleLearn(deps: EngineDeps, m: MimicRecord, seq: number): Promise<void> {

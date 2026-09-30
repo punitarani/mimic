@@ -103,6 +103,9 @@ function systemText(req: ChatRequest): string {
   return req.messages.find((m) => m.role === 'system')?.content ?? '';
 }
 
+/** The sentence the fake reflection model adds; tests key fake predictors on it to make an improvement detectable. */
+export const FAKE_REFLECTION_HINT = 'Weigh earlier answers first.';
+
 export class FakeLlm implements LlmClient {
   readonly provider = 'fake-llm';
   calls = 0;
@@ -113,17 +116,25 @@ export class FakeLlm implements LlmClient {
     const sys = systemText(req);
     const user = userText(req);
     let out: unknown;
-    if (sys.startsWith('You write short, concrete questions')) out = this.generate(user);
+    let text: string | undefined;
+    if (sys.startsWith('You improve one text component')) {
+      // Reflection (mimic-eval optimize): the current text plus one generic sentence, keeping every placeholder.
+      const current = user.split('CURRENT TEXT:\n<<<\n')[1]?.split('\n>>>')[0] ?? '';
+      text = `<component>${current} ${FAKE_REFLECTION_HINT}</component>`;
+    } else if (sys.startsWith('You analyze where a predictor'))
+      text = '1. Fake analysis: misses cluster on scale items.';
+    else if (sys.startsWith('You write short, concrete questions')) out = this.generate(user);
     else if (sys.startsWith("You analyze one person's answers")) out = this.reflect(user);
     else if (sys.startsWith('Estimate the probability')) out = this.predict(user);
     else if (sys.startsWith("Given a person's occupation")) out = this.occFacets();
     else if (sys.startsWith('Write {k}') || /^Write \d+ distinct/.test(sys)) out = this.hypotheses(user);
     else if (sys.startsWith("Turn the person's scenario")) out = this.ask(user);
+    else if (sys.startsWith('You write a portrait of one specific person')) out = this.persona(user);
     else if (sys.startsWith('Write one short sentence'))
       out = { sentence: 'I tend to go with what worked before.' };
     else out = {};
     return {
-      content: JSON.stringify(out),
+      content: text ?? JSON.stringify(out),
       modelSnapshot: `${req.model}@fake`,
       provider: 'fake',
       usage: { inputTokens: Math.ceil(user.length / 4), outputTokens: 50, costUsd: 0 },
@@ -187,6 +198,52 @@ export class FakeLlm implements LlmClient {
       ],
       facts: [{ predicate: 'hasInterest', object: 'Planning trips', evidenceSeqs: [seqs[0]!] }],
       contradictions: [],
+    };
+  }
+
+  private persona(user: string) {
+    const seqs = [...(user.split('ANSWERS:')[1] ?? '').matchAll(/^#(\d+)/gm)].map((m) => Number(m[1]));
+    const cite = (i: number) => seqs.filter((_, j) => j % 3 === i % 3).slice(0, 3);
+    return {
+      summary: 'They decide quickly on everyday matters and slow down when other people are affected.',
+      statements: [
+        {
+          section: 'decision_style',
+          text: 'Decides fast when a choice is easy to undo.',
+          evidenceSeqs: cite(0),
+          confidence: 0.7,
+        },
+        {
+          section: 'principles',
+          text: 'When a plan changes, they adapt rather than push back.',
+          evidenceSeqs: cite(1),
+          confidence: 0.6,
+        },
+        {
+          section: 'tradeoffs',
+          text: 'Prefers finishing on time over polishing.',
+          evidenceSeqs: cite(2),
+          confidence: 0.45,
+        },
+        {
+          section: 'biases',
+          text: 'Leans on what worked before, even when conditions changed.',
+          evidenceSeqs: cite(0),
+          confidence: 0.55,
+        },
+        {
+          section: 'values',
+          text: 'An uncited claim that must be dropped.',
+          evidenceSeqs: [],
+          confidence: 0.9,
+        },
+        {
+          section: 'values',
+          text: 'A claim citing answers that do not exist.',
+          evidenceSeqs: [99_999],
+          confidence: 0.9,
+        },
+      ],
     };
   }
 

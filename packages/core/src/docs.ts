@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PREDICT_PROMPTS, renderVariantDoc } from './components';
 import { MimicJson } from './engine/artifact';
 import { ANCHORS_V1, ONTOLOGY_V1, RESERVE_V1 } from './ontology';
 import { PROMPTS, renderPromptDoc } from './prompts';
@@ -16,5 +17,7 @@ export function docsFiles(): Record<string, string> {
     }),
   };
   for (const p of Object.values(PROMPTS)) files[`docs/prompts/${p.id}.md`] = renderPromptDoc(p);
+  for (const v of Object.values(PREDICT_PROMPTS))
+    files[`docs/prompts/variants/${v.id}.md`] = renderVariantDoc(v);
   return files;
 }

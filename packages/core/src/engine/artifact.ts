@@ -1,7 +1,9 @@
 import { z } from 'zod';
-import { loadMimicData, vectorId } from './data';
+import type { FactRecord, FidelityRecord, MimicRecord } from '../store';
+import { QKind } from '../types';
+import { type LoadedMimic, loadMimicData, vectorId } from './data';
 import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
-import { searchCacheKey } from './identity';
+import { searchCacheKeys } from './identity';
 
 /** The persisted, portable mimic (PLAN §8.1). */
 export const MimicJson = z.object({
@@ -23,7 +25,7 @@ export const MimicJson = z.object({
   evidence: z.array(
     z.object({
       seq: z.number().int(),
-      kind: z.enum(['anchor', 'adaptive', 'repeat', 'playground']),
+      kind: QKind,
       type: z.enum(['choice', 'noul', 'score']),
       prompt: z.string(),
       options: z.array(z.string()),
@@ -75,25 +77,22 @@ export function snapshotKey(mimicId: string, version: number, attemptId: string)
   return `snapshots/${mimicId}/v${version}-${attemptId}.json`;
 }
 
-export async function buildMimicJson(deps: EngineDeps, mimicId: string, version: number): Promise<MimicJson> {
-  const m = await requireMimic(deps, mimicId);
-  const cfg = await loadConfig(deps, m.configHash);
-  const loaded = await loadMimicData(deps, m);
-  const [facts, kg, fid, primaries] = await Promise.all([
-    deps.store.listFacts(m.id),
-    deps.store.listKg(m.id),
-    deps.store.listFidelity(m.id),
-    deps.store.listPredictions({ mimicId: m.id, roles: ['primary'] }),
-  ]);
+/** The fields of `mimic.json` that describe the person, from the mimic's current data (facts: active only). */
+export type MimicDocParts = Pick<
+  MimicJson,
+  'seqUpTo' | 'subject' | 'facts' | 'evidence' | 'traits' | 'insights' | 'fidelity'
+>;
+
+export function mimicDocParts(
+  m: MimicRecord,
+  loaded: LoadedMimic,
+  facts: FactRecord[],
+  fid: FidelityRecord[],
+): MimicDocParts {
   const seqUpTo = loaded.answers.reduce((a, x) => Math.max(a, x.seq), 0);
   const latestFid = fid.at(-1);
-  const lastPrimary = primaries.filter((p) => p.ok && !p.fallback).at(-1);
   const qById = new Map(loaded.questions.map((q) => [q.id, q]));
-  const doc: MimicJson = {
-    schema: 'mimic/1',
-    mimicId: m.id,
-    version,
-    createdAt: deps.clock(),
+  return {
     seqUpTo,
     subject: { displayName: m.displayName, location: m.location, occupation: m.occupation },
     facts: facts
@@ -133,10 +132,6 @@ export async function buildMimicJson(deps: EngineDeps, mimicId: string, version:
       facets: i.facetIds,
       evidence: i.evidenceSeqs,
     })),
-    kg: {
-      nodes: kg.nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),
-      edges: kg.edges.map((e) => ({ src: e.src, dst: e.dst, predicate: e.predicate, weight: e.weight })),
-    },
     fidelity: latestFid
       ? {
           fidelity: latestFid.fidelity,
@@ -147,6 +142,31 @@ export async function buildMimicJson(deps: EngineDeps, mimicId: string, version:
           n: latestFid.nScored,
         }
       : null,
+  };
+}
+
+export async function buildMimicJson(deps: EngineDeps, mimicId: string, version: number): Promise<MimicJson> {
+  const m = await requireMimic(deps, mimicId);
+  const cfg = await loadConfig(deps, m.configHash);
+  const loaded = await loadMimicData(deps, m);
+  const [facts, kg, fid, primaries] = await Promise.all([
+    deps.store.listFacts(m.id),
+    deps.store.listKg(m.id),
+    deps.store.listFidelity(m.id),
+    deps.store.listPredictions({ mimicId: m.id, roles: ['primary'] }),
+  ]);
+  const lastPrimary = primaries.filter((p) => p.ok && !p.fallback).at(-1);
+  const parts = mimicDocParts(m, loaded, facts, fid);
+  const doc: MimicJson = {
+    schema: 'mimic/1',
+    mimicId: m.id,
+    version,
+    createdAt: deps.clock(),
+    ...parts,
+    kg: {
+      nodes: kg.nodes.map((n) => ({ id: n.id, type: n.type, label: n.label })),
+      edges: kg.edges.map((e) => ({ src: e.src, dst: e.dst, predicate: e.predicate, weight: e.weight })),
+    },
     pipeline: {
       configHash: m.configHash,
       config: cfg,
@@ -156,7 +176,12 @@ export async function buildMimicJson(deps: EngineDeps, mimicId: string, version:
   return MimicJson.parse(doc);
 }
 
-/** Writes an immutable snapshot unless one already covers `seqUpTo` (this is what debounces learning bursts). */
+/**
+ * Writes an immutable snapshot unless the latest one already holds every answer (this is what debounces learning
+ * bursts). Answers are append-only, so the same count and a seq at least as high mean the same answers. The count
+ * matters because answers don't always arrive in seq order: an asked question on the mimic page can be answered
+ * while a session question below it is still open.
+ */
 export async function writeSnapshot(
   deps: EngineDeps,
   mimicId: string,
@@ -172,11 +197,15 @@ export async function writeSnapshot(
   ]);
   const latest = snaps.at(-1);
   const currentSeq = answers.reduce((a, x) => Math.max(a, x.seq), 0);
-  // A snapshot taken before an undo still holds the retracted answer, whatever its seq (ADR-0027).
+  // A snapshot taken before an undo still holds the retracted answer, even with the same count and seq (ADR-0034).
   const lastRewind = rewinds.reduce((a, r) => Math.max(a, r.rewoundAt), 0);
-  const covered =
-    latest && latest.seqUpTo >= Math.max(seqUpTo ?? 0, currentSeq) && latest.createdAt > lastRewind;
-  if (covered) return null;
+  if (
+    latest &&
+    latest.seqUpTo >= Math.max(seqUpTo ?? 0, currentSeq) &&
+    latest.createdAt > lastRewind &&
+    (await snapshotAnswerCount(deps, latest.r2Key)) === answers.length
+  )
+    return null;
   const version = (latest?.version ?? 0) + 1;
   const doc = await buildMimicJson(deps, m.id, version);
   const key = snapshotKey(m.id, version, deps.newId());
@@ -196,6 +225,15 @@ export async function writeSnapshot(
   }
   await deps.store.updateMimic(m.id, { snapshotVersion: version, updatedAt: deps.clock() });
   return version;
+}
+
+async function snapshotAnswerCount(deps: EngineDeps, key: string): Promise<number | null> {
+  try {
+    const raw = await deps.blobs.get(key);
+    return raw ? ((JSON.parse(raw) as { evidence?: unknown[] }).evidence?.length ?? null) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `GET /export`: the latest snapshot, written fresh if evidence moved past it. */
@@ -231,7 +269,7 @@ export async function deleteMimic(deps: EngineDeps, mimicId: string): Promise<vo
   for (let i = 0; i < blobKeys.length; i += 500) await deps.blobs.delete(blobKeys.slice(i, i + 500));
 
   await deps.kv.delete(`hyp:${m.id}`);
-  await deps.kv.delete(searchCacheKey(m));
+  for (const k of searchCacheKeys(m)) await deps.kv.delete(k);
   for (const k of await deps.kv.list(`mimic:${m.id}:`)) await deps.kv.delete(k);
 
   await deps.store.deleteMimic(m.id);

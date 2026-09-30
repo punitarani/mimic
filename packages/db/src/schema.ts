@@ -55,7 +55,7 @@ export const identityCandidates = sqliteTable(
     summary: text('summary').notNull(),
     jevSamePersonP: real('jev_same_person_p'),
     r2Key: text('r2_key'),
-    status: text('status', { enum: ['proposed', 'confirmed', 'rejected'] }).notNull(),
+    status: text('status', { enum: ['proposed', 'confirmed', 'rejected', 'superseded'] }).notNull(),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [index('identity_candidates_mimic_idx').on(t.mimicId)],
@@ -86,7 +86,7 @@ export const questions = sqliteTable(
     id: text('id').primaryKey(),
     mimicId: text('mimic_id').notNull(),
     seq: integer('seq'),
-    kind: text('kind', { enum: ['anchor', 'adaptive', 'repeat', 'playground'] }).notNull(),
+    kind: text('kind', { enum: ['anchor', 'adaptive', 'repeat', 'playground', 'feedback'] }).notNull(),
     type: text('type', { enum: ['choice', 'noul', 'score'] }).notNull(),
     domain: text('domain', { enum: ['core', 'casual', 'professional'] }).notNull(),
     prompt: text('prompt').notNull(),
@@ -103,6 +103,8 @@ export const questions = sqliteTable(
     servedAt: integer('served_at'),
     /** As-of time of the derived data (traits, insights, facts) in this question's sealed states (ADR-0017). */
     stateAt: integer('state_at'),
+    /** The selector's diagnostics for the winning score (ADR-0027). */
+    selectionJson: text('selection_json'),
   },
   (t) => [
     index('questions_mimic_idx').on(t.mimicId),
@@ -131,6 +133,8 @@ export const predictions = sqliteTable(
     ok: bool('ok').notNull(),
     error: text('error'),
     fallback: bool('fallback').notNull().default(false),
+    /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0027). */
+    hypothesis: text('hypothesis'),
     createdAt: integer('created_at').notNull(),
   },
   (t) => [
@@ -161,7 +165,7 @@ export const answers = sqliteTable(
   ],
 );
 
-/** ADR-0027: answers the person undid to re-answer. One row per retracted answer (answer_id is unique). */
+/** ADR-0034: answers the person undid to re-answer. One row per retracted answer (answer_id is unique). */
 export const answerRewinds = sqliteTable(
   'answer_rewinds',
   {
@@ -180,7 +184,7 @@ export const answerRewinds = sqliteTable(
   },
   (t) => [
     index('answer_rewinds_mimic_idx').on(t.mimicId, t.seq),
-    // Makes a second, concurrent undo of the same answer fail as a whole (ADR-0027).
+    // Makes a second, concurrent undo of the same answer fail as a whole (ADR-0034).
     uniqueIndex('answer_rewinds_answer_idx').on(t.answerId),
     index('answer_rewinds_idempotency_idx').on(t.idempotencyKey),
   ],
@@ -242,7 +246,7 @@ export const insights = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** When the status left `active` (ADR-0017: lets replay rebuild the state as it was at serve time). */
     statusChangedAt: integer('status_changed_at'),
-    /** seqUpTo of the reflection that superseded it, so undoing that answer restores it (ADR-0027). */
+    /** seqUpTo of the reflection that superseded it, so undoing that answer restores it (ADR-0034). */
     supersededSeq: integer('superseded_seq'),
   },
   (t) => [index('insights_mimic_idx').on(t.mimicId)],
@@ -383,6 +387,32 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
+/** ADR-0033: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds Persona.md. */
+export const personaDrafts = sqliteTable(
+  'persona_drafts',
+  {
+    id: text('id').primaryKey(),
+    mimicId: text('mimic_id').notNull(),
+    seqUpTo: integer('seq_up_to').notNull(),
+    configHash: text('config_hash').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    model: text('model').notNull(),
+    modelSnapshot: text('model_snapshot').notNull(),
+    draftJson: text('draft_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('persona_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
+);
+
+/** ADR-0033: the person's choices for Persona.md (sections, hidden items, edits, their own words). */
+export const personaCurations = sqliteTable('persona_curations', {
+  mimicId: text('mimic_id').primaryKey(),
+  json: text('json').notNull(),
+  /** Client revision: saves apply only in increasing rev order. */
+  rev: integer('rev').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 /** ADR-0003: local stand-in for Vectorize (dev and the Node CLI). */
 export const vectors = sqliteTable(
   'vectors',
@@ -396,6 +426,24 @@ export const vectors = sqliteTable(
   },
   (t) => [index('vectors_mimic_idx').on(t.mimicId, t.kind)],
 );
+
+/**
+ * ADR-0027: cross-person item statistics, aggregate only (no mimic_id, no free text), over research-consented
+ * dev-split mimics. Used to rank pooled candidates; never in a prompt or a state.
+ */
+export const itemStats = sqliteTable('item_stats', {
+  key: text('key').primaryKey(),
+  kind: text('kind', { enum: ['item', 'archetype'] }).notNull(),
+  nPeople: integer('n_people').notNull(),
+  nAnswers: integer('n_answers').notNull(),
+  answerEntropy: real('answer_entropy'),
+  baselineError: real('baseline_error').notNull(),
+  primaryError: real('primary_error').notNull(),
+  surprise: real('surprise').notNull(),
+  lift: real('lift'),
+  meanLatencyMs: real('mean_latency_ms').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
 
 /** Tables scoped to one mimic, all removed by a hard delete. */
 export const MIMIC_TABLES = [
@@ -416,4 +464,6 @@ export const MIMIC_TABLES = [
   snapshots,
   mimicFacets,
   vectors,
+  personaDrafts,
+  personaCurations,
 ] as const;

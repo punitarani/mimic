@@ -7,6 +7,7 @@ import {
   type MimicData,
   pickRepeat,
   SECTION_BUDGETS,
+  toStateEvidence,
   validateDraft,
 } from '../src';
 
@@ -105,6 +106,13 @@ describe('sealing (PLAN §3.1): the state for question t never contains answer t
     expect(buildState(m, opts()).evidence.map((e) => e.seq)).toEqual([1, 2, 3]);
   });
 
+  it('includes feedback the person answered themselves, sealed like any answer (ADR-0032)', () => {
+    const m = mimic(3);
+    m.evidence.push(item(4, { kind: 'feedback' }), item(5, { kind: 'playground' }));
+    expect(buildState(m, opts()).evidence.map((e) => e.seq)).toEqual([1, 2, 3, 4]);
+    expect(buildState(m, opts({ beforeSeq: 4 })).evidence.map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
   it('context-only states carry identity and nothing learned', () => {
     const s = buildState(mimic(20), opts({ contextOnly: true }));
     expect(s.evidence).toEqual([]);
@@ -187,6 +195,50 @@ describe('state builder (PLAN §9.9)', () => {
       options: ['Option A for 1', 'Option B for 1'],
     });
   });
+
+  it('marks decisive and torn answers with latency hints, from the median over the sealed evidence', () => {
+    const m = mimic(12);
+    for (const e of m.evidence) e.latencyMs = 3000;
+    m.evidence[1]!.latencyMs = 500; // quick
+    m.evidence[2]!.latencyMs = 9000; // slow
+    m.evidence[11]!.latencyMs = 100; // seq 12: quick, but only when sealed in
+    const s = buildState(m, opts({ latencyHints: true, beforeSeq: 12 }));
+    expect(s.meta.builder).toBe('full.v2');
+    expect(s.evidence[0]!.pace).toBeUndefined();
+    expect(s.evidence[1]!.pace).toBe('quick');
+    expect(s.evidence[2]!.pace).toBe('slow');
+    expect(s.evidence.map((e) => e.seq)).not.toContain(12);
+    const plain = buildState(m, opts({ beforeSeq: 12 }));
+    expect(plain.meta.builder).toBe('full.v1');
+    expect(plain.evidence.every((e) => e.pace === undefined)).toBe(true);
+    expect(plain.meta.stateHash).not.toBe(s.meta.stateHash);
+    // The hints are deterministic and need at least three timed answers.
+    expect(buildState(m, opts({ latencyHints: true, beforeSeq: 12 })).meta.stateHash).toBe(s.meta.stateHash);
+    const few = mimic(2);
+    few.evidence[0]!.latencyMs = 100;
+    few.evidence[1]!.latencyMs = 9000;
+    expect(buildState(few, opts({ latencyHints: true })).evidence.every((e) => e.pace === undefined)).toBe(
+      true,
+    );
+    expect(buildState(m, opts({ latencyHints: true, contextOnly: true })).meta.builder).toBe('context.v1');
+  });
+
+  it('`xs.map(toStateEvidence)` never injects a median (the index is not a latency)', () => {
+    const items = Array.from({ length: 5 }, (_, i) => item(i + 1, { latencyMs: 3000 }));
+    // The compiler rejects `items.map(toStateEvidence)` now; the runtime guard covers untyped callers.
+    const mapped = items.map((e, i) => toStateEvidence(e, i as unknown as { medianLatencyMs: number }));
+    expect(mapped.every((e) => e.pace === undefined)).toBe(true);
+    expect(
+      items.map((e) => toStateEvidence(e, { medianLatencyMs: 3000 })).every((e) => e.pace === undefined),
+    ).toBe(true);
+    expect(toStateEvidence(item(1, { latencyMs: 100 }), { medianLatencyMs: 3000 }).pace).toBe('quick');
+    // The budget is costed as rendered: with hints on, pace marks count toward it.
+    const m = mimic(200);
+    for (const e of m.evidence) e.latencyMs = e.seq % 2 ? 100 : 30000;
+    const s = buildState(m, opts({ budgetTokens: 2000, latencyHints: true }));
+    expect(s.meta.tokens).toBeLessThanOrEqual(2000);
+    expect(s.evidence.some((e) => e.pace !== undefined)).toBe(true);
+  });
 });
 
 describe('repeat schedule (PLAN §9.5)', () => {
@@ -200,8 +252,8 @@ describe('repeat schedule (PLAN §9.5)', () => {
   const rng = () => 0;
 
   it('waits for `every` adaptive questions', () => {
-    expect(pickRepeat(served(17), 18, { every: 8, minGap: 6 }, rng)).toBeNull();
-    expect(pickRepeat(served(18), 19, { every: 8, minGap: 6 }, rng)).toBe('q1');
+    expect(pickRepeat(served(17), { every: 8, minGap: 6 }, rng)).toBeNull();
+    expect(pickRepeat(served(18), { every: 8, minGap: 6 }, rng)).toBe('q1');
   });
 
   it('respects the minimum gap and never repeats twice', () => {
@@ -209,7 +261,7 @@ describe('repeat schedule (PLAN §9.5)', () => {
       ...served(18),
       { questionId: 'r1', seq: 19, kind: 'repeat' as const, repeatOf: 'q1', answered: true },
     ];
-    expect(pickRepeat(s, 20, { every: 8, minGap: 6 }, rng)).toBeNull();
+    expect(pickRepeat(s, { every: 8, minGap: 6 }, rng)).toBeNull();
     const later = [
       ...s,
       ...Array.from({ length: 8 }, (_, i) => ({
@@ -219,8 +271,14 @@ describe('repeat schedule (PLAN §9.5)', () => {
         answered: true,
       })),
     ];
-    const pick = pickRepeat(later, 28, { every: 8, minGap: 6 }, rng);
+    const pick = pickRepeat(later, { every: 8, minGap: 6 }, rng);
     expect(pick).toBe('q2');
+  });
+
+  it('counts the gap in session questions, not seqs (ADR-0032)', () => {
+    // Seqs jump where the person taught on the mimic page; only q1 is 18 session questions back.
+    const s = served(18).map((x, i) => (i >= 13 ? { ...x, seq: x.seq + 100 } : x));
+    expect(pickRepeat(s, { every: 8, minGap: 18 }, () => 0.99)).toBe('q1');
   });
 });
 
