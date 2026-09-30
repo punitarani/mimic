@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use Mimic, please cite it as below."
+type: software
+title: "Mimic: Efficient Human Mimicry"
+abstract: >-
+  Mimic learns a person from a short, adaptive Q&A session and persists a mimic that predicts their decisions.
+  It is also a research platform for comparing cheap LLMs against a decision model at that task, with sealed,
+  prequential predictions and a context-only baseline on every question.
+authors:
+  - family-names: Arani
+    given-names: Punit
+repository-code: "https://github.com/punitarani/mimic"
+keywords:
+  - digital twins
+  - human decision prediction
+  - adaptive questioning
+  - LLM evaluation
