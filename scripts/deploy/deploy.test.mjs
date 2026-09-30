@@ -204,6 +204,22 @@ describe('config', () => {
     ]);
   });
 
+  it('passes spend caps to both Workers only when set, and refuses caps that are not numbers in range', () => {
+    for (const c of [web, worker]) {
+      // Unset, the code defaults apply (packages/core/src/config.ts), so both Workers agree without a var.
+      assert.equal(resolveSettings(c, 'prod', {}).vars.BUDGET_USD, undefined);
+      const ok = resolveSettings(c, 'prod', { BUDGET_USD: ' 1.5 ', BUDGET_SESSION_SHARE: '0.75' });
+      assert.deepEqual(ok.problems, []);
+      assert.equal(ok.vars.BUDGET_USD, '1.5');
+      assert.equal(ok.vars.BUDGET_SESSION_SHARE, '0.75');
+    }
+    const { problems } = resolveSettings(worker, 'prod', { BUDGET_USD: '0', BUDGET_SESSION_SHARE: '80%' });
+    assert.deepEqual(problems, [
+      'BUDGET_USD must be a number of US dollars above 0',
+      'BUDGET_SESSION_SHARE must be a number above 0 and at most 1',
+    ]);
+  });
+
   it('keeps logs and traces on for both Workers, in every environment', () => {
     for (const c of [web, worker]) {
       // Top-level observability is inherited by env.preview and env.prod unless they override it.

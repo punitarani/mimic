@@ -829,3 +829,37 @@ On the local stack, with a 35-second `pool.refill` batch running on the main que
 - enrichment through Exa, 0.94 s. A candidate's carried facts need none.
 
 A deploy-time `ENRICH_PROVIDER` set in Doppler overrides the new default (ADR-0022). Remove it, or set it to `exa`.
+
+## ADR-0035 — Spend caps: a session share and a reserve for the mimic page (2026-09-30)
+
+The budget guard stopped everything at `session.budgetUsd` ($0.50). A session that spent all of it left nothing for
+the mimic page, so a person who finished the session could no longer ask their mimic a question or draft Persona.md,
+the two things they finish the session to do.
+
+- **Two caps from one budget.** The session may spend a share of the cap (`BUDGET_SESSION_SHARE`, default 0.8); the
+  rest is a reserve for the mimic page. Past the share `/next` returns `budget`.
+- **Enforced at the gateway, by purpose.** Every purpose an engine call is logged under has a spend scope
+  (`SPEND_SCOPES` in `packages/core/src/gateway.ts`), and a test fails when a purpose in the engine is missing
+  from it. `session` purposes (shadows, `pnpm backfill`, pool refills and gates, hypotheses, identity) are held to
+  the share, so no background or research work can draw on the reserve. `page` purposes (asking, teaching,
+  Persona.md, and learning from answers: embeddings, trait reads, reflection) run to the whole cap, so an answer
+  taught after the session still updates the mimic. `serve` purposes (primary, baseline, fallback, BALD
+  exploration) are admitted once by `/next` under the share and then held to the whole cap, so a serve that
+  starts just under the share is never cut off halfway with a failed primary. An unlisted purpose is held to the
+  share.
+- **Refused jobs.** A job the guard refuses is skipped, not retried, and never marked done in the ledger, so the
+  same job runs if it's enqueued after the cap is raised. Shadows, refills and hypotheses check the share before
+  loading anything, and the cron stops enqueueing missing shadows for a mimic past its share.
+- **Deploy settings, not config.** The caps change what a mimic may spend, never what a prediction sees, so they stay
+  out of `PipelineConfig` and every config hash stays valid. A new config field would have meant `cfg.default.v5`
+  and a new label on every question, just for a limit change. `BUDGET_USD` sets the standard budget (default $1,
+  `DEFAULT_BUDGET_USD`). It applies to every config carrying $0.50, the budget every `cfg.default.*` has had, so
+  mimics created earlier get it too, and one that stopped at $0.50 reopens its session. A config that names any
+  other budget, such as an experiment arm, keeps its own, so arms stay comparable.
+- **Defaults in code.** $1 and 0.8 are constants in `packages/core/src/config.ts`, used by the Workers, tests and
+  the eval CLI alike. The Workers' vars only carry an override set in Doppler, and the live eval engine reads the
+  same variables from its environment. Preflight refuses a non-number, a cap at or below 0, or a share outside
+  (0, 1], and a test checks that it accepts exactly what the runtime accepts. At runtime a var may be a string or
+  a JSON number; an invalid one keeps its default and is logged once.
+- **UI.** `budgetUsd` in the snapshot is the whole cap. The session's end says what is left: the reserve for the
+  mimic page, or, once everything is spent, that answers can still be taught there.
