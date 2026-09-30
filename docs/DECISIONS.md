@@ -1534,7 +1534,17 @@ This ADR adds balance and ordering to the selector and the generator, and makes 
   - The gap term gives 35% of its weight to the candidate's category shortfall and 25% to its group gap.
   - Once four adaptive questions are answered: a candidate whose categories are all above 40% is skipped unless every
     candidate is (the cap), and while a category is below 60% of its even share (15% with four), candidates in it go
-    first (the floor). The engine backs the floor with one reserve item from that category when the pool has none.
+    first (the floor).
+  - Coverage deadlines (`balance.groupsBy` 20, `trustRamp.sweepBy` 30): information chooses freely until the facet
+    groups still untouched, or the consented sensitive facets still unasked, would no longer fit in the questions left
+    (allowing one repeat probe per eight); then only candidates covering one are eligible. This is the shadow-test
+    approach to content constraints in CAT (van der Linden & Reese 1998), applied greedily. It was added after the
+    first live scripted run: with bonuses alone, live hypothesis information (0 to 1) outweighed the balance terms
+    (about 0.1 inside the λ-weighted gap) and the sweep (0.3), so 16 of 20 consented sensitive facets were reached by
+    question 30 and each person missed one group by 20.
+  - The reserve backs coverage: before each selection the engine adds up to three reserve items for needs the pool has
+    nothing for (untouched groups until question 20, unasked consented sensitive facets once the sweep has begun,
+    categories below the floor).
   - Trust ramp: nothing touching a sensitive facet is served before six answers, enforced by the engine on the pool
     and the reserve and by the selector with no exception. From ten answers, a candidate touching a consented
     sensitive facet not yet asked about earns +0.3 (the sweep). Sensitive items later in an instrument are answered
@@ -1547,7 +1557,7 @@ This ADR adds balance and ordering to the selector and the generator, and makes 
   quota and, once the ramp is open, the consented sensitive facets.
 - **`cfg.default.v7`** = v6's predictors on ontology v2, reserve.v2, gen.v3, gates.v3, reflect.v2, domain mix core 15 /
   casual 55 / professional 30, and `VOI_SELECTOR_V7` (v4 weights plus balance `{ category 0.35, group 0.25, cap 0.4 }`
-  and ramp `{ minAnswered 6, sweepFrom 10, sweepBonus 0.3 }`). v1–v6 hashes stay pinned; `cfg.m10.candidate` is now
+  and ramp `{ minAnswered 6, sweepFrom 10, sweepBonus 0.3, sweepBy 30 }`, with `groupsBy 20` in balance). v1–v6 hashes stay pinned; `cfg.m10.candidate` is now
   built from v6 so it keeps its hash and isolates the selector in comparisons. New mimics get v7; existing mimics keep
   their config.
 - **Measurement.** `pnpm eval -- rubric` reports R1 (generated questions passing `concrete`), R2 (category shares by

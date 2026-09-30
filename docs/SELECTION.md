@@ -109,8 +109,21 @@ gap(q) = (1 − c − g) · (½ facetGap + ½ domainGap) + c · categoryShortfal
 
 and two eligibility rules bound the shares once four adaptive questions are answered: a candidate whose categories are
 all above the **cap** (40%) is skipped unless every candidate is; while a category is below 60% of its even share (15%
-with four), candidates in it go first. The engine backs the floor: if such a category has nothing in the pool, one
-reserve item from it is added before selection, so a generator that missed its quota cannot starve it.
+with four), candidates in it go first.
+
+**Coverage deadlines.** A bonus can't guarantee coverage: live hypothesis information runs from 0 to 1 while the
+balance terms, inside the λ-weighted gap, are worth about 0.1. So two deadlines work like content constraints in the
+shadow-test approach to CAT (van der Linden & Reese 1998): information chooses freely until the things still to cover
+would no longer fit in the questions left, counting a repeat probe for every eight, and from then on only candidates
+that cover one are eligible. Every facet group in scope is touched by question 20 (`balance.groupsBy`) and every
+consented sensitive facet is asked about by question 30 (`trustRamp.sweepBy`). Deadlines outrank exposure, the cap and
+the floor, never the ramp.
+
+**The reserve backs coverage.** The selector can only choose from the pool, so before each selection the engine adds
+up to three reserve items (reserve.v2: hand-written, concrete, sensitive items plainly worded) for needs the pool has
+nothing for: facet groups not yet touched (until question 20), consented sensitive facets not yet asked about (once the
+sweep has begun), and categories below the floor. A generator that missed its targets, or whose drafts the gates
+rejected, can't leave a gap.
 
 **Trust ramp.** No question touching a sensitive facet is served before six anchor and adaptive answers. The engine
 removes such candidates from the pool (and the reserve) before selection, and the selector excludes them with no
