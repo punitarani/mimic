@@ -139,7 +139,7 @@ export interface PredictionResult {
   ok: boolean;
   error?: string;
   /**
-   * Why it failed (set on failures only; stored with the prediction, ADR-0034):
+   * Why it failed (set on failures only; stored with the prediction, ADR-0035):
    * - `output`: the model answered but the answer was unusable (the prompt's or model's fault);
    * - `timeout`: the model didn't answer within the call's timeout (too slow; the model's failure, never redone);
    * - `transport`: the call failed before the model answered (provider error, rate limit, network, budget guard).
@@ -241,6 +241,11 @@ export interface PersonCandidate {
   location?: string;
   url: string;
   summary: string;
+  /**
+   * Structured facts the search result already carried (an Exa person entity), without source URLs: the candidate's
+   * URL is their source. When present, confirming this candidate needs no enrichment call (ADR-0034).
+   */
+  facts?: EnrichedFact[];
 }
 
 export interface PeopleSearchResult {
@@ -271,15 +276,40 @@ export interface EnrichmentResult {
   raw: unknown;
 }
 
+/** One provider call's outcome, for logging (PLAN §3.5). */
+export interface ProviderCallOutcome {
+  costUsd: number;
+  latencyMs: number;
+  raw: unknown;
+}
+
+/**
+ * Runs and logs one provider call: the gateway gives each enricher a runner so an enrichment that makes several
+ * calls (Exa `/contents`, then a schema summary) logs one `model_calls` row per call, each under its own model.
+ */
+export type ProviderCallRunner = <T extends ProviderCallOutcome>(
+  model: string,
+  request: unknown,
+  call: () => Promise<T>,
+) => Promise<T>;
+
 export interface Enricher {
   readonly provider: string;
-  enrich(subject: {
-    name: string;
-    location: string;
-    url: string;
-    occupation?: string;
-    employer?: string;
-  }): Promise<EnrichmentResult>;
+  /**
+   * True when the facts a search candidate carries (`PersonCandidate.facts`) are what this enricher would return,
+   * so confirming such a candidate skips the enrichment call.
+   */
+  readonly usesSearchFacts?: boolean;
+  enrich(
+    subject: {
+      name: string;
+      location: string;
+      url: string;
+      occupation?: string;
+      employer?: string;
+    },
+    run: ProviderCallRunner,
+  ): Promise<EnrichmentResult>;
 }
 
 export interface EmbedResult {

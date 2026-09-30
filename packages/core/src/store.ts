@@ -76,7 +76,7 @@ export interface PredictionRecord {
   latencyMs: number;
   ok: boolean;
   error: string | null;
-  /** Failed predictions only: `output`, `timeout` (the model's) or `transport` (the call's); ADR-0034. */
+  /** Failed predictions only: `output`, `timeout` (the model's) or `transport` (the call's); ADR-0035. */
   errorKind?: PredictionErrorKind | null;
   /** True when the primary came from the LLM fallback because Jev errored (PLAN §16). */
   fallback: boolean;
@@ -259,7 +259,7 @@ export interface JobRecord {
   key: string;
   type: string;
   /**
-   * `queued`: enqueued to run at `updatedAt` (a paced backfill, ADR-0034), so a re-run knows it's in flight; a
+   * `queued`: enqueued to run at `updatedAt` (a paced backfill, ADR-0035), so a re-run knows it's in flight; a
    * queued job still not done 15 minutes after its time is stale and the cron requeues it.
    */
   status: 'queued' | 'running' | 'done' | 'failed';
@@ -355,7 +355,7 @@ export interface Store {
   /**
    * Stores one shadow unless this question already has one from this predictor (a unique index, so concurrent runs
    * can't both insert), first deleting `replaceIds` if they are failed shadows (a backfill redoing a failed call,
-   * ADR-0034). Primary and baseline rows are never deleted. True if `rec` was stored.
+   * ADR-0035). Primary and baseline rows are never deleted. True if `rec` was stored.
    */
   insertShadow(rec: PredictionRecord, replaceIds?: string[]): Promise<boolean>;
   listPredictions(filter: {

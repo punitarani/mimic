@@ -26,7 +26,6 @@ describe('identity search queries (ADR-0029)', () => {
     expect(qs).toEqual([
       'Rosa Ibarra, Neuroscience graduate at Pomona College, Claremont, CA',
       'Rosa Ibarra, Neuroscience graduate at Pomona College',
-      'Rosa Ibarra',
     ]);
     for (const q of qs) expect(q).not.toContain('"');
   });

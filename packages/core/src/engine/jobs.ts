@@ -199,7 +199,7 @@ async function missingPredictions(
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Backfill (ADR-0024, ADR-0034): a new shadow model run over questions already served, on the same sealed states.
+// Backfill (ADR-0024, ADR-0035): a new shadow model run over questions already served, on the same sealed states.
 // ---------------------------------------------------------------------------------------------------------------
 
 /** Default pace, per predictor: one prediction every 2 s, about what a few live sessions produce. */
@@ -403,7 +403,7 @@ export async function runStatsRefresh(deps: EngineDeps): Promise<number> {
  * A call that failed before the model answered (a rate limit, provider error or network failure) is thrown, so the
  * queue retries it with backoff; on the last attempt (MAX_JOB_ATTEMPTS) it is stored as a failed call instead, so
  * nothing retries it forever and a backfill with `retryFailed` can redo it later. The model's own failures
- * (unusable output, a timeout) are stored at once (ADR-0034). The unique shadow index makes a concurrent run of
+ * (unusable output, a timeout) are stored at once (ADR-0035). The unique shadow index makes a concurrent run of
  * the same shadow a no-op.
  *
  * `backfill`: operator research work (ADR-0024). The call is logged as `predict.backfill`, outside the mimic's

@@ -19,6 +19,8 @@ export interface MimicBindings extends ProviderEnv {
   BLOBS: R2Bucket;
   CACHE: KVNamespace;
   JOBS?: Queue<Job>;
+  /** Identity jobs' own lane, so a person never waits behind question generation (ADR-0034). Optional. */
+  IDENTITY_JOBS?: Queue<Job>;
   VEC?: VectorizeIndex;
   AI?: { run(model: string, input: { text: string[] }): Promise<unknown> };
   RL?: RateLimit;
@@ -50,9 +52,51 @@ export class CfQueue implements JobQueue {
   }
 }
 
+/**
+ * Job types a person waits on during sign-up. They get their own queue: Cloudflare Queues adds consumers only after
+ * a batch finishes, so on a shared queue a 1–4 minute `pool.refill` batch held a 2-second search for its whole run.
+ * Producers route by type alone, whatever their own settings say (ADR-0034).
+ */
+export const IDENTITY_JOB_TYPES: ReadonlySet<Job['type']> = new Set(['identity.search', 'identity.enrich']);
+
+/** Identity queues: `mimic-identity` plus the environment suffix (wrangler.jsonc). */
+export function isIdentityQueue(name: string): boolean {
+  return /^mimic-identity(?:-|$)/.test(name);
+}
+
+/**
+ * Whether the identity lane runs this job itself. Decided by the consumer, which is where enrichment runs and whose
+ * ENRICH_PROVIDER counts: Parallel enrichment takes minutes and would hold the lane the way `pool.refill` held the
+ * shared queue, so the consumer forwards it there.
+ */
+export function runsOnIdentityLane(job: Job, env: Pick<MimicBindings, 'ENRICH_PROVIDER'>): boolean {
+  return (
+    job.type === 'identity.search' || (job.type === 'identity.enrich' && env.ENRICH_PROVIDER !== 'parallel')
+  );
+}
+
+/** Routes identity jobs to IDENTITY_JOBS when it is bound; everything else (and all jobs without it) to JOBS. */
+export class RoutedQueue implements JobQueue {
+  constructor(
+    private readonly main: JobQueue,
+    private readonly identity: JobQueue | null,
+  ) {}
+  private laneOf(job: Job): JobQueue {
+    return this.identity && IDENTITY_JOB_TYPES.has(job.type) ? this.identity : this.main;
+  }
+  enqueue(job: Job, opts?: { delaySeconds?: number }) {
+    return this.laneOf(job).enqueue(job, opts);
+  }
+  async enqueueBatch(items: readonly QueuedJob[]) {
+    const lanes = new Map<JobQueue, QueuedJob[]>();
+    for (const i of items) lanes.set(this.laneOf(i.job), [...(lanes.get(this.laneOf(i.job)) ?? []), i]);
+    for (const [q, batch] of lanes) await q.enqueueBatch(batch);
+  }
+}
+
 export function queueFor(env: MimicBindings): JobQueue {
   if (!env.JOBS) throw new Error('No job queue bound');
-  return new CfQueue(env.JOBS);
+  return new RoutedQueue(new CfQueue(env.JOBS), env.IDENTITY_JOBS ? new CfQueue(env.IDENTITY_JOBS) : null);
 }
 
 export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = {}): EngineDeps {

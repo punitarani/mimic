@@ -10,7 +10,7 @@
 // model's, unusable output or a timeout, and failed calls, which aren't), counts the missing predictions per mimic,
 // and estimates cost and duration from what this predictor has cost so far (never a hardcoded price). `--yes`
 // enqueues one job per predictor (or per named mimic); the worker spaces the predictions `--rate` a minute
-// (ADR-0034), so they see the load a live shadow sees. Re-running is safe: predictions already queued or being
+// (ADR-0035), so they see the load a live shadow sees. Re-running is safe: predictions already queued or being
 // retried are skipped, and the count falls to 0 as the queue drains.
 //
 //   --retry-failed  also redo this predictor's failed calls (rate limits and provider errors that outlasted every
@@ -315,7 +315,8 @@ export function localTarget({ fetchImpl = fetch, exec = capture } = {}) {
 export function remoteTarget(env, cf, workerConfig = readConfig(WORKER_CONFIG)) {
   const e = envBlock(workerConfig, env);
   const dbName = e.d1_databases?.[0]?.database_name;
-  const queueName = e.queues?.producers?.[0]?.queue;
+  // The shared queue by its binding, not its position: identity jobs have a queue of their own (ADR-0034).
+  const queueName = e.queues?.producers?.find((p) => p.binding === 'JOBS')?.queue;
   let dbId;
   let queueId;
   return {

@@ -152,3 +152,37 @@ describe('budget guard', () => {
     await expect(g.decide({ purpose: 'x' }, req)).resolves.toBeDefined();
   });
 });
+
+describe('enrichment logging (PLAN §3.5, ADR-0034)', () => {
+  it('logs each provider call an enricher makes as its own row, failures included', async () => {
+    const log = new MemLog();
+    let n = 0;
+    const g = new Gateway({
+      decisions: decisions(),
+      llm,
+      log,
+      enricher: {
+        provider: 'exa',
+        async enrich(_subject, run) {
+          const page = await run('exa:contents', { urls: ['u'] }, async () => ({
+            costUsd: 0.001,
+            latencyMs: 3,
+            raw: {},
+          }));
+          await run('exa:summary', { urls: ['u'] }, async () => {
+            throw new Error('summary did not match the schema');
+          }).catch(() => null);
+          return { facts: [], costUsd: page.costUsd, latencyMs: 5, raw: {} };
+        },
+      },
+      clock: () => 1_790_000_000_000,
+      newId: () => `id${++n}`,
+    });
+    await g.enrich({ purpose: 'identity.enrich', mimicId: 'M' }, { name: 'A', location: 'B', url: 'u' });
+    expect(log.rows.map((r) => [r.provider, r.model, r.ok, r.costUsd])).toEqual([
+      ['exa', 'exa:contents', true, 0.001],
+      ['exa', 'exa:summary', false, 0],
+    ]);
+    expect(log.rows[1]!.error).toContain('schema');
+  });
+});

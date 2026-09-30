@@ -191,7 +191,7 @@ export function toRecord(
     modelSnapshot: r.modelSnapshot,
     ok: r.ok,
     error: r.ok ? null : (r.error ?? 'failed'),
-    // A timeout counts as transient here, as it did before timeouts had their own kind (ADR-0034).
+    // A timeout counts as transient here, as it did before timeouts had their own kind (ADR-0035).
     transient: !r.ok && (r.errorKind === 'transport' || r.errorKind === 'timeout'),
     dist,
     answer: inst.answer,

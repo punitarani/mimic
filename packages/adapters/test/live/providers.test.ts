@@ -3,6 +3,7 @@
 import { DEFAULT_CONFIG, LLM_PREDICTOR_MAX_TOKENS, PROMPTS, parsePredictorId } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
+  ExaEnricher,
   ExaPeopleSearch,
   JevDecisions,
   OpenRouterChat,
@@ -113,6 +114,17 @@ describe.skipIf(!LIVE)('live providers', () => {
     expect(r.candidates[0]).toMatchObject({ name: 'Bill Gates', url });
   }, 30_000);
 
+  it('Exa enrichment maps a LinkedIn profile to sourced facts', async () => {
+    const url = 'https://www.linkedin.com/in/williamhgates';
+    const r = await new ExaEnricher(env.EXA_API_KEY ? { apiKey: env.EXA_API_KEY } : {}).enrich(
+      { name: 'Bill Gates', location: 'Seattle', url },
+      (_model, _request, call) => call(),
+    );
+    expect(r.facts.some((f) => f.predicate === 'worksAt' || f.predicate === 'workedAt')).toBe(true);
+    expect(r.facts.every((f) => f.sourceUrl === url)).toBe(true);
+    expect(r.costUsd).toBeGreaterThan(0);
+  }, 30_000);
+
   it('Parallel enrichment runs a task (skipped when the host is unreachable)', async (ctx) => {
     if (!(await reachable('https://api.parallel.ai'))) ctx.skip();
     const r = await new ParallelEnricher(env.PARALLEL_API_KEY ? { apiKey: env.PARALLEL_API_KEY } : {}).enrich(
@@ -121,6 +133,7 @@ describe.skipIf(!LIVE)('live providers', () => {
         location: 'London',
         url: 'https://en.wikipedia.org/wiki/Ada_Lovelace',
       },
+      (_model, _request, call) => call(),
     );
     expect(Array.isArray(r.facts)).toBe(true);
   }, 200_000);

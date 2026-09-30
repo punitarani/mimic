@@ -27,10 +27,21 @@
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "mimic-blobs" }],
   "kv_namespaces": [{ "binding": "CACHE", "id": "local-cache" }],
   "queues": {
-    "producers": [{ "binding": "JOBS", "queue": "mimic-jobs" }],
+    "producers": [
+      { "binding": "JOBS", "queue": "mimic-jobs" },
+      { "binding": "IDENTITY_JOBS", "queue": "mimic-identity" }
+    ],
     "consumers": [
       {
         "queue": "mimic-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 1,
+        "max_retries": 5,
+        "dead_letter_queue": "mimic-jobs-dlq"
+      },
+      // Identity jobs (search, Exa enrichment) on their own lane: a person waits on them (ADR-0034).
+      {
+        "queue": "mimic-identity",
         "max_batch_size": 10,
         "max_batch_timeout": 1,
         "max_retries": 5,
@@ -59,10 +70,21 @@
       "vectorize": [{ "binding": "VEC", "index_name": "mimic-qa-preview" }],
       "ai": { "binding": "AI" },
       "queues": {
-        "producers": [{ "binding": "JOBS", "queue": "mimic-jobs-preview" }],
+        "producers": [
+          { "binding": "JOBS", "queue": "mimic-jobs-preview" },
+          { "binding": "IDENTITY_JOBS", "queue": "mimic-identity-preview" }
+        ],
         "consumers": [
           {
             "queue": "mimic-jobs-preview",
+            "max_batch_size": 10,
+            "max_batch_timeout": 1,
+            "max_retries": 5,
+            "dead_letter_queue": "mimic-jobs-preview-dlq"
+          },
+          // Identity jobs (search, Exa enrichment) on their own lane: a person waits on them (ADR-0034).
+          {
+            "queue": "mimic-identity-preview",
             "max_batch_size": 10,
             "max_batch_timeout": 1,
             "max_retries": 5,
@@ -76,7 +98,7 @@
         "VECTOR_BACKEND": "vectorize",
         "EMBEDDINGS_PROVIDER": "workers-ai",
         "SEARCH_PROVIDER": "exa",
-        "ENRICH_PROVIDER": "parallel"
+        "ENRICH_PROVIDER": "exa"
       },
       // Pushed with each deploy (scripts/deploy), plus the keys the chosen providers need (EXA_API_KEY for exa
       // search, PARALLEL_API_KEY for parallel enrichment, ...). Not inherited: listed per environment.
@@ -100,10 +122,21 @@
       "vectorize": [{ "binding": "VEC", "index_name": "mimic-qa-prod" }],
       "ai": { "binding": "AI" },
       "queues": {
-        "producers": [{ "binding": "JOBS", "queue": "mimic-jobs-prod" }],
+        "producers": [
+          { "binding": "JOBS", "queue": "mimic-jobs-prod" },
+          { "binding": "IDENTITY_JOBS", "queue": "mimic-identity-prod" }
+        ],
         "consumers": [
           {
             "queue": "mimic-jobs-prod",
+            "max_batch_size": 10,
+            "max_batch_timeout": 1,
+            "max_retries": 5,
+            "dead_letter_queue": "mimic-jobs-prod-dlq"
+          },
+          // Identity jobs (search, Exa enrichment) on their own lane: a person waits on them (ADR-0034).
+          {
+            "queue": "mimic-identity-prod",
             "max_batch_size": 10,
             "max_batch_timeout": 1,
             "max_retries": 5,
@@ -117,7 +150,7 @@
         "VECTOR_BACKEND": "vectorize",
         "EMBEDDINGS_PROVIDER": "workers-ai",
         "SEARCH_PROVIDER": "exa",
-        "ENRICH_PROVIDER": "parallel"
+        "ENRICH_PROVIDER": "exa"
       },
       "secrets": { "required": ["OPENROUTER_API_KEY"] }
     }

@@ -13,7 +13,7 @@ export interface HttpOptions {
   retries?: number;
   /**
    * Retry an attempt that timed out (default true). Chat turns it off: a timeout there means the model was too slow,
-   * and a retry would bill a second generation and hide the slowness (ADR-0034).
+   * and a retry would bill a second generation and hide the slowness (ADR-0035).
    */
   retryTimeouts?: boolean;
 }

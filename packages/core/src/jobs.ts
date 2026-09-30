@@ -23,7 +23,7 @@ export const Job = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hypotheses.refresh'), mimicId: z.string(), seqUpTo: z.number().int() }),
   z.object({ type: z.literal('snapshot.write'), mimicId: z.string(), seqUpTo: z.number().int() }),
   /**
-   * Backfill (ADR-0024, ADR-0034): enqueues a paced `backfill.shadow` for every (consented) mimic's missing
+   * Backfill (ADR-0024, ADR-0035): enqueues a paced `backfill.shadow` for every (consented) mimic's missing
    * predictions. `runId` makes each run its own job; the options are part of the key, so a job requeued from the
    * ledger keeps them.
    */
