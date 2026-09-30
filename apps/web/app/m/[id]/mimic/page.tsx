@@ -4,10 +4,11 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { TopBar } from '@/components/brand';
+import { ConfirmDelete } from '@/components/confirm-delete';
 import { FidelityHeadline, KgMap } from '@/components/model-panel';
 import { Playground } from '@/components/playground';
 import { CodeIcon, DocIcon, TrashIcon } from '@/components/session/icons';
-import { Button, buttonClass, ErrorText, Spinner } from '@/components/ui';
+import { Button, buttonClass, Spinner } from '@/components/ui';
 import { api } from '@/lib/api';
 
 export default function MimicPage() {
@@ -51,10 +52,7 @@ function Persona({ id }: { id: string }) {
         Persona.md is a file any AI agent can read to represent you: your values, beliefs, opinions and
         biases, and above all how you make decisions. You choose what goes in.
       </p>
-      <Link
-        href={`/m/${id}/persona`}
-        className="inline-flex h-10 items-center rounded-[10px] bg-graphite px-4 text-[15px] font-medium text-fog hover:bg-graphite-soft"
-      >
+      <Link href={`/m/${id}/persona`} className={buttonClass('primary')}>
         Curate Persona.md
       </Link>
     </section>
@@ -64,8 +62,6 @@ function Persona({ id }: { id: string }) {
 function Manage({ id }: { id: string }) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   return (
     <section aria-labelledby="manage-h" className="space-y-4 border-t border-line pt-8">
       <h2 id="manage-h" className="text-lg font-medium">
@@ -80,42 +76,24 @@ function Manage({ id }: { id: string }) {
           <CodeIcon width={18} height={18} />
           Download mimic.json
         </a>
-        {!confirming ? (
-          <Button variant="danger" onClick={() => setConfirming(true)}>
-            <TrashIcon width={18} height={18} />
-            Delete this mimic
-          </Button>
-        ) : (
-          <div className="flex items-center gap-2 rounded-[10px] bg-rust-soft px-3 py-1.5">
-            <span className="text-[14px] text-rust">Delete everything, permanently?</span>
-            <Button
-              variant="danger"
-              size="sm"
-              disabled={busy}
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await api.remove(id);
-                  router.push('/');
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : 'Could not delete.');
-                  setBusy(false);
-                }
-              }}
-            >
-              {busy ? 'Deleting…' : 'Delete'}
-            </Button>
-            <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
-              Cancel
-            </Button>
-          </div>
-        )}
+        <Button variant="danger" onClick={() => setConfirming(true)}>
+          <TrashIcon width={18} height={18} />
+          Delete this mimic
+        </Button>
       </div>
-      <ErrorText>{error}</ErrorText>
       <p className="text-[13px] text-muted">
         Deleting removes your answers, predictions, facts, snapshots and logs from every store. It can't be
         undone.
       </p>
+      {confirming && (
+        <ConfirmDelete
+          onCancel={() => setConfirming(false)}
+          onDelete={async () => {
+            await api.remove(id);
+            router.push('/');
+          }}
+        />
+      )}
     </section>
   );
 }

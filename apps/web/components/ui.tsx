@@ -10,36 +10,14 @@ import {
   useRef,
 } from 'react';
 
-export function cn(...xs: Array<string | false | null | undefined>): string {
-  return xs.filter(Boolean).join(' ');
-}
+import { type ButtonSize, type ButtonVariant, buttonClass, cn } from './button-styles';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
-const VARIANTS: Record<Variant, string> = {
-  primary: 'bg-graphite text-fog hover:bg-graphite-soft disabled:bg-line-strong',
-  secondary: 'bg-raised text-graphite border border-line hover:border-line-strong disabled:text-muted',
-  ghost: 'text-graphite-soft hover:text-graphite hover:bg-surface',
-  danger: 'bg-rust text-fog hover:brightness-95 disabled:opacity-60',
-};
-
-type Size = 'sm' | 'md' | 'lg';
-
-/** Button classes, for links that should look like a button (downloads, navigation). */
-export function buttonClass(variant: Variant = 'primary', size: Size = 'md', className?: string): string {
-  return cn(
-    'inline-flex items-center justify-center gap-2 rounded-[10px] font-medium transition-colors disabled:cursor-not-allowed',
-    size === 'sm' && 'h-8 px-3 text-sm',
-    size === 'md' && 'h-10 px-4 text-[15px]',
-    size === 'lg' && 'h-12 px-6 text-base',
-    VARIANTS[variant],
-    className,
-  );
-}
+export { type ButtonSize, type ButtonVariant, buttonClass, cn };
 
 export const Button = forwardRef<
   HTMLButtonElement,
-  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size }
->(function Button({ variant = 'primary', size = 'md', className, ...props }, ref) {
+  ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: ButtonSize }
+>(function Button({ variant, size, className, ...props }, ref) {
   return <button ref={ref} className={buttonClass(variant, size, className)} {...props} />;
 });
 

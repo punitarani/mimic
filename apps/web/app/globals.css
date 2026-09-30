@@ -129,10 +129,13 @@ button {
   background: var(--ink16);
 }
 
-:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
-  border-radius: 6px;
+/* In the base layer so a component's own rounded-* utility wins: focus shouldn't reshape a button. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
 }
 
 .prompt {
