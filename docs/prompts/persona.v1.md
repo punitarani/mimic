@@ -1,4 +1,4 @@
-# persona.v1 — Persona writer (Persona.md; superseded by soul.v1)
+# persona.v1 — Persona writer (Persona.md)
 
 > Generated from `packages/core/src/prompts.ts`. Changing a prompt means adding a new ID.
 

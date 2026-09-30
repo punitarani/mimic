@@ -9,7 +9,7 @@ export const GET = handle(async (_req: Request, ctx: RouteCtx<{ id: string }>) =
   return ok(await getSoul(d, id));
 });
 
-/** POST /api/mimics/:id/soul — writes a new `persona.v1` draft from the latest snapshot (one LLM call). */
+/** POST /api/mimics/:id/soul — writes a new `soul.v1` draft from the mimic's current data (one LLM call). */
 export const POST = handle(async (_req: Request, ctx: RouteCtx<{ id: string }>) => {
   const { id } = await ctx.params;
   const { deps: d, env } = await deps();

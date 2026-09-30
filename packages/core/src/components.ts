@@ -164,6 +164,14 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
     harness: {},
     source: 'PLAN §9.6',
   },
+  'predict.v1-direct': {
+    id: 'predict.v1-direct',
+    kind: 'llm',
+    title: 'LLM predictor, reasoning off (for models that ignore low effort)',
+    components: {},
+    harness: { reasoningEffort: 'none' },
+    source: 'ADR-0038: Qwen3.8 Flash reasons 1-4.5K tokens at effort low; off, it answers in about 2 s',
+  },
 };
 
 export function resolvePredictPrompt(version: string, kind: 'jev' | 'llm'): PredictPrompt {

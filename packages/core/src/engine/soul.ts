@@ -31,7 +31,7 @@ import {
 } from './deps';
 
 /**
- * SOUL.md (ADR-0037). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
+ * SOUL.md (ADR-0039). Views are built from the mimic's current data rather than a snapshot: viewing never writes a
  * snapshot (so it can't race the `snapshot.write` job or freeze derived data mid-learning), and a fact the person
  * removes leaves the file at once.
  */
@@ -71,23 +71,31 @@ async function view(
   deps: EngineDeps,
   m: MimicRecord,
   pre: { loaded?: Loaded; draft?: SoulDraftRecord | null; stored?: CurationRecord | null } = {},
+  profile: SoulProfile = 'full',
 ): Promise<SoulView> {
   const [loaded, draft, stored] = await Promise.all([
     pre.loaded ?? load(deps, m),
     pre.draft !== undefined ? pre.draft : deps.store.latestSoulDraft(m.id),
     pre.stored !== undefined ? pre.stored : deps.store.getSoulCuration(m.id),
   ]);
-  return buildSoul({
-    source: loaded.source,
-    facets: loaded.facets,
-    draft,
-    curation: stored?.curation ?? EMPTY_CURATION,
-    rev: stored?.rev ?? 0,
-  });
+  return buildSoul(
+    {
+      source: loaded.source,
+      facets: loaded.facets,
+      draft,
+      curation: stored?.curation ?? EMPTY_CURATION,
+      rev: stored?.rev ?? 0,
+    },
+    profile,
+  );
 }
 
-export async function getSoul(deps: EngineDeps, mimicId: string): Promise<SoulView> {
-  return view(deps, await requireMimic(deps, mimicId));
+export async function getSoul(
+  deps: EngineDeps,
+  mimicId: string,
+  profile: SoulProfile = 'full',
+): Promise<SoulView> {
+  return view(deps, await requireMimic(deps, mimicId), {}, profile);
 }
 
 /**
@@ -159,6 +167,5 @@ export async function exportSoul(
   mimicId: string,
   profile: SoulProfile = 'full',
 ): Promise<string> {
-  const v = await getSoul(deps, mimicId);
-  return profile === 'core' ? v.coreMarkdown : v.markdown;
+  return (await getSoul(deps, mimicId, profile)).markdown;
 }

@@ -47,7 +47,7 @@ async function mimic() {
   );
 }
 
-describe('SOUL.md (ADR-0037)', () => {
+describe('SOUL.md (ADR-0039)', () => {
   it('drafts, curates and exports a SOUL.md from live data', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await mimic();
@@ -121,7 +121,7 @@ describe('SOUL.md (ADR-0037)', () => {
 
     // A removed fact leaves the file at once, with no new answer or snapshot needed.
     const fact = (await engine.deps.store.listFacts(m.id)).find((f) => f.object === 'Planning trips')!;
-    expect(md).toContain('Interest: Planning trips');
+    expect(md).toContain('Interest: “Planning trips”');
     await setFactState(engine.deps, m.id, fact.id, 'removed');
     expect(await exportSoul(engine.deps, m.id)).not.toContain('Planning trips');
 
@@ -132,7 +132,11 @@ describe('SOUL.md (ADR-0037)', () => {
     expect(later.source.answers).toBe(14);
     // Past the key-decision cap, the rest of the record moves to an appendix, which the core leaves out.
     expect(later.markdown).toContain('## Appendix: all other answers');
-    expect(later.coreMarkdown).not.toContain('## Appendix');
+    const laterCore = await getSoul(engine.deps, m.id, 'core');
+    expect(laterCore.profile).toBe('core');
+    expect(laterCore.markdown).not.toContain('## Appendix');
+    expect(laterCore.markdown).toContain('**#14**');
+    expect(laterCore.tokens).toEqual(later.tokens);
     expect(later.markdown).toContain('**#14**');
     expect(later.markdown).toContain('- Commits quickly, then revisits.');
   }, 60_000);

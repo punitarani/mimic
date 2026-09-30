@@ -163,7 +163,7 @@ describe('replay (M7)', () => {
     }
     const { dropped } = await scrubExport(engine.client, { keepIdentity: false });
     expect(dropped).toBe(1);
-    for (const t of ['soul_drafts', 'soul_curations'])
+    for (const t of ['persona_drafts', 'persona_curations'])
       expect((await engine.client.execute(`select count(*) as n from ${t}`)).rows[0]!.n).toBe(0);
     const db = (
       engine.deps.store as unknown as { db: { all: (q: unknown) => Promise<Array<Record<string, unknown>>> } }

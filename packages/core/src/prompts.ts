@@ -187,7 +187,7 @@ Return JSON only, matching the schema.`,
   },
   'persona.v1': {
     id: 'persona.v1',
-    title: 'Persona writer (Persona.md; superseded by soul.v1)',
+    title: 'Persona writer (Persona.md)',
     system: `You write a portrait of one specific person from their own answers, so that another AI agent can represent how
 they think and decide. Decision-making comes first: how they weigh options, what they optimize for, and how they
 handle risk, uncertainty, time pressure and other people. Note where their behavior changes by context, such as work

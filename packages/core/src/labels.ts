@@ -1,5 +1,5 @@
 /**
- * Display labels shared by the web app and SOUL.md (ADR-0037). Client-safe: no imports, so client components can
+ * Display labels shared by the web app and SOUL.md (ADR-0039). Client-safe: no imports, so client components can
  * use it through `@mimic/core/labels` without bundling the engine.
  */
 

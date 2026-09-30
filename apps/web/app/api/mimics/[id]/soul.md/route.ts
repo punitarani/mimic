@@ -1,7 +1,7 @@
 import { exportSoul, SoulProfile } from '@mimic/core';
 import { deps, handle, ownMimic, type RouteCtx } from '@/lib/server';
 
-/** GET /api/mimics/:id/soul.md — the curated SOUL.md, for any agent to read (ADR-0037). */
+/** GET /api/mimics/:id/soul.md — the curated SOUL.md, for any agent to read (ADR-0039). */
 export const GET = handle(async (req: Request, ctx: RouteCtx<{ id: string }>) => {
   const { id } = await ctx.params;
   const { deps: d, env } = await deps();
@@ -11,7 +11,7 @@ export const GET = handle(async (req: Request, ctx: RouteCtx<{ id: string }>) =>
   return new Response(await exportSoul(d, id, profile), {
     headers: {
       'content-type': 'text/markdown; charset=utf-8',
-      'content-disposition': 'attachment; filename="SOUL.md"',
+      'content-disposition': `attachment; filename="${profile === 'core' ? 'SOUL.core.md' : 'SOUL.md'}"`,
       'cache-control': 'no-store',
     },
   });

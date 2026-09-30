@@ -492,6 +492,7 @@ async function serveWithPredictions(
     latencyMs: r.latencyMs,
     ok: r.ok,
     error: r.error ?? null,
+    errorKind: r.ok ? null : (r.errorKind ?? null),
     fallback: isFallback,
     createdAt: now,
   });

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /** PLAN §8. IDs are ULIDs; timestamps are integer ms; *_json columns are validated with zod on read. */
@@ -136,6 +137,8 @@ export const predictions = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
+    /** Failed rows only: 'output' | 'timeout' (the model's) | 'transport' (the call's); ADR-0037. */
+    errorKind: text('error_kind', { enum: ['output', 'timeout', 'transport'] }),
     fallback: bool('fallback').notNull().default(false),
     /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0027). */
     hypothesis: text('hypothesis'),
@@ -144,6 +147,8 @@ export const predictions = sqliteTable(
   (t) => [
     index('predictions_mimic_idx').on(t.mimicId),
     index('predictions_question_role_idx').on(t.questionId, t.role),
+    // One shadow per question and predictor, however many runs race to store it (ADR-0037).
+    uniqueIndex('predictions_shadow_uq').on(t.questionId, t.predictorId).where(sql`${t.role} = 'shadow'`),
   ],
 );
 
@@ -324,6 +329,8 @@ export const modelCalls = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
+    /** HTTP attempts it took: retries after a 429 or 5xx, which latencyMs (the answering attempt) leaves out. */
+    attempts: integer('attempts').notNull().default(1),
     configHash: text('config_hash'),
     r2TraceKey: text('r2_trace_key').notNull(),
     createdAt: integer('created_at').notNull(),
@@ -372,7 +379,7 @@ export const evalRuns = sqliteTable('eval_runs', {
 export const jobs = sqliteTable('jobs', {
   key: text('key').primaryKey(),
   type: text('type').notNull(),
-  status: text('status', { enum: ['running', 'done', 'failed'] }).notNull(),
+  status: text('status', { enum: ['queued', 'running', 'done', 'failed'] }).notNull(),
   attempts: integer('attempts').notNull(),
   lastError: text('last_error'),
   updatedAt: integer('updated_at').notNull(),
@@ -391,9 +398,13 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
-/** ADR-0037: `persona.v1` drafts, derived from the evidence up to seq_up_to; the latest feeds SOUL.md. */
+/**
+ * ADR-0039: SOUL.md drafts (`soul.v1`, and `persona.v1` from before the rename), derived from the evidence up to
+ * seq_up_to; the latest feeds SOUL.md. The table keeps its Persona.md-era name: deploys migrate before they ship
+ * code, so renaming it would break the old code still serving until then.
+ */
 export const soulDrafts = sqliteTable(
-  'soul_drafts',
+  'persona_drafts',
   {
     id: text('id').primaryKey(),
     mimicId: text('mimic_id').notNull(),
@@ -405,11 +416,11 @@ export const soulDrafts = sqliteTable(
     draftJson: text('draft_json').notNull(),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [index('soul_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
+  (t) => [index('persona_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
 );
 
-/** ADR-0037: the person's choices for SOUL.md (sections, hidden items, edits, their own words). */
-export const soulCurations = sqliteTable('soul_curations', {
+/** ADR-0039: the person's choices for SOUL.md; the table keeps its Persona.md-era name, as above. */
+export const soulCurations = sqliteTable('persona_curations', {
   mimicId: text('mimic_id').primaryKey(),
   json: text('json').notNull(),
   /** Client revision: saves apply only in increasing rev order. */

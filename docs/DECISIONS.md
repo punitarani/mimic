@@ -944,7 +944,118 @@ fidelity counts the re-answer like any answer.
 Schema: `answer_rewinds`, `mimics.evidence_epoch`, `facts.seq_up_to`, `insights.superseded_seq`
 (migration `0005_answer_rewinds`).
 
-## ADR-0037 — SOUL.md: Persona.md renamed, and redesigned from research (2026-09-30)
+## ADR-0037 — Backfill accuracy: failure kinds, bounded retries, paced and deduplicated runs (2026-09-30)
+
+After the ADR-0025 backfill, the lab showed Qwen3.8 Flash with 142 failed predictions (78%) and a p50 of 35 s, and
+MiMo V2.6 Flash at 7.8 s. Some of that is the models, and some was how the backfill ran and what it recorded.
+
+**What was the model.** Live `predict.v1` calls, sent one at a time on 8 sealed states from an offline session,
+measured:
+
+| Model | Latency | Result |
+| --- | --- | --- |
+| Qwen3.8 Flash (`effort: low`, 3000 max tokens) | 21–67 s | 3 of 8 spent all 3000 tokens on reasoning and returned no content (`finish_reason: length`) |
+| Qwen3.8 Flash (`effort: low`, 8000 max tokens) | 18–104 s | 7 of 7 valid, with up to 4.5K reasoning tokens; plus one HTTP 429 from Alibaba |
+| Qwen3.8 Flash (`effort: none`) | 1.7–2.7 s | 8 of 8 valid, no reasoning tokens |
+| MiMo V2.6 Flash | 3–11 s | one of 8 was "Provider returned an empty response", in a 200 |
+| GLM 5.3 Flash | 1–3.5 s | 8 of 8 valid |
+
+So Qwen's latency is real at `effort: low`: its provider doesn't cap reasoning at that effort. Its failures were
+mostly the 3000-token cap, recorded as "invalid JSON output". Whether to give it more tokens, run it with reasoning
+off (a prompt variant, ADR-0028) or drop it is a separate decision; this ADR doesn't change the predictor.
+
+**What was the backfill.**
+
+1. **Failed calls were stored as the model failing, forever.** A 429 or a provider error made `LlmPredictor` return
+   a failed prediction, and `runShadow` stored it and marked the job done, so nothing ever retried it. The budget
+   guard did the same on a mimic near its $0.50 session cap.
+2. **Latency counted retries.** Adapters timed a call from before the first attempt, so a success after a 429
+   included the failed attempt and the backoff.
+3. **No pacing.** Each run enqueued every prediction at once, which draws rate limits and slower answers, and queues
+   ahead of live sessions' jobs.
+
+**Decisions.**
+
+- **Failures have a kind, stored with the prediction** (`predictions.error_kind`, main's `errorKind` plus one):
+  - `output`: the model answered but the answer was unusable. Invalid JSON, options not covered, Jev's missing or
+    wrong-typed answer, and now named cutoffs: `output cut off at max_tokens (…)` when `finish_reason` is `length`,
+    and the provider's content filter.
+  - `timeout`: the model didn't answer within the call's timeout. Chat calls no longer retry a timeout in-request
+    (`retryTimeouts: false`): a retry bills a second generation and would record only the fast answers.
+  - `transport`: the call failed before the model answered. `retryable` says whether it may succeed later: rate
+    limits, 5xx, network errors, malformed responses, a 200 carrying an OpenRouter `error` body or a choice with
+    `finish_reason: error`. The budget guard and other 4xx are not.
+  - `output` and `timeout` are the model's: stored at once, counted, never redone. The optimizer still treats a
+    timeout as transient, as before.
+- **Retries are bounded.** A retryable failure makes `runShadow` throw so the queue retries it with backoff. On the
+  last attempt (`MAX_JOB_ATTEMPTS`, from the ledger) it's stored as a `transport` failure instead. The cron's
+  missing-shadow repair then sees the row and stops; it also skips a live shadow whose job used up its attempts.
+- **Latency is the attempt that answered.** `requestJson` returns it with `attempts`, and `model_calls.attempts`
+  records how many HTTP attempts each call took, so retry pressure stays visible.
+- **Backfill predictions are `backfill.shadow` jobs, keyed without a run** (`backfill.shadow:{mimic}:{question}:
+  {predictor}`), so the ledger dedupes them across runs. They are logged as `predict.backfill`.
+- **Pacing.** `backfill.predictor` enqueues them for every (consented) mimic, `60 / perMinute` seconds apart as one
+  stream (default 30 a minute per predictor, `--rate`), through `enqueueBatch` (Queues' `sendBatch`, 100 at a
+  time). `backfill.mimic` does the same for one named mimic from `offsetSeconds`; the CLI staggers several.
+- **Run limits.** A run enqueues at most 5,000, and nothing delayed past 12 h (`backfillLimit`). The CLI says when
+  a run stops there, and a re-run enqueues the rest. The options are part of the job keys, so a job the cron
+  requeues from the ledger keeps its rate.
+- **In flight.** Each prediction is written to the ledger as `queued` (a new status) due at its time before it's
+  sent. The missing rule, in the engine and the CLI, skips a question whose live or backfill shadow job is queued,
+  running or being retried, and not stale. So a re-run never doubles the pace, and neither the cron nor a backfill
+  races a live shadow. A queued job still not done 15 minutes after its time is stale, and the cron requeues it,
+  which also repairs a lost message.
+- **One shadow per question and predictor.** The partial unique index `predictions_shadow_uq` makes a concurrent
+  second run of the same shadow a no-op (`Store.insertShadow` returns whether it stored). The migration first
+  keeps the best of any existing duplicates: ok first, then the earliest.
+- **Legacy failures are classified in the migration:** Jev's `Error: Expected …`, the two LlmPredictor messages and
+  a missing answer are `output`; anything that timed out is `timeout`; the rest is `transport`.
+- **Backfills are held to the session's share of the budget, like shadows** (ADR-0035). A mimic that has spent it
+  is skipped when a run is planned, and a backfilled prediction it refuses is skipped, not stored. The calls are
+  logged as `predict.backfill` (session scope).
+- **Consent is checked again when each prediction runs**, since a paced run can span hours. Named mimics
+  (`--mimic`) skip the check unless `--consented`.
+- **`--retry-failed`** redoes this predictor's `transport` failures, carried on each job. `insertShadow` deletes
+  the failed row and stores the new one atomically, and deletes only failed shadow rows, never primary or baseline
+  ones.
+- **The dry run explains failures.** It splits them by kind and lists the most common messages. It also reports
+  predictions in flight, estimates cost from every charged prediction (unusable output included), and gives the
+  duration and any run limit at the chosen rate. `packages/eval/test/backfill.test.ts` runs the CLI's SQL against
+  the real schema, checks it against the engine's rule, and checks the CLI's copies of the engine's constants.
+- **Queue batches still run all their jobs at once.** Capping them would make live jobs wait behind slow shadows.
+  Pacing keeps backfill batches small; a live burst larger than six calls waiting on headers can still add a
+  little queueing to a shadow's latency.
+
+## ADR-0038 — Qwen3.8 Flash runs with reasoning off: `predict.v1-direct` and `cfg.default.v5` (2026-09-30)
+
+ADR-0025 added `llm:qwen/qwen3.8-flash` as a shadow after one live call. At the incumbent harness (`reasoning.effort:
+low`, 3000 max tokens) its provider doesn't honor low effort. ADR-0037's measurements on 8 sealed states:
+
+| Qwen3.8 Flash | Valid | p50 | $ per 1k |
+| --- | --- | --- | --- |
+| effort low, 3000 max tokens (`predict.v1`) | 5 of 8; the rest spent all 3000 tokens reasoning | 59 s | $1.07 |
+| effort low, 8000 max tokens | 7 of 7 | 49 s | $1.20 |
+| reasoning off (`predict.v1-direct`, through `LlmPredictor`) | 7 of 8; one keyed an option by its label | 1.8 s | $0.07 |
+
+The prod lab agreed: 78% failed, 35 s p50 over what did succeed. Almost every failure is the token cap, which also
+makes the successes a biased sample: the questions Qwen happened to reason about briefly.
+
+**Decision.**
+- **A registered prompt variant, `predict.v1-direct`:** the incumbent `predict.v1` text with `harness.reasoningEffort:
+  'none'`. It changes nothing but the effort, so it is addressable for any model as `llm:<model>@predict.v1-direct`
+  (ADR-0028), and every prediction stores it as its prompt version (invariant 4).
+- **`cfg.default.v5` is `cfg.default.v4` with the Qwen shadow as `llm:qwen/qwen3.8-flash@predict.v1-direct`.** The
+  other shadows are unchanged. At effort low they reason for only tens to a few hundred tokens, so reasoning off is
+  the closest match for Qwen to the condition they run in. Configs are immutable: mimics created under v3 and v4 keep
+  `llm:qwen/qwen3.8-flash`, and its predictions stay in the record (with their failures now marked `output`,
+  ADR-0037).
+- **Backfill the new predictor** over served questions (`pnpm backfill --predictor
+  llm:qwen/qwen3.8-flash@predict.v1-direct`, ADR-0024), so the lab compares it on the same questions as the others.
+
+Whether reasoning helps Qwen's accuracy at all is left to the lab. `llm:qwen/qwen3.8-flash` remains as a
+predictor ID, and the 8000-token harness can be registered as its own variant if that comparison is wanted.
+
+## ADR-0039 — SOUL.md: Persona.md renamed, and redesigned from research (2026-09-30)
 
 `Persona.md` (ADR-0033) is now `SOUL.md`. The rename came with a research pass on what the file should hold. What we
 found, and what we changed:
@@ -982,10 +1093,14 @@ found, and what we changed:
 - **Third person for the portrait.** Asking a model to predict a person moved its answers closer to real ones than
   role-play did (arXiv 2607.24782), so the portrait says "they"; first person appears only in the person's quoted
   words and voice samples.
-- **Rename mechanics.** Routes move to `/m/[id]/soul` and `/api/mimics/:id/soul(.md)`, with permanent redirects from
-  the old paths. Migration `0005_soul` renames `persona_drafts` and `persona_curations` in place, so existing drafts
-  and curations (with their `rev`) carry over; stored curations parse with the new fields' defaults. The LLM call's
-  purpose is `soul.draft`.
+- **Rename mechanics.** Routes move to `/m/[id]/soul` and `/api/mimics/:id/soul(.md)`, with permanent (308)
+  redirects from the old page, file and JSON API paths, so a page left open across the deploy still saves. The
+  tables keep their names, `persona_drafts` and `persona_curations`, and there is no migration: a deploy migrates
+  D1 before it ships code, so a rename would break the old code still serving in between. Drizzle names them
+  `soulDrafts` and `soulCurations`. Existing drafts and curations (with their `rev`) carry over; stored curations
+  parse with the new fields' defaults, and `persona.v1` drafts still render. `?profile=core` downloads as
+  `SOUL.core.md`. The LLM call's purpose is `soul.draft`, drawn from the page's reserve like `persona.draft` was
+  (ADR-0035).
 - **Not in this change.** Treating "that's not me" on a statement as new evidence, and a "test my SOUL.md" check
   that scores an agent reading only the exported file on held-out answers, both touch the research invariants and
   are left for later.

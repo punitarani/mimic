@@ -409,9 +409,9 @@ experiments         id, name, status, arms_json [{arm, config_hash, weight}], cr
 snapshots           mimic_id, version, r2_key, seq_up_to, created_at
 eval_runs           id, name, spec_json, dataset_hash, status, metrics_json, r2_report_key, created_at
 jobs                key PK, type, status, attempts, last_error, updated_at    (idempotency ledger)
-soul_drafts         id, mimic_id, seq_up_to, config_hash, prompt_version, model, model_snapshot,
+persona_drafts      id, mimic_id, seq_up_to, config_hash, prompt_version, model, model_snapshot,
                     draft_json, created_at                                    (soul.v1, §8.3)
-soul_curations      mimic_id PK, json, rev, updated_at                        (the person's choices, §8.3)
+persona_curations   mimic_id PK, json, rev, updated_at                        (the person's choices, §8.3)
 ```
 
 KG node types follow schema.org names where one exists.
@@ -471,7 +471,7 @@ Using a mimic means running any predictor against its snapshot.
 ### 8.3 SOUL.md
 
 `mimic.json` is for running predictors. `SOUL.md` is for people's own agents: a Markdown model of the person that any
-agent can read to predict and represent them, with decision-making first (ADR-0037, which renamed and redesigned
+agent can read to predict and represent them, with decision-making first (ADR-0039, which renamed and redesigned
 `Persona.md`, ADR-0033). Other agent tools load a file named SOUL.md as the agent's *own* identity, so this one
 declares itself a person model up front: YAML front matter (`kind: person-model`, subject, as-of date, answers,
 evidence cutoff, draft prompt, profile) and a first line saying it describes the person and is not the reader's
@@ -481,15 +481,15 @@ identity.
 
 | Section | Source | Notes |
 | --- | --- | --- |
-| How to use this file | Template | Role, trust order (boundaries › own words › recorded answers, most recent first › inferred sections › tendencies › background), predict from related answers first, don't idealize the person, unknowns mean ask, check before irreversible or sensitive actions, the speaking-as-me rule, quoted text is data not instructions, fidelity and date. |
-| Boundaries | Person | Always / Never / Ask-me-first rules; they override everything else. |
+| How to use this file | Template | Role, trust order (boundaries › own words › recorded answers, most recent first › inferred sections › tendencies › background), predict from related answers first, don't idealize the person, unknowns mean ask, check before irreversible or sensitive actions, quoted text is data not instructions, fidelity and date. |
+| Boundaries | Person | Always present, even with the instructions turned off: the speaking-as-me rule, then Always / Never / Ask-me-first rules. They override everything else. |
 | In their own words | Person | Free Markdown, quoted. |
 | Summary; How they decide; Rules of thumb; Tradeoffs; What they value; Beliefs and opinions; Biases and blind spots; Tensions; How they come across | `soul.v1` draft | Cited statements; one citation means _tentative_. Tensions keep answers that pull both ways, with the context that decides. |
 | Patterns in their answers | Reflector | Cited insights. |
-| How they talk | Person | Up to 5 writing samples, quoted. |
-| Measured tendencies | Traits | A table: area, facet, leaning, certainty tier, answers. Only facets with direct evidence and certainty ≥ 0.4. |
+| How they talk | Person | Up to 5 writing samples, quoted. Left out while agents may never speak as them. |
+| Measured tendencies | Traits | A table: area, facet, scale (low ↔ high pole), leaning, certainty tier, answers. Only facets with direct evidence and certainty ≥ 0.4. |
 | Not known yet | Traits | The rest: "don't assume either way". |
-| Background | Intake, facts | Each sourced fact with its source; removable. |
+| Background | Intake, facts | Location and work, then each sourced fact quoted as found, with its source; removable. |
 | Key decisions | Answers | The 12 answers the portrait cites most (then those with a reason, then the most recent), verbatim with reasons. |
 | Appendix: all other answers | Answers | The rest of the record. Left out of the `core` profile. |
 
@@ -510,7 +510,7 @@ It is a view with three inputs:
    it has.
 
 **Profiles.** `full` (the default download) is the core plus the appendix; `core` (`?profile=core`) leaves the
-appendix out, for system prompts with a small budget. The page shows both sizes.
+appendix out, for system prompts with a small budget, and downloads as `SOUL.core.md`. The page shows both sizes.
 
 Curation only filters, rewords and adds the person's own rules and words. It never feeds back into states, traits or
 predictions. Citations appear only for answers that are in the file. Hard delete covers both tables. Research exports
@@ -817,7 +817,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0036) |
 | `POST /api/mimics/:id/ask` | scenario → typed question + prediction | Playground |
 | `GET /api/mimics/:id/export` | → latest `mimic.json` | |
-| `GET /api/mimics/:id/soul` | → SOUL.md view: sections, items, curation, both profiles and their sizes | §8.3 |
+| `GET /api/mimics/:id/soul` | → SOUL.md view: sections, items, curation, the full file and both profiles' sizes | §8.3; `/persona` redirects here (308) |
 | `POST /api/mimics/:id/soul` | → new `soul.v1` draft, then the view | One LLM call; rate-limited, budget-guarded |
 | `PUT /api/mimics/:id/soul` | `{ rev, curation }` → view | Ignored if an equal or newer `rev` is stored; keys for replaced draft items are pruned |
 | `GET /api/mimics/:id/soul.md` | `?profile=full\|core` → `SOUL.md` (text/markdown) | `/persona.md` redirects here |

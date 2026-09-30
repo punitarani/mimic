@@ -16,6 +16,21 @@ describe('job routing (ADR-0034)', () => {
     expect(main.drain()).toEqual([refill]);
   });
 
+  it('splits a batch by lane, keeping each delay', async () => {
+    const main = new MemoryQueue();
+    const identity = new MemoryQueue();
+    await new RoutedQueue(main, identity).enqueueBatch([
+      { job: refill, delaySeconds: 2 },
+      { job: search },
+      { job: refill, delaySeconds: 4 },
+    ]);
+    expect(identity.pending).toEqual([{ job: search }]);
+    expect(main.pending).toEqual([
+      { job: refill, delaySeconds: 2 },
+      { job: refill, delaySeconds: 4 },
+    ]);
+  });
+
   it("lets the consumer's enrichment setting decide what the lane runs itself", () => {
     expect(runsOnIdentityLane(search, {})).toBe(true);
     expect(runsOnIdentityLane(enrich, {})).toBe(true); // Exa, the default: under a second

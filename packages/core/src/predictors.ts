@@ -9,7 +9,7 @@ import {
 } from './components';
 import { parsePredictorId, predictorIdProblem } from './config';
 import { normalizeDist, optionKeys } from './distribution';
-import type { CallContext, Gateway } from './gateway';
+import { type CallContext, type Gateway, isTimeoutError, isTransientError } from './gateway';
 import { answerToDistribution, confidenceOf, predictionQuestion } from './jev';
 import { PROMPTS } from './prompts';
 import { renderStateText, stateForProvider } from './state-builder';
@@ -17,6 +17,7 @@ import type {
   ChatMessage,
   DecisionQuestion,
   PersonState,
+  PredictionErrorKind,
   PredictionResult,
   Predictor,
   Question,
@@ -96,7 +97,7 @@ export class JevPredictor implements Predictor {
       });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      return qs.map(() => failed(msg, 0, this.model, 0, 'transport'));
+      return qs.map(() => callFailed(e, msg, this.model));
     }
   }
 }
@@ -175,8 +176,16 @@ export class LlmPredictor implements Predictor {
         raw: res.content.slice(0, 2000),
       };
       const parsed = LlmProbs.safeParse(parseJsonLoose(res.content));
-      if (!parsed.success)
-        return { ...base, dist: {}, ok: false, error: 'invalid JSON output', errorKind: 'output' };
+      if (!parsed.success) {
+        // The provider's stop reason says why no JSON came back: the token cap, or a refusal.
+        const error =
+          res.finishReason === 'length'
+            ? `output cut off at max_tokens (${h.maxTokens}; ${res.usage.outputTokens} output tokens)`
+            : res.finishReason === 'content_filter'
+              ? "output withheld by the provider's content filter"
+              : 'invalid JSON output';
+        return { ...base, dist: {}, ok: false, error, errorKind: 'output' };
+      }
       const raw: Record<string, number> =
         'probs' in parsed.data && Array.isArray(parsed.data.probs)
           ? Object.fromEntries(parsed.data.probs.map((x) => [x.key, x.p]))
@@ -194,7 +203,7 @@ export class LlmPredictor implements Predictor {
       }
       return { ...base, dist: normalizeDist(raw, keys), ok: true };
     } catch (e) {
-      return failed(e instanceof Error ? e.message : String(e), 0, this.model, 0, 'transport');
+      return callFailed(e, e instanceof Error ? e.message : String(e), this.model);
     }
   }
 }
@@ -204,9 +213,18 @@ function failed(
   latencyMs: number,
   modelSnapshot: string,
   costUsd: number,
-  errorKind: 'transport' | 'output',
+  errorKind: PredictionErrorKind,
 ): PredictionResult {
   return { dist: {}, costUsd, latencyMs, modelSnapshot, ok: false, error, errorKind };
+}
+
+/**
+ * The provider call threw, so the model never answered: a timeout (the model was too slow) or a transport failure,
+ * which may be worth retrying (ADR-0037).
+ */
+function callFailed(e: unknown, error: string, model: string): PredictionResult {
+  if (isTimeoutError(e)) return failed(error, 0, model, 0, 'timeout');
+  return { ...failed(error, 0, model, 0, 'transport'), retryable: isTransientError(e) };
 }
 
 /** Parses JSON from model output, tolerating code fences and surrounding prose. */

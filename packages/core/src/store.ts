@@ -1,6 +1,14 @@
 import type { FidelityState } from './fidelity';
 import type { SoulCuration, SoulDraft } from './soul';
-import type { Distribution, Facet, Insight, QKind, Question, TraitEstimate } from './types';
+import type {
+  Distribution,
+  Facet,
+  Insight,
+  PredictionErrorKind,
+  QKind,
+  Question,
+  TraitEstimate,
+} from './types';
 
 export type MimicStatus = 'intake' | 'identity' | 'learning' | 'paused' | 'archived';
 /** ADR-0007: sub-state of identity resolution, so the UI can show progress. */
@@ -73,6 +81,8 @@ export interface PredictionRecord {
   latencyMs: number;
   ok: boolean;
   error: string | null;
+  /** Failed predictions only: `output`, `timeout` (the model's) or `transport` (the call's); ADR-0037. */
+  errorKind?: PredictionErrorKind | null;
   /** True when the primary came from the LLM fallback because Jev errored (PLAN §16). */
   fallback: boolean;
   /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (docs/SELECTION.md §6). */
@@ -245,7 +255,7 @@ export interface SnapshotRecord {
   createdAt: number;
 }
 
-/** A `persona.v1` draft (ADR-0037): derived from the evidence up to `seqUpTo`, versioned, recomputable. */
+/** A SOUL.md draft (`soul.v1`, or `persona.v1` from before the rename; ADR-0039): derived from the evidence up to `seqUpTo`, versioned, recomputable. */
 export interface SoulDraftRecord {
   id: string;
   mimicId: string;
@@ -296,7 +306,11 @@ export interface EvalRunRecord {
 export interface JobRecord {
   key: string;
   type: string;
-  status: 'running' | 'done' | 'failed';
+  /**
+   * `queued`: enqueued to run at `updatedAt` (a paced backfill, ADR-0037), so a re-run knows it's in flight; a
+   * queued job still not done 15 minutes after its time is stale and the cron requeues it.
+   */
+  status: 'queued' | 'running' | 'done' | 'failed';
   attempts: number;
   lastError: string | null;
   updatedAt: number;
@@ -391,6 +405,12 @@ export interface Store {
   }): Promise<boolean>;
   // predictions & answers
   insertPredictions(recs: PredictionRecord[]): Promise<void>;
+  /**
+   * Stores one shadow unless this question already has one from this predictor (a unique index, so concurrent runs
+   * can't both insert), first deleting `replaceIds` if they are failed shadows (a backfill redoing a failed call,
+   * ADR-0037). Primary and baseline rows are never deleted. True if `rec` was stored.
+   */
+  insertShadow(rec: PredictionRecord, replaceIds?: string[]): Promise<boolean>;
   /** Removes a shadow that landed on a question discarded while it ran (ADR-0036). */
   deletePredictions(ids: string[]): Promise<void>;
   listPredictions(filter: {
@@ -457,7 +477,7 @@ export interface Store {
   insertSnapshot(rec: SnapshotRecord): Promise<void>;
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
-  // SOUL.md (ADR-0037)
+  // SOUL.md (ADR-0039)
   insertSoulDraft(rec: SoulDraftRecord): Promise<void>;
   latestSoulDraft(mimicId: string): Promise<SoulDraftRecord | null>;
   getSoulCuration(mimicId: string): Promise<SoulCurationRecord | null>;
@@ -476,6 +496,10 @@ export interface Store {
   // jobs ledger
   getJob(key: string): Promise<JobRecord | null>;
   putJob(rec: JobRecord): Promise<void>;
+  /** Upserts many ledger rows in few statements. */
+  putJobs(recs: JobRecord[]): Promise<void>;
+  /** Ledger rows whose key starts with `prefix` (e.g. every shadow job of one mimic). */
+  listJobs(prefix: string): Promise<JobRecord[]>;
   /** Jobs not done whose last update is older than `before`. */
   listStaleJobs(before: number, limit: number): Promise<JobRecord[]>;
   // observability

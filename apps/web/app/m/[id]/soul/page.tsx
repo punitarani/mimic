@@ -21,7 +21,7 @@ type SaveState = 'saved' | 'saving' | 'error';
 const SAVE_DELAY_MS = 600;
 const RECORD_PREVIEW = 8;
 
-/** SOUL.md (ADR-0037): choose what goes in, reword what was inferred, add your own words, then download. */
+/** SOUL.md (ADR-0039): choose what goes in, reword what was inferred, add your own words, then download. */
 export default function SoulPage() {
   const { id } = useParams<{ id: string }>();
   const qc = useQueryClient();
@@ -361,6 +361,11 @@ function Curate({
           on={!curation.disabled.includes('voice')}
           onChange={(on) => setSection('voice', on)}
         >
+          {curation.speakAsMe === 'no' && (
+            <p className="text-[13px] text-muted">
+              Left out of the file while agents may never speak as you.
+            </p>
+          )}
           <VoiceSamples
             value={curation.voiceSamples}
             onChange={(voiceSamples) => update({ ...curation, voiceSamples })}
