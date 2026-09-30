@@ -7,8 +7,8 @@ type L5 = [string, string, string, string, string];
  * Ontology v2 (ADR-0042). Every v1 facet keeps its id, poles and labels, so readings stay comparable across
  * versions; only its group changes. Each group sits in exactly one category (ADR-0040). New facets fill the gaps
  * named in PLAN §14 M10: emotion and motivation, moral foundations, beliefs about people and the world, attachment,
- * money psychology and the five opt-in sensitive areas. Every facet carries the research anchor it was modelled on
- * (`source`), rendered into `docs/ontology/v2.sources.md`.
+ * money psychology and the five sensitive areas, each behind its own consent. Every facet carries the research anchor
+ * it was modelled on (`source`), rendered into `docs/ontology/v2.sources.md`.
  */
 export const FACET_GROUPS_V2 = [
   'Personality',
