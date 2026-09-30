@@ -212,7 +212,7 @@ Asynchronous jobs, on Queue `mimic-jobs`:
 
 | Job | Trigger | What it does |
 |---|---|---|
-| `identity.search` | Intake submitted | Exa people search finds candidates; Jev pre-ranks them with a `noul` "same person?" question |
+| `identity.search` | Intake submitted, or "Search with a link" | Exa people search (and a lookup of the person's link) finds candidates; Jev pre-ranks them with a `noul` "same person?" question |
 | `identity.enrich` | Person confirms a candidate | Parallel structured enrichment produces facts with sources |
 | `pool.refill` | Pool drops below 6 | LLM generates candidates; they are validated, gated by Jev, deduped and inserted |
 | `predict.shadow` | Question served | LLM predictors run on the sealed state (§3.1) |
@@ -476,7 +476,7 @@ Required fields:
 Optional fields:
 
 - Occupation
-- Employer
+- Employer or school (students and recent graduates enter their school; stored as `employer`, ADR-0029)
 - One link, such as LinkedIn or a personal site (this improves identity matching a lot)
 
 Optional consents, each a separate checkbox:
@@ -486,9 +486,9 @@ Optional consents, each a separate checkbox:
 
 ### 9.2 Identity resolution and enrichment
 
-1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2–3 query variants: `"{name}" {occupation} {location}`, with and without the employer. Request `numResults` 5–10 with highlights, then merge and dedupe by URL. Cache in KV and store raw results in R2.
+1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2–3 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0029): `{name}, {occupation} at {employer}, {location}`, the same without the location, and the name alone. If the person gave a link, read it with Exa `/contents` too. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
 2. **Pre-rank.** For each candidate, one Jev request (all run in parallel, state = intake plus that candidate's summary) asks the `noul` question "Is this profile the same person as the intake?". Store the result as `jev_same_person_p`.
-3. **Confirm.** The UI asks "Is one of these you?" and shows the top 3–5 candidates with name, headline, location and source. The person picks one or chooses "None of these". Never auto-confirm.
+3. **Confirm.** The UI asks "Is one of these you?" and shows the top 3–5 candidates with name, headline, location and source; namesakes Jev scores low are behind "Show more". The person picks one or chooses "None of these". Never auto-confirm. If they aren't listed, they can search again with a link to their profile.
 4. **Enrich.** `identity.enrich` runs on confirmation. A Parallel Task with a JSON output schema collects current role, employer history, education, skills, public projects and writing, interests and locations, each with a source URL. Optionally, fetch Exa contents for the confirmed URLs.
 5. **Review.** The person sees every fact with its source and can remove any of them. Removed facts never enter any state.
 6. **Use.** Active facts become `identity` in `PersonState`. Together with intake, they are everything the baseline predictor sees.
@@ -747,6 +747,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `GET /api/mimics/:id` | → UI snapshot | Profile, fidelity, facets, insights, KG, pool status |
 | `GET /api/mimics/:id/identity` | → `{ status, candidates, facts }` | |
 | `POST /api/mimics/:id/identity/confirm` | `{ candidateId \| null }` | Enqueues `identity.enrich` |
+| `POST /api/mimics/:id/identity/search` | `{ link }` | Searches again led by the link; only while a choice is pending (ADR-0029) |
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |

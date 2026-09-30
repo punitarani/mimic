@@ -10,6 +10,7 @@ export * from './ids';
 export * from './jev';
 export * from './jobs';
 export * from './learning';
+export * from './links';
 export * from './metrics';
 export * from './ontology';
 export * from './population';

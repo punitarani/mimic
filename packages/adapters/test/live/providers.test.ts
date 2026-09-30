@@ -106,6 +106,13 @@ describe.skipIf(!LIVE)('live providers', () => {
     expect(r.candidates[0]!.url).toMatch(/^https?:\/\//);
   }, 30_000);
 
+  it('Exa resolves a LinkedIn link to the person (the intake link lookup)', async () => {
+    const url = 'https://www.linkedin.com/in/williamhgates';
+    const r = await new ExaPeopleSearch(env.EXA_API_KEY ? { apiKey: env.EXA_API_KEY } : {}).lookup(url);
+    expect(r.candidates).toHaveLength(1);
+    expect(r.candidates[0]).toMatchObject({ name: 'Bill Gates', url });
+  }, 30_000);
+
   it('Parallel enrichment runs a task (skipped when the host is unreachable)', async (ctx) => {
     if (!(await reachable('https://api.parallel.ai'))) ctx.skip();
     const r = await new ParallelEnricher(env.PARALLEL_API_KEY ? { apiKey: env.PARALLEL_API_KEY } : {}).enrich(

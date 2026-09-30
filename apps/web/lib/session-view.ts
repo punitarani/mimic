@@ -1,4 +1,5 @@
 import type { UiSnapshot } from '@mimic/core';
+import { hostLabel } from '@mimic/core/links';
 import type { IdentityView } from './api';
 
 /** View helpers for the session v2 design: readings, certainty tiers, fact rows and "What changed". */
@@ -60,14 +61,6 @@ export interface FactRow {
   removed: boolean;
 }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
-
 export function factRows(facts: Fact[]): { profile: FactRow[]; told: FactRow[] } {
   const row = (f: Fact): FactRow => ({
     id: f.id,
@@ -75,7 +68,7 @@ export function factRows(facts: Fact[]): { profile: FactRow[]; told: FactRow[] }
     source:
       f.source === 'search'
         ? f.sourceUrl
-          ? hostOf(f.sourceUrl)
+          ? hostLabel(f.sourceUrl)
           : 'Public profile'
         : f.source === 'intake'
           ? 'You, at sign-up'

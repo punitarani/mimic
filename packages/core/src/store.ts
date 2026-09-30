@@ -125,9 +125,12 @@ export interface CandidateRecord {
   summary: string;
   jevSamePersonP: number | null;
   r2Key: string | null;
-  status: 'proposed' | 'confirmed' | 'rejected';
+  /** `superseded`: set aside by a newer search, not judged by the person (ADR-0029). */
+  status: CandidateStatus;
   createdAt: number;
 }
+
+export type CandidateStatus = 'proposed' | 'confirmed' | 'rejected' | 'superseded';
 
 export interface TraitRecord extends TraitEstimate {
   mimicId: string;
@@ -271,13 +274,20 @@ export interface Store {
   addSpend(id: string, usd: number): Promise<void>;
   /** Removes every row for the mimic across all tables. */
   deleteMimic(id: string): Promise<void>;
+  /**
+   * Applies the patch only if the mimic's identity state is one of `from`, in one statement. False when it isn't,
+   * for example because a concurrent request moved it first.
+   */
+  transitionIdentity(
+    id: string,
+    from: readonly IdentityState[],
+    patch: Partial<Omit<MimicRecord, 'id'>>,
+  ): Promise<boolean>;
   // identity
   insertCandidates(recs: CandidateRecord[]): Promise<void>;
   listCandidates(mimicId: string): Promise<CandidateRecord[]>;
-  updateCandidate(
-    id: string,
-    patch: Partial<Pick<CandidateRecord, 'status' | 'jevSamePersonP'>>,
-  ): Promise<void>;
+  /** Sets the status of the mimic's candidates with these IDs. */
+  setCandidateStatus(mimicId: string, ids: readonly string[], status: CandidateStatus): Promise<void>;
   insertFacts(recs: FactRecord[]): Promise<void>;
   listFacts(mimicId: string): Promise<FactRecord[]>;
   updateFact(

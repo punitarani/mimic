@@ -212,6 +212,38 @@ describe('Exa people search', () => {
     });
     expect(r.candidates[0]!.summary).toContain('Contoso');
   });
+
+  it("looks up the person's own link with /contents and keeps their exact URL", async () => {
+    const { fetch, calls } = replay({ json: fixture('exa-contents.json') });
+    const link = 'https://linkedin.com/in/avery-quinn-example/';
+    const r = await new ExaPeopleSearch({ fetch, apiKey: 'exa' }).lookup(link);
+    expect(calls[0]!.url).toBe('https://api.exa.ai/contents');
+    expect(calls[0]!.headers['x-api-key']).toBe('exa');
+    expect(calls[0]!.body).toMatchObject({ urls: [link] });
+    expect(r.costUsd).toBe(0.001);
+    expect(r.candidates).toEqual([
+      expect.objectContaining({
+        provider: 'exa',
+        name: 'Avery Quinn',
+        headline: 'Senior Software Engineer at Northwind Labs',
+        location: 'San Francisco, California, United States',
+        url: link,
+      }),
+    ]);
+  });
+
+  it('gives no candidate for a link Exa cannot read', async () => {
+    const { fetch } = replay({
+      json: {
+        requestId: 'x',
+        results: [],
+        statuses: [{ id: 'https://linkedin.com/in/nobody', status: 'error', error: { httpStatusCode: 404 } }],
+        costDollars: { total: 0 },
+      },
+    });
+    const r = await new ExaPeopleSearch({ fetch }).lookup('https://linkedin.com/in/nobody');
+    expect(r.candidates).toEqual([]);
+  });
 });
 
 describe('Parallel enrichment', () => {

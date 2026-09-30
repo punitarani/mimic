@@ -496,3 +496,58 @@ experiment arm. Calibration post-processing is reported but not applied online y
 scrubbed), optionally add Twin-2K-500 people, report on stored predictions for free, and optionally optimize. Only
 aggregates and prompt text leave the runner: the step summary, `/lab`, and an artifact with the candidate. Hugging
 Face is blocked in the Claude Code environment, so the Twin step runs only in Actions and is best-effort there.
+
+## ADR-0029 — Identity search: plain queries, the person's link, a name filter and search again (2026-09-30)
+
+Two real people tried identity search in prod and neither was offered: a software engineer with a rare name got two
+strangers, and a recent graduate with a common name got nothing. Replaying their intakes against Exa found the causes.
+
+- **Quoted names.** Every query was `"{name}" …`, as PLAN §9.2 suggested. Exa's people index is semantic and has no
+  phrase operator: the quoted query returned strangers (both engineers, neither named like the person) or zero
+  results. Unquoted, the engineer is Exa's first result for every variant tried. Queries are now plain descriptions
+  that lead with the name: `{name}, {occupation} at {employer}, {location}`, the same without the location, and the
+  name alone. The graduate's profile shows up when the query includes her school or field; the name alone is buried
+  under namesakes.
+- **The link was never used.** Intake says a link "makes finding you much more accurate", but search ignored it. Now
+  the link is read with Exa `/contents` (a LinkedIn URL resolves to the same person entity as search; any other page
+  gives its title and text) and that profile is always kept and listed first. It's logged as `identity.lookup`.
+- **A merge that favoured the first query.** Results were concatenated in query order and cut to 8 before Jev saw
+  them. They're now merged by reciprocal rank, deduped by profile URL and cut to 10, the most the screen lists.
+  `profileKey` (`@mimic/core/links`, shared with the browser) ignores the scheme, `www.`, a trailing slash and
+  tracking parameters, and treats every LinkedIn host (country and mobile) as one with case-insensitive paths.
+  Other query parameters count (`profile.php?id=…`).
+- **No name check.** Strangers were offered. A profile with no name part in common with the intake is dropped,
+  ignoring accents, apostrophes (O'Brien = OBrien), other punctuation and suffixes (Jr., PhD). A last initial that
+  ends the name counts, since LinkedIn shows "First L." outside someone's network, which is exactly how the
+  graduate's profile appears; a middle initial doesn't.
+- **Blank fields.** Intake stored a blank occupation as `''`, and `??` let it hide the employer from every query.
+  Blank optional fields are now absent, and queries use `||`.
+- **A cache that kept failures.** The KV key covered only name, location and occupation, and an empty or partial
+  result was cached for 7 days. The key is now `search:v2:` over every intake field plus the link. Only complete,
+  non-empty results are cached. Hard delete removes every key a mimic may have written, including the old format.
+- **No way back.** The screen told people to add a link "when you start", after they had started. "Search with a
+  link" (`POST /api/mimics/:id/identity/search`) now works while a choice is pending, with search consent, for up to
+  4 distinct links. It moves `identity_state` to `searching` in one conditional statement
+  (`Store.transitionIdentity`), so two requests at once start one search. Then it marks the open candidates
+  `superseded`, puts the link first in `links`, and enqueues `identity.search` with an `attempt`, which gets its own
+  ledger key.
+  - `superseded` is a new candidate status. Those candidates weren't judged, so they never read as "not me"
+    (`rejected`) in the data.
+  - If the enqueue fails there is no ledger row for the cron to requeue, so the candidates and state are put back.
+  - Only the newest link's profile leads the list and is tagged "Your link".
+  - Confirming also moves the state in one statement, from `candidates` only, and only a candidate from the latest
+    search can be confirmed. Status changes are one statement each, not one per row.
+  - A redelivered search job that finds its candidates already in place finishes the move to `candidates`, so a
+    run that failed after inserting them doesn't leave the person on the spinner.
+- **Intake.** "Employer" is now "Employer or school", since a school is what finds a student. The column is still
+  `employer`, and states and prompts are unchanged.
+
+Jev ranking was already sound given the right profile: 0.93 and 0.68 for the two people, with at most 0.49 for
+anyone else. Live after the change, five intakes for the two people (different wording, with and without the
+employer or school) found the right profile every time: first in four, second in one. In that one, the school was
+entered by a short name that is also a nearby city, and Jev preferred a local namesake. The screen therefore has no
+"likely you" badge; order alone carries the ranking. Cost is unchanged at about $0.021 per search, 3 Exa queries
+plus 10 Jev calls, and $0.001 more for a link.
+
+The picker is a radio group (select, then "This is me"). Profiles below p = 0.2 are behind "Show more". The link
+search sits under the list and on the "couldn't find" screen.

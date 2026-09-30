@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 export const Job = z.discriminatedUnion('type', [
   z.object({ type: z.literal('noop'), id: z.string() }),
-  z.object({ type: z.literal('identity.search'), mimicId: z.string() }),
+  /** `attempt` is set when the person searches again with a link, so the retry is its own job. */
+  z.object({ type: z.literal('identity.search'), mimicId: z.string(), attempt: z.number().int().optional() }),
   z.object({ type: z.literal('identity.enrich'), mimicId: z.string(), candidateId: z.string() }),
   z.object({ type: z.literal('pool.refill'), mimicId: z.string(), seq: z.number().int() }),
   z.object({
@@ -39,7 +40,7 @@ export function jobKey(job: Job): string {
     case 'noop':
       return `noop:${job.id}`;
     case 'identity.search':
-      return `identity.search:${job.mimicId}`;
+      return `identity.search:${job.mimicId}${job.attempt === undefined ? '' : `:${job.attempt}`}`;
     case 'identity.enrich':
       return `identity.enrich:${job.mimicId}:${job.candidateId}`;
     case 'pool.refill':
@@ -71,7 +72,10 @@ export function jobFromKey(key: string): Job | null {
       job = { type, id: parts.join(':') };
       break;
     case 'identity.search':
-      job = { type, mimicId: parts[0] };
+      job =
+        parts[1] === undefined
+          ? { type, mimicId: parts[0] }
+          : { type, mimicId: parts[0], attempt: Number(parts[1]) };
       break;
     case 'identity.enrich':
       job = { type, mimicId: parts[0], candidateId: parts[1] };

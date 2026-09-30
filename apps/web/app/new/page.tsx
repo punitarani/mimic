@@ -1,4 +1,5 @@
 'use client';
+import { withScheme } from '@mimic/core/links';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import { TopBar } from '@/components/brand';
@@ -73,7 +74,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
         location: f.location,
         ...(f.occupation ? { occupation: f.occupation } : {}),
         ...(f.employer ? { employer: f.employer } : {}),
-        ...(f.link ? { link: f.link } : {}),
+        ...(f.link.trim() ? { link: withScheme(f.link) } : {}),
         attestSelf: true,
         consentSearch: search,
         consentResearch: research,
@@ -131,7 +132,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
             autoComplete="organization-title"
           />
         </Field>
-        <Field label="Employer" htmlFor="employer">
+        <Field label="Employer or school" htmlFor="employer">
           <Input id="employer" value={f.employer} onChange={set('employer')} autoComplete="organization" />
         </Field>
       </div>
@@ -140,7 +141,17 @@ function IntakeForm({ invite }: { invite: string | null }) {
         htmlFor="link"
         hint="LinkedIn or a personal site. It makes finding you much more accurate."
       >
-        <Input id="link" type="url" value={f.link} onChange={set('link')} placeholder="https://" />
+        <Input
+          id="link"
+          type="url"
+          inputMode="url"
+          autoComplete="url"
+          autoCapitalize="none"
+          spellCheck={false}
+          value={f.link}
+          onChange={set('link')}
+          placeholder="linkedin.com/in/you"
+        />
       </Field>
       <div className="space-y-4 border-t border-line pt-5">
         <Checkbox id="attest" checked={attest} onChange={setAttest} label="I'm building a mimic of myself" />

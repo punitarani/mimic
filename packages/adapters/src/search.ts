@@ -148,6 +148,30 @@ export class ExaPeopleSearch implements PeopleSearch {
       raw: json,
     };
   }
+
+  /**
+   * Reads the person's own link with `/contents`. A LinkedIn URL resolves to the same structured person entity as
+   * search; any other page gives its title and text. A page Exa can't read (status `error`) gives no candidate.
+   */
+  async lookup(url: string): Promise<PeopleSearchResult> {
+    const started = Date.now();
+    const { json } = await requestJson(
+      { timeoutMs: 20_000, ...this.opts },
+      `${this.opts.baseUrl ?? 'https://api.exa.ai'}/contents`,
+      {
+        headers: authHeader('x-api-key', this.opts.apiKey),
+        body: { urls: [url], text: { maxCharacters: 1500 } },
+      },
+    );
+    const r = ExaResponse.parse(json);
+    return {
+      // Exa echoes the URL as given; keep the person's exact link so it can be matched and opened.
+      candidates: r.results.slice(0, 1).map((x) => ({ ...exaCandidate(x), url })),
+      costUsd: r.costDollars?.total ?? 0,
+      latencyMs: Date.now() - started,
+      raw: json,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
