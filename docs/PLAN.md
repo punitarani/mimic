@@ -221,7 +221,8 @@ Asynchronous jobs, on Queue `mimic-jobs`:
 
 Job rules:
 
-- **Idempotent.** The dedupe key is the job type plus its IDs plus seq.
+- **Idempotent.** The dedupe key is the job type plus its IDs plus seq. `learn.answer` also carries the answer ID, so
+  a re-answer after an undo is learned again (ADR-0027).
 - **Monotonic writes.** A job writes derived state only if its `seqUpTo` is greater than the stored one.
 - **Resilient.** Retries with backoff, and a dead-letter queue.
 - **Logged.** Every job logs its model calls.
@@ -384,6 +385,8 @@ predictions         id, question_id, mimic_id, predictor_id, role(primary|baseli
                     cost_usd, latency_ms, ok, error?, created_at
 answers             id, question_id, mimic_id, seq, value, why?, latency_ms, revealed_prediction,
                     idempotency_key UNIQUE, created_at
+answer_rewinds      id, mimic_id, question_id, seq, answer_id UNIQUE, value, why?, latency_ms, revealed_prediction,
+                    idempotency_key, answered_at, rewound_at    (undone answers, ADR-0027)
 scores              prediction_id PK, answer_id, top1, item_acc, log_loss, brier, created_at
 trait_estimates     PK(mimic_id, facet_id, method) method(jev|psychometric), seq_up_to, mean, dist_json,
                     confidence, n_evidence, config_hash, created_at
@@ -685,6 +688,10 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 
 **After answering** (when `reveal = after_answer`), a 600 ms inline reveal shows "Your mimic guessed B (62%)" with a match or miss mark, then the next question.
 
+**Undo.** The latest answer can be undone, once, after a simple confirmation: "Undo" next to Next during the reveal,
+or "Undo last answer" on the question after it. The question comes back with its sealed predictions, and the answer
+is kept as a rewind, not as evidence (ADR-0027).
+
 **Progress** reads "12 of ~30", with "Stop here" always available. Stopping never loses the mimic.
 
 **Model panel** (left):
@@ -727,6 +734,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
+| `POST /api/mimics/:id/rewind` | `{ questionId }` → `{ question, progress, previous }` | Undoes the latest answer; 409 otherwise (ADR-0027) |
 | `POST /api/mimics/:id/ask` | scenario → typed question + prediction | Playground |
 | `GET /api/mimics/:id/export` | → latest `mimic.json` | |
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |

@@ -84,6 +84,37 @@ export interface AnswerRecord {
   createdAt: number;
 }
 
+/**
+ * An answer the person undid to re-answer (ADR-0027). The row keeps what was retracted, so analysis can tell a
+ * re-answer from a first answer, and whether the person had seen the mimic's guess before changing it.
+ */
+export interface AnswerRewindRecord {
+  id: string;
+  mimicId: string;
+  questionId: string;
+  seq: number;
+  answerId: string;
+  value: string;
+  why: string | null;
+  latencyMs: number;
+  revealedPrediction: boolean;
+  idempotencyKey: string;
+  answeredAt: number;
+  rewoundAt: number;
+}
+
+/**
+ * Derived rows built from evidence at or after `fromSeq`, removed when that evidence is retracted (ADR-0027). Facts
+ * are chosen by the engine (by the evidence they cite); everything else is selected by seq inside the store.
+ */
+export interface DerivedRollback {
+  mimicId: string;
+  fromSeq: number;
+  factIds: string[];
+  /** Job ledger keys to clear so the jobs can run again for the re-answer. */
+  jobKeys: string[];
+}
+
 export interface ScoreRecord {
   predictionId: string;
   answerId: string;
@@ -288,6 +319,8 @@ export interface Store {
   }): Promise<boolean>;
   // predictions & answers
   insertPredictions(recs: PredictionRecord[]): Promise<void>;
+  /** Removes a shadow that landed on a question discarded while it ran (ADR-0027). */
+  deletePredictions(ids: string[]): Promise<void>;
   listPredictions(filter: {
     mimicId?: string;
     questionId?: string;
@@ -298,6 +331,26 @@ export interface Store {
   listAnswers(mimicId: string): Promise<AnswerRecord[]>;
   /** Atomically stores the answer, marks the question answered and writes the scores. */
   recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<void>;
+  /**
+   * Atomically retracts `rewind.answerId` (ADR-0027): records the rewind, deletes the answer and its question's scores,
+   * puts the question back to `served`, discards every question served after it (as `discardServedAfter`), inserts
+   * `requeue` into the pool, drops fidelity rows from `rewind.seq` on and applies `derived`. Returns the IDs it
+   * discarded, or null (and changes nothing) if the answer is no longer there.
+   */
+  rewindAnswer(args: {
+    rewind: AnswerRewindRecord;
+    requeue: QuestionRecord[];
+    derived: DerivedRollback;
+  }): Promise<string[] | null>;
+  /**
+   * Discards served, unanswered session questions with seq > `seq`, deleting their predictions (ADR-0027). Returns
+   * the discarded IDs.
+   */
+  discardServedAfter(mimicId: string, seq: number): Promise<string[]>;
+  /** Removes derived rows built from evidence at or after `fromSeq` (ADR-0027). */
+  rollbackDerived(args: DerivedRollback): Promise<void>;
+  getAnswerRewindByIdempotencyKey(key: string): Promise<AnswerRewindRecord | null>;
+  listAnswerRewinds(mimicId: string): Promise<AnswerRewindRecord[]>;
   insertScores(recs: ScoreRecord[]): Promise<void>;
   listScoredPredictions(mimicId: string, roles: PredictionRole[]): Promise<ScoredPredictionRow[]>;
   // derived state
@@ -312,7 +365,8 @@ export interface Store {
   upsertTraits(recs: TraitRecord[]): Promise<number>;
   listInsights(mimicId: string): Promise<InsightRecord[]>;
   insertInsights(recs: InsightRecord[]): Promise<void>;
-  updateInsightStatus(id: string, status: InsightRecord['status'], at: number): Promise<void>;
+  /** `seq` is the reflection's seqUpTo when it supersedes, so a rewind can restore the insight (ADR-0027). */
+  updateInsightStatus(id: string, status: InsightRecord['status'], at: number, seq?: number): Promise<void>;
   listKg(mimicId: string): Promise<{ nodes: KgNodeRecord[]; edges: KgEdgeRecord[] }>;
   insertKg(nodes: KgNodeRecord[], edges: KgEdgeRecord[]): Promise<void>;
   insertFidelity(rec: FidelityRecord): Promise<void>;

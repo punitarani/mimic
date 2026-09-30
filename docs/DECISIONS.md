@@ -377,3 +377,64 @@ landing page's button carries it to `/new`.
   Suspense boundary whose fallback is the same form with no code, so the static HTML is what it was before, and
   hydration only fills the field in.
 - Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
+
+## ADR-0027 — Undo the latest answer (2026-09-30)
+
+People mis-tap. The session page lets them take back their **latest** answer, once, and answer that question again:
+"Undo" sits next to Next during the reveal, and "Undo last answer" shows on the question after it. Both open a
+simple confirmation that names the question and the answer. `POST /api/mimics/:id/rewind { questionId }` does the
+work; the client names the question it is undoing, so a double click or a stale tab gets a 409 instead of undoing
+something else. The button is only offered for an answer this page sent and the server confirmed (not while it is
+waiting in the offline outbox), and it is gone after a reload.
+
+What an undo of the answer at seq *t* does, in one D1 batch:
+
+- **The answer leaves the evidence.** It moves to a new `answer_rewinds` table (value, why, latency, whether the
+  guess was revealed, idempotency key, when it was given and undone). `answer_id` is unique there, so a second,
+  concurrent undo of the same answer fails the whole batch. Hard delete and research exports cover the table; exports
+  scrub its idempotency keys like the answers'.
+- **The question comes back as it was.** Same row, same seq, same sealed predictions: they were built from answers
+  before *t* (PLAN §3.1), so they still are. Its scores and the fidelity rows from *t* on are deleted, and the
+  re-answer is scored against the same predictions.
+- **What was predicted from the retracted answer is discarded.** The next question is usually prefetched while the
+  reveal shows, and its sealed state holds answer *t*. Every served, unanswered session question after *t* is marked
+  `discarded` with `seq = null`, and its predictions are deleted (the model calls stay logged). A fresh copy with a
+  new ID goes back in the pool, keeping `createdAt` so anchors keep their order and prompt embedding; a repeat probe
+  is dropped, since the repeat schedule picks it again. New IDs keep shadow job keys from colliding.
+- **Derived state from *t* on is rolled back** (PLAN §3.3), so the re-answer is learned from scratch and the
+  monotonic writes don't block it: trait history rows with `seqUpTo ≥ t` are deleted and `trait_estimates` is rebuilt
+  from what remains with the upsert's own rule (highest seqUpTo, first write wins ties); insights with
+  `seqUpTo ≥ t` are deleted with their KG edges; insights that reflection superseded are restored (the new
+  `insights.superseded_seq` records which reflection did it); reflection facts that cite seq ≥ *t* are deleted with
+  their KG edges and vectors, then reflection nodes left without an edge; the Q&A vector for *t* and BALD hypotheses
+  from *t* on are dropped; the ledger rows for `snapshot.write` and `hypotheses.refresh` at *t* are cleared.
+
+**One step only.** Only the latest non-playground answer can be undone, and not again while its question waits for
+the new answer, so an undo never walks back a second question. A playground question asked since the answer blocks
+the undo, since its prediction used that answer.
+
+**Races, and how each is closed:**
+
+- *A learn job for the undone answer.* `learn.answer` now carries `answerId`, and its key includes it (old keys still
+  parse). A job whose answer is gone is a no-op. If the answer is undone while the job runs, the job checks again
+  after writing and rolls back what it wrote; if the question was answered again meanwhile, that answer's learn job
+  is queued again.
+- *A prefetch that commits during the undo.* The batch discards by condition (served after *t*), not from the IDs it
+  read earlier, and returns what it discarded, so a question served in between still gets its pool copy. A serve that
+  commits after the undo checks, once persisted, that the latest answer it built from still exists; if not, it
+  discards what it served and serves again.
+- *A shadow that lands on a discarded question* deletes its own prediction.
+- *A resent answer.* An idempotency key that was undone gets a 409, so a retrying outbox or another tab can't bring
+  the answer back.
+- *A shadow finishing as the answer is recorded.* Found while testing undo, but older than it: a shadow that inserts
+  after the answer lists predictions, and looks for the answer before it is recorded, was scored by neither.
+  `submitAnswer` now lists again after recording (deferred) and scores the stragglers; scores are keyed by
+  prediction, so duplicates are no-ops. `recordAnswer` also replaces any score a prediction already has, and
+  `insertScores` skips answers that no longer exist.
+
+**Snapshots.** A snapshot taken before an undo still holds the retracted answer, whatever its seq, so
+`writeSnapshot` treats a snapshot older than the last undo as stale. Its `createdAt` is now taken before it reads.
+
+**Research caveat.** A re-answer can be influenced by the guess the person saw before undoing. `answer_rewinds`
+marks every re-answered seq and whether the guess was revealed, so analysis can exclude or compare them. Headline
+fidelity counts the re-answer like any answer.

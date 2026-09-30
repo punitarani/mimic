@@ -11,7 +11,13 @@ export const Job = z.discriminatedUnion('type', [
     questionId: z.string(),
     predictorId: z.string(),
   }),
-  z.object({ type: z.literal('learn.answer'), mimicId: z.string(), seq: z.number().int() }),
+  /** `answerId` ties the job to one answer, so a re-answer after a rewind learns again (ADR-0027). */
+  z.object({
+    type: z.literal('learn.answer'),
+    mimicId: z.string(),
+    seq: z.number().int(),
+    answerId: z.string().optional(),
+  }),
   z.object({ type: z.literal('hypotheses.refresh'), mimicId: z.string(), seqUpTo: z.number().int() }),
   z.object({ type: z.literal('snapshot.write'), mimicId: z.string(), seqUpTo: z.number().int() }),
   /** Backfill (ADR-0024): fans out one `backfill.mimic` per mimic. `runId` makes each run its own job. */
@@ -45,7 +51,7 @@ export function jobKey(job: Job): string {
     case 'predict.shadow':
       return `predict.shadow:${job.mimicId}:${job.questionId}:${job.predictorId}`;
     case 'learn.answer':
-      return `learn.answer:${job.mimicId}:${job.seq}`;
+      return `learn.answer:${job.mimicId}:${job.seq}${job.answerId ? `:${job.answerId}` : ''}`;
     case 'hypotheses.refresh':
       return `hypotheses.refresh:${job.mimicId}:${job.seqUpTo}`;
     case 'snapshot.write':
@@ -73,8 +79,10 @@ export function jobFromKey(key: string): Job | null {
       job = { type, mimicId: parts[0], candidateId: parts[1] };
       break;
     case 'pool.refill':
-    case 'learn.answer':
       job = { type, mimicId: parts[0], seq: Number(parts[1]) };
+      break;
+    case 'learn.answer':
+      job = { type, mimicId: parts[0], seq: Number(parts[1]), ...(parts[2] ? { answerId: parts[2] } : {}) };
       break;
     case 'predict.shadow':
       job = { type, mimicId: parts[0], questionId: parts[1], predictorId: parts.slice(2).join(':') };

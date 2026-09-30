@@ -22,6 +22,7 @@ import { writeSnapshot } from './artifact';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
+import { rollbackStaleLearn } from './rewind';
 import { JEV_PROMPT_VERSION, MAX_POOL, MIN_POOL } from './session';
 
 export const MAX_JOB_ATTEMPTS = 5;
@@ -188,7 +189,7 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
     case 'predict.shadow':
       return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key);
     case 'learn.answer':
-      return runLearn(deps, job.mimicId, job.seq, key);
+      return runLearn(deps, job.mimicId, job.seq, key, job.answerId);
     case 'hypotheses.refresh':
       return runHypotheses(deps, job.mimicId, job.seqUpTo, key);
     case 'snapshot.write':
@@ -251,6 +252,11 @@ export async function runShadow(
     createdAt: now,
   };
   await deps.store.insertPredictions([rec]);
+  // Discarded by an undo while this ran (ADR-0027): its state held the retracted answer.
+  if ((await deps.store.getQuestion(q.id))?.status === 'discarded') {
+    await deps.store.deletePredictions([rec.id]);
+    return;
+  }
   // Sealing is defined by state contents, so a shadow may finish after the answer and still be scored.
   const answer = await deps.store.getAnswerForQuestion(q.id);
   if (answer && rec.ok) {
@@ -411,10 +417,21 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
 
 export const SNAPSHOT_DEBOUNCE_SECONDS = 10;
 
-export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, key?: string): Promise<void> {
+/**
+ * `answerId` (absent on jobs queued before ADR-0027) names the answer being learned. If the person undid it, the job
+ * is a no-op; if they undo it while the job runs, the job rolls back what it wrote.
+ */
+export async function runLearn(
+  deps: EngineDeps,
+  mimicId: string,
+  seq: number,
+  key?: string,
+  answerId?: string,
+): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
   const loaded = await loadMimicData(deps, m);
+  if (answerId && !loaded.answers.some((a) => a.seq === seq && a.id === answerId)) return;
   const item = loaded.data.evidence.find((e) => e.seq === seq);
   if (!item || (item.kind !== 'anchor' && item.kind !== 'adaptive')) return;
   const learnable = loaded.data.evidence.filter((e) => e.kind === 'anchor' || e.kind === 'adaptive');
@@ -515,6 +532,12 @@ export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, k
     }
   }
 
+  // Retracted while this job ran: what it wrote came from an answer that no longer exists.
+  if (answerId && (await deps.store.getAnswerForQuestion(item.questionId))?.id !== answerId) {
+    await rollbackStaleLearn(deps, m, seq);
+    return;
+  }
+
   // 5) Debounced snapshot.
   await deps.jobs.enqueue(
     { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
@@ -549,7 +572,8 @@ export async function runReflection(
     earlierEvidence: earlier,
   });
   const now = deps.clock();
-  for (const c of delta.contradictions) await deps.store.updateInsightStatus(c.insightId, 'superseded', now);
+  for (const c of delta.contradictions)
+    await deps.store.updateInsightStatus(c.insightId, 'superseded', now, seq);
   const insights: InsightRecord[] = delta.insights.map((i) => ({
     id: deps.newId(),
     mimicId: m.id,

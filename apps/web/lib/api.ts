@@ -4,6 +4,7 @@ import type {
   NextResult,
   PlaygroundPrediction,
   PublicQuestion,
+  RewindResult,
   UiSnapshot,
 } from '@mimic/core';
 
@@ -112,6 +113,8 @@ export const api = {
     call<{ id: string }>('PATCH', `/api/mimics/${id}/facts/${factId}`, { userState }),
   next: (id: string) => call<NextResult>('POST', `/api/mimics/${id}/next`),
   answer: (id: string, b: AnswerRequest) => call<AnswerResult>('POST', `/api/mimics/${id}/answers`, b),
+  rewind: (id: string, questionId: string) =>
+    call<RewindResult>('POST', `/api/mimics/${id}/rewind`, { questionId }),
   draft: (id: string, scenario: string) =>
     call<{ draft: Draft }>('POST', `/api/mimics/${id}/ask`, { scenario }),
   predict: (id: string, question: Draft & { rationale: boolean }) =>

@@ -12,7 +12,8 @@ import {
   useState,
 } from 'react';
 import { BottomSheet } from '@/components/session/bottom-sheet';
-import { CheckIcon, CrossIcon, MinusIcon } from '@/components/session/icons';
+import { ConfirmDialog } from '@/components/session/confirm-dialog';
+import { CheckIcon, CrossIcon, MinusIcon, UndoIcon } from '@/components/session/icons';
 import { ModelPanel } from '@/components/session/model-panel';
 import { Kbd, NextButton } from '@/components/session/next-button';
 import { OptionButton } from '@/components/session/option-button';
@@ -78,6 +79,13 @@ export default function SessionPage() {
     baseline: UiSnapshot;
   } | null>(null);
   const [guesses, setGuesses] = useGuesses(id);
+  /** The latest answer, while it can still be undone (ADR-0027): only the one sent from this page, and one step. */
+  const [undoable, setUndoable] = useState<{ questionId: string; prompt: string; label: string } | null>(
+    null,
+  );
+  const [confirmUndo, setConfirmUndo] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const undoRef = useRef<HTMLButtonElement>(null);
   const done = useRef(new Set<string>());
   const shownAt = useRef(Date.now());
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -152,6 +160,7 @@ export default function SessionPage() {
       setPicked(value);
       setSending(true);
       setError(null);
+      setNotice(null);
       const why = reasonOpen ? reason.trim() : '';
       const item = {
         mimicId: id,
@@ -172,6 +181,7 @@ export default function SessionPage() {
         setReveal(res.reveal);
         setAnswered(true);
         setReasonSent(!!why);
+        setUndoable({ questionId: q.id, prompt: q.prompt, label });
         if (baseline) setLastAnswer({ label, match: res.reveal ? res.reveal.match : null, baseline });
         // Prefetch the next question while the reveal shows; no auto-advance.
         void qc
@@ -189,10 +199,11 @@ export default function SessionPage() {
           void qc.invalidateQueries({ queryKey: ['question', id] });
           setCurrent(null);
         } else {
-          // Kept in the outbox and retried on reconnect.
+          // Kept in the outbox and retried on reconnect. Not undoable: the server may not have it yet.
           done.current.add(q.id);
           setAnswered(true);
           setOffline(true);
+          setUndoable(null);
         }
       } finally {
         setSending(false);
@@ -206,6 +217,7 @@ export default function SessionPage() {
     setAnswered(false);
     setPicked(null);
     setReveal(null);
+    setNotice(null);
     setReason('');
     setReasonOpen(false);
     setReasonSent(false);
@@ -222,6 +234,49 @@ export default function SessionPage() {
     }
   }, [answered, offline, qc, id]);
 
+  /**
+   * Takes back the latest answer and shows its question again (ADR-0027). The server discards the question
+   * prefetched after it, so a prefetch still in flight is cancelled first and never shown.
+   */
+  const undo = useCallback(async () => {
+    if (!undoable) return;
+    await qc.cancelQueries({ queryKey: ['question', id] });
+    let res: Awaited<ReturnType<typeof api.rewind>>;
+    try {
+      res = await api.rewind(id, undoable.questionId);
+    } catch (e) {
+      // 409: no longer the latest answer (another tab, or already undone). The dialog shows why.
+      if (e instanceof ApiError && e.status === 409) setUndoable(null);
+      throw e;
+    }
+    timers.current.forEach(clearTimeout);
+    done.current.delete(res.question.id);
+    const shown: NextResult = { status: 'question', question: res.question, progress: res.progress };
+    qc.setQueryData<NextResult>(['question', id], shown);
+    setCurrent({ question: res.question, progress: res.progress });
+    shownAt.current = Date.now();
+    setAnswered(false);
+    setPicked(null);
+    setReveal(null);
+    setError(null);
+    setReasonSent(false);
+    // The reason they gave is put back, ready to send with the new answer.
+    setReason(res.previous.why ?? '');
+    setReasonOpen(!!res.previous.why);
+    setFirstOfVisit(false);
+    setLastAnswer(null);
+    setUndoable(null);
+    setConfirmUndo(false);
+    setNotice(`Answer undone. “${undoable.label}” was removed; choose again.`);
+    void qc.invalidateQueries({ queryKey: ['snapshot', id] });
+    requestAnimationFrame(() => optionRefs.current[0]?.focus({ preventScroll: true }));
+  }, [undoable, qc, id]);
+
+  const cancelUndo = useCallback(() => {
+    setConfirmUndo(false);
+    requestAnimationFrame(() => undoRef.current?.focus({ preventScroll: true }));
+  }, []);
+
   // Move focus to Next once the answer is in, so Enter and screen readers land there.
   useEffect(() => {
     if (answered && !offline) nextRef.current?.focus({ preventScroll: true });
@@ -236,7 +291,10 @@ export default function SessionPage() {
       if (document.querySelector('[role="menu"], [aria-modal="true"]')) return;
       const target = e.target as HTMLElement | null;
       const typing = target?.tagName === 'TEXTAREA' || target?.tagName === 'INPUT';
-      if (e.key === 'Enter' && !typing) {
+      // Enter on another focused control (Undo, Finish for now) activates that control, not Next.
+      const otherControl =
+        target !== nextRef.current && (target?.tagName === 'BUTTON' || target?.tagName === 'A');
+      if (e.key === 'Enter' && !typing && !otherControl) {
         if (answered) {
           e.preventDefault();
           advance();
@@ -416,6 +474,18 @@ export default function SessionPage() {
                 disabled={sending || answered || offline}
                 offline={offline}
                 error={error}
+                notice={notice}
+                undo={
+                  undoable && !offline
+                    ? {
+                        // After Next, the answer being undone belongs to the previous question.
+                        label: answered ? 'Undo' : 'Undo last answer',
+                        disabled: sending,
+                        onClick: () => setConfirmUndo(true),
+                        ref: undoRef,
+                      }
+                    : null
+                }
                 first={answeredCount === 0}
                 reasonOpen={reasonOpen}
                 reason={reason}
@@ -452,6 +522,26 @@ export default function SessionPage() {
       <BottomSheet open={sheetOpen} onClose={() => setSheetOpen(false)}>
         {panel(true)}
       </BottomSheet>
+
+      {confirmUndo && undoable && (
+        <ConfirmDialog
+          title="Undo your last answer?"
+          body={
+            <>
+              <span className="mb-2 block font-serif text-[16px] leading-6 text-graphite">
+                {undoable.prompt}
+              </span>
+              Your answer “{undoable.label}” will be removed, and you can answer this question again.
+            </>
+          }
+          confirmLabel="Undo answer"
+          busyLabel="Undoing…"
+          tone="graphite"
+          errorFallback="Could not undo. Try again."
+          onCancel={cancelUndo}
+          onConfirm={undo}
+        />
+      )}
     </div>
   );
 }
@@ -465,6 +555,9 @@ interface QuestionViewProps {
   disabled: boolean;
   offline: boolean;
   error: string | null;
+  notice: string | null;
+  /** Shown while the latest answer can be undone. */
+  undo: { label: string; disabled: boolean; onClick: () => void; ref: React.Ref<HTMLButtonElement> } | null;
   first: boolean;
   reasonOpen: boolean;
   reason: string;
@@ -552,8 +645,15 @@ function QuestionView(p: QuestionViewProps) {
             className="h-14 w-full resize-none rounded-[8px] border border-rule bg-sheet px-3 py-2 text-[14px] leading-5 text-graphite placeholder:text-slate focus-visible:rounded-[8px]"
           />
         )}
-        <Status reveal={reveal} q={q} picked={p.picked} offline={p.offline} error={p.error} />
-        <div className="flex items-center justify-between">
+        <Status
+          reveal={reveal}
+          q={q}
+          picked={p.picked}
+          offline={p.offline}
+          error={p.error}
+          notice={p.notice}
+        />
+        <div className="flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={p.onReasonToggle}
@@ -567,18 +667,33 @@ function QuestionView(p: QuestionViewProps) {
                 ? 'Remove reason'
                 : 'Add a reason (optional)'}
           </button>
-          {p.answered ? (
-            <NextButton ref={p.nextRef} onClick={p.onNext} disabled={p.offline} />
-          ) : (
-            p.first && (
-              <span className="hidden items-center gap-1.5 text-[14px] leading-5 whitespace-nowrap text-slate lg:flex">
-                <Kbd>{q.type === 'noul' ? 'Y / N' : `1–${q.options.length}`}</Kbd>
-                <span>to answer,</span>
-                <Kbd>Enter</Kbd>
-                <span>for the next question</span>
-              </span>
-            )
-          )}
+          <div className="flex items-center gap-1 lg:gap-2">
+            {p.undo && (
+              <button
+                ref={p.undo.ref}
+                type="button"
+                onClick={p.undo.onClick}
+                disabled={p.undo.disabled}
+                title="Take back your last answer and answer that question again"
+                className="inline-flex h-11 items-center gap-1.5 rounded-[8px] px-2 text-[14px] last:-mr-2 font-medium leading-5 whitespace-nowrap text-slate hover:text-graphite disabled:cursor-default disabled:hover:text-slate focus-visible:rounded-[8px]"
+              >
+                <UndoIcon width={16} height={16} />
+                {p.undo.label}
+              </button>
+            )}
+            {p.answered ? (
+              <NextButton ref={p.nextRef} onClick={p.onNext} disabled={p.offline} />
+            ) : (
+              p.first && (
+                <span className="hidden items-center gap-1.5 text-[14px] leading-5 whitespace-nowrap text-slate lg:flex">
+                  <Kbd>{q.type === 'noul' ? 'Y / N' : `1–${q.options.length}`}</Kbd>
+                  <span>to answer,</span>
+                  <Kbd>Enter</Kbd>
+                  <span>for the next question</span>
+                </span>
+              )
+            )}
+          </div>
         </div>
       </div>
       {/* A scale's reveal adds its bars (84 px); reserve them below so the prompt and scale never move. */}
@@ -593,12 +708,14 @@ function Status({
   picked,
   offline,
   error,
+  notice,
 }: {
   reveal: Reveal | null;
   q: PublicQuestion;
   picked: string | null;
   offline: boolean;
   error: string | null;
+  notice: string | null;
 }) {
   let tone: 'moss' | 'rust' | 'slate' | null = null;
   let text = '';
@@ -608,6 +725,9 @@ function Status({
   } else if (offline) {
     tone = 'slate';
     text = "Saved on this device. It will be sent when you're back online.";
+  } else if (notice) {
+    tone = 'slate';
+    text = notice;
   } else if (reveal && picked) {
     const p = Math.round(reveal.p * 100);
     if (q.type === 'score') {
@@ -633,7 +753,14 @@ function Status({
     }
   }
   if (!tone) return null;
-  const Icon = error || tone === 'rust' ? CrossIcon : tone === 'moss' ? CheckIcon : MinusIcon;
+  const Icon =
+    error || tone === 'rust'
+      ? CrossIcon
+      : tone === 'moss'
+        ? CheckIcon
+        : notice && !offline
+          ? UndoIcon
+          : MinusIcon;
   return (
     <div
       role="status"

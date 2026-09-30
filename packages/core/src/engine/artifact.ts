@@ -163,11 +163,20 @@ export async function writeSnapshot(
   seqUpTo?: number,
 ): Promise<number | null> {
   const m = await requireMimic(deps, mimicId);
-  const snaps = await deps.store.listSnapshots(m.id);
+  // Taken before reading, so a snapshot's createdAt never claims data newer than what it read.
+  const asOf = deps.clock();
+  const [snaps, answers, rewinds] = await Promise.all([
+    deps.store.listSnapshots(m.id),
+    deps.store.listAnswers(m.id),
+    deps.store.listAnswerRewinds(m.id),
+  ]);
   const latest = snaps.at(-1);
-  const answers = await deps.store.listAnswers(m.id);
   const currentSeq = answers.reduce((a, x) => Math.max(a, x.seq), 0);
-  if (latest && latest.seqUpTo >= Math.max(seqUpTo ?? 0, currentSeq)) return null;
+  // A snapshot taken before an undo still holds the retracted answer, whatever its seq (ADR-0027).
+  const lastRewind = rewinds.reduce((a, r) => Math.max(a, r.rewoundAt), 0);
+  const covered =
+    latest && latest.seqUpTo >= Math.max(seqUpTo ?? 0, currentSeq) && latest.createdAt > lastRewind;
+  if (covered) return null;
   const version = (latest?.version ?? 0) + 1;
   const doc = await buildMimicJson(deps, m.id, version);
   const key = snapshotKey(m.id, version, deps.newId());
@@ -178,7 +187,7 @@ export async function writeSnapshot(
       version,
       r2Key: key,
       seqUpTo: doc.seqUpTo,
-      createdAt: deps.clock(),
+      createdAt: asOf,
     });
   } catch (e) {
     // Another writer took this version (primary key); drop our blob and let the job retry.

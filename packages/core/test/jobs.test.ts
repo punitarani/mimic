@@ -10,6 +10,7 @@ describe('job keys', () => {
       { type: 'pool.refill', mimicId: 'M', seq: 3 },
       { type: 'predict.shadow', mimicId: 'M', questionId: 'Q', predictorId: 'llm:openai/gpt-6-luna' },
       { type: 'learn.answer', mimicId: 'M', seq: 12 },
+      { type: 'learn.answer', mimicId: 'M', seq: 12, answerId: 'A' },
       { type: 'hypotheses.refresh', mimicId: 'M', seqUpTo: 20 },
       { type: 'snapshot.write', mimicId: 'M', seqUpTo: 20 },
       {

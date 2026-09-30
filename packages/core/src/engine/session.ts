@@ -66,7 +66,7 @@ export function toPublic(q: QuestionRecord): PublicQuestion {
   };
 }
 
-function progressOf(questions: QuestionRecord[], cfg: PipelineConfig): Progress {
+export function progressOf(questions: QuestionRecord[], cfg: PipelineConfig): Progress {
   const answered = questions.filter((q) => q.status === 'answered' && q.kind !== 'playground').length;
   return { answered, target: cfg.session.target };
 }
@@ -80,6 +80,79 @@ function maxSeq(questions: QuestionRecord[]): number {
  * The primary and baseline predictions are persisted before the question is returned (PLAN §3.2).
  */
 export async function serveNext(deps: EngineDeps, mimicId: string): Promise<NextResult> {
+  for (let attempt = 0; ; attempt++) {
+    const r = await serveOnce(deps, mimicId);
+    if (r !== RACED_UNDO) return r;
+    if (attempt >= 2) throw new EngineError('conflict', 'Your last answer changed; retry');
+  }
+}
+
+/** A serve that raced an undo (ADR-0027): it was discarded, and the caller serves again. */
+const RACED_UNDO = Symbol('raced-undo');
+
+/**
+ * Fresh pool copies of served questions being taken back (ADR-0027). A repeat probe gets none: the repeat schedule
+ * picks it again. Copies keep `createdAt`, so anchors keep their per-person order.
+ */
+export function poolCopies(
+  deps: EngineDeps,
+  questions: QuestionRecord[],
+): Array<{ from: QuestionRecord; copy: QuestionRecord }> {
+  return questions
+    .filter((q) => q.kind !== 'repeat' && q.kind !== 'playground')
+    .map((from) => ({
+      from,
+      copy: { ...from, id: deps.newId(), seq: null, status: 'pooled', servedAt: null, stateAt: null },
+    }));
+}
+
+/** Copies keep their prompt embedding (redundancy and retrieval read it by question ID). Best effort. */
+export async function copyQuestionVectors(
+  deps: EngineDeps,
+  mimicId: string,
+  copies: Array<{ from: QuestionRecord; copy: QuestionRecord }>,
+): Promise<void> {
+  if (!copies.length) return;
+  try {
+    const vecs = await deps.vectors.getByIds(copies.map((c) => vectorId.question(mimicId, c.from.id)));
+    const byId = new Map(vecs.map((v) => [v.id, v]));
+    const moved = copies.flatMap(({ from, copy }) => {
+      const v = byId.get(vectorId.question(mimicId, from.id));
+      return v ? [{ ...v, id: vectorId.question(mimicId, copy.id) }] : [];
+    });
+    if (moved.length) await deps.vectors.upsert(moved);
+  } catch {
+    // Falls back to lexical similarity.
+  }
+}
+
+/** Puts pool copies of already-discarded questions back (ADR-0027). */
+export async function requeueDiscarded(deps: EngineDeps, mimicId: string, ids: string[]): Promise<void> {
+  if (!ids.length) return;
+  const discarded = (await Promise.all(ids.map((id) => deps.store.getQuestion(id)))).filter(
+    (q): q is QuestionRecord => q?.mimicId === mimicId,
+  );
+  const copies = poolCopies(deps, discarded);
+  if (copies.length) await deps.store.insertQuestions(copies.map((c) => c.copy));
+  await copyQuestionVectors(deps, mimicId, copies);
+}
+
+/**
+ * True unless the answer this serve built its state from was undone while it ran (ADR-0027). Only the latest answer
+ * can be undone, so checking it is enough.
+ */
+async function stillCurrent(deps: EngineDeps, loaded: LoadedMimic): Promise<boolean> {
+  const last = loaded.answers.at(-1);
+  if (!last) return true;
+  return (await deps.store.getAnswerForQuestion(last.questionId))?.id === last.id;
+}
+
+async function discardRaced(deps: EngineDeps, mimicId: string, seq: number): Promise<typeof RACED_UNDO> {
+  await requeueDiscarded(deps, mimicId, await deps.store.discardServedAfter(mimicId, seq - 1));
+  return RACED_UNDO;
+}
+
+async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult | typeof RACED_UNDO> {
   const m = await timed(deps, 'mimic', () => requireMimic(deps, mimicId));
   const cfg = await loadConfig(deps, m.configHash);
   // Derived data is pinned to `stateAt` so the sealed states can be rebuilt exactly from an export (ADR-0017).
@@ -137,6 +210,7 @@ export async function serveNext(deps: EngineDeps, mimicId: string): Promise<Next
       predictions: [],
     });
     if (!ok) return raced(deps, m.id);
+    if (!(await stillCurrent(deps, loaded))) return discardRaced(deps, m.id, seq);
     return { status: 'question', question: toPublic({ ...rep, seq, status: 'served' }), progress };
   }
 
@@ -248,7 +322,7 @@ async function serveWithPredictions(
   pool: QuestionRecord[],
   progress: Progress,
   rng: () => number,
-): Promise<NextResult> {
+): Promise<NextResult | typeof RACED_UNDO> {
   const primarySpec = cfg.predictor.primary;
   const ctxPrimary = ctxFor(m, 'predict.primary');
   const primary = primarySpec.startsWith('jev:')
@@ -358,6 +432,7 @@ async function serveWithPredictions(
     }),
   );
   if (!ok) return raced(deps, m.id);
+  if (!(await stillCurrent(deps, loaded))) return discardRaced(deps, m.id, seq);
 
   // The sealed states must exist before shadow jobs read them; both can finish after the response.
   await deferred(deps, async () => {
@@ -430,11 +505,16 @@ export async function submitAnswer(
 ): Promise<AnswerResult> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  const existing = await deps.store.getAnswerByIdempotencyKey(input.idempotencyKey);
+  const [existing, undone] = await Promise.all([
+    deps.store.getAnswerByIdempotencyKey(input.idempotencyKey),
+    deps.store.getAnswerRewindByIdempotencyKey(input.idempotencyKey),
+  ]);
   if (existing) {
     if (existing.mimicId !== m.id) throw new EngineError('conflict', 'Idempotency key reused');
     return replayResult(deps, m, cfg, existing);
   }
+  // A resend of an answer the person undid (a retrying outbox, another tab) must not bring it back (ADR-0027).
+  if (undone) throw new EngineError('conflict', 'This answer was undone');
   const q = await deps.store.getQuestion(input.questionId);
   if (!q || q.mimicId !== m.id) throw new EngineError('not_found', 'Question not found');
   if (q.status === 'answered') throw new EngineError('conflict', 'Question already answered');
@@ -479,9 +559,39 @@ export async function submitAnswer(
       : await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seqAnswered));
   if (q.kind === 'anchor' || q.kind === 'adaptive') {
     const seq = q.seq;
-    await deferred(deps, () => deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq }));
+    await deferred(deps, () =>
+      deps.jobs.enqueue({ type: 'learn.answer', mimicId: m.id, seq, answerId: answer.id }),
+    );
   }
+  if (q.kind !== 'repeat') await deferred(deps, () => scoreLateShadows(deps, q, answer, scores));
   return { reveal, fidelity, seq: q.seq };
+}
+
+/**
+ * A shadow that inserts its prediction after this answer listed them, but looks for the answer before it was
+ * recorded, would be scored by neither side. Listing again after the answer is recorded closes that gap: whichever
+ * write lands second sees the other. Scores are keyed by prediction, so a duplicate is a no-op.
+ */
+async function scoreLateShadows(
+  deps: EngineDeps,
+  q: QuestionRecord,
+  answer: AnswerRecord,
+  scored: Array<{ predictionId: string }>,
+): Promise<void> {
+  const have = new Set(scored.map((s) => s.predictionId));
+  const late = (await deps.store.listPredictions({ questionId: q.id })).filter(
+    (p) => p.ok && !have.has(p.id),
+  );
+  if (!late.length) return;
+  const now = deps.clock();
+  await deps.store.insertScores(
+    late.map((p) => ({
+      predictionId: p.id,
+      answerId: answer.id,
+      ...scorePrediction(q.type, p.dist, answer.value),
+      createdAt: now,
+    })),
+  );
 }
 
 function revealOf(q: QuestionRecord, p: PredictionRecord): Reveal {

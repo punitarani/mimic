@@ -161,6 +161,31 @@ export const answers = sqliteTable(
   ],
 );
 
+/** ADR-0027: answers the person undid to re-answer. One row per retracted answer (answer_id is unique). */
+export const answerRewinds = sqliteTable(
+  'answer_rewinds',
+  {
+    id: text('id').primaryKey(),
+    mimicId: text('mimic_id').notNull(),
+    questionId: text('question_id').notNull(),
+    seq: integer('seq').notNull(),
+    answerId: text('answer_id').notNull(),
+    value: text('value').notNull(),
+    why: text('why'),
+    latencyMs: integer('latency_ms').notNull(),
+    revealedPrediction: bool('revealed_prediction').notNull(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    answeredAt: integer('answered_at').notNull(),
+    rewoundAt: integer('rewound_at').notNull(),
+  },
+  (t) => [
+    index('answer_rewinds_mimic_idx').on(t.mimicId, t.seq),
+    // Makes a second, concurrent undo of the same answer fail as a whole (ADR-0027).
+    uniqueIndex('answer_rewinds_answer_idx').on(t.answerId),
+    index('answer_rewinds_idempotency_idx').on(t.idempotencyKey),
+  ],
+);
+
 export const scores = sqliteTable(
   'scores',
   {
@@ -217,6 +242,8 @@ export const insights = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** When the status left `active` (ADR-0017: lets replay rebuild the state as it was at serve time). */
     statusChangedAt: integer('status_changed_at'),
+    /** seqUpTo of the reflection that superseded it, so undoing that answer restores it (ADR-0027). */
+    supersededSeq: integer('superseded_seq'),
   },
   (t) => [index('insights_mimic_idx').on(t.mimicId)],
 );
@@ -377,6 +404,7 @@ export const MIMIC_TABLES = [
   questions,
   predictions,
   answers,
+  answerRewinds,
   scores,
   traitEstimates,
   traitHistory,

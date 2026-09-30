@@ -5,5 +5,6 @@ export * from './identity';
 export * from './jobs';
 export * from './lab';
 export * from './playground';
+export * from './rewind';
 export * from './session';
 export * from './ui';
