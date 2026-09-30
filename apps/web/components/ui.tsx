@@ -63,6 +63,7 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
       ref={ref}
       className={cn(
         'h-11 w-full rounded-[10px] border border-line bg-raised px-3 text-[15px] placeholder:text-muted/70 hover:border-line-strong',
+        'disabled:cursor-not-allowed disabled:bg-surface disabled:text-muted disabled:hover:border-line',
         className,
       )}
       {...props}
@@ -77,6 +78,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
         ref={ref}
         className={cn(
           'w-full rounded-[10px] border border-line bg-raised px-3 py-2 text-[15px] placeholder:text-muted/70 hover:border-line-strong',
+          'disabled:cursor-not-allowed disabled:bg-surface disabled:text-muted disabled:hover:border-line',
           className,
         )}
         {...props}

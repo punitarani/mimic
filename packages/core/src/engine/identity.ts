@@ -175,7 +175,7 @@ export function searchCacheKeys(m: SearchSubject): string[] {
 }
 
 /**
- * Query variants for Exa people search (PLAN §9.2 step 1, ADR-0026). The index is semantic: a quoted name is not
+ * Query variants for Exa people search (PLAN §9.2 step 1, ADR-0027). The index is semantic: a quoted name is not
  * a phrase match, and in live checks it returned strangers or nothing at all. So each query is a plain description
  * that leads with the name, from most to least specific.
  */

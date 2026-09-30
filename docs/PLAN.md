@@ -473,7 +473,7 @@ Required fields:
 Optional fields:
 
 - Occupation
-- Employer or school (students and recent graduates enter their school; stored as `employer`, ADR-0026)
+- Employer or school (students and recent graduates enter their school; stored as `employer`, ADR-0027)
 - One link, such as LinkedIn or a personal site (this improves identity matching a lot)
 
 Optional consents, each a separate checkbox:
@@ -483,7 +483,7 @@ Optional consents, each a separate checkbox:
 
 ### 9.2 Identity resolution and enrichment
 
-1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2–3 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0026): `{name}, {occupation} at {employer}, {location}`, the same without the location, and the name alone. If the person gave a link, read it with Exa `/contents` too. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
+1. **Search.** `identity.search` runs Exa with `category: "people"`. Use 2–3 plain-language query variants that lead with the name, never quoted (Exa's people index is semantic; ADR-0027): `{name}, {occupation} at {employer}, {location}`, the same without the location, and the name alone. If the person gave a link, read it with Exa `/contents` too. Request `numResults` 10 with highlights, then merge by reciprocal rank, dedupe by profile URL and drop profiles with no name in common with the intake (the person's own link is always kept). Cache complete, non-empty results in KV and store raw results in R2.
 2. **Pre-rank.** For each candidate, one Jev request (all run in parallel, state = intake plus that candidate's summary) asks the `noul` question "Is this profile the same person as the intake?". Store the result as `jev_same_person_p`.
 3. **Confirm.** The UI asks "Is one of these you?" and shows the top 3–5 candidates with name, headline, location and source; namesakes Jev scores low are behind "Show more". The person picks one or chooses "None of these". Never auto-confirm. If they aren't listed, they can search again with a link to their profile.
 4. **Enrich.** `identity.enrich` runs on confirmation. A Parallel Task with a JSON output schema collects current role, employer history, education, skills, public projects and writing, interests and locations, each with a source URL. Optionally, fetch Exa contents for the confirmed URLs.
@@ -668,7 +668,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | Route | Purpose |
 |---|---|
 | `/` | One sentence on what Mimic does, and one button: "Build your mimic". |
-| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. |
+| `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and locks the field. |
 | `/m/[id]/identity` | Search progress, "Is one of these you?", then fact review with remove toggles. "Skip" is always available. |
 | `/m/[id]` | The session. |
 | `/m/[id]/mimic` | Talk to your mimic (§9.11); download `mimic.json`; delete the mimic. |
@@ -724,7 +724,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `GET /api/mimics/:id` | → UI snapshot | Profile, fidelity, facets, insights, KG, pool status |
 | `GET /api/mimics/:id/identity` | → `{ status, candidates, facts }` | |
 | `POST /api/mimics/:id/identity/confirm` | `{ candidateId \| null }` | Enqueues `identity.enrich` |
-| `POST /api/mimics/:id/identity/search` | `{ link }` | Searches again led by the link; only while a choice is pending (ADR-0026) |
+| `POST /api/mimics/:id/identity/search` | `{ link }` | Searches again led by the link; only while a choice is pending (ADR-0027) |
 | `PATCH /api/mimics/:id/facts/:factId` | `{ userState: 'removed' \| 'active' }` | |
 | `POST /api/mimics/:id/next` | → `{ question, seq }` | Idempotent per seq; seals predictions |
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
@@ -733,7 +733,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
-**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
+**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and locks the field, and unlocks it only if the server rejects the code (ADR-0026). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
 **Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd ≥ session.budgetUsd`.
 

@@ -11,7 +11,7 @@ import {
 
 const person = (name: string, url: string): PersonCandidate => ({ provider: 'exa', name, url, summary: '' });
 
-describe('identity search queries (ADR-0026)', () => {
+describe('identity search queries (ADR-0027)', () => {
   it('never quotes the name, and leads every query with it', () => {
     const qs = searchQueries({
       displayName: 'Rosa Ibarra',

@@ -71,7 +71,7 @@ describe('identity (PLAN §9.2, M3)', () => {
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.every((c) => c.status === 'proposed' && c.jevSamePersonP !== null)).toBe(true);
     expect(search().calls).toBeGreaterThanOrEqual(2); // 2–3 query variants
-    // Exa's people index is semantic: a quoted name is not a phrase match and wrecked recall (ADR-0026).
+    // Exa's people index is semantic: a quoted name is not a phrase match and wrecked recall (ADR-0027).
     expect(search().queries.every((q) => q.startsWith('Avery Quinn') && !q.includes('"'))).toBe(true);
     // Profiles with no name in common with the intake (Rowan Ellis) are never offered.
     expect(candidates.map((c) => c.name)).toEqual(['Avery Quinn']);
