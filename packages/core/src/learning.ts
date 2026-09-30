@@ -150,7 +150,9 @@ function targetLines(input: GenerateInput): string {
         t.label && t.certainty !== null
           ? `current reading "${t.label}" (certainty ${t.certainty})`
           : 'no reading yet';
-      return `- ${id} (${t.name}: ${t.low} → ${t.high}); why: ${t.reason}; ${reading}`;
+      // A sweep target (ADR-0044) is a consented sensitive facet nothing has touched: to the prompt, it is unexplored.
+      const why = t.reason === 'sweep' ? 'unexplored' : t.reason;
+      return `- ${id} (${t.name}: ${t.low} → ${t.high}); why: ${why}; ${reading}`;
     })
     .join('\n');
 }
