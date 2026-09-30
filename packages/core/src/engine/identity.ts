@@ -62,15 +62,19 @@ export async function createMimic(
   deps: EngineDeps,
   input: IntakeInput,
   participantId: string,
+  /** Internal callers only (the eval session runner): a registered config to use instead of the default or an arm. */
+  opts: { configHash?: string } = {},
 ): Promise<MimicRecord> {
   const now = deps.clock();
   const id = deps.newId();
   await deps.store.ensureParticipant(participantId, now);
 
-  let cfgHash = await ensureDefaultConfig(deps);
+  let cfgHash = opts.configHash ?? (await ensureDefaultConfig(deps));
   let experimentId: string | null = null;
   let arm: string | null = null;
-  const active = (await deps.store.listExperiments()).find((e) => e.status === 'active' && e.arms.length > 0);
+  const active = opts.configHash
+    ? undefined
+    : (await deps.store.listExperiments()).find((e) => e.status === 'active' && e.arms.length > 0);
   if (active) {
     const chosen = allocateArm(id, active.id, active.arms);
     cfgHash = chosen.configHash;

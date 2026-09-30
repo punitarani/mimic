@@ -1126,7 +1126,7 @@ full policy.
   search or enrichment: those fields are never requested, and a lexicon drops any fact that reveals one before it is
   stored. Hard delete covers it like everything else.
 - **Direct questions only.** A sensitive facet is populated only by answers to questions that ask about it directly;
-  nothing is inferred from other answers or from facts. The reflector is told so and code enforces it (ADR-0042).
+  nothing is inferred from other answers or from facts. The reflector is told so and code enforces it (ADR-0043).
 - **Stored as a `MimicScope`** in `mimics.categories_json`, `consents_json`, `research_consents_json` (NOT NULL with
   constant defaults, so existing rows read as every category and no sensitive consent, which is what they were asked)
   and `scope_at` (migration 0007). `normalizeScope` keeps categories in canonical order, only `true` flags, drops
@@ -1146,7 +1146,7 @@ full policy.
   as for removed facts in ADR-0017); replay reports states served before `scope_at` as `rescoped`.
 - **Scripted people are marked.** `runSession` gives scripted mimics a `script:` participant id (Twin imports already
   use `twin2k:`), so reports can keep real people apart (rubric R10).
-- **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0044); PLAN §14 lists them
+- **Milestones.** M9 (this ADR: the policy, storage and scoped facets) through M13 (ADR-0045); PLAN §14 lists them
   and the rubric each is scored on.
 
 ## ADR-0041 — Reasoning budgets and caps per model, pinned option keys, calibrated Jev derived: `cfg.default.v6` (2026-09-30)
@@ -1313,6 +1313,83 @@ The pooling fits also put almost no weight on the primary against any LLM shadow
 
 Calibrated Jev costs nothing. Backfilling the five `predict.v2` shadows over the 232 questions served so far costs
 about $0.53.
+
+## ADR-0042 — Ontology v2, reserve.v2, gen.v3 and gates.v3: concrete, broad, consented questions (2026-09-30)
+
+Sessions opened with self-ratings, leaned on work (`domainMix` put 45% on professional scenes and `gen.v2` grounded
+them in the occupation: in a live sample, 8 of 20 gen.v2 drafts for a nurse were set at work, none of them measuring a
+work facet), and the ontology had nothing on morality, emotion, motivation, attachment, beliefs about the world or
+money psychology. ADR-0040 made sensitive areas opt-in, but there were no facets to ask about. This ADR adds them,
+and makes concreteness and respect things a gate checks rather than things a prompt asks for.
+
+- **Ontology v2** (`packages/core/src/ontology/v2.ts`): 67 facets in ten groups, each group in one category.
+  Every v1 facet keeps its id, poles, labels and category; only its group changes. 34 facets are new:
+  - Emotion and motivation (psychology): emotion regulation, emotional expressiveness, sensitivity to setbacks,
+    reward drive, need for cognition, growth mindset, self-control.
+  - Values and morality (values): the five moral foundations of the MFQ (care, fairness, loyalty, authority) plus
+    liberty, honesty-humility and rule following.
+  - Beliefs and worldview (values): locus of control, optimism, belief in a just world; sensitive: political
+    leaning, political engagement, religiosity, spirituality.
+  - Relationships and intimacy (life): attachment anxiety and avoidance, social comparison, forgiveness; sensitive:
+    sociosexuality, relationship exclusivity.
+  - Everyday and health (life), sensitive: health vigilance, body image, alcohol and substances.
+  - Money (work): mental accounting, materialism; sensitive: financial security, attitude to debt.
+
+  Every facet carries the instrument it was modelled on (`Facet.source`), rendered with its poles into
+  `docs/ontology/v2.sources.md`. Changes from the M9 plan: `worldview` became `spirituality`, `body_relationship`
+  became `body_image`, `substance_moderation` became `substance_use` (clearer names for the same constructs), and
+  `scarcity_mindset` was replaced by `materialism`: scarcity is a situational state (Mullainathan & Shafir 2013), not
+  a stable trait, and overlaps `financial_security`. Facet groups are per version (`getFacetGroups`), so views follow
+  the mimic's ontology.
+- **reserve.v2**: reserve.v1, keys unchanged, plus two concrete items for every new facet (68). Sensitive items ask
+  one facet directly and plainly, presume nothing, cover the range (including "not religious" or "no alcohol") and
+  have no "prefer not to say", because the consent is the opt-out. A config picks its set with the optional
+  `reserve.setId`; configs without it keep reserve.v1 and its fixed order. Later sets serve the items whose facets
+  have been asked least first, so a stalled generator still spreads questions.
+- **gen.v3**: gen.v2's belief-driven targets, plus strict concreteness (one specific everyday situation, options that
+  are actions, self-rating forms forbidden by name), everyday scenes for everything outside "Work and money", an even
+  quota per category with facets in scope (weighted by need in ADR-0044), and sensitive facets marked in the ontology
+  block and listed as askable only when consented.
+- **Workplace scenes follow "Work and money"**, for every generator: without that category the professional quota
+  is zero, professional drafts are rejected in code, and professional reserve items are skipped.
+- **gates.v3** (optional `generator.gates`; gates.v2 when absent, unchanged word for word):
+  - `concrete` fails below 0.4 and `demeaning` above 0.5, on every draft.
+  - `sensitive` asks only about the areas a draft is not tagged with, and about the answerer's own life. Tags are
+    already limited to consented areas (`validateDraft`), so a draft must be tagged with a facet of every sensitive
+    area it touches: an untagged or mis-tagged sensitive draft fails. This replaces "skip the gate when consented",
+    which would have let a draft tagged `political_leaning` but asking about health through.
+  - `leading` judges the wording, not whether one option is more admirable.
+  - The sensitive and leading wording changed after the first calibration run: the gates.v2 wording rejected 7 of 59
+    gen.v3 drafts for a nurse because caring for patients read as "health", and flagged ordinary moral scenarios
+    (returning extra change) as leading. Both rewordings follow label definitions written before the run.
+  - `quality_json` gains `sensitiveAsked` (the areas the draft was checked against).
+- **Calibration** (`pnpm eval -- gates`, live Jev, `docs/reports/m10-gates.md`) on
+  `packages/eval/labeled/gates.v3.json`: 133 items (59 raw gen.v3 drafts and 20 raw gen.v2 drafts sampled with the
+  new `pnpm eval -- drafts`, 54 handwritten for the rare classes), labelled by the implementer from written
+  definitions.
+
+  | Gate | AUC | Fails when | Caught | False alarms |
+  | --- | --- | --- | --- | --- |
+  | concrete | 0.990 | p < 0.4 | 33 of 34 | 3 of 99 |
+  | sensitive | 0.993 | p > 0.3 | 11 of 11 | 3 of 122 |
+  | demeaning | 0.960 | p > 0.5 | 9 of 10 | 4 of 123 |
+  | leading | 0.948 | p > 0.4 | 9 of 12 | 4 of 121 |
+  | ambiguous | 0.780 | p > 0.9 | 1 of 6 | 0 of 127 |
+  | quick | 0.887 | p < 0.6 | 1 of 3 | 2 of 130 |
+
+  `ambiguous` moved from 0.85 to 0.9: it barely separates, and every ambiguous item in the set is abstract, which
+  `concrete` catches; at 0.85 it rejected 4 good gen.v3 drafts. `quick` keeps its gates.v2 threshold (3 slow items
+  are too few to move it). On a held-out set (`gates.v3.heldout.json`: 40 gen.v3 drafts for an accountant, sampled
+  and labelled after the thresholds were fixed), gates.v3 passed 34 of 36 good drafts and rejected 1 of 4 flawed
+  ones, whose flaws were mild. By hand, 58 of 59 and 39 of 40 raw gen.v3 drafts were concrete.
+- **reflect.v2 and hyp.v2** tell the reflector and the hypothesis writer that a sensitive facet is named only from
+  answers to questions that asked about it directly and never inferred; the reflector's facet list marks sensitive
+  ids. hyp.v2 is used for configs on ontology v2 and later (derived, no config field). The code guards come in
+  ADR-0043.
+- **Candidate config.** `cfg.m10.candidate` (eval only, `--config m10-candidate`) is the default (`cfg.default.v6`,
+  ADR-0041) on ontology v2 with reserve.v2, gen.v3, gates.v3, reflect.v2 and domain mix core 15 / casual 55 /
+  professional 30. The default config is unchanged until ADR-0044. Offline fakes append rogue drafts to every gen.v3 batch (a self-rating, an untagged
+  religious question, a political one, a loaded one) so tests show each guard work.
 
 ## ADR-0047 — Invite links hide the code field (2026-09-30)
 

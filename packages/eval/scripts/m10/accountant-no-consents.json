@@ -1,0 +1,6 @@
+{
+  "intake": { "name": "Tom Becker", "location": "Berlin, DE", "occupation": "Accountant" },
+  "consentResearch": false,
+  "seed": "m10-accountant",
+  "policy": "consistent"
+}

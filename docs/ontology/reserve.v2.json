@@ -1,0 +1,2040 @@
+{
+  "setId": "reserve.v2",
+  "items": [
+    {
+      "itemKey": "reserve.v1/restaurant",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "At a restaurant you love, do you usually order your favorite dish or something new?",
+      "options": [
+        {
+          "key": "a",
+          "label": "My favorite"
+        },
+        {
+          "key": "b",
+          "label": "Something new"
+        }
+      ],
+      "facetIds": [
+        "taste_novelty"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/feedback_style",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "A colleague's draft has a serious flaw. How do you tell them?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Say it plainly, right away"
+        },
+        {
+          "key": "b",
+          "label": "Start with what works, then raise it gently"
+        },
+        {
+          "key": "c",
+          "label": "Ask questions until they spot it themselves"
+        }
+      ],
+      "facetIds": [
+        "directness",
+        "conflict_directness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/trip_planning",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "For a week-long trip, how much do you plan before you leave?",
+      "options": [
+        {
+          "key": "a",
+          "label": "A day-by-day itinerary"
+        },
+        {
+          "key": "b",
+          "label": "A few must-dos, the rest open"
+        },
+        {
+          "key": "c",
+          "label": "Just the flights and a bed"
+        }
+      ],
+      "facetIds": [
+        "planning",
+        "routine"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/big_purchase",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "Buying new headphones, how much research do you do?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Buy the first decent pair"
+        },
+        {
+          "key": "1",
+          "label": "Glance at a review"
+        },
+        {
+          "key": "2",
+          "label": "Compare a few options"
+        },
+        {
+          "key": "3",
+          "label": "Read several reviews"
+        },
+        {
+          "key": "4",
+          "label": "Research until I find the best"
+        }
+      ],
+      "facetIds": [
+        "maximizing",
+        "deliberation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/lead_or_contribute",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "A new project team forms and nobody is in charge yet. You:",
+      "options": [
+        {
+          "key": "a",
+          "label": "Step up to lead it"
+        },
+        {
+          "key": "b",
+          "label": "Take on a key piece and let someone else lead"
+        }
+      ],
+      "facetIds": [
+        "leadership_drive",
+        "autonomy"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/group_dinner",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "Friends pick a restaurant you don't love. Would you suggest a different place?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "conformity",
+        "conflict_directness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/unclear_task",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "You're handed a task with vague requirements and a tight deadline. You:",
+      "options": [
+        {
+          "key": "a",
+          "label": "Start building and adjust as you learn"
+        },
+        {
+          "key": "b",
+          "label": "Pin down the requirements before starting"
+        }
+      ],
+      "facetIds": [
+        "ambiguity_tolerance",
+        "planning"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/solo_or_team",
+      "type": "score",
+      "domain": "professional",
+      "prompt": "For a hard problem at work, where do you do your best thinking?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Entirely alone"
+        },
+        {
+          "key": "1",
+          "label": "Mostly alone"
+        },
+        {
+          "key": "2",
+          "label": "A mix"
+        },
+        {
+          "key": "3",
+          "label": "Mostly with others"
+        },
+        {
+          "key": "4",
+          "label": "Entirely with others"
+        }
+      ],
+      "facetIds": [
+        "collaboration"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/message_length",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "You need a decision from a busy colleague. Your message is:",
+      "options": [
+        {
+          "key": "a",
+          "label": "One line with the question"
+        },
+        {
+          "key": "b",
+          "label": "A short paragraph with context"
+        },
+        {
+          "key": "c",
+          "label": "A full write-up with options"
+        }
+      ],
+      "facetIds": [
+        "verbosity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/windfall",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You unexpectedly get a $300 gift card for any store. You:",
+      "options": [
+        {
+          "key": "a",
+          "label": "Treat yourself to something fun"
+        },
+        {
+          "key": "b",
+          "label": "Use it for things you would buy anyway"
+        }
+      ],
+      "facetIds": [
+        "spending_style"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/help_stranger",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "Would you give up 30 minutes of your evening to help a neighbor you barely know move a couch?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "self_transcendence",
+        "agreeableness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/job_offer",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Two job offers with equal pay. Which appeals more?",
+      "options": [
+        {
+          "key": "a",
+          "label": "A stable company with a clear path"
+        },
+        {
+          "key": "b",
+          "label": "A young startup with a bigger role"
+        }
+      ],
+      "facetIds": [
+        "risk_tolerance",
+        "openness_to_change"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/rules",
+      "type": "score",
+      "domain": "professional",
+      "prompt": "A team process feels pointless to you. What do you do?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Ignore it and do it my way"
+        },
+        {
+          "key": "1",
+          "label": "Work around it quietly"
+        },
+        {
+          "key": "2",
+          "label": "Follow it but raise concerns"
+        },
+        {
+          "key": "3",
+          "label": "Follow it and assume there is a reason"
+        },
+        {
+          "key": "4",
+          "label": "Follow it exactly"
+        }
+      ],
+      "facetIds": [
+        "conservation",
+        "conformity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/joke_meeting",
+      "type": "noul",
+      "domain": "professional",
+      "prompt": "In a tense meeting, would you crack a joke to lighten the mood?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "humor"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/email_tone",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Writing to a senior person you have never met, you open with:",
+      "options": [
+        {
+          "key": "a",
+          "label": "\"Hi [first name],\""
+        },
+        {
+          "key": "b",
+          "label": "\"Dear [full name],\""
+        }
+      ],
+      "facetIds": [
+        "formality"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/recognition",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Which would feel better after a big win at work?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Public credit in front of leadership"
+        },
+        {
+          "key": "b",
+          "label": "A quiet thank-you from the people you helped"
+        }
+      ],
+      "facetIds": [
+        "self_enhancement",
+        "self_transcendence"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/lost_wallet",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You lose $50 and find $50 on the same day. How do you feel by evening?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Even, it balanced out"
+        },
+        {
+          "key": "b",
+          "label": "Still annoyed about the loss"
+        },
+        {
+          "key": "c",
+          "label": "Happy about the find"
+        }
+      ],
+      "facetIds": [
+        "loss_aversion",
+        "emotional_stability"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/morning",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "How similar are your weekday mornings to each other?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Never the same"
+        },
+        {
+          "key": "1",
+          "label": "Mostly different"
+        },
+        {
+          "key": "2",
+          "label": "Somewhat similar"
+        },
+        {
+          "key": "3",
+          "label": "Mostly the same"
+        },
+        {
+          "key": "4",
+          "label": "Identical routine"
+        }
+      ],
+      "facetIds": [
+        "routine"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/review_detail",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Reviewing a teammate’s work, what do you look at first?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Whether the overall approach makes sense"
+        },
+        {
+          "key": "b",
+          "label": "Whether the details are correct"
+        }
+      ],
+      "facetIds": [
+        "detail_orientation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/gut_call",
+      "type": "noul",
+      "domain": "core",
+      "prompt": "Choosing between two apartments you like equally, would you decide on gut feeling?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "deliberation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/emotion_regulation_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Someone makes a harsh comment about something you worked hard on. What do you do for the next hour?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Keep going and hide that it stung"
+        },
+        {
+          "key": "b",
+          "label": "Replay it in my head"
+        },
+        {
+          "key": "c",
+          "label": "Tell myself it is one opinion and move on"
+        }
+      ],
+      "facetIds": [
+        "emotion_regulation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/emotion_regulation_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Your flight is cancelled and you will arrive a day late. Which is closest to what you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Stay annoyed about it for a while"
+        },
+        {
+          "key": "b",
+          "label": "Swallow the frustration and sort it out"
+        },
+        {
+          "key": "c",
+          "label": "Treat the extra day as a bonus"
+        }
+      ],
+      "facetIds": [
+        "emotion_regulation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/emotional_expressiveness_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You get great news during dinner with friends. What happens next?",
+      "options": [
+        {
+          "key": "a",
+          "label": "I share it right away, beaming"
+        },
+        {
+          "key": "b",
+          "label": "I mention it with a smile"
+        },
+        {
+          "key": "c",
+          "label": "I keep it to myself for now"
+        }
+      ],
+      "facetIds": [
+        "emotional_expressiveness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/emotional_expressiveness_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A film you are watching with others really moves you. What do they see?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Nothing, I keep a straight face"
+        },
+        {
+          "key": "b",
+          "label": "A small reaction"
+        },
+        {
+          "key": "c",
+          "label": "Tears or laughter, openly"
+        }
+      ],
+      "facetIds": [
+        "emotional_expressiveness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/punishment_sensitivity_1",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "You send a message with an embarrassing typo to a big group chat. What happens next?",
+      "options": [
+        {
+          "key": "0",
+          "label": "I forget it straight away"
+        },
+        {
+          "key": "1",
+          "label": "I wince, then forget it"
+        },
+        {
+          "key": "2",
+          "label": "I think about it a few times that day"
+        },
+        {
+          "key": "3",
+          "label": "I send a correction and still dwell on it"
+        },
+        {
+          "key": "4",
+          "label": "It stays on my mind for days"
+        }
+      ],
+      "facetIds": [
+        "punishment_sensitivity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/punishment_sensitivity_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend asks you to give a short toast at their wedding. What is your first thought?",
+      "options": [
+        {
+          "key": "a",
+          "label": "What if I mess it up"
+        },
+        {
+          "key": "b",
+          "label": "This could be fun"
+        },
+        {
+          "key": "c",
+          "label": "Neither, I just start preparing"
+        }
+      ],
+      "facetIds": [
+        "punishment_sensitivity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/reward_sensitivity_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend invites you to a last-minute concert tonight, but you planned a quiet night in. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Go, it sounds exciting"
+        },
+        {
+          "key": "b",
+          "label": "Go only if it is a band I love"
+        },
+        {
+          "key": "c",
+          "label": "Stay in as planned"
+        }
+      ],
+      "facetIds": [
+        "reward_sensitivity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/reward_sensitivity_2",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "You are one level away from a reward in a game or app. What do you do?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Ignore it"
+        },
+        {
+          "key": "1",
+          "label": "Try once if it is easy"
+        },
+        {
+          "key": "2",
+          "label": "Give it a few goes"
+        },
+        {
+          "key": "3",
+          "label": "Keep trying until I get it"
+        },
+        {
+          "key": "4",
+          "label": "Stay up late to get it"
+        }
+      ],
+      "facetIds": [
+        "reward_sensitivity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/need_for_cognition_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "On a free evening, which would you rather do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Work through a puzzle that takes real thought"
+        },
+        {
+          "key": "b",
+          "label": "Watch something easy to switch off with"
+        }
+      ],
+      "facetIds": [
+        "need_for_cognition"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/need_for_cognition_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend explains a tricky idea you only half follow. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Ask questions until I really get it"
+        },
+        {
+          "key": "b",
+          "label": "Nod and look it up later"
+        },
+        {
+          "key": "c",
+          "label": "Let it go"
+        }
+      ],
+      "facetIds": [
+        "need_for_cognition"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/growth_mindset_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "At your first dance class you are clearly the worst in the room. What do you do the next week?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Go back, I will get better"
+        },
+        {
+          "key": "b",
+          "label": "Try a class that suits me more"
+        },
+        {
+          "key": "c",
+          "label": "Stop, it is not for me"
+        }
+      ],
+      "facetIds": [
+        "growth_mindset"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/growth_mindset_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend says they are just bad with numbers, so they will never learn to do their own budget. What do you tell them?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Anyone can learn it with practice"
+        },
+        {
+          "key": "b",
+          "label": "Some people are not numbers people"
+        }
+      ],
+      "facetIds": [
+        "growth_mindset"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/self_control_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You decided to skip dessert this week. At dinner, your favourite cake arrives. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Skip it"
+        },
+        {
+          "key": "b",
+          "label": "Have one small bite"
+        },
+        {
+          "key": "c",
+          "label": "Have a slice and start again tomorrow"
+        }
+      ],
+      "facetIds": [
+        "self_control"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/self_control_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "It is late, you must be up early, and a new episode of a show you love just came out. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Go to bed and watch it tomorrow"
+        },
+        {
+          "key": "b",
+          "label": "Watch one, then bed"
+        },
+        {
+          "key": "c",
+          "label": "Watch until the season is done"
+        }
+      ],
+      "facetIds": [
+        "self_control"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/care_harm_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You see a stray dog limping in the rain and you are already late. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Stop and help, even if I am late"
+        },
+        {
+          "key": "b",
+          "label": "Call a shelter as I keep walking"
+        },
+        {
+          "key": "c",
+          "label": "Keep going"
+        }
+      ],
+      "facetIds": [
+        "care_harm"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/care_harm_2",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "Would you tell a very funny story at a party if it would embarrass a friend who is not there?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "care_harm"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/fairness_cheating_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend running a raffle offers to slip your ticket to the top of the draw. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Refuse, it would not be fair"
+        },
+        {
+          "key": "b",
+          "label": "Laugh it off and let them decide"
+        },
+        {
+          "key": "c",
+          "label": "Accept, it is only a raffle"
+        }
+      ],
+      "facetIds": [
+        "fairness_cheating"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/fairness_cheating_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You and a friend share a taxi, and you ride twice as far. How do you split the fare?",
+      "options": [
+        {
+          "key": "a",
+          "label": "I pay more, by distance"
+        },
+        {
+          "key": "b",
+          "label": "We split it evenly"
+        },
+        {
+          "key": "c",
+          "label": "Whoever pays, pays"
+        }
+      ],
+      "facetIds": [
+        "fairness_cheating"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/loyalty_betrayal_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Your friend's café is not as good as the new one across the street. Where do you usually go?",
+      "options": [
+        {
+          "key": "a",
+          "label": "My friend's, always"
+        },
+        {
+          "key": "b",
+          "label": "Mostly my friend's"
+        },
+        {
+          "key": "c",
+          "label": "Whichever is better that day"
+        }
+      ],
+      "facetIds": [
+        "loyalty_betrayal"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/loyalty_betrayal_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Your best friend is in a dispute with someone you both know, and your friend is partly wrong. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Back my friend, in public and in private"
+        },
+        {
+          "key": "b",
+          "label": "Back them in public, tell them the truth in private"
+        },
+        {
+          "key": "c",
+          "label": "Side with whoever is more right"
+        }
+      ],
+      "facetIds": [
+        "loyalty_betrayal"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/authority_subversion_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "At a family gathering, the eldest relative insists on a tradition you find outdated. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Go along with it out of respect"
+        },
+        {
+          "key": "b",
+          "label": "Go along, and say what I think later"
+        },
+        {
+          "key": "c",
+          "label": "Openly skip it"
+        }
+      ],
+      "facetIds": [
+        "authority_subversion"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/authority_subversion_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A building manager tells everyone to clear the lobby now, without saying why. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Leave right away"
+        },
+        {
+          "key": "b",
+          "label": "Ask why, then leave"
+        },
+        {
+          "key": "c",
+          "label": "Stay until I get a reason"
+        }
+      ],
+      "facetIds": [
+        "authority_subversion"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/liberty_oppression_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Your town wants to ban fireworks for everyone because a few people misuse them. Where do you stand?",
+      "options": [
+        {
+          "key": "a",
+          "label": "For the ban"
+        },
+        {
+          "key": "b",
+          "label": "Against it, punish only the misusers"
+        },
+        {
+          "key": "c",
+          "label": "I do not mind either way"
+        }
+      ],
+      "facetIds": [
+        "liberty_oppression"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/liberty_oppression_2",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "Your building offers a door app that logs who comes and goes, for safety. Would you vote to install it?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "liberty_oppression"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/honesty_humility_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A cashier gives you $20 too much change and is already serving the next customer. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Go back and return it"
+        },
+        {
+          "key": "b",
+          "label": "Return it only if it is easy"
+        },
+        {
+          "key": "c",
+          "label": "Keep it"
+        }
+      ],
+      "facetIds": [
+        "honesty_humility"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/honesty_humility_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You are selling your old bike online, and it has a fault a buyer would not spot. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Mention it and lower the price"
+        },
+        {
+          "key": "b",
+          "label": "Mention it only if asked"
+        },
+        {
+          "key": "c",
+          "label": "Say nothing"
+        }
+      ],
+      "facetIds": [
+        "honesty_humility"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/norm_compliance_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "It is 2 a.m., the street is empty, and the pedestrian light is red. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Wait for the green light"
+        },
+        {
+          "key": "b",
+          "label": "Cross if it is clearly safe"
+        }
+      ],
+      "facetIds": [
+        "norm_compliance"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/norm_compliance_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You're walking a friend's dog in a park where dogs must stay on the leash, and nobody else is around. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Keep the leash on"
+        },
+        {
+          "key": "b",
+          "label": "Let it off for a minute"
+        },
+        {
+          "key": "c",
+          "label": "Let it run"
+        }
+      ],
+      "facetIds": [
+        "norm_compliance"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/locus_of_control_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You did not get a flat you applied for. What is your first explanation?",
+      "options": [
+        {
+          "key": "a",
+          "label": "I should have applied differently"
+        },
+        {
+          "key": "b",
+          "label": "The landlord had someone in mind"
+        },
+        {
+          "key": "c",
+          "label": "Just bad luck"
+        }
+      ],
+      "facetIds": [
+        "locus_of_control"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/locus_of_control_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Your team loses a pub quiz by one point. What do you put it down to?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Things we could have done better"
+        },
+        {
+          "key": "b",
+          "label": "Unfair questions"
+        },
+        {
+          "key": "c",
+          "label": "The luck of the draw"
+        }
+      ],
+      "facetIds": [
+        "locus_of_control"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/optimism_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You are waiting to hear back about something you really want, like a flat or a place on a course. What do you expect?",
+      "options": [
+        {
+          "key": "a",
+          "label": "I will probably get it"
+        },
+        {
+          "key": "b",
+          "label": "It could go either way"
+        },
+        {
+          "key": "c",
+          "label": "I probably will not"
+        }
+      ],
+      "facetIds": [
+        "optimism"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/optimism_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You are planning an outdoor party three weeks away. What do you plan for?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Sunshine, and deal with rain if it comes"
+        },
+        {
+          "key": "b",
+          "label": "Book a tent just in case"
+        },
+        {
+          "key": "c",
+          "label": "Plan it indoors, it will probably rain"
+        }
+      ],
+      "facetIds": [
+        "optimism"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/just_world_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You read that a stranger lost their savings in an online scam. What is your first thought?",
+      "options": [
+        {
+          "key": "a",
+          "label": "They should have been more careful"
+        },
+        {
+          "key": "b",
+          "label": "That could happen to anyone"
+        }
+      ],
+      "facetIds": [
+        "just_world"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/just_world_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Someone who never prepares gets top marks in a course you both take. What do you think?",
+      "options": [
+        {
+          "key": "a",
+          "label": "It will catch up with them eventually"
+        },
+        {
+          "key": "b",
+          "label": "Life is not always fair"
+        },
+        {
+          "key": "c",
+          "label": "Good for them"
+        }
+      ],
+      "facetIds": [
+        "just_world"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/political_leaning_1",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "In a close national election, which kind of party would you most likely vote for?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Clearly left of centre"
+        },
+        {
+          "key": "1",
+          "label": "Centre-left"
+        },
+        {
+          "key": "2",
+          "label": "Centre"
+        },
+        {
+          "key": "3",
+          "label": "Centre-right"
+        },
+        {
+          "key": "4",
+          "label": "Clearly right of centre"
+        }
+      ],
+      "facetIds": [
+        "political_leaning"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/political_leaning_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Your city must choose: lower taxes with fewer public services, or higher taxes with more. Which do you back?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Lower taxes, fewer services"
+        },
+        {
+          "key": "b",
+          "label": "Keep things as they are"
+        },
+        {
+          "key": "c",
+          "label": "Higher taxes, more services"
+        }
+      ],
+      "facetIds": [
+        "political_leaning"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/political_engagement_1",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "An election is coming up. What do you do?",
+      "options": [
+        {
+          "key": "0",
+          "label": "I usually do not vote"
+        },
+        {
+          "key": "1",
+          "label": "I vote, nothing more"
+        },
+        {
+          "key": "2",
+          "label": "I vote and follow the news"
+        },
+        {
+          "key": "3",
+          "label": "I vote and talk it over with people"
+        },
+        {
+          "key": "4",
+          "label": "I volunteer, donate or campaign"
+        }
+      ],
+      "facetIds": [
+        "political_engagement"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/political_engagement_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend shares a petition on a local issue you agree with. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Nothing"
+        },
+        {
+          "key": "b",
+          "label": "Sign it"
+        },
+        {
+          "key": "c",
+          "label": "Sign and share it"
+        },
+        {
+          "key": "d",
+          "label": "Sign, share and go to the public meeting"
+        }
+      ],
+      "facetIds": [
+        "political_engagement"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/religiosity_1",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "In a typical month, how many times do you attend a religious service or set time aside to pray?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Never"
+        },
+        {
+          "key": "1",
+          "label": "Once or less"
+        },
+        {
+          "key": "2",
+          "label": "Two or three times"
+        },
+        {
+          "key": "3",
+          "label": "About weekly"
+        },
+        {
+          "key": "4",
+          "label": "Most days"
+        }
+      ],
+      "facetIds": [
+        "religiosity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/religiosity_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Facing a big decision, like moving to a new city, what part does religious faith play?",
+      "options": [
+        {
+          "key": "a",
+          "label": "None, I am not religious"
+        },
+        {
+          "key": "b",
+          "label": "A small part"
+        },
+        {
+          "key": "c",
+          "label": "An important part"
+        },
+        {
+          "key": "d",
+          "label": "It guides the decision"
+        }
+      ],
+      "facetIds": [
+        "religiosity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/spirituality_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Standing under a clear night sky far from any city, which is closest to what you feel?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Awe at nature and science"
+        },
+        {
+          "key": "b",
+          "label": "A sense of something greater"
+        },
+        {
+          "key": "c",
+          "label": "Not much, it is just the sky"
+        }
+      ],
+      "facetIds": [
+        "spirituality"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/spirituality_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend says everything happens for a reason. What do you say?",
+      "options": [
+        {
+          "key": "a",
+          "label": "I believe that too"
+        },
+        {
+          "key": "b",
+          "label": "Maybe, sometimes"
+        },
+        {
+          "key": "c",
+          "label": "I think things just happen"
+        }
+      ],
+      "facetIds": [
+        "spirituality"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/attachment_anxiety_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Someone close to you has not replied to your message all day. What goes through your mind?",
+      "options": [
+        {
+          "key": "a",
+          "label": "They are busy, no worries"
+        },
+        {
+          "key": "b",
+          "label": "I wonder a little"
+        },
+        {
+          "key": "c",
+          "label": "I worry something is wrong between us"
+        }
+      ],
+      "facetIds": [
+        "attachment_anxiety"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/attachment_anxiety_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A close friend cancels your plans twice in a row. What do you think?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Life is busy, no big deal"
+        },
+        {
+          "key": "b",
+          "label": "I wonder if something is up"
+        },
+        {
+          "key": "c",
+          "label": "I worry they are pulling away from me"
+        }
+      ],
+      "facetIds": [
+        "attachment_anxiety"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/attachment_avoidance_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You are having a hard week. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Lean on someone close"
+        },
+        {
+          "key": "b",
+          "label": "Mention it, but mostly handle it myself"
+        },
+        {
+          "key": "c",
+          "label": "Handle it alone"
+        }
+      ],
+      "facetIds": [
+        "attachment_avoidance"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/attachment_avoidance_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Someone you have grown close to wants to see you every weekend. What is your reaction?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Great, I would like that"
+        },
+        {
+          "key": "b",
+          "label": "Nice, but I need some weekends to myself"
+        },
+        {
+          "key": "c",
+          "label": "It feels like too much"
+        }
+      ],
+      "facetIds": [
+        "attachment_avoidance"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/social_comparison_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend posts about a promotion and a new car. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Congratulate them and move on"
+        },
+        {
+          "key": "b",
+          "label": "Congratulate them, then think about where I stand"
+        },
+        {
+          "key": "c",
+          "label": "Feel behind for a while"
+        }
+      ],
+      "facetIds": [
+        "social_comparison"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/social_comparison_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You get your score back from a course or a fitness test. What do you want to know next?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Nothing, my score is enough"
+        },
+        {
+          "key": "b",
+          "label": "How it compares to the average"
+        },
+        {
+          "key": "c",
+          "label": "Exactly where I ranked"
+        }
+      ],
+      "facetIds": [
+        "social_comparison"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/forgiveness_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend forgot your birthday and apologised a week later. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Forgive it right away"
+        },
+        {
+          "key": "b",
+          "label": "Forgive it, but I remember"
+        },
+        {
+          "key": "c",
+          "label": "Stay cool with them for a while"
+        }
+      ],
+      "facetIds": [
+        "forgiveness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/forgiveness_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A neighbour damaged your fence, paid for the repair, but never apologised. How do you treat them?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Same as before"
+        },
+        {
+          "key": "b",
+          "label": "Polite but distant"
+        },
+        {
+          "key": "c",
+          "label": "I avoid them"
+        }
+      ],
+      "facetIds": [
+        "forgiveness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/sociosexuality_1",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "Could you enjoy sex with someone you are attracted to without being in a relationship with them?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "sociosexuality"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/sociosexuality_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Before becoming intimate with someone new, how well do you want to know them?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Very well, in a committed relationship"
+        },
+        {
+          "key": "b",
+          "label": "Well, after several dates"
+        },
+        {
+          "key": "c",
+          "label": "A little, after a date or two"
+        },
+        {
+          "key": "d",
+          "label": "Mutual attraction is enough"
+        }
+      ],
+      "facetIds": [
+        "sociosexuality"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/relationship_exclusivity_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "If a partner suggested opening up your relationship, what would you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Say no, I want us to be exclusive"
+        },
+        {
+          "key": "b",
+          "label": "Talk it through before deciding"
+        },
+        {
+          "key": "c",
+          "label": "Be open to it"
+        }
+      ],
+      "facetIds": [
+        "relationship_exclusivity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/relationship_exclusivity_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend says they are happy in a relationship with two partners. What is your honest reaction?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Not for me"
+        },
+        {
+          "key": "b",
+          "label": "Not for me, but I get it"
+        },
+        {
+          "key": "c",
+          "label": "I could imagine it for myself"
+        }
+      ],
+      "facetIds": [
+        "relationship_exclusivity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/health_vigilance_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You notice a new ache that has lasted a week but is not getting worse. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Wait and see"
+        },
+        {
+          "key": "b",
+          "label": "Look it up online"
+        },
+        {
+          "key": "c",
+          "label": "Book a doctor's appointment"
+        }
+      ],
+      "facetIds": [
+        "health_vigilance"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/health_vigilance_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Your phone offers to track your sleep, steps and heart rate every day. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Turn it on and check it daily"
+        },
+        {
+          "key": "b",
+          "label": "Turn it on and glance now and then"
+        },
+        {
+          "key": "c",
+          "label": "Leave it off"
+        }
+      ],
+      "facetIds": [
+        "health_vigilance"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/body_image_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You catch your reflection in a shop window on an ordinary day. What is your usual reaction?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Happy with what I see"
+        },
+        {
+          "key": "b",
+          "label": "Neutral or mixed"
+        },
+        {
+          "key": "c",
+          "label": "Mostly critical"
+        }
+      ],
+      "facetIds": [
+        "body_image"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/body_image_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Friends invite you for a day at the beach. How do you get ready?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Wear what I like without a thought"
+        },
+        {
+          "key": "b",
+          "label": "Take a while choosing what to wear"
+        },
+        {
+          "key": "c",
+          "label": "Cover up, or find a reason to skip it"
+        }
+      ],
+      "facetIds": [
+        "body_image"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/substance_use_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "At a relaxed dinner with friends, what do you usually drink?",
+      "options": [
+        {
+          "key": "a",
+          "label": "No alcohol"
+        },
+        {
+          "key": "b",
+          "label": "One drink"
+        },
+        {
+          "key": "c",
+          "label": "Two or three"
+        },
+        {
+          "key": "d",
+          "label": "More than three"
+        }
+      ],
+      "facetIds": [
+        "substance_use"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/substance_use_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "Where it is legal, someone at a party offers you cannabis. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Decline, I do not use it"
+        },
+        {
+          "key": "b",
+          "label": "Try a little"
+        },
+        {
+          "key": "c",
+          "label": "Accept, I use it now and then"
+        }
+      ],
+      "facetIds": [
+        "substance_use"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/mental_accounting_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You get an unexpected $200 tax refund. What do you do with it?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Treat myself, it is bonus money"
+        },
+        {
+          "key": "b",
+          "label": "Put it toward bills or savings"
+        },
+        {
+          "key": "c",
+          "label": "Some of each"
+        }
+      ],
+      "facetIds": [
+        "mental_accounting"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/mental_accounting_2",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "You lose your $50 concert ticket on the way to the show. Would you buy another at the door?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "mental_accounting"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/materialism_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You have $500 to spend on yourself. What do you choose?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Something nice I can keep"
+        },
+        {
+          "key": "b",
+          "label": "A trip or an experience"
+        }
+      ],
+      "facetIds": [
+        "materialism"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/materialism_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "A friend buys an expensive designer watch. What do you think?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Nice, I would like one too"
+        },
+        {
+          "key": "b",
+          "label": "Nice, but not for me"
+        },
+        {
+          "key": "c",
+          "label": "A waste of money"
+        }
+      ],
+      "facetIds": [
+        "materialism"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/financial_security_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "An unexpected $1,000 bill arrives. How would you cover it?",
+      "options": [
+        {
+          "key": "a",
+          "label": "From savings, easily"
+        },
+        {
+          "key": "b",
+          "label": "From savings, but it would hurt"
+        },
+        {
+          "key": "c",
+          "label": "Borrow or use credit"
+        },
+        {
+          "key": "d",
+          "label": "It would be very hard to cover"
+        }
+      ],
+      "facetIds": [
+        "financial_security"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/financial_security_2",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "At the end of a typical month, where does your money stand?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Some left to save"
+        },
+        {
+          "key": "b",
+          "label": "About even"
+        },
+        {
+          "key": "c",
+          "label": "Short, and I borrow to cover it"
+        }
+      ],
+      "facetIds": [
+        "financial_security"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/debt_attitude_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You want a new laptop. You can pay in 12 interest-free instalments or save for four months. What do you do?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Instalments, and get it now"
+        },
+        {
+          "key": "b",
+          "label": "Save, and buy it outright"
+        }
+      ],
+      "facetIds": [
+        "debt_attitude"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/debt_attitude_2",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "Would you take out a loan to pay for a dream holiday?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "debt_attitude"
+      ]
+    }
+  ]
+}

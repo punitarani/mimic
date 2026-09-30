@@ -2,21 +2,33 @@ import { z } from 'zod';
 import type { TargetFacet } from './belief';
 import { expectedIndex, normalizeDist } from './distribution';
 import type { CallContext, Gateway } from './gateway';
-import { GATES, type Gate, gateFailures, gateQuestions, traitQuestion } from './jev';
+import {
+  failClosed,
+  forbiddenAreas,
+  GATES_VERSION,
+  type Gate,
+  gateFailures,
+  gateQuestions,
+  traitQuestion,
+} from './jev';
 import { MAX_PROMPT_WORDS } from './limits';
 import type { ItemTemplate } from './ontology';
 import { parseJsonLoose } from './predictors';
 import { PROMPTS } from './prompts';
+import { CATEGORY_INFO } from './scope';
 import { renderStateText, stateForProvider } from './state-builder';
-import type {
-  ChatMessage,
-  Domain,
-  Facet,
-  Option,
-  PersonState,
-  QType,
-  ReasoningEffort,
-  TraitEstimate,
+import {
+  CATEGORIES,
+  type Category,
+  type ChatMessage,
+  type Domain,
+  type Facet,
+  type Option,
+  type PersonState,
+  type QType,
+  type ReasoningEffort,
+  type SensitiveArea,
+  type TraitEstimate,
 } from './types';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -104,6 +116,28 @@ export interface GenerateInput {
   n: number;
   /** Facet ids outside the person's scope (ADR-0040): drafts tagging them are rejected. */
   blocked?: ReadonlySet<string>;
+  /**
+   * False when "Work and money" is out of the person's scope (ADR-0042): workplace scenes are then off the table too,
+   * so professional drafts are rejected and the domain quota carries no professional questions.
+   */
+  professionalAllowed?: boolean;
+  /** gen.v3: the categories asked about and how many questions each gets (ADR-0042). */
+  categoryQuota?: Partial<Record<Category, number>>;
+  /** gen.v3: sensitive facets the person consented to, the only ones it may ask about. */
+  sensitiveAllowed?: string[];
+}
+
+/**
+ * An even split of `n` questions over the categories that have facets in scope, largest remainder first in
+ * canonical order. gen.v3's quota until the belief state weighs categories (ADR-0044).
+ */
+export function evenCategoryQuota(facets: Facet[], n: number): Partial<Record<Category, number>> {
+  const cats = CATEGORIES.filter((c) => facets.some((f) => f.category === c));
+  const out: Partial<Record<Category, number>> = {};
+  cats.forEach((c, i) => {
+    out[c] = Math.floor(n / cats.length) + (i < n % cats.length ? 1 : 0);
+  });
+  return out;
 }
 
 function targetLines(input: GenerateInput): string {
@@ -126,8 +160,14 @@ export interface GenerateOutput {
   rejected: Array<{ error: string }>;
 }
 
-function ontologyBlock(facets: Facet[]): string {
-  return facets.map((f) => `${f.id} | ${f.name} | ${f.low} → ${f.high}`).join('\n');
+function ontologyBlock(facets: Facet[], withCategory = false): string {
+  return facets
+    .map((f) => {
+      const base = `${f.id} | ${f.name} | ${f.low} → ${f.high}`;
+      if (!withCategory) return base;
+      return `${base} | ${CATEGORY_INFO[f.category].name}${f.sensitive ? ` | [sensitive: ${f.sensitive}]` : ''}`;
+    })
+    .join('\n');
 }
 
 export async function generateCandidates(
@@ -135,22 +175,38 @@ export async function generateCandidates(
   ctx: CallContext,
   input: GenerateInput,
 ): Promise<GenerateOutput> {
-  const v2 = input.promptVersion === 'gen.v2';
-  const p = PROMPTS[v2 ? 'gen.v2' : 'gen.v1'];
+  const version =
+    input.promptVersion === 'gen.v2' || input.promptVersion === 'gen.v3' ? input.promptVersion : 'gen.v1';
+  const p = PROMPTS[version];
+  const beliefDriven = version !== 'gen.v1';
+  const v3 = version === 'gen.v3';
+  const quota = input.categoryQuota ?? evenCategoryQuota(input.facets, input.n);
   // Stable prefix first (system, ontology), variable task last, so provider prompt caching applies (PLAN §5).
+  const header = v3
+    ? 'ONTOLOGY (id | name | low → high | category | sensitive area):'
+    : 'ONTOLOGY (id | name | low → high):';
   const messages: ChatMessage[] = [
     {
       role: 'system',
-      content: `${p.system}\n\nONTOLOGY (id | name | low → high):\n${ontologyBlock(input.facets)}`,
+      content: `${p.system}\n\n${header}\n${ontologyBlock(input.facets, v3)}`,
     },
     {
       role: 'user',
       content: [
         `Target facets: ${input.targets.join(', ')}`,
-        ...(v2
+        ...(beliefDriven
           ? [
               `Target details:\n${targetLines(input)}`,
               `Avoid facets: ${input.avoid?.length ? input.avoid.join(', ') : 'none'}`,
+            ]
+          : []),
+        ...(v3
+          ? [
+              `Categories: ${Object.keys(quota)
+                .map((c) => CATEGORY_INFO[c as Category].name)
+                .join('; ')}`,
+              `Category quota: ${JSON.stringify(quota)}`,
+              `Sensitive facets you may ask about: ${input.sensitiveAllowed?.length ? input.sensitiveAllowed.join(', ') : 'none'}`,
             ]
           : []),
         `Domain quota: ${JSON.stringify(input.quota)}`,
@@ -175,6 +231,10 @@ export async function generateCandidates(
   const rejected: Array<{ error: string }> = [];
   for (const raw of list) {
     const v = validateDraft(raw, known, input.blocked);
+    if (!('error' in v) && v.domain === 'professional' && input.professionalAllowed === false) {
+      rejected.push({ error: 'professional scene out of scope' });
+      continue;
+    }
     if ('error' in v) rejected.push(v);
     else drafts.push(v);
   }
@@ -184,19 +244,30 @@ export async function generateCandidates(
 export interface GateResult {
   passed: boolean;
   failures: Gate[];
-  p: Record<Gate, number>;
+  p: Partial<Record<Gate, number>>;
+  /** gates.v3: the sensitive areas this draft was checked against (ADR-0042); absent for gates.v2. */
+  sensitiveAsked?: SensitiveArea[];
 }
 
-/** Quality gates: one Jev request per candidate, all in parallel (PLAN §9.4, B.3). */
+/**
+ * Quality gates: one Jev request per candidate, all in parallel (PLAN §9.4, B.3). `version` picks the gate set
+ * (gates.v2 when absent); under gates.v3 `facets` maps a draft's sensitive tags to the areas it may touch.
+ */
 export async function runQualityGates(
   gateway: Gateway,
   ctx: CallContext,
   jevModel: string,
   drafts: DraftQuestion[],
+  opts: { version?: string; facets?: ReadonlyArray<Pick<Facet, 'id' | 'sensitive'>> } = {},
 ): Promise<GateResult[]> {
-  const questions = gateQuestions();
+  const version = opts.version ?? GATES_VERSION;
+  const v2 = version === 'gates.v2';
   return Promise.all(
     drafts.map(async (d) => {
+      const forbidden = v2 ? undefined : forbiddenAreas(d.facetIds, opts.facets ?? []);
+      const questions = gateQuestions(version, forbidden);
+      const asked = Object.keys(questions) as Gate[];
+      const extra = forbidden ? { sensitiveAsked: forbidden } : {};
       try {
         const res = await gateway.decide(ctx, {
           model: jevModel,
@@ -204,16 +275,18 @@ export async function runQualityGates(
           questions,
         });
         const p = Object.fromEntries(
-          GATES.map((g) => {
+          asked.map((g) => {
             const a = res.answers[g];
-            return [g, a?.type === 'noul' ? a.p : g === 'quick' ? 0 : 1];
+            return [g, a?.type === 'noul' ? a.p : failClosed(g, version)];
           }),
-        ) as Record<Gate, number>;
-        const failures = gateFailures(p);
-        return { passed: failures.length === 0, failures, p };
+        ) as Partial<Record<Gate, number>>;
+        const failures = gateFailures(p, version);
+        return { passed: failures.length === 0, failures, p, ...extra };
       } catch {
-        const p = { ambiguous: 1, sensitive: 1, leading: 1, quick: 0 };
-        return { passed: false, failures: [...GATES], p };
+        const p = Object.fromEntries(asked.map((g) => [g, failClosed(g, version)])) as Partial<
+          Record<Gate, number>
+        >;
+        return { passed: false, failures: gateFailures(p, version), p, ...extra };
       }
     }),
   );
@@ -328,13 +401,17 @@ export async function reflect(
   ctx: CallContext,
   input: {
     model: string;
+    /** `reflect.v1` or `reflect.v2` (ADR-0042); reflect.v1 when absent. */
+    promptVersion?: string;
     facets: Facet[];
     existing: Array<{ id: string; text: string; evidenceSeqs: number[] }>;
     newEvidence: PersonState['evidence'];
     earlierEvidence: PersonState['evidence'];
   },
 ): Promise<ReflectionDelta> {
-  const p = PROMPTS['reflect.v1'];
+  const v2 = input.promptVersion === 'reflect.v2';
+  const p = PROMPTS[v2 ? 'reflect.v2' : 'reflect.v1'];
+  const ids = input.facets.map((f) => (v2 && f.sensitive ? `${f.id} [sensitive]` : f.id));
   const fmt = (xs: PersonState['evidence']) =>
     xs
       .map(
@@ -346,7 +423,7 @@ export async function reflect(
     messages: [
       {
         role: 'system',
-        content: `${p.system}\n\nONTOLOGY facet IDs: ${input.facets.map((f) => f.id).join(', ')}`,
+        content: `${p.system}\n\nONTOLOGY facet IDs: ${ids.join(', ')}`,
       },
       {
         role: 'user',
@@ -390,9 +467,16 @@ export async function reflect(
 export async function generateHypotheses(
   gateway: Gateway,
   ctx: CallContext,
-  input: { model: string; state: PersonState; lowFacets: string[]; k: number },
+  input: {
+    model: string;
+    state: PersonState;
+    lowFacets: string[];
+    k: number;
+    /** `hyp.v1` or `hyp.v2` (ADR-0042); hyp.v1 when absent. */
+    promptVersion?: string;
+  },
 ): Promise<string[]> {
-  const p = PROMPTS['hyp.v1'];
+  const p = PROMPTS[input.promptVersion === 'hyp.v2' ? 'hyp.v2' : 'hyp.v1'];
   const res = await gateway.chat(ctx, {
     model: input.model,
     messages: [

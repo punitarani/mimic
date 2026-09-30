@@ -74,6 +74,9 @@ describe('deselected categories (ADR-0040)', () => {
           q.facetIds.filter((f) => BLOCKED.has(f)),
           q.prompt,
         ).toEqual([]);
+      // Without "Work and money" there are no workplace scenes either (ADR-0042).
+      for (const q of served.filter((x) => x.kind === 'adaptive'))
+        expect(q.domain, q.prompt).not.toBe('professional');
       for (const t of await store.listTraitHistory(id)) expect(BLOCKED.has(t.facetId), t.facetId).toBe(false);
       for (const i of await store.listInsights(id))
         expect(i.facetIds.filter((f) => BLOCKED.has(f))).toEqual([]);

@@ -94,6 +94,55 @@ person context (identity facts, trait summary), recently asked prompts (don't re
       ),
     }),
   },
+  'gen.v3': {
+    id: 'gen.v3',
+    title: 'Question generator, concrete and scoped (ADR-0042)',
+    system: `You write short, concrete questions that reveal how one specific person makes decisions.
+Each question must be one of three types:
+- choice: 2–5 mutually exclusive options, roughly equally attractive. Option keys are "a", "b", "c", …
+- noul: a yes/no question. Options are exactly [{"key":"yes","label":"Yes"},{"key":"no","label":"No"}].
+- score: a 5-point ordered scale, lowest to highest. Option keys are "0".."4"; each label is a concrete behaviour.
+Make every question concrete:
+- Put the person in one specific, everyday situation and ask what they do or choose there.
+- Options are actions or concrete choices, never adjectives about the person.
+- Never write a self-rating or an abstract opinion. Forbidden: "How well does this describe you", "How much do you
+  agree", "Rate yourself", "Do you consider yourself", and "How often do you…" with no situation.
+- One idea per question. At most 30 words. No "it depends" option. Never mention AI or the person's name.
+Set scenes across the person's whole life:
+- Core and casual questions happen at home, with friends, family or a partner, while shopping, travelling, with
+  neighbours or online. Keep the person's job out of them.
+- Use professional scenarios only for facets in the "Work and money" category, grounded in the person's occupation.
+- Write as many questions for each category as the category quota says, using only facets of that category.
+Sensitive facets are marked [sensitive: area] in the ontology:
+- Ask about one only if it is listed under "Sensitive facets you may ask about", directly and plainly, and tag it.
+- Never presume a belief, identity, orientation, condition or income, and never judge or shame. Options cover the
+  whole range evenly, including "none" or "not religious" where it applies. No "prefer not to say": the person
+  chose to answer these.
+- Every other question stays clear of health, sexuality, religion, politics and detailed finances.
+Each target facet comes with why it is targeted and, when known, the person's current reading on it:
+- unexplored: nothing is known yet; ask a clean, everyday scenario that separates the two poles.
+- uncertain: pitch the trade-off at the reading; the best question is one they could go either way on.
+- conflicted: their answers disagree; write a scenario that forces the trade-off between the two readings.
+- weak: the mimic keeps guessing wrong here; ask about a concrete situation in this domain.
+Never ask about facets listed under "avoid". Use only facet IDs from the ontology.
+Return JSON only, matching the schema.`,
+    input: `ONTOLOGY: {facet id, name, low pole, high pole, category, [sensitive: area]}[]
+TASK: target facets (id, why, current reading, certainty), facets to avoid, the categories asked about, category
+quota, sensitive facets the person consented to, domain quota {core, casual, professional}, person context (identity
+facts, trait summary), recently asked prompts (don't repeat these), number of questions.`,
+    schema: obj({
+      questions: arr(
+        obj({
+          type: { type: 'string', enum: ['choice', 'noul', 'score'] },
+          domain: { type: 'string', enum: ['core', 'casual', 'professional'] },
+          prompt: str,
+          options: arr(obj({ key: str, label: str })),
+          facetIds: arr(str),
+          rationale: str,
+        }),
+      ),
+    }),
+  },
   'reflect.v1': {
     id: 'reflect.v1',
     title: 'Reflector',
@@ -107,6 +156,38 @@ person context (identity facts, trait summary), recently asked prompts (don't re
 - Use only facet IDs from the ontology. At most 5 new insights.
 Return JSON only, matching the schema.`,
     input: 'ONTOLOGY facet IDs, EXISTING INSIGHTS (with ids), NEW EVIDENCE, RELEVANT EARLIER EVIDENCE.',
+    schema: obj({
+      insights: arr(obj({ text: str, facetIds: arr(str), evidenceSeqs: arr(int), confidence: num })),
+      facts: arr(
+        obj({
+          predicate: {
+            type: 'string',
+            enum: ['hasSkill', 'hasInterest', 'livesIn', 'worksAt', 'knowsAbout'],
+          },
+          object: str,
+          evidenceSeqs: arr(int),
+        }),
+      ),
+      contradictions: arr(obj({ insightId: str, evidenceSeqs: arr(int) })),
+    }),
+  },
+  'reflect.v2': {
+    id: 'reflect.v2',
+    title: 'Reflector, direct evidence for sensitive facets (ADR-0042)',
+    system: `You analyze one person's answers and write insights that are specific to them and supported by their answers.
+- Every insight must cite the seq numbers of the answers that support it. No citation, no insight.
+- Describe behavior, not identity labels. For example, "In work scenarios, chose speed over polish in 3 of 4 cases,"
+  not "is a hustler".
+- Facets marked [sensitive] cover politics, religion, sexuality, health or detailed finances. Name one only in an
+  insight whose cited answers are to questions that asked about that topic directly. Never infer politics, religion,
+  sexuality, health, finances or demographics from other answers or from facts.
+- If new answers contradict an existing insight, list it under contradictions.
+- Facts are concrete things the person stated (for example a skill, interest or place), each citing answers. Never
+  record a fact about politics, religion, sexuality or health.
+- Use only facet IDs from the ontology. At most 5 new insights.
+Return JSON only, matching the schema.`,
+    input:
+      'ONTOLOGY facet IDs (sensitive ones marked [sensitive]), EXISTING INSIGHTS (with ids), NEW EVIDENCE, RELEVANT EARLIER EVIDENCE.',
     schema: obj({
       insights: arr(obj({ text: str, facetIds: arr(str), evidenceSeqs: arr(int), confidence: num })),
       facts: arr(
@@ -137,6 +218,26 @@ Return JSON: { "probs": [{ "key": string, "p": number }] } covering every option
     system: `Write {k} distinct one-paragraph readings of this person. Each must be consistent with every listed answer,
 but the readings should differ on the facets with the lowest certainty.
 Describe behavior and preferences only; never infer demographics, politics, religion or health.
+Return JSON only, matching the schema.`,
+    input: 'STATE: {rendered PersonState}\nLOW-CERTAINTY FACETS: {facets}\nK: {k}',
+    schema: obj({
+      hypotheses: arr(
+        obj({
+          id: str,
+          text: str,
+          leanings: arr(obj({ facetId: str, level: { type: 'string', enum: ['low', 'mid', 'high'] } })),
+        }),
+      ),
+    }),
+  },
+  'hyp.v2': {
+    id: 'hyp.v2',
+    title: 'Persona hypotheses (BALD), direct evidence for sensitive facets (ADR-0042)',
+    system: `Write {k} distinct one-paragraph readings of this person. Each must be consistent with every listed answer,
+but the readings should differ on the facets with the lowest certainty.
+Describe behavior and preferences only; never infer demographics. Mention politics, religion, sexuality, health or
+detailed finances only where the state holds the person's own answer to a question asking about it directly, and
+never guess them from other answers.
 Return JSON only, matching the schema.`,
     input: 'STATE: {rendered PersonState}\nLOW-CERTAINTY FACETS: {facets}\nK: {k}',
     schema: obj({

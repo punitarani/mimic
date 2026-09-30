@@ -21,7 +21,7 @@ pnpm db:migrate:local       # remote migrations run as part of each deploy
 pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Workers (CI's build job)
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
-pnpm eval -- <export|replay|select|import|report|session|evaluate|diagnose|optimize> ...
+pnpm eval -- <export|replay|select|import|report|session|evaluate|diagnose|optimize|drafts|gates> ...
 pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--rate n] [--retry-failed] [--yes]   # new predictors on served questions (ADR-0024, ADR-0037)
 ```
 

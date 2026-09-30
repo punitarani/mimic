@@ -1,0 +1,736 @@
+{
+  "id": "gates.v3.heldout",
+  "description": "Held-out check for gates.v3 (ADR-0042): 40 raw gen.v3 drafts for an accountant, sampled after the gates.v3 wording and thresholds were chosen on gates.v3.json and labelled before any gate saw them. Same label definitions as gates.v3.json.",
+  "items": [
+    {
+      "prompt": "At a new cafe, do you order your usual drink or try their signature specialty?",
+      "type": "choice",
+      "options": ["Your usual drink", "Their signature specialty"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You burn dinner while guests are arriving in 10 minutes. What do you do?",
+      "type": "choice",
+      "options": ["Panic and order takeout", "Stay calm and salvage what you can"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": true,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're assembling furniture with vague instructions. How do you proceed?",
+      "type": "choice",
+      "options": ["Look up exact steps online", "Figure it out as you go"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your neighbour wants to repaint their door a bright colour that clashes with the street's look. What do you think?",
+      "type": "choice",
+      "options": ["They should keep the street's style", "They can paint it however they like"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your family always does Sunday lunch at 1pm. A relative suggests moving it to 3pm. How do you react?",
+      "type": "choice",
+      "options": ["Prefer to keep 1pm", "Happy to shift to 3pm"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're in a queue and someone cuts in. What do you do?",
+      "type": "choice",
+      "options": ["Point out the queue", "Let it go"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You get a promotion at work. How do you tell your friends?",
+      "type": "choice",
+      "options": ["Wait until they ask", "Call them right away with the news"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You try a new sport and are the worst in the group. What's your next step?",
+      "type": "choice",
+      "options": ["Accept you're not naturally good", "Keep practicing to improve"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your manager gives you a project in an unfamiliar area. What's your first thought?",
+      "type": "choice",
+      "options": ["I might not be able to learn this quickly", "I can figure it out with effort"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your firm considers a new flexible schedule that breaks the old 9-5. What's your stance?",
+      "type": "choice",
+      "options": ["Prefer the old structure", "Welcome the change"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "It's Sunday evening at home. How do you handle the week ahead?",
+      "type": "choice",
+      "options": [
+        "I write out each day's tasks and appointments",
+        "I note the main things and keep the rest loose",
+        "I check Monday morning and take it from there",
+        "I don't plan — the week sorts itself out"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "It's 11pm and you're mid-episode, with the alarm set for 6:30.",
+      "type": "score",
+      "options": [
+        "Watch until the credits roll",
+        "One more episode, then bed",
+        "Watch 15 more minutes, then stop",
+        "Pause it now and go to bed",
+        "Phone's already charging in the kitchen, lights out at 10:30"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": true,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend books a trip and the cheap fare is non-refundable and non-changeable. Do you take that fare?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": true,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You need new headphones. What actually happens?",
+      "type": "choice",
+      "options": [
+        "I grab the first decent pair I see",
+        "I check a couple of reviews, then buy",
+        "I compare several models across shops before deciding",
+        "I keep researching for days to be sure it's the best one"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A neighbour asks for help carrying boxes on your only free Saturday afternoon.",
+      "type": "choice",
+      "options": [
+        "I say yes and give up the afternoon",
+        "I help for an hour, then head off",
+        "I suggest a shorter time that suits us both",
+        "I say I can't, my Saturday is mine"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend asks you to sponsor their 10 km charity run for €20. Do you sponsor them?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A one-year move to another city appears: better pay, cheaper rent, but no guarantee it lasts. What do you do?",
+      "type": "choice",
+      "options": [
+        "Take it — nothing here is worth missing it",
+        "Take it if I can keep a fallback here",
+        "Ask around first and decide slowly",
+        "Turn it down — too much could go wrong"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend calls at 6pm: dinner in an hour?",
+      "type": "score",
+      "options": [
+        "Yes — I drop everything and go",
+        "Yes, if I can be ready in 20 minutes",
+        "I ask to push it to 8pm",
+        "I say another day suits me better",
+        "I decline — I need at least a day's notice"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Two ways to reconcile a client's accounts, both correct: one is quicker, one is cleaner and takes an extra hour. Which do you use?",
+      "type": "choice",
+      "options": [
+        "The quick one — it's correct, that's enough",
+        "Usually the quick one, clean version if time allows",
+        "The cleaner one, even if it runs late",
+        "I rebuild the working papers until the method is the best available"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A client wants modest but steady growth. Do you steer them towards the option with bigger possible swings and bigger possible gains?",
+      "type": "noul",
+      "options": ["Yes", "No"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "After a long week, friends invite you to a busy bar on Friday night. What do you do?",
+      "type": "choice",
+      "options": [
+        "Go, stay late, and talk to people you've never met",
+        "Go for an hour, then head home",
+        "Suggest dinner at home with just one friend instead",
+        "Decline and spend the evening alone"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You want a pair of trainers. They cost €90 today; a sale in three weeks brings them to €60.",
+      "type": "choice",
+      "options": [
+        "Buy them today at €90",
+        "Wait three weeks and buy them at €60",
+        "Buy a cheaper used pair now instead"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your phone breaks and you need a replacement this week. How do you choose the new one?",
+      "type": "choice",
+      "options": [
+        "Order the same model right away",
+        "Spend the evening comparing specs and reviews, then order",
+        "Ask three friends what they'd buy and take their pick",
+        "Walk into a shop and decide on the spot"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your family has held the same summer gathering, same place, same food, for fifteen years. A cousin suggests skipping it for a trip abroad instead.",
+      "type": "choice",
+      "options": [
+        "Keep the gathering exactly as it has always been",
+        "Keep the gathering and do the trip another week",
+        "Try the trip this year and see how it feels",
+        "Drop the gathering for good and plan something new each year"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Walking to a dinner reservation, you see a cyclist knocked off their bike just ahead of you.",
+      "type": "choice",
+      "options": [
+        "Stop and stay with them until the ambulance takes over",
+        "Call 112 from the pavement and wait until help arrives",
+        "Call 112 as you keep walking, since others are already there",
+        "Keep going — enough people have stopped already"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Your partner's elderly parent needs daily help for a month. It would mean giving up most weekends and your evening gym sessions.",
+      "type": "choice",
+      "options": [
+        "Take on nearly all the daily shifts yourself",
+        "Split the shifts with relatives and keep some of your routine",
+        "Pay for a professional carer instead"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "After a big Sunday lunch with twelve relatives, you have the rest of the day free.",
+      "type": "choice",
+      "options": [
+        "Nap and read at home alone",
+        "Meet one friend for a walk",
+        "Invite a few of them round for coffee",
+        "Head to a crowded market with whoever's keen"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "What does a weekday morning at home usually look like for you?",
+      "type": "choice",
+      "options": [
+        "Same steps, same times, almost every day",
+        "Mostly fixed, but it drifts by half an hour or so",
+        "I decide each morning as it comes",
+        "No pattern at all from one day to the next"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": false,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A client's receipts don't quite match their bank statement, and the filing deadline is Friday.",
+      "type": "choice",
+      "options": [
+        "Reconcile every line before filing anything",
+        "File the solid figures and flag the gaps in a note",
+        "Send it back to the client to check and wait for Friday",
+        "Post the totals I trust and move on"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "Four client accounts to close, two weeks until the month-end deadline, and no one to delegate to.",
+      "type": "choice",
+      "options": [
+        "Map out daily targets for all four today",
+        "Block the final four days and do them all then",
+        "Start with the biggest and take the rest as they come",
+        "Work through whatever looks most urgent each morning"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend is late for dinner again. What do you do?",
+      "type": "choice",
+      "options": [
+        "Say nothing, let it go",
+        "Make a light joke about it",
+        "Tell them directly it bothers you",
+        "Ask them to leave earlier next time"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You bought a €80 concert ticket but can't go. Someone offers €40. What do you do?",
+      "type": "choice",
+      "options": [
+        "Sell for €40 to recoup something",
+        "Give it to a friend",
+        "Go anyway even if inconvenient",
+        "Keep it and hope to use it later"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend shares a news article with a surprising claim. What do you do?",
+      "type": "choice",
+      "options": [
+        "Skim it and move on",
+        "Check the source and look for other coverage",
+        "Discuss it with friends to hear opinions",
+        "Ignore it"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "At a reunion, people ask what you've been up to. What do you highlight?",
+      "type": "choice",
+      "options": ["A recent promotion or award", "A hobby you enjoy", "Family news", "Keep it general"],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You find a wallet with €50 and an ID on the street. What do you do?",
+      "type": "choice",
+      "options": [
+        "Turn it in with all the money",
+        "Keep the money and turn in the wallet",
+        "Keep everything",
+        "Leave it"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're playing a board game with friends and notice you made an illegal move that gave you an advantage. What do you do?",
+      "type": "choice",
+      "options": [
+        "Say nothing and continue",
+        "Admit it and fix the move",
+        "Blame the rules",
+        "Offer to skip your next turn"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A neighbor lends you their ladder for a week. What do you do?",
+      "type": "choice",
+      "options": [
+        "Return it with a thank-you note",
+        "Offer to help them with a task",
+        "Just return it",
+        "Forget to return it"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "A friend cancels plans at the last minute for the third time. What do you do?",
+      "type": "choice",
+      "options": [
+        "Say nothing but feel annoyed",
+        "Tell them directly it bothers you",
+        "Ask if something is wrong",
+        "Stop making plans with them"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're an accountant preparing for month-end close. How do you approach it?",
+      "type": "choice",
+      "options": [
+        "Start with a checklist and timeline",
+        "Dive in and handle tasks as they come",
+        "Wait for all data before starting",
+        "Ask a colleague to lead"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    },
+    {
+      "prompt": "You're reviewing a financial statement for errors. What do you focus on?",
+      "type": "choice",
+      "options": [
+        "The overall totals and trends",
+        "Every line item and footnote",
+        "Only the items flagged by software",
+        "A quick scan"
+      ],
+      "tagged": [],
+      "source": "gen.v3 (held out, accountant)",
+      "labels": {
+        "ambiguous": false,
+        "sensitive": false,
+        "leading": false,
+        "quick": true,
+        "concrete": true,
+        "demeaning": false
+      }
+    }
+  ]
+}
