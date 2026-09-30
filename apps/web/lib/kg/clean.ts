@@ -113,6 +113,21 @@ export function parseWork(label: string, hint: 'org' | 'role'): WorkParts {
   if (at && (hint === 'role' || isRoleLike(at[1]!))) {
     return { org: tidy(at[2]!), roles: splitRoles(tidy(at[1]!)), aliases };
   }
+  // A page-title headline chains more parts ("Jane Doe - Senior Engineer - Handshake"): the first role, and the
+  // company next to it, after it in a title and before it in a company label ("Acme — Engineer — Remote").
+  // Splitting at the first dash alone would make the name a company.
+  const segs = first
+    .split(/\s+[—–-]\s+|\s*—\s*/)
+    .map(tidy)
+    .filter(Boolean);
+  const roleAt = segs.length > 2 ? segs.findIndex(isRoleLike) : -1;
+  if (roleAt >= 0) {
+    const [after, before] = [segs[roleAt + 1], segs[roleAt - 1]];
+    const org = (hint === 'org' ? [before, after] : [after, before]).find(
+      (s) => s !== undefined && !isRoleLike(s),
+    );
+    return { ...(org ? { org } : {}), roles: splitRoles(segs[roleAt]!), aliases };
+  }
   const dash = /^(.+?)(?:\s+[—–-]\s+|\s*—\s*)(.+)$/.exec(first);
   if (dash) {
     const a = tidy(dash[1]!);
@@ -126,6 +141,9 @@ export function parseWork(label: string, hint: 'org' | 'role'): WorkParts {
   return hint === 'org' ? { org: first, roles: [], aliases } : { roles: splitRoles(first), aliases };
 }
 
+const LIST_LABEL =
+  /\b(?:skills?|technolog(?:y|ies)|tech|languages?|frameworks?|librar(?:y|ies)|tools?|tooling|stack|platforms?|databases?|interests?|hobbies|topics?|expertise|certifications?|competencies|specialties)$/i;
+
 /**
  * A list label as its items: "Programming languages: Python, TypeScript" → subtype "Programming languages" and two
  * items. Without a "Label:" prefix, a comma list splits only when every item is short, so a phrase with a comma in
@@ -133,7 +151,11 @@ export function parseWork(label: string, hint: 'org' | 'role'): WorkParts {
  */
 export function splitList(label: string): { subtype?: string; items: string[] } {
   const clean = tidy(label);
-  const prefixed = /^([A-Za-z][\w &/-]{1,40}):\s*(.+)$/.exec(clean);
+  const match = /^([A-Za-z][\w &/-]{1,40}):\s*(.+)$/.exec(clean);
+  const items = (match?.[2] ?? '').split(/\s*[,;•·]\s*/).filter(Boolean).length;
+  // A title with a colon ("Star Wars: The Clone Wars") is one thing: a prefix names a list only when a list follows
+  // it or it reads like a list's name.
+  const prefixed = match && (items > 1 || LIST_LABEL.test(match[1]!)) ? match : null;
   const body = prefixed ? prefixed[2]! : clean;
   const parts = body
     .split(/\s*[,;•·]\s*/)
@@ -152,8 +174,10 @@ export function splitList(label: string): { subtype?: string; items: string[] } 
 const LEADING_VERB = /^(?:uses?|using|likes?|enjoys?|loves?|prefers?|into)\s+/i;
 const VAGUE =
   /\b(?:self-described|involving|various|general(?:ly)?|broad|overall|balanced|stuff|things?|something|anything|kind of|sort of|misc(?:ellaneous)?|etc)\b/i;
-const DANGLING = /\b(?:a|an|the|and|or|of|for|with|over|to|in|on|at|by|from|about|as|than)$/i;
-const STATEMENT = /^(?:is|are|was|has|have|does|did|job|role|someone|person|tends?)\b/i;
+// Case-sensitive: a cut-off fragment ends in a lowercase word; "Series A" and "Vitamin A" name things.
+const DANGLING = /\b(?:a|an|the|and|or|of|for|with|over|to|in|on|at|by|from|about|as|than)$/;
+// A whole word: "Role-playing games" is an interest, "role over deep specialization" a statement.
+const STATEMENT = /^(?:is|are|was|has|have|does|did|job|role|someone|person|tends?)(?:\s|$)/i;
 
 /** Longest entity label, in words. Longer labels are sentences about the person, not things in their life. */
 export const MAX_WORDS = 6;
@@ -167,13 +191,16 @@ export function entityLabel(s: string): string {
 
 /**
  * True for fragments that don't name a thing: too long, hedged ("self-described balanced or"), cut off mid-phrase
- * ("broad platform role over"), or a statement ("job involving complex tech").
+ * ("broad platform role over"), or a statement ("job involving complex tech"). With `name`, the label is a name from
+ * a profile (a company or a title), so hedge words don't count: "General Motors", "Broad Institute", "General Manager".
  */
-export function isVague(s: string): boolean {
+export function isVague(s: string, opts: { name?: boolean } = {}): boolean {
   const t = tidy(s);
-  if (t.length < 2 || !/[a-z]/i.test(t)) return true;
+  if (!/[a-z]/i.test(t)) return true;
+  // One capital letter is a name ("R", "C", "X"); any other single character isn't.
+  if (t.length < 2 && !/^[A-Z]$/.test(t)) return true;
   if (words(t) > MAX_WORDS) return true;
-  return VAGUE.test(t) || DANGLING.test(t) || STATEMENT.test(t);
+  return (!opts.name && VAGUE.test(t)) || DANGLING.test(t) || STATEMENT.test(t);
 }
 
 /** Sentence case for lowercase phrases, leaving names and acronyms ("iOS", "PyTorch", "npm") alone. */

@@ -38,6 +38,12 @@ describe('label cleanup', () => {
       roles: ['Senior Software Engineer'],
     });
     expect(parseWork('Prospify — Co-Founder & CTO', 'org').roles).toEqual(['Co-Founder', 'CTO']);
+    // A page title chains the person's name, the title and the company: the name is neither.
+    expect(parseWork('Jane Doe - Senior Software Engineer - Handshake | LinkedIn', 'role')).toEqual({
+      org: 'Handshake',
+      roles: ['Senior Software Engineer'],
+      aliases: [],
+    });
   });
 
   it('keeps an aside as an alias and drops dates', () => {
@@ -57,6 +63,9 @@ describe('label cleanup', () => {
     expect(splitList('Python, Go, and Rust').items).toEqual(['Python', 'Go', 'Rust']);
     // A phrase with a comma in it is one thing.
     expect(splitList('writing code for data pipelines, mostly in Python').items).toHaveLength(1);
+    // A title with a colon is one thing; a list's name with one item is still a list.
+    expect(splitList('Star Wars: The Clone Wars')).toEqual({ items: ['Star Wars: The Clone Wars'] });
+    expect(splitList('Languages: Python')).toEqual({ subtype: 'Languages', items: ['Python'] });
   });
 
   it('gives one key to spellings of one place', () => {
@@ -76,8 +85,22 @@ describe('label cleanup', () => {
       'things',
     ])
       expect(isVague(s), s).toBe(true);
-    for (const s of ['Rock climbing', 'PyTorch', 'System design', 'San Francisco, California'])
+    for (const s of [
+      'Rock climbing',
+      'PyTorch',
+      'System design',
+      'San Francisco, California',
+      'R',
+      'C',
+      'Role-playing games',
+      'Series A',
+    ])
       expect(isVague(s), s).toBe(false);
+    expect(isVague('x')).toBe(true);
+    // Names from a profile keep their hedge words.
+    expect(isVague('General Motors')).toBe(true);
+    for (const s of ['General Motors', 'Broad Institute', 'General Manager'])
+      expect(isVague(s, { name: true }), s).toBe(false);
   });
 
   it('sentence-cases phrases but not names', () => {
@@ -112,6 +135,71 @@ describe('buildGraph', () => {
     expect(new Set(g.nodes.map((n) => n.id)).size).toBe(g.nodes.length);
     const categories = new Set(CATEGORIES.map((c) => c.id));
     for (const n of g.nodes) expect(categories.has(n.category)).toBe(true);
+  });
+
+  it('merges by alias in any order, but not two companies that share an aside', () => {
+    const P = 'p';
+    const U = 'https://www.linkedin.com/in/x';
+    const org = (id: string, label: string, predicate: string, url?: string) => ({
+      node: {
+        id,
+        type: 'Organization',
+        label,
+        source: url ? 'search' : 'reflection',
+        ...(url ? { url } : {}),
+      },
+      edge: { src: P, dst: id, predicate, weight: 0.8, ...(url ? { url } : { evidence: [2] }) },
+    });
+    const parts = [
+      org('a', 'Google (Intern)', 'workedFor', U),
+      org('b', 'Meta (Intern)', 'workedFor', U),
+      org('c', 'Handshake', 'worksFor'),
+      org('d', 'Handshake AI', 'worksFor', 'https://handshake.com/about'),
+      org('e', 'Handshake (Handshake AI)', 'worksFor', U),
+    ];
+    const g = buildGraph({
+      nodes: [{ id: P, type: 'Person', label: 'You' }, ...parts.map((p) => p.node)],
+      edges: parts.map((p) => p.edge),
+    });
+    expect(g.nodes).toHaveLength(3);
+    for (const label of ['Google', 'Meta']) expect(byLabel(g, label), label).toBeDefined();
+    expect(g.nodes.filter((n) => /handshake/i.test(n.label))).toHaveLength(1);
+  });
+
+  it('calls the company in a current title a current employer', () => {
+    const P = 'p';
+    const U = 'https://www.linkedin.com/in/x';
+    const g = buildGraph({
+      nodes: [
+        { id: P, type: 'Person', label: 'You' },
+        { id: 'h', type: 'Occupation', label: 'Founder at Acme', source: 'search', url: U },
+      ],
+      edges: [{ src: P, dst: 'h', predicate: 'hasOccupation', weight: 0.8, url: U }],
+    });
+    expect(byLabel(g, 'Acme')!.description).toBe('Current employer');
+    expect(byLabel(g, 'Founder')!.description).toBe('Current role at Acme');
+  });
+
+  it('pairs the title and employer on one profile only when no label already paired them', () => {
+    const P = 'p';
+    const U = 'https://www.linkedin.com/in/x';
+    const g = buildGraph({
+      nodes: [
+        { id: P, type: 'Person', label: 'You' },
+        { id: 'h', type: 'Occupation', label: 'Founder at Acme', source: 'search', url: U },
+        { id: 't', type: 'Occupation', label: 'Senior Software Engineer', source: 'search', url: U },
+        { id: 'w', type: 'Organization', label: 'Handshake', source: 'search', url: U },
+      ],
+      edges: [
+        { src: P, dst: 'h', predicate: 'hasOccupation', weight: 0.8, url: U },
+        { src: P, dst: 't', predicate: 'hasOccupation', weight: 0.85, url: U },
+        { src: P, dst: 'w', predicate: 'worksFor', weight: 0.85, url: U },
+      ],
+    });
+    expect(edgeBetween(g, 'Founder', 'Acme')?.kind).toBe('role-at');
+    expect(edgeBetween(g, 'Senior Software Engineer', 'Handshake')?.kind).toBe('holds');
+    expect(edgeBetween(g, 'Senior Software Engineer', 'Acme')).toBeUndefined();
+    expect(edgeBetween(g, 'Founder', 'Handshake')).toBeUndefined();
   });
 
   it('drops vague fragments', () => {
@@ -306,6 +394,41 @@ describe('layoutGraph', () => {
         for (let j = i + 1; j < boxes.length; j++) expect(boxesOverlap(boxes[i]!, boxes[j]!)).toBe(false);
     });
   }
+
+  it('keeps every node clear of the controls, even one that starts in their corner', () => {
+    const cats = ['work', 'skill', 'interest', 'trait', 'place'] as const;
+    for (let seed = 0; seed < 40; seed++) {
+      const nodes: LayoutNode[] = Array.from({ length: 20 + (seed % 40) }, (_, i) => ({
+        id: `s${seed}n${i}`,
+        category: cats[(i * 7 + seed) % 5]!,
+        r: 3 + ((i + seed) % 6),
+        ...(i % 3 === 0 ? { label: { w: 40 + ((i * 13) % 90), h: 14 } } : {}),
+      }));
+      // Links to a few early nodes, so the layout crowds and some nodes start in the controls' corner.
+      const edges = nodes
+        .slice(1)
+        .map((n, i) => ({ source: nodes[(i * 5 + seed) % i || 0]!.id, target: n.id, weight: 0.6 }));
+      for (const [w, h] of [
+        [358, 404],
+        [420, 428],
+        [624, 500],
+      ] as const) {
+        const avoid = { x: w - 48, y: 0, w: 48, h: 112 };
+        const pos = layoutGraph({ nodes, edges, width: w, height: h, categories: [...cats], avoid: [avoid] });
+        for (const n of nodes) {
+          const p = pos.get(n.id)!;
+          const half = Math.max(n.r, (n.label?.w ?? 0) / 2);
+          const box = {
+            x: p.x - half,
+            y: p.y - n.r,
+            w: 2 * half,
+            h: 2 * n.r + (n.label ? 2 + n.label.h : 0),
+          };
+          expect(boxesOverlap(box, avoid), `${n.id} at ${w}px`).toBe(false);
+        }
+      }
+    }
+  });
 
   it('clusters by category', () => {
     const inp = input(624, 500);

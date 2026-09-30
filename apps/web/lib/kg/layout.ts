@@ -147,11 +147,16 @@ function clamp(nodes: SimNode[], width: number, height: number, avoid: Box[]) {
       const up = n.y! + e.b + GAP - b.y;
       const down = b.y + b.h + GAP - (n.y! - e.t);
       if (left <= 0 || right <= 0 || up <= 0 || down <= 0) continue;
-      const least = Math.min(left, right, up, down);
-      if (least === left) n.x! -= left;
-      else if (least === right) n.x! += right;
-      else if (least === up) n.y! -= up;
-      else n.y! += down;
+      // The shortest way out that stays on the canvas: an area in a corner has two ways out that would leave it, and
+      // the canvas clamp would put the box straight back.
+      const ways = [
+        { d: left, fits: n.x! - left - e.l >= GAP, move: () => (n.x! -= left) },
+        { d: right, fits: n.x! + right + e.r <= width - GAP, move: () => (n.x! += right) },
+        { d: up, fits: n.y! - up - e.t >= GAP, move: () => (n.y! -= up) },
+        { d: down, fits: n.y! + down + e.b <= height - GAP, move: () => (n.y! += down) },
+      ];
+      const open = ways.filter((w) => w.fits);
+      (open.length ? open : ways).reduce((a, w) => (w.d < a.d ? w : a)).move();
     }
     n.x = Math.max(e.l + GAP, Math.min(width - e.r - GAP, n.x!));
     n.y = Math.max(e.t + GAP, Math.min(height - e.b - GAP, n.y!));

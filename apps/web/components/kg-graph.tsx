@@ -77,21 +77,21 @@ const radiusOf = (n: MapNode, degree: number) =>
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 const clampK = (k: number) => Math.max(K_MIN, Math.min(K_MAX, k));
 
+/** A callback ref: the measured element mounts only once the graph has nodes, which can be after the first render. */
 function useWidth() {
-  const ref = useRef<HTMLDivElement>(null);
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(0);
   useEffect(() => {
-    const el = ref.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setWidth(Math.round(el.clientWidth)));
     ro.observe(el);
     setWidth(Math.round(el.clientWidth));
     return () => ro.disconnect();
-  }, []);
-  return { ref, width };
+  }, [el]);
+  return { ref: setEl, width };
 }
 
-/** Text width in the label font, re-measured once web fonts load. */
+/** Text width in the label font at a weight, re-measured once web fonts load. */
 function useMeasure() {
   const [fontsReady, setFontsReady] = useState(false);
   useEffect(() => {
@@ -105,12 +105,13 @@ function useMeasure() {
   return useMemo(() => {
     const cache = new Map<string, number>();
     const ctx = document.createElement('canvas').getContext('2d');
-    if (ctx) ctx.font = FONT;
-    return (text: string) => {
-      let w = cache.get(text);
+    return (text: string, weight = 400) => {
+      const key = `${weight}|${text}`;
+      let w = cache.get(key);
       if (w === undefined) {
+        if (ctx) ctx.font = `${weight} ${FONT}`;
         w = Math.ceil(ctx ? ctx.measureText(text).width : text.length * 6) + 2;
-        cache.set(text, w);
+        cache.set(key, w);
       }
       return w;
     };
@@ -385,7 +386,11 @@ function Canvas({
   const [pins, setPins] = useState<Map<string, Point>>(new Map());
   // biome-ignore lint/correctness/useExhaustiveDependencies: a new layout drops dragged positions
   useEffect(() => setPins(new Map()), [target]);
-  const pos = useCallback((id: string) => pins.get(id) ?? laid.get(id) ?? { x: 0, y: 0 }, [pins, laid]);
+  // A node new to this layout isn't in the eased positions until the next frame: it starts where it settles.
+  const pos = useCallback(
+    (id: string) => pins.get(id) ?? laid.get(id) ?? target.get(id) ?? { x: 0, y: 0 },
+    [pins, laid, target],
+  );
 
   // View transform, with eased transitions for focus and reset.
   const [t, setTState] = useState<Transform>(IDENTITY);
@@ -475,7 +480,8 @@ function Canvas({
   const active = hover ?? focus;
   const lit = useMemo(() => {
     if (active) return new Set([active, ...(neighbors.get(active) ?? []).map((n) => n.id)]);
-    return matches;
+    // A search that finds nothing says so in the box; it doesn't dim the whole map and hide every label.
+    return matches?.size ? matches : null;
   }, [active, neighbors, matches]);
 
   // Gestures: drag the background to pan (mouse and pen; touch scrolls the page), drag a dot to move it, tap or
@@ -608,8 +614,10 @@ function Canvas({
     const at = new Map(drawn.map((d) => [d.id, d]));
     return placeLabels(
       first.map((n) => {
-        const text = truncate(n.id === active ? n.label : n.short, n.id === active ? 40 : LABEL_CHARS);
-        return { ...at.get(n.id)!, text, w: measure(text), h: LABEL_H };
+        const on = n.id === active;
+        const text = truncate(on ? n.label : n.short, on ? 40 : LABEL_CHARS);
+        // Measured at the weight it's drawn in: the active label is bold.
+        return { ...at.get(n.id)!, text, w: measure(text, on ? 600 : 400), h: LABEL_H };
       }),
       drawn,
       { width, height },

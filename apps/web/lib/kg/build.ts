@@ -149,12 +149,15 @@ function mentionsOf(
     case 'Occupation': {
       const parts = parseWork(node.label, node.type === 'Organization' ? 'org' : 'role');
       const current = preds.has('worksFor') || (node.type === 'Occupation' && base.source === 'search');
+      // Profile data names companies and titles; only the reflector's phrases can be hedged fragments.
+      const named = base.source !== 'reflection';
       const history = (['alumniOf', 'workedFor'] as const).find((p) => preds.has(p));
       const out: Mention[] = [];
       let org: Mention | undefined;
-      if (parts.org && !isVague(parts.org)) {
+      if (parts.org && !isVague(parts.org, { name: named })) {
         const school = preds.has('alumniOf') || isSchoolLike(parts.org);
-        const rank = preds.has('worksFor') ? RANK.current : school ? RANK.school : RANK.past;
+        // The company in a current title ("Founder at Acme") is a current employer too.
+        const employer = preds.has('worksFor') || (node.type === 'Occupation' && current);
         org = {
           ...base,
           ns: 'org',
@@ -162,15 +165,17 @@ function mentionsOf(
           aliases: parts.aliases.map(orgKey).filter(Boolean),
           kind: school ? 'School' : 'Company',
           label: parts.org,
-          description: rank === RANK.current ? 'Current employer' : school ? 'School' : 'Past employer',
-          rank,
-          current: preds.has('worksFor'),
+          description:
+            school && !preds.has('worksFor') ? 'School' : employer ? 'Current employer' : 'Past employer',
+          rank:
+            preds.has('worksFor') || (employer && !school) ? RANK.current : school ? RANK.school : RANK.past,
+          current: employer,
         };
         if (history && url) org.group = { id: `${history}|${url}`, index: order };
         out.push(org);
       }
       for (const role of parts.roles) {
-        if (isVague(role)) continue;
+        if (isVague(role, { name: named })) continue;
         const r: Mention = {
           ...base,
           ns: 'role',
@@ -178,7 +183,8 @@ function mentionsOf(
           aliases: [],
           kind: 'Role',
           label: role,
-          description: org ? `Role at ${org.label}` : current ? 'Current role' : 'Role',
+          // Replaced once links are known: "Current role at …" (see the end of `buildGraph`).
+          description: 'Role',
           rank: current ? RANK.current : RANK.plain,
           current,
         };
@@ -271,19 +277,35 @@ const CATEGORY_OF: Record<NodeKind, Category> = {
 
 /** Merges mentions of one thing into a node, and gives every mention the node's id. */
 function mergeMentions(mentions: Mention[], facetById: Map<string, Facet>) {
+  const own = (m: Mention) => `${m.ns}:${m.key}`;
+  // An alias joins two mentions only when it is the other's own key ("Handshake (Handshake AI)" and "Handshake AI",
+  // in either order). Two companies that share an aside ("Google (Intern)", "Meta (Intern)") stay apart.
+  const owned = new Set(mentions.map(own));
+  const parent = new Map<string, string>();
+  const find = (k: string): string => {
+    const p = parent.get(k);
+    if (p === undefined || p === k) return k;
+    const root = find(p);
+    parent.set(k, root);
+    return root;
+  };
+  for (const m of mentions)
+    for (const a of m.aliases) {
+      const k = `${m.ns}:${a}`;
+      if (!owned.has(k)) continue;
+      const [x, y] = [find(own(m)), find(k)];
+      if (x !== y) parent.set(y, x);
+    }
   const idOf = new Map<Mention, string>();
   const byKey = new Map<string, Mention[]>();
-  const alias = new Map<string, string>();
+  // A node's id is its first mention's own key.
+  const idOfRoot = new Map<string, string>();
   for (const m of mentions) {
-    const own = `${m.ns}:${m.key}`;
-    // Its own key first, then a key an earlier mention gave as an alias ("Handshake AI" after "Handshake (Handshake
-    // AI)"), then its aliases naming an earlier mention (the reverse order).
-    const target = byKey.has(own)
-      ? own
-      : (alias.get(own) ?? m.aliases.map((a) => alias.get(`${m.ns}:${a}`)).find(Boolean) ?? own);
-    byKey.set(target, [...(byKey.get(target) ?? []), m]);
-    idOf.set(m, target);
-    for (const a of [m.key, ...m.aliases]) if (!alias.has(`${m.ns}:${a}`)) alias.set(`${m.ns}:${a}`, target);
+    const root = find(own(m));
+    const id = idOfRoot.get(root) ?? own(m);
+    idOfRoot.set(root, id);
+    byKey.set(id, [...(byKey.get(id) ?? []), m]);
+    idOf.set(m, id);
   }
   const nodes: MapNode[] = [];
   const current = new Set<string>();
@@ -416,10 +438,13 @@ export function buildGraph(kg: UiSnapshot['kg'], facets: Facet[] = []): MapGraph
   const currentOrgs = ms((m) => m.ns === 'org' && m.current);
   const places = ms((m) => m.ns === 'place');
 
-  // The current job title and the current employer, from one profile.
+  // The current job title and the current employer, from one profile. A title or employer already paired in one
+  // label ("Founder at Acme") has its match, so it isn't paired again with the profile's other job.
+  const paired = new Set(pairs.flatMap((p) => [p.a, p.b]));
   for (const r of currentRoles)
     for (const o of currentOrgs)
-      if (sameSource(r, o)) add(idOf.get(r)!, idOf.get(o)!, 'holds', 0.95 * Math.min(r.conf, o.conf));
+      if (sameSource(r, o) && !paired.has(r) && !paired.has(o))
+        add(idOf.get(r)!, idOf.get(o)!, 'holds', 0.95 * Math.min(r.conf, o.conf));
 
   // Related roles: one's words contain the other's ("Senior Software Engineer" and "Software Engineer").
   const roleNodes = nodes.filter((n) => n.kind === 'Role');
@@ -439,25 +464,31 @@ export function buildGraph(kg: UiSnapshot['kg'], facets: Facet[] = []): MapGraph
     }
 
   // Profile skills go with the current role on the same profile; at most six per role, the rest link through lists.
-  const uses: MapEdge[] = [];
+  // One candidate per skill and role: a skill listed twice (two lists, two profiles) takes one of the six places.
+  const uses = new Map<string, MapEdge>();
   const byConf = [...currentRoles].sort((a, b) => b.conf - a.conf);
   for (const s of ms((m) => m.ns === 'topic' && m.kind === 'Skill' && m.source === 'search')) {
     // From another page of the same search (a portfolio next to a profile), the link is weaker.
     const same = byConf.find((x) => sameSource(x, s));
     const r = same ?? byConf[0];
-    if (r)
-      uses.push(cand(idOf.get(s)!, idOf.get(r)!, 'uses', (same ? 0.8 : 0.65) * Math.min(s.conf, r.conf)));
+    if (!r) continue;
+    const e = cand(idOf.get(s)!, idOf.get(r)!, 'uses', (same ? 0.8 : 0.65) * Math.min(s.conf, r.conf));
+    const prev = uses.get(e.id);
+    if (!prev || prev.weight < e.weight) uses.set(e.id, e);
   }
   const usesByRole = new Map<string, MapEdge[]>();
-  for (const e of uses) {
+  for (const e of uses.values()) {
     const role = nodeById.get(e.source)?.kind === 'Role' ? e.source : e.target;
     usesByRole.set(role, [...(usesByRole.get(role) ?? []), e]);
   }
   // Each list's first items before any list's later ones, so every list reaches the role.
-  const position = (e: MapEdge) => {
-    const skill = nodeById.get(e.source)?.kind === 'Role' ? e.target : e.source;
-    return Math.min(...mentions.filter((m) => idOf.get(m) === skill).map((m) => m.group?.index ?? 0));
-  };
+  const listIndex = new Map<string, number>();
+  for (const m of mentions) {
+    const id = idOf.get(m)!;
+    listIndex.set(id, Math.min(listIndex.get(id) ?? Number.POSITIVE_INFINITY, m.group?.index ?? 0));
+  }
+  const position = (e: MapEdge) =>
+    listIndex.get(nodeById.get(e.source)?.kind === 'Role' ? e.target : e.source) ?? 0;
   for (const list of usesByRole.values())
     addAll(
       [...list]
@@ -572,8 +603,6 @@ export function maxDegree(nodeCount: number): number {
 
 export interface GraphView extends MapGraph {
   degree: Map<string, number>;
-  /** Nodes above the threshold with no link there, left out of the map. */
-  unlinked: number;
 }
 
 /**
@@ -588,7 +617,7 @@ export function filterGraph(
   const keep = new Map(
     g.nodes.filter((n) => n.confidence >= opts.threshold && !hidden.has(n.category)).map((n) => [n.id, n]),
   );
-  let edges = g.edges.filter((e) => e.weight >= opts.threshold && keep.has(e.source) && keep.has(e.target));
+  const shown = g.edges.filter((e) => e.weight >= opts.threshold && keep.has(e.source) && keep.has(e.target));
   const degree = new Map<string, number>();
   const count = (es: MapEdge[]) => {
     degree.clear();
@@ -597,22 +626,24 @@ export function filterGraph(
       degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
     }
   };
-  count(edges);
+  count(shown);
   const linked = [...keep.keys()].filter((id) => degree.has(id)).length;
   const cap = maxDegree(linked);
   // Drop a hub's weakest links first, never one that is the other end's only link.
-  for (const e of [...edges].sort((a, b) => a.weight - b.weight || a.id.localeCompare(b.id))) {
+  const dropped = new Set<MapEdge>();
+  for (const e of [...shown].sort((a, b) => a.weight - b.weight || a.id.localeCompare(b.id))) {
     const s = degree.get(e.source)!;
     const t = degree.get(e.target)!;
     if ((s > cap && t > 1) || (t > cap && s > 1)) {
-      edges = edges.filter((x) => x !== e);
+      dropped.add(e);
       degree.set(e.source, s - 1);
       degree.set(e.target, t - 1);
     }
   }
+  const edges = shown.filter((e) => !dropped.has(e));
   count(edges);
   const nodes = [...keep.values()].filter((n) => degree.has(n.id));
-  return { nodes, edges, degree, unlinked: keep.size - nodes.length };
+  return { nodes, edges, degree };
 }
 
 /** Label and size priority: well-linked, confident nodes first. */
