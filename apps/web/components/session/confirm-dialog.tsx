@@ -15,7 +15,10 @@ export interface ConfirmDialogProps {
   onConfirm: () => Promise<void>;
 }
 
-/** A modal yes/no (design: Delete confirm). Cancel has focus first; Escape cancels. */
+/**
+ * A modal yes/no (design: Delete confirm). Cancel has focus first; Escape cancels. While the confirmed action runs,
+ * neither can close the dialog: the request would still land after it closed.
+ */
 export function ConfirmDialog({
   title,
   body,
@@ -29,10 +32,14 @@ export function ConfirmDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const cancel = useRef<HTMLButtonElement>(null);
+  const busyRef = useRef(false);
+  busyRef.current = busy;
   const id = useId();
   useEffect(() => {
     cancel.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onCancel();
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !busyRef.current && onCancel();
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [onCancel]);
@@ -61,7 +68,8 @@ export function ConfirmDialog({
             ref={cancel}
             type="button"
             onClick={onCancel}
-            className="h-11 rounded-[8px] border border-rule bg-sheet px-4 text-[16px] font-medium text-graphite hover:border-slate"
+            disabled={busy}
+            className="h-11 rounded-[8px] border border-rule bg-sheet px-4 text-[16px] font-medium text-graphite hover:border-slate disabled:opacity-60 disabled:hover:border-rule"
           >
             Cancel
           </button>

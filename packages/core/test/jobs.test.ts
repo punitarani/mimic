@@ -14,6 +14,8 @@ describe('job keys', () => {
       { type: 'learn.answer', mimicId: 'M', seq: 12, answerId: 'A' },
       { type: 'hypotheses.refresh', mimicId: 'M', seqUpTo: 20 },
       { type: 'snapshot.write', mimicId: 'M', seqUpTo: 20 },
+      { type: 'hypotheses.refresh', mimicId: 'M', seqUpTo: 20, epoch: 2 },
+      { type: 'snapshot.write', mimicId: 'M', seqUpTo: 20, epoch: 0 },
       {
         type: 'backfill.predictor',
         runId: 'R',

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "f7ad8cef-2c3f-44c3-a400-b940f7738a1b",
+  "id": "0406aeda-4c95-434a-96b4-90f6e963aab8",
   "prevId": "6bcc4eef-908a-44c9-93a4-26f4a66f26dc",
   "tables": {
     "answer_rewinds": {
@@ -455,6 +455,13 @@
         },
         "user_state_at": {
           "name": "user_state_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "seq_up_to": {
+          "name": "seq_up_to",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -1262,6 +1269,14 @@
         },
         "seq_max": {
           "name": "seq_max",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "evidence_epoch": {
+          "name": "evidence_epoch",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,

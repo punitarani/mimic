@@ -10,7 +10,12 @@ import {
   pruneCuration,
   writePersonaDraft,
 } from '../persona';
-import type { PersonaCurationRecord as CurationRecord, MimicRecord, PersonaDraftRecord } from '../store';
+import {
+  type PersonaCurationRecord as CurationRecord,
+  type MimicRecord,
+  type PersonaDraftRecord,
+  StaleEvidenceError,
+} from '../store';
 import type { Facet } from '../types';
 import { mimicDocParts } from './artifact';
 import { loadMimicData } from './data';
@@ -132,7 +137,14 @@ export async function draftPersona(deps: EngineDeps, mimicId: string): Promise<P
     draft,
     createdAt: deps.clock(),
   };
-  await deps.store.insertPersonaDraft(rec);
+  // Drafted from the answers read above: refused if one of them was undone meanwhile (ADR-0034).
+  try {
+    await deps.store.guarded(m.id, m.evidenceEpoch).insertPersonaDraft(rec);
+  } catch (e) {
+    if (e instanceof StaleEvidenceError)
+      throw new EngineError('conflict', 'Your answers changed while this was written. Try again.');
+    throw e;
+  }
   return view(deps, m, { loaded, draft: rec });
 }
 

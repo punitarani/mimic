@@ -190,6 +190,7 @@ export async function importTwin(
       consentResearch: true,
       split: splitFor(id),
       seqMax: 0,
+      evidenceEpoch: 0,
       snapshotVersion: 0,
       spendUsd: 0,
       createdAt: now,
@@ -214,7 +215,8 @@ export async function importTwin(
         facetIds: [],
         itemKey: it.itemKey,
         provenance: { generator: 'twin2k500', configHash: cfgHash, promptVersion: 'twin2k500.v1' },
-        status: 'answered',
+        // Served, like a session question; recordAnswer marks it answered (it only records onto a served question).
+        status: 'served',
         quality: null,
         createdAt: now + seq,
         servedAt: now + seq,
@@ -234,7 +236,7 @@ export async function importTwin(
     }
     await deps.store.insertQuestions(questions);
     for (const { q, value } of answers) {
-      await deps.store.recordAnswer({
+      const recorded = await deps.store.recordAnswer({
         answer: {
           id: deps.newId(),
           questionId: q.id,
@@ -249,6 +251,7 @@ export async function importTwin(
         },
         scores: [],
       });
+      if (!recorded) throw new Error(`Could not record ${line.pid} seq ${q.seq}`);
     }
     await deps.store.updateMimic(id, { seqMax: seq });
     people++;

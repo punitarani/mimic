@@ -373,7 +373,7 @@ participants        id, email?, is_admin, created_at
 mimics              id, participant_id, display_name, location, occupation?, employer?, links_json,
                     status(intake|identity|learning|paused|archived), config_hash, experiment_id?, arm?,
                     consent_app, consent_search, consent_research, split(dev|test),
-                    seq_max, snapshot_version, spend_usd, created_at, updated_at
+                    seq_max, evidence_epoch (ADR-0034), snapshot_version, spend_usd, created_at, updated_at
 identity_candidates id, mimic_id, provider, rank, name, headline, location, url, summary,
                     jev_same_person_p, r2_key, status(proposed|confirmed|rejected), created_at
 facts               id, mimic_id, predicate, object, source(intake|search|answer|reflection), source_ref,

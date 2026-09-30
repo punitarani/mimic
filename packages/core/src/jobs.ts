@@ -19,8 +19,20 @@ export const Job = z.discriminatedUnion('type', [
     seq: z.number().int(),
     answerId: z.string().optional(),
   }),
-  z.object({ type: z.literal('hypotheses.refresh'), mimicId: z.string(), seqUpTo: z.number().int() }),
-  z.object({ type: z.literal('snapshot.write'), mimicId: z.string(), seqUpTo: z.number().int() }),
+  /** `epoch` (ADR-0034) keys a refresh or snapshot to the evidence it follows, so one queued before an undo never
+   * stands in for the re-answer's. Absent on jobs queued before it. */
+  z.object({
+    type: z.literal('hypotheses.refresh'),
+    mimicId: z.string(),
+    seqUpTo: z.number().int(),
+    epoch: z.number().int().optional(),
+  }),
+  z.object({
+    type: z.literal('snapshot.write'),
+    mimicId: z.string(),
+    seqUpTo: z.number().int(),
+    epoch: z.number().int().optional(),
+  }),
   /** Backfill (ADR-0024): fans out one `backfill.mimic` per mimic. `runId` makes each run its own job. */
   z.object({
     type: z.literal('backfill.predictor'),
@@ -56,9 +68,8 @@ export function jobKey(job: Job): string {
     case 'learn.answer':
       return `learn.answer:${job.mimicId}:${job.seq}${job.answerId ? `:${job.answerId}` : ''}`;
     case 'hypotheses.refresh':
-      return `hypotheses.refresh:${job.mimicId}:${job.seqUpTo}`;
     case 'snapshot.write':
-      return `snapshot.write:${job.mimicId}:${job.seqUpTo}`;
+      return `${job.type}:${job.mimicId}:${job.seqUpTo}${job.epoch !== undefined ? `:${job.epoch}` : ''}`;
     // Predictor IDs contain ':', so they come last.
     case 'backfill.predictor':
       return `backfill.predictor:${job.runId}:${job.consentedOnly ? 1 : 0}:${job.predictorId}`;
@@ -97,7 +108,12 @@ export function jobFromKey(key: string): Job | null {
       break;
     case 'hypotheses.refresh':
     case 'snapshot.write':
-      job = { type, mimicId: parts[0], seqUpTo: Number(parts[1]) };
+      job = {
+        type,
+        mimicId: parts[0],
+        seqUpTo: Number(parts[1]),
+        ...(parts[2] !== undefined ? { epoch: Number(parts[2]) } : {}),
+      };
       break;
     case 'backfill.predictor':
       job = { type, runId: parts[0], consentedOnly: parts[1] === '1', predictorId: parts.slice(2).join(':') };

@@ -22,6 +22,7 @@ function mimic(id: string, cfg: string): MimicRecord {
     consentResearch: false,
     split: 'dev',
     seqMax: 0,
+    evidenceEpoch: 0,
     snapshotVersion: 0,
     spendUsd: 0,
     createdAt: 1,

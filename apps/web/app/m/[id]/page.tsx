@@ -55,6 +55,12 @@ function useGuesses(mimicId: string): [boolean, (on: boolean) => void] {
   return [on, set];
 }
 
+interface Undoable {
+  questionId: string;
+  prompt: string;
+  label: string;
+}
+
 export default function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -80,10 +86,10 @@ export default function SessionPage() {
   } | null>(null);
   const [guesses, setGuesses] = useGuesses(id);
   /** The latest answer, while it can still be undone (ADR-0034): only the one sent from this page, and one step. */
-  const [undoable, setUndoable] = useState<{ questionId: string; prompt: string; label: string } | null>(
-    null,
-  );
-  const [confirmUndo, setConfirmUndo] = useState(false);
+  const [undoable, setUndoable] = useState<Undoable | null>(null);
+  /** The answer the open confirmation is about. Kept apart from `undoable`, so a 409 can clear the button while
+   * the dialog stays open to say why. */
+  const [confirmUndo, setConfirmUndo] = useState<Undoable | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const undoRef = useRef<HTMLButtonElement>(null);
   const done = useRef(new Set<string>());
@@ -239,13 +245,14 @@ export default function SessionPage() {
    * prefetched after it, so a prefetch still in flight is cancelled first and never shown.
    */
   const undo = useCallback(async () => {
-    if (!undoable) return;
+    const target = confirmUndo;
+    if (!target) return;
     await qc.cancelQueries({ queryKey: ['question', id] });
     let res: Awaited<ReturnType<typeof api.rewind>>;
     try {
-      res = await api.rewind(id, undoable.questionId);
+      res = await api.rewind(id, target.questionId);
     } catch (e) {
-      // 409: no longer the latest answer (another tab, or already undone). The dialog shows why.
+      // 409: no longer the latest answer (another tab, or already undone). The dialog stays open and says why.
       if (e instanceof ApiError && e.status === 409) setUndoable(null);
       throw e;
     }
@@ -266,15 +273,18 @@ export default function SessionPage() {
     setFirstOfVisit(false);
     setLastAnswer(null);
     setUndoable(null);
-    setConfirmUndo(false);
-    setNotice(`Answer undone. “${undoable.label}” was removed; choose again.`);
+    setConfirmUndo(null);
+    setNotice(`Answer undone. “${target.label}” was removed; choose again.`);
     void qc.invalidateQueries({ queryKey: ['snapshot', id] });
     requestAnimationFrame(() => optionRefs.current[0]?.focus({ preventScroll: true }));
-  }, [undoable, qc, id]);
+  }, [confirmUndo, qc, id]);
 
   const cancelUndo = useCallback(() => {
-    setConfirmUndo(false);
-    requestAnimationFrame(() => undoRef.current?.focus({ preventScroll: true }));
+    setConfirmUndo(null);
+    // Back to Undo; if a 409 removed it, to Next or the first option.
+    requestAnimationFrame(() =>
+      (undoRef.current ?? nextRef.current ?? optionRefs.current[0])?.focus({ preventScroll: true }),
+    );
   }, []);
 
   // Move focus to Next once the answer is in, so Enter and screen readers land there.
@@ -481,7 +491,7 @@ export default function SessionPage() {
                         // After Next, the answer being undone belongs to the previous question.
                         label: answered ? 'Undo' : 'Undo last answer',
                         disabled: sending,
-                        onClick: () => setConfirmUndo(true),
+                        onClick: () => setConfirmUndo(undoable),
                         ref: undoRef,
                       }
                     : null
@@ -523,15 +533,15 @@ export default function SessionPage() {
         {panel(true)}
       </BottomSheet>
 
-      {confirmUndo && undoable && (
+      {confirmUndo && (
         <ConfirmDialog
           title="Undo your last answer?"
           body={
             <>
               <span className="mb-2 block font-serif text-[16px] leading-6 text-graphite">
-                {undoable.prompt}
+                {confirmUndo.prompt}
               </span>
-              Your answer “{undoable.label}” will be removed, and you can answer this question again.
+              Your answer “{confirmUndo.label}” will be removed, and you can answer this question again.
             </>
           }
           confirmLabel="Undo answer"

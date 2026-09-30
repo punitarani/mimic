@@ -5,9 +5,11 @@ import {
   exportMimic,
   hashJson,
   jobKey,
+  loadHypotheses,
   type PersonState,
   type PublicQuestion,
   rewindLastAnswer,
+  runHypotheses,
   runJob,
   serveNext,
   submitAnswer,
@@ -245,62 +247,6 @@ describe('undo the latest answer (ADR-0034)', () => {
     await expectConflict(rewindLastAnswer(engine.deps, id, { questionId: 'nope' }));
   }, 30_000);
 
-  it('makes a learn job for the undone answer a no-op, and rolls back one that was mid-flight', async () => {
-    const id = await start();
-    const { store } = engine.deps;
-    await answerMany(id, 4);
-    // Queued, not yet run, when the person undoes.
-    const q5 = await serve(id);
-    await answer(id, q5, q5.options[0]!.key, false);
-    const stale = engine.queue.drain();
-    expect(stale.some((j) => j.type === 'learn.answer' && j.seq === 5 && j.answerId)).toBe(true);
-    await rewindLastAnswer(engine.deps, id, { questionId: q5.id });
-    for (const j of stale) await runJob(engine.deps, j);
-    expect((await store.listTraitHistory(id)).every((t) => t.seqUpTo < 5)).toBe(true);
-    expect((await store.listInsights(id)).every((i) => i.seqUpTo < 5)).toBe(true);
-
-    // Re-answer, and undo again while that answer's learn job is running (just before its final check).
-    await answer(id, q5, q5.options[1]!.key, false);
-    const [learn] = engine.queue.drain().filter((j) => j.type === 'learn.answer');
-    let undone = false;
-    const racing = {
-      ...engine.deps,
-      store: new Proxy(store, {
-        get(target, prop, recv) {
-          if (prop === 'getAnswerForQuestion' && !undone) {
-            return async (qid: string) => {
-              undone = true;
-              await rewindLastAnswer(engine.deps, id, { questionId: q5.id });
-              // ...and the person answers again before the stale job finishes.
-              await submitAnswer(engine.deps, id, {
-                questionId: q5.id,
-                value: q5.options[0]!.key,
-                latencyMs: 900,
-                idempotencyKey: 'k-third',
-              });
-              return target.getAnswerForQuestion(qid);
-            };
-          }
-          return Reflect.get(target, prop, recv);
-        },
-      }),
-    };
-    await runJob(racing, learn!);
-    expect(undone).toBe(true);
-    // The stale job's writes were rolled back, and the current answer's learn job was queued again.
-    const current = (await store.getAnswerForQuestion(q5.id))!;
-    const queued = engine.queue.pending.map((p) => p.job);
-    expect(queued).toContainEqual({ type: 'learn.answer', mimicId: id, seq: 5, answerId: current.id });
-    await engine.drain((j) => j.type !== 'snapshot.write');
-    const traits = await store.listTraitHistory(id);
-    expect(traits.some((t) => t.seqUpTo === 5)).toBe(true);
-    expect(
-      await store.getJob(jobKey({ type: 'learn.answer', mimicId: id, seq: 5, answerId: current.id })),
-    ).toMatchObject({ status: 'done' });
-    expect((await store.listInsights(id)).filter((i) => i.seqUpTo === 5).length).toBeGreaterThan(0);
-  }, 30_000);
-
-  /** A store whose `method` first runs `before` (once), to put another request inside a critical section. */
   function interleave(method: string, before: () => Promise<unknown>) {
     let fired = false;
     const store = engine.deps.store;
@@ -319,6 +265,100 @@ describe('undo the latest answer (ADR-0034)', () => {
       }),
     };
   }
+
+  /**
+   * Deps whose guarded store (Store.guarded, ADR-0034) runs `undo` just ahead of its first write: the undo lands
+   * after the work read its evidence and before it writes anything.
+   */
+  function undoBeforeGuardedWrite(undo: () => Promise<unknown>) {
+    let fired = false;
+    const store = engine.deps.store;
+    return {
+      ...engine.deps,
+      store: new Proxy(store, {
+        get(target, prop, recv) {
+          const v = Reflect.get(target, prop, recv);
+          if (prop !== 'guarded' || typeof v !== 'function') return v;
+          return (mimicId: string, epoch: number) => {
+            const g = (v as (m: string, e: number) => typeof store).call(target, mimicId, epoch);
+            return new Proxy(g, {
+              get(gt, gp, gr) {
+                const gv = Reflect.get(gt, gp, gr);
+                if (typeof gv !== 'function' || fired || !/^(insert|upsert|update|serve)/.test(String(gp)))
+                  return typeof gv === 'function' ? gv.bind(gt) : gv;
+                return async (...args: unknown[]) => {
+                  fired = true;
+                  await undo();
+                  return (gv as (...a: unknown[]) => unknown).apply(gt, args);
+                };
+              },
+            });
+          };
+        },
+      }),
+    };
+  }
+
+  it('makes a queued learn job for the undone answer a no-op', async () => {
+    const id = await start();
+    const { store } = engine.deps;
+    await answerMany(id, 4);
+    const q5 = await serve(id);
+    await answer(id, q5, q5.options[0]!.key, false);
+    const stale = engine.queue.drain();
+    expect(stale.some((j) => j.type === 'learn.answer' && j.seq === 5 && j.answerId)).toBe(true);
+    await rewindLastAnswer(engine.deps, id, { questionId: q5.id });
+    for (const j of stale) await runJob(engine.deps, j);
+    expect((await store.listTraitHistory(id)).every((t) => t.seqUpTo < 5)).toBe(true);
+    expect((await store.listInsights(id)).every((i) => i.seqUpTo < 5)).toBe(true);
+  }, 30_000);
+
+  it('refuses every write of a learn job whose answer is undone while it runs, so the re-answer learns', async () => {
+    const id = await start();
+    const { store } = engine.deps;
+    await answerMany(id, 4);
+    const q5 = await serve(id);
+    await answer(id, q5, q5.options[0]!.key, false);
+    const [learn] = engine.queue.drain().filter((j) => j.type === 'learn.answer');
+    // The undo lands after the job read the evidence and before it writes anything.
+    const racing = undoBeforeGuardedWrite(() => rewindLastAnswer(engine.deps, id, { questionId: q5.id }));
+    expect(await runJob(racing, learn!)).toBe('done');
+    expect(await store.getJob(jobKey(learn!))).toMatchObject({
+      status: 'done',
+      lastError: expect.stringMatching(/changed/),
+    });
+    expect((await store.listTraitHistory(id)).every((t) => t.seqUpTo < 5)).toBe(true);
+    expect((await store.listInsights(id)).every((i) => i.seqUpTo < 5)).toBe(true);
+    expect(await engine.deps.vectors.getByIds([vectorId.qa(id, 5)])).toEqual([]);
+    // Nothing stale blocks the re-answer's monotonic writes.
+    await answer(id, q5, q5.options[1]!.key);
+    const at5 = (await store.listTraitHistory(id)).filter((t) => t.seqUpTo === 5);
+    expect(at5.length).toBeGreaterThan(0);
+    expect((await store.listInsights(id)).some((i) => i.seqUpTo === 5)).toBe(true);
+    const current = (await store.getAnswerForQuestion(q5.id))!;
+    expect(current.value).toBe(q5.options[1]!.key);
+  }, 30_000);
+
+  it('retries a learn job that an undo of a later answer refused, since its own answer stands', async () => {
+    const id = await start();
+    const { store } = engine.deps;
+    await answerMany(id, 3);
+    const q4 = await serve(id);
+    await answer(id, q4, q4.options[0]!.key, false);
+    const [learn4] = engine.queue.drain().filter((j) => j.type === 'learn.answer');
+    const next = await serveNext(engine.deps, id);
+    if (next.status !== 'question') throw new Error(next.status);
+    engine.queue.drain();
+    await answer(id, next.question, next.question.options[0]!.key, false);
+    engine.queue.drain();
+    const racing = undoBeforeGuardedWrite(() =>
+      rewindLastAnswer(engine.deps, id, { questionId: next.question.id }),
+    );
+    await expect(runJob(racing, learn4!)).rejects.toThrow(/retrying/);
+    expect(await store.getJob(jobKey(learn4!))).toMatchObject({ status: 'failed' });
+    expect(await runJob(engine.deps, learn4!)).toBe('done');
+    expect((await store.listTraitHistory(id)).some((t) => t.seqUpTo === 4)).toBe(true);
+  }, 30_000);
 
   it('discards a prefetch that commits inside the undo, and pools it again', async () => {
     const id = await start();
@@ -340,27 +380,195 @@ describe('undo the latest answer (ADR-0034)', () => {
     expect((await serve(id)).id).toBe(q12.id);
   }, 30_000);
 
-  it('discards a prefetch that commits after the undo, and serves the undone question', async () => {
+  it('builds the next question again when an undo lands while it is built, serving nothing stale', async () => {
     const id = await start();
     const { store } = engine.deps;
     await answerMany(id, 11);
     const q12 = await serve(id);
     await answer(id, q12);
-    // The serve built its state with answer 12, then the undo lands before its final check.
-    const racing = interleave('getAnswerForQuestion', () =>
-      rewindLastAnswer(engine.deps, id, { questionId: q12.id }),
-    );
+    // The serve read the evidence with answer 12; the undo lands before it persists.
+    const racing = undoBeforeGuardedWrite(() => rewindLastAnswer(engine.deps, id, { questionId: q12.id }));
     const r = await serveNext(racing, id);
     expect(r.status === 'question' && r.question).toEqual(q12);
-    const discarded = await store.listQuestions(id, ['discarded']);
-    expect(discarded).toHaveLength(1);
-    expect(await store.listPredictions({ questionId: discarded[0]!.id })).toEqual([]);
-    expect((await store.listQuestions(id, ['pooled'])).some((q) => q.prompt === discarded[0]!.prompt)).toBe(
-      true,
-    );
+    // The refused serve wrote nothing: no discarded question, no prediction outside a served question.
+    expect(await store.listQuestions(id, ['discarded'])).toEqual([]);
+    const served = new Set((await store.listQuestions(id)).filter((q) => q.seq !== null).map((q) => q.id));
+    expect((await store.listPredictions({ mimicId: id })).every((p) => served.has(p.questionId))).toBe(true);
     await answer(id, q12, q12.options[1]!.key);
     expect((await serve(id)).seq).toBe(13);
     await expectSealed(id);
+  }, 30_000);
+
+  it('refuses an answer to the prefetched question that races the undo, and the session carries on', async () => {
+    const id = await start();
+    const { store } = engine.deps;
+    await answerMany(id, 5);
+    const q6 = await serve(id);
+    await answer(id, q6);
+    const q7 = await serve(id);
+    // The answer read q7 as served; the undo discards it before the answer is recorded.
+    const racing = interleave('recordAnswer', () => rewindLastAnswer(engine.deps, id, { questionId: q6.id }));
+    await expectConflict(
+      submitAnswer(racing, id, {
+        questionId: q7.id,
+        value: q7.options[0]!.key,
+        latencyMs: 900,
+        idempotencyKey: 'k-q7',
+      }),
+      /not being asked/,
+    );
+    expect(await store.getAnswerForQuestion(q7.id)).toBeNull();
+    expect((await store.listAnswers(id)).map((a) => a.seq)).toEqual([1, 2, 3, 4, 5]);
+    await answer(id, q6, q6.options[1]!.key);
+    const next = await serve(id);
+    expect(next.seq).toBe(7);
+    await answer(id, next);
+    expect((await store.listAnswers(id)).map((a) => a.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    await expectSealed(id);
+  }, 30_000);
+
+  it('refuses an undo when the next answer lands between its checks and its batch', async () => {
+    const id = await start();
+    const { store } = engine.deps;
+    await answerMany(id, 5);
+    const q6 = await serve(id);
+    await answer(id, q6);
+    const q7 = await serve(id);
+    const racing = interleave('rewindAnswer', () =>
+      submitAnswer(engine.deps, id, {
+        questionId: q7.id,
+        value: q7.options[0]!.key,
+        latencyMs: 900,
+        idempotencyKey: 'k-7',
+      }),
+    );
+    await expectConflict(rewindLastAnswer(racing, id, { questionId: q6.id }), /latest answer/);
+    expect((await store.listAnswers(id)).map((a) => a.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(await store.listAnswerRewinds(id)).toEqual([]);
+    expect((await store.getMimic(id))!.evidenceEpoch).toBe(0);
+    expect((await store.getQuestion(q6.id))!.status).toBe('answered');
+  }, 30_000);
+
+  it('refuses an undo when feedback lands between its checks and its batch', async () => {
+    const id = await start();
+    const q1 = await serve(id);
+    await answer(id, q1);
+    const racing = interleave('rewindAnswer', () =>
+      submitFeedback(engine.deps, id, {
+        question: {
+          type: 'choice',
+          prompt: 'Would you rather spend a free Saturday hiking or reading at home?',
+          options: [
+            { key: 'x1', label: 'Hiking in the hills' },
+            { key: 'x2', label: 'Reading at home' },
+          ],
+        },
+        answer: 'x1',
+        idempotencyKey: 'fb-race',
+      }),
+    );
+    await expectConflict(rewindLastAnswer(racing, id, { questionId: q1.id }), /latest answer/);
+    expect(await engine.deps.store.getAnswerForQuestion(q1.id)).not.toBeNull();
+  }, 30_000);
+
+  it("keys the re-answer's snapshot and hypothesis jobs apart from the undone answer's", async () => {
+    const id = await start();
+    await answerMany(id, 4);
+    const q5 = await serve(id);
+    await answer(id, q5, q5.options[0]!.key, false);
+    const before = engine.queue.drain();
+    for (const j of before) await runJob(engine.deps, j);
+    const snapA = engine.queue.pending.map((p) => p.job).find((j) => j.type === 'snapshot.write')!;
+    expect(snapA).toMatchObject({ seqUpTo: 5, epoch: 0 });
+    await runJob(engine.deps, snapA);
+    engine.queue.drain();
+    await rewindLastAnswer(engine.deps, id, { questionId: q5.id });
+    await answer(id, q5, q5.options[1]!.key, false);
+    for (const j of engine.queue.drain()) await runJob(engine.deps, j);
+    const snapB = engine.queue.pending.map((p) => p.job).find((j) => j.type === 'snapshot.write')!;
+    expect(snapB).toMatchObject({ seqUpTo: 5, epoch: 1 });
+    expect(jobKey(snapB)).not.toBe(jobKey(snapA));
+    expect(await runJob(engine.deps, snapB)).toBe('done');
+    const doc = await exportMimic(engine.deps, id);
+    expect(doc.evidence.find((e) => e.seq === 5)?.answer).toBe(q5.options[1]!.key);
+  }, 30_000);
+
+  it('takes back hypotheses drawn while an undo landed', async () => {
+    const id = await start();
+    await answerMany(id, 5);
+    const q6 = await serve(id);
+    await answer(id, q6);
+    let fired = false;
+    const kv = new Proxy(engine.deps.kv, {
+      get(target, prop, recv) {
+        const v = Reflect.get(target, prop, recv);
+        if (prop !== 'put' || typeof v !== 'function') return v;
+        return async (...args: unknown[]) => {
+          if (!fired) {
+            fired = true;
+            await rewindLastAnswer(engine.deps, id, { questionId: q6.id });
+          }
+          return (v as (...a: unknown[]) => unknown).apply(target, args);
+        };
+      },
+    });
+    await runHypotheses({ ...engine.deps, kv }, id, 6);
+    expect(fired).toBe(true);
+    expect((await loadHypotheses(engine.deps, id))?.seqUpTo ?? 0).toBeLessThan(6);
+  }, 30_000);
+
+  it("removes the undone reflection's facts even when they cite only earlier answers", async () => {
+    const id = await start();
+    const { store } = engine.deps;
+    await answerMany(id, 2);
+    const q3 = await serve(id);
+    await answer(id, q3);
+    const fact = (fid: string, seqUpTo: number | null, sourceRef: string) => ({
+      id: fid,
+      mimicId: id,
+      predicate: 'hasInterest',
+      object: `Interest ${fid}`,
+      source: 'reflection' as const,
+      sourceRef,
+      sourceUrl: null,
+      confidence: 0.6,
+      userState: 'active' as const,
+      createdAt: Date.now(),
+      userStateAt: null,
+      seqUpTo,
+    });
+    await store.insertFacts([
+      fact('f-at-3', 3, 'answers:1,2'),
+      fact('f-at-2', 2, 'answers:1,2'),
+      fact('f-legacy', null, 'answers:3'),
+    ]);
+    await rewindLastAnswer(engine.deps, id, { questionId: q3.id });
+    const ids = (await store.listFacts(id)).map((f) => f.id);
+    expect(ids).toContain('f-at-2');
+    expect(ids).not.toContain('f-at-3');
+    expect(ids).not.toContain('f-legacy');
+  }, 30_000);
+
+  it('never writes a score for an answer that is gone', async () => {
+    const id = await start();
+    const q1 = await serve(id);
+    await answer(id, q1);
+    const [p] = await engine.deps.store.listPredictions({ questionId: q1.id, roles: ['primary'] });
+    const gone = {
+      predictionId: `${p!.id}-x`,
+      answerId: 'gone',
+      top1: 1,
+      itemAcc: 1,
+      logLoss: 0,
+      brier: 0,
+      createdAt: 1,
+    };
+    await engine.deps.store.insertScores([gone]);
+    const n = await engine.client.execute({
+      sql: 'select count(*) as n from scores where answer_id = ?',
+      args: ['gone'],
+    });
+    expect(Number(n.rows[0]!.n)).toBe(0);
   }, 30_000);
 
   it('removes a shadow that lands on a question discarded while it ran', async () => {

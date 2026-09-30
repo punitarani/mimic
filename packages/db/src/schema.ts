@@ -33,6 +33,8 @@ export const mimics = sqliteTable(
     consentResearch: bool('consent_research').notNull(),
     split: text('split', { enum: ['dev', 'test'] }).notNull(),
     seqMax: integer('seq_max').notNull().default(0),
+    /** Bumped by every undo; guarded writes check it in the same batch (ADR-0034). */
+    evidenceEpoch: integer('evidence_epoch').notNull().default(0),
     snapshotVersion: integer('snapshot_version').notNull().default(0),
     spendUsd: real('spend_usd').notNull().default(0),
     createdAt: integer('created_at').notNull(),
@@ -76,6 +78,8 @@ export const facts = sqliteTable(
     createdAt: integer('created_at').notNull(),
     /** Last change of user_state (ADR-0017). */
     userStateAt: integer('user_state_at'),
+    /** For reflection facts: the seqUpTo of the reflection that wrote it (ADR-0034). */
+    seqUpTo: integer('seq_up_to'),
   },
   (t) => [index('facts_mimic_idx').on(t.mimicId)],
 );

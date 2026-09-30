@@ -17,13 +17,14 @@ import {
   usesHypotheses,
 } from '../selectors';
 import { cosine, lexicalSimilarity } from '../state-builder';
-import type {
-  AnswerRecord,
-  FidelityRecord,
-  MimicRecord,
-  PredictionRecord,
-  QuestionRecord,
-  Store,
+import {
+  type AnswerRecord,
+  type FidelityRecord,
+  type MimicRecord,
+  type PredictionRecord,
+  type QuestionRecord,
+  StaleEvidenceError,
+  type Store,
 } from '../store';
 import {
   type Distribution,
@@ -52,6 +53,7 @@ import {
   EngineError,
   facetsFor,
   fallbackModel,
+  guardedDeps,
   loadConfig,
   requireMimic,
   timed,
@@ -130,14 +132,15 @@ export async function serveAtFreeSeq(
  */
 export async function serveNext(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   for (let attempt = 0; ; attempt++) {
-    const r = await serveOnce(deps, mimicId);
-    if (r !== RACED_UNDO) return r;
-    if (attempt >= 2) throw new EngineError('conflict', 'Your last answer changed; retry');
+    try {
+      return await serveOnce(deps, mimicId);
+    } catch (e) {
+      // Built from evidence an undo changed meanwhile, so nothing was served (ADR-0034): build it again.
+      if (!(e instanceof StaleEvidenceError)) throw e;
+      if (attempt >= 2) throw new EngineError('conflict', 'Your last answer changed; try again');
+    }
   }
 }
-
-/** A serve that raced an undo (ADR-0034): it was discarded, and the caller serves again. */
-const RACED_UNDO = Symbol('raced-undo');
 
 /**
  * Fresh pool copies of served questions being taken back (ADR-0034). A repeat probe gets none: the repeat schedule
@@ -194,22 +197,7 @@ export async function requeueDiscarded(deps: EngineDeps, mimicId: string, ids: s
   await copyQuestionVectors(deps, mimicId, copies);
 }
 
-/**
- * True unless the answer this serve built its state from was undone while it ran (ADR-0034). Only the latest answer
- * can be undone, so checking it is enough.
- */
-async function stillCurrent(deps: EngineDeps, loaded: LoadedMimic): Promise<boolean> {
-  const last = loaded.answers.at(-1);
-  if (!last) return true;
-  return (await deps.store.getAnswerForQuestion(last.questionId))?.id === last.id;
-}
-
-async function discardRaced(deps: EngineDeps, mimicId: string, seq: number): Promise<typeof RACED_UNDO> {
-  await requeueDiscarded(deps, mimicId, await deps.store.discardServedAfter(mimicId, seq - 1));
-  return RACED_UNDO;
-}
-
-async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult | typeof RACED_UNDO> {
+async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult> {
   const m = await timed(deps, 'mimic', () => requireMimic(deps, mimicId));
   const cfg = await loadConfig(deps, m.configHash);
   // Derived data is pinned to `stateAt` so the sealed states can be rebuilt exactly from an export (ADR-0017).
@@ -258,16 +246,22 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult 
       stateAt: null,
     };
     await deps.store.insertQuestions([rep]);
-    const at = await serveAtFreeSeq(deps, {
-      questionId: rep.id,
-      mimicId: m.id,
-      seq,
-      servedAt: deps.clock(),
-      stateAt: null,
-      predictions: [],
-    });
+    let at: number | null;
+    try {
+      // Scheduled from the answers read above, so guarded by their epoch like any serve (ADR-0034).
+      at = await serveAtFreeSeq(guardedDeps(deps, m), {
+        questionId: rep.id,
+        mimicId: m.id,
+        seq,
+        servedAt: deps.clock(),
+        stateAt: null,
+        predictions: [],
+      });
+    } catch (e) {
+      if (e instanceof StaleEvidenceError) await deps.store.updateQuestionStatus(rep.id, 'discarded');
+      throw e;
+    }
     if (at === null) return raced(deps, m.id);
-    if (!(await stillCurrent(deps, loaded))) return discardRaced(deps, m.id, seq);
     return { status: 'question', question: toPublic({ ...rep, seq: at, status: 'served' }), progress };
   }
 
@@ -379,7 +373,7 @@ async function serveWithPredictions(
   pool: QuestionRecord[],
   progress: Progress,
   rng: () => number,
-): Promise<NextResult | typeof RACED_UNDO> {
+): Promise<NextResult> {
   const primarySpec = cfg.predictor.primary;
   // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
   const primary = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.primary'));
@@ -507,8 +501,9 @@ async function serveWithPredictions(
     ...hypothesisRows,
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
+  // Guarded: if an undo changed the evidence since `loaded` was read, nothing is written (ADR-0034).
   const at = await timed(deps, 'persist', () =>
-    serveAtFreeSeq(deps, {
+    serveAtFreeSeq(guardedDeps(deps, m), {
       questionId: chosen.id,
       mimicId: m.id,
       seq,
@@ -519,7 +514,6 @@ async function serveWithPredictions(
     }),
   );
   if (at === null) return raced(deps, m.id);
-  if (!(await stillCurrent(deps, loaded))) return discardRaced(deps, m.id, seq);
 
   // The sealed states must exist before shadow jobs read them; both can finish after the response. Hypothesis
   // states are written too, so every stored prediction resolves to its state (ADR-0010).
@@ -747,8 +741,14 @@ async function afterAnswer(
   reveal: Reveal | null,
 ): Promise<AnswerResult> {
   const seq = answer.seq;
+  // Guarded like any derived write: if the answer was undone right after it was recorded, no fidelity row counts it.
   const fidelity = isSessionKind(q.kind)
-    ? await timed(deps, 'fidelity', () => recomputeFidelity(deps, m, seq))
+    ? await timed(deps, 'fidelity', () => recomputeFidelity(guardedDeps(deps, m), m, seq)).catch(
+        (e: unknown) => {
+          if (e instanceof StaleEvidenceError) return null;
+          throw e;
+        },
+      )
     : null;
   if (learnsFrom(q.kind)) {
     // Keyed by answer, so a re-answer after an undo is learned again (ADR-0034).

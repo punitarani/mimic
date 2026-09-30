@@ -1,11 +1,11 @@
 import { z } from 'zod';
-import { jobKey } from '../jobs';
 import type { AnswerRewindRecord, DerivedRollback, FactRecord, MimicRecord } from '../store';
 import { isSessionKind } from '../types';
-import { vectorId } from './data';
-import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
+import { loadMimicData, qaText, vectorId } from './data';
+import { ctxFor, type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
 import {
   copyQuestionVectors,
+  loadHypotheses,
   type Progress,
   type PublicQuestion,
   poolCopies,
@@ -40,35 +40,35 @@ export function citedSeqs(sourceRef: string | null): number[] {
 }
 
 /**
- * What a retraction at `fromSeq` invalidates. Traits, insights and fidelity are selected by seq in the store; facts
- * go when they cite the retracted evidence. The per-seq jobs are cleared so the re-answer's can run again.
+ * What a retraction at `fromSeq` invalidates, beyond what the store selects by seq (traits, insights, reflection
+ * facts by `seq_up_to`, persona drafts, fidelity): reflection facts written before `seq_up_to` existed, found by the
+ * evidence they cite.
  */
 export function derivedRollback(mimicId: string, fromSeq: number, facts: FactRecord[]): DerivedRollback {
   return {
     mimicId,
     fromSeq,
     factIds: facts
-      .filter((f) => f.source === 'reflection' && citedSeqs(f.sourceRef).some((s) => s >= fromSeq))
+      .filter(
+        (f) =>
+          f.source === 'reflection' &&
+          (f.seqUpTo ?? null) === null &&
+          citedSeqs(f.sourceRef).some((s) => s >= fromSeq),
+      )
       .map((f) => f.id),
-    jobKeys: [
-      jobKey({ type: 'snapshot.write', mimicId, seqUpTo: fromSeq }),
-      jobKey({ type: 'hypotheses.refresh', mimicId, seqUpTo: fromSeq }),
-    ],
   };
 }
 
-/** Index entries built from retracted evidence. Best effort: they are rebuildable, and missing ones fall back. */
-async function dropIndexes(deps: EngineDeps, m: MimicRecord, fromSeq: number, factIds: string[]) {
+/**
+ * Index entries built from retracted evidence: the Q&A vector at `fromSeq`, removed facts' vectors and hypotheses
+ * from `fromSeq` on. Best effort: they are rebuildable, and missing ones fall back.
+ */
+async function dropIndexes(deps: EngineDeps, mimicId: string, fromSeq: number, factIds: string[]) {
   await deps.vectors
-    .deleteByIds([vectorId.qa(m.id, fromSeq), ...factIds.map((id) => vectorId.fact(m.id, id))])
+    .deleteByIds([vectorId.qa(mimicId, fromSeq), ...factIds.map((id) => vectorId.fact(mimicId, id))])
     .catch(() => {});
-  try {
-    const raw = await deps.kv.get(`hyp:${m.id}`);
-    if (raw && (JSON.parse(raw) as { seqUpTo?: number }).seqUpTo! >= fromSeq)
-      await deps.kv.delete(`hyp:${m.id}`);
-  } catch {
-    // Hypotheses are refreshed on the next reflection.
-  }
+  const hyp = await loadHypotheses(deps, mimicId);
+  if (hyp && hyp.seqUpTo >= fromSeq) await deps.kv.delete(`hyp:${mimicId}`).catch(() => {});
 }
 
 /**
@@ -140,17 +140,19 @@ export async function rewindLastAnswer(
     rewoundAt: now,
   };
   const derived = derivedRollback(m.id, latest.seq, facts);
-  const discarded = await deps.store.rewindAnswer({ rewind, requeue: copies.map((c) => c.copy), derived });
-  if (!discarded) throw new EngineError('conflict', 'That answer was already undone');
+  const done = await deps.store.rewindAnswer({ rewind, requeue: copies.map((c) => c.copy), derived });
+  // The batch re-checks everything above atomically: the answer may have been undone, or something answered, asked
+  // or taught after it, since the read.
+  if (!done) throw new EngineError('conflict', 'Only your latest answer can be undone');
 
-  await dropIndexes(deps, m, latest.seq, derived.factIds);
+  await dropIndexes(deps, m.id, latest.seq, done.factIds);
   await copyQuestionVectors(deps, m.id, copies);
   // A serve that committed between the read above and the rewind was discarded without a copy.
   const known = new Set(later.map((x) => x.id));
   await requeueDiscarded(
     deps,
     m.id,
-    discarded.filter((x) => !known.has(x)),
+    done.discarded.filter((x) => !known.has(x)),
   );
 
   const after = questions.map((x) => (x.id === q.id ? { ...x, status: 'served' as const } : x));
@@ -162,18 +164,26 @@ export async function rewindLastAnswer(
 }
 
 /**
- * Undoes a learn job's writes when its answer was retracted while it ran (ADR-0034). If the question has been
- * answered again meanwhile, that answer's learn job is queued again, since the rollback may have removed its work.
+ * Makes the Q&A vector at `seq` match the answer there now (ADR-0034): a learn job that embedded an answer undone
+ * while it ran may have written it after the undo removed it. Deletes it if the question has no answer yet.
  */
-export async function rollbackStaleLearn(deps: EngineDeps, m: MimicRecord, seq: number): Promise<void> {
-  const [facts, answers] = await Promise.all([deps.store.listFacts(m.id), deps.store.listAnswers(m.id)]);
-  const derived = derivedRollback(m.id, seq, facts);
-  const current = answers.find((a) => a.seq === seq);
-  const relearn = current
-    ? ({ type: 'learn.answer', mimicId: m.id, seq, answerId: current.id } as const)
-    : null;
-  if (relearn) derived.jobKeys.push(jobKey(relearn));
-  await deps.store.rollbackDerived(derived);
-  await dropIndexes(deps, m, seq, derived.factIds);
-  if (relearn) await deps.jobs.enqueue(relearn);
+export async function refreshQaVector(deps: EngineDeps, m: MimicRecord, seq: number): Promise<void> {
+  try {
+    const loaded = await loadMimicData(deps, m);
+    const item = loaded.data.evidence.find((e) => e.seq === seq);
+    if (!item) {
+      await deps.vectors.deleteByIds([vectorId.qa(m.id, seq)]);
+      return;
+    }
+    const emb = await deps.gateway.embed(ctxFor(m, 'embed.qa'), [qaText(item)]);
+    await deps.vectors.upsert([
+      {
+        id: vectorId.qa(m.id, seq),
+        values: emb.vectors[0]!,
+        metadata: { mimicId: m.id, kind: 'qa', facetIds: item.facetIds.join(','), seq },
+      },
+    ]);
+  } catch {
+    // Index only; retrieval falls back without it.
+  }
 }

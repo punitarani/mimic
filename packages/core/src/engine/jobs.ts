@@ -1,4 +1,5 @@
 import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
+import type { PipelineConfig } from '../config';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
 import { type Job, jobFromKey, jobKey } from '../jobs';
@@ -16,16 +17,32 @@ import { computeItemStats, type ScoredItemRow } from '../population';
 import { assertPredictorId, makePredictor, promptVersionOf } from '../predictors';
 import { scorePrediction } from '../scoring';
 import { facetCoverage, usesHypotheses } from '../selectors';
-import { buildState, cosine, toStateEvidence } from '../state-builder';
-import type { FactRecord, InsightRecord, KgEdgeRecord, KgNodeRecord, QuestionRecord } from '../store';
+import { buildState, cosine, type EvidenceItem, toStateEvidence } from '../state-builder';
+import {
+  type FactRecord,
+  type InsightRecord,
+  type KgEdgeRecord,
+  type KgNodeRecord,
+  type MimicRecord,
+  type QuestionRecord,
+  StaleEvidenceError,
+} from '../store';
 import { type Domain, isScoredKind, learnsFrom, type PersonState } from '../types';
 import { writeSnapshot } from './artifact';
 import { beliefFromLoaded, loadBeliefSources } from './belief';
-import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
+import {
+  facetCounts,
+  type LoadedMimic,
+  loadMimicData,
+  qaText,
+  stateBlobKey,
+  stateOptions,
+  vectorId,
+} from './data';
 import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
-import { rollbackStaleLearn } from './rewind';
-import { invalidateItemStatsCache, MAX_POOL, MIN_POOL } from './session';
+import { refreshQaVector } from './rewind';
+import { invalidateItemStatsCache, loadHypotheses, MAX_POOL, MIN_POOL } from './session';
 
 export const MAX_JOB_ATTEMPTS = 5;
 
@@ -58,6 +75,18 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
     });
     return 'done';
   } catch (e) {
+    // An undo landed while the job ran and its writes were refused (ADR-0034): a retry would only be refused again.
+    if (e instanceof StaleEvidenceError) {
+      await deps.store.putJob({
+        key,
+        type: job.type,
+        status: 'done',
+        attempts,
+        lastError: e.message,
+        updatedAt: deps.clock(),
+      });
+      return 'done';
+    }
     const msg = e instanceof Error ? e.message : String(e);
     await deps.store.putJob({
       key,
@@ -478,8 +507,9 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
 export const SNAPSHOT_DEBOUNCE_SECONDS = 10;
 
 /**
- * `answerId` (absent on jobs queued before ADR-0034) names the answer being learned. If the person undid it, the job
- * is a no-op; if they undo it while the job runs, the job rolls back what it wrote.
+ * `answerId` (absent on jobs queued before ADR-0034) names the answer being learned; if the person undid it, the job
+ * is a no-op. Every derived write goes through a store guarded by the evidence epoch read here, so if they undo it
+ * while the job runs, nothing the job computes lands after the undo (which removed what had already landed).
  */
 export async function runLearn(
   deps: EngineDeps,
@@ -494,22 +524,51 @@ export async function runLearn(
   if (answerId && !loaded.answers.some((a) => a.seq === seq && a.id === answerId)) return;
   const item = loaded.data.evidence.find((e) => e.seq === seq);
   if (!item || !learnsFrom(item.kind)) return;
-  const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
-  const nAnswered = learnable.filter((e) => e.seq <= seq).length;
+  const epoch = m.evidenceEpoch;
   const snapshot = () =>
     deps.jobs.enqueue(
-      { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
+      { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq, epoch },
       { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
     );
+  try {
+    await learnGuarded({ ...deps, store: deps.store.guarded(m.id, epoch) }, m, cfg, loaded, item, seq, key);
+  } catch (e) {
+    if (!(e instanceof StaleEvidenceError)) throw e;
+    await refreshQaVector(deps, m, seq);
+    // An undo of a later answer refuses this job too, though its own answer still stands: learn it again.
+    const current = await deps.store.getAnswerForQuestion(item.questionId);
+    if (current && (!answerId || current.id === answerId))
+      throw new Error('Evidence changed while learning; retrying');
+    throw e;
+  }
+  // The Q&A vector isn't in D1, so the guard can't cover it: an undo after the last guarded write is caught here.
+  if ((await deps.store.getMimic(m.id))?.evidenceEpoch !== epoch) {
+    await refreshQaVector(deps, m, seq);
+    return;
+  }
+  await snapshot();
+}
+
+/** Steps 1–4 of `learn.answer`, with `deps.store` guarded by the epoch the job read. */
+async function learnGuarded(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  loaded: LoadedMimic,
+  item: EvidenceItem,
+  seq: number,
+  key: string | undefined,
+): Promise<void> {
+  const learnable = loaded.data.evidence.filter((e) => learnsFrom(e.kind));
+  const nAnswered = learnable.filter((e) => e.seq <= seq).length;
 
   // Over budget every model call is refused, and the job would retry until dropped. The answer is kept as evidence
   // and goes into the snapshot; only the reads that need a model are skipped.
-  if (m.spendUsd >= cfg.session.budgetUsd) return snapshot();
+  if (m.spendUsd >= cfg.session.budgetUsd) return;
 
   // 1) Embed the Q&A (plus the "why").
   try {
-    const text = `${item.prompt} → ${toStateEvidence(item).answer}${item.why ? ` (why: ${item.why})` : ''}`;
-    const emb = await deps.gateway.embed(ctxFor(m, 'embed.qa', key), [text]);
+    const emb = await deps.gateway.embed(ctxFor(m, 'embed.qa', key), [qaText(item)]);
     await deps.vectors.upsert([
       {
         id: vectorId.qa(m.id, seq),
@@ -577,7 +636,12 @@ export async function runLearn(
   if (cfg.reflector.model && cfg.reflector.everyN > 0 && nAnswered % cfg.reflector.everyN === 0) {
     await runReflection(deps, m.id, seq, key);
     if (usesHypotheses(cfg.selector))
-      await deps.jobs.enqueue({ type: 'hypotheses.refresh', mimicId: m.id, seqUpTo: seq });
+      await deps.jobs.enqueue({
+        type: 'hypotheses.refresh',
+        mimicId: m.id,
+        seqUpTo: seq,
+        epoch: m.evidenceEpoch,
+      });
   }
 
   // 4) Occupation facets, on the first learn after identity is settled.
@@ -600,15 +664,6 @@ export async function runLearn(
       // Optional enrichment; retried on a later learn.
     }
   }
-
-  // Retracted while this job ran: what it wrote came from an answer that no longer exists.
-  if (answerId && (await deps.store.getAnswerForQuestion(item.questionId))?.id !== answerId) {
-    await rollbackStaleLearn(deps, m, seq);
-    return;
-  }
-
-  // 5) Debounced snapshot.
-  await snapshot();
 }
 
 export async function runReflection(
@@ -667,8 +722,13 @@ export async function runReflection(
     userState: 'active',
     createdAt: now,
     userStateAt: null,
+    seqUpTo: seq,
   }));
   await addFacts(deps, m, facts);
+  // Fact vectors aren't in D1: if an undo landed after the facts did (and removed them), drop the vectors too, or a
+  // hard delete, which finds vectors through facts, would miss them.
+  if (facts.length && (await deps.store.getMimic(m.id))?.evidenceEpoch !== m.evidenceEpoch)
+    await deps.vectors.deleteByIds(facts.map((f) => vectorId.fact(m.id, f.id))).catch(() => {});
   // Link insights to facet nodes in the KG.
   const kg = await deps.store.listKg(m.id);
   const nodes: KgNodeRecord[] = [];
@@ -720,12 +780,7 @@ export async function runHypotheses(
   const sel = cfg.selector;
   const k = sel.type === 'bald' || sel.type === 'voi' ? sel.k : 0;
   if (k < 2) return;
-  const cur = await deps.kv.get(`hyp:${m.id}`);
-  if (cur) {
-    try {
-      if ((JSON.parse(cur) as { seqUpTo: number }).seqUpTo >= seqUpTo) return;
-    } catch {}
-  }
+  if (((await loadHypotheses(deps, m.id))?.seqUpTo ?? -1) >= seqUpTo) return;
   const loaded = await loadMimicData(deps, m);
   const state = buildState(loaded.data, stateOptions(cfg, seqUpTo + 1));
   const facets = await facetsFor(deps, m, cfg);
@@ -742,5 +797,14 @@ export async function runHypotheses(
     lowFacets,
     k,
   });
-  if (hypotheses.length) await deps.kv.put(`hyp:${m.id}`, JSON.stringify({ seqUpTo, hypotheses }));
+  if (!hypotheses.length) return;
+  const body = JSON.stringify({ seqUpTo, hypotheses });
+  await deps.kv.put(`hyp:${m.id}`, body);
+  // KV can't join the D1 guard (ADR-0034): if an undo landed while these were drawn from its state, take them back,
+  // unless a newer set has replaced them already.
+  if (
+    (await deps.store.getMimic(m.id))?.evidenceEpoch !== m.evidenceEpoch &&
+    (await deps.kv.get(`hyp:${m.id}`)) === body
+  )
+    await deps.kv.delete(`hyp:${m.id}`);
 }

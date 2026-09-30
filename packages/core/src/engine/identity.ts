@@ -94,6 +94,7 @@ export async function createMimic(
     consentResearch: input.consentResearch,
     split: splitFor(id),
     seqMax: 0,
+    evidenceEpoch: 0,
     snapshotVersion: 0,
     spendUsd: 0,
     createdAt: now,

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { FactRecord, FidelityRecord, MimicRecord } from '../store';
+import { StaleEvidenceError } from '../store';
 import { QKind } from '../types';
 import { type LoadedMimic, loadMimicData, vectorId } from './data';
 import { type EngineDeps, EngineError, loadConfig, requireMimic } from './deps';
@@ -187,6 +188,20 @@ export async function writeSnapshot(
   mimicId: string,
   seqUpTo?: number,
 ): Promise<number | null> {
+  // One retry: an undo that lands while the snapshot is built refuses it (it read the retracted answer).
+  try {
+    return await writeSnapshotOnce(deps, mimicId, seqUpTo);
+  } catch (e) {
+    if (!(e instanceof StaleEvidenceError)) throw e;
+    return writeSnapshotOnce(deps, mimicId, seqUpTo);
+  }
+}
+
+async function writeSnapshotOnce(
+  deps: EngineDeps,
+  mimicId: string,
+  seqUpTo?: number,
+): Promise<number | null> {
   const m = await requireMimic(deps, mimicId);
   // Taken before reading, so a snapshot's createdAt never claims data newer than what it read.
   const asOf = deps.clock();
@@ -211,7 +226,8 @@ export async function writeSnapshot(
   const key = snapshotKey(m.id, version, deps.newId());
   await deps.blobs.put(key, JSON.stringify(doc), 'application/json');
   try {
-    await deps.store.insertSnapshot({
+    // Guarded by the epoch read above, so a snapshot built before an undo is never recorded after it.
+    await deps.store.guarded(m.id, m.evidenceEpoch).insertSnapshot({
       mimicId: m.id,
       version,
       r2Key: key,
@@ -219,7 +235,7 @@ export async function writeSnapshot(
       createdAt: asOf,
     });
   } catch (e) {
-    // Another writer took this version (primary key); drop our blob and let the job retry.
+    // Another writer took this version (primary key), or an undo landed; drop our blob.
     await deps.blobs.delete([key]);
     throw e;
   }

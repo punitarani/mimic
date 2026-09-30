@@ -34,6 +34,11 @@ export interface MimicRecord {
   consentResearch: boolean;
   split: 'dev' | 'test';
   seqMax: number;
+  /**
+   * Bumped by every undo (ADR-0034). Derived writes and serves made from data read at one epoch are refused at
+   * another (`Store.guarded`), so nothing built on a retracted answer lands after the undo.
+   */
+  evidenceEpoch: number;
   snapshotVersion: number;
   spendUsd: number;
   createdAt: number;
@@ -115,9 +120,19 @@ export interface AnswerRewindRecord {
 export interface DerivedRollback {
   mimicId: string;
   fromSeq: number;
+  /** Reflection facts written before `facts.seq_up_to` existed, found by the evidence they cite. */
   factIds: string[];
-  /** Job ledger keys to clear so the jobs can run again for the re-answer. */
-  jobKeys: string[];
+}
+
+/**
+ * A guarded write found the mimic's evidence changed since the data it was built from was read: an undo happened
+ * meanwhile (ADR-0034). Nothing was written. Jobs treat it as done; a serve starts again.
+ */
+export class StaleEvidenceError extends Error {
+  constructor() {
+    super('Evidence changed while this was computed');
+    this.name = 'StaleEvidenceError';
+  }
 }
 
 export interface ScoreRecord {
@@ -143,6 +158,8 @@ export interface FactRecord {
   createdAt: number;
   /** When userState last changed (null = never). */
   userStateAt: number | null;
+  /** For `reflection` facts: the seqUpTo of the reflection that wrote it, so an undo can remove it (ADR-0034). */
+  seqUpTo?: number | null;
 }
 
 export interface CandidateRecord {
@@ -312,6 +329,11 @@ export interface ScoredItemSource {
 
 /** Persistence port used by the engine. Implemented with Drizzle over D1 (Workers) and libSQL (Node CLI). */
 export interface Store {
+  /**
+   * This store, with derived writes and serves refused (`StaleEvidenceError`, nothing written) unless the mimic's
+   * `evidenceEpoch` still equals `epoch` in the same batch (ADR-0034).
+   */
+  guarded(mimicId: string, epoch: number): Store;
   // participants
   ensureParticipant(id: string, now: number): Promise<void>;
   // configs & experiments
@@ -381,7 +403,8 @@ export interface Store {
   listAnswers(mimicId: string): Promise<AnswerRecord[]>;
   /**
    * Atomically stores the answer, marks the question answered and writes the scores. Returns false, writing
-   * nothing, if the answer's seq or idempotency key is already taken (the question moved, or a duplicate raced).
+   * nothing, if the question is no longer served at the answer's seq (feedback moved it, or an undo discarded it) or
+   * the idempotency key is already taken.
    */
   recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }): Promise<boolean>;
   /**
@@ -397,24 +420,20 @@ export interface Store {
   }): Promise<boolean>;
   /**
    * Atomically retracts `rewind.answerId` (ADR-0034): records the rewind, deletes the answer and its question's scores,
-   * puts the question back to `served`, discards every question served after it (as `discardServedAfter`), inserts
-   * `requeue` into the pool, drops fidelity rows from `rewind.seq` on and applies `derived`. Returns the IDs it
-   * discarded, or null (and changes nothing) if the answer is no longer there.
+   * puts the question back to `served`, discards every session question served after it (deleting their
+   * predictions), inserts `requeue` into the pool, drops fidelity rows from `rewind.seq` on, rolls back `derived` and
+   * bumps `evidence_epoch`. It applies only if, inside the batch, the answer still exists and nothing was answered,
+   * asked or taught after it; otherwise it changes nothing and returns null. Returns the discarded question IDs and
+   * the removed fact IDs.
    */
   rewindAnswer(args: {
     rewind: AnswerRewindRecord;
     requeue: QuestionRecord[];
     derived: DerivedRollback;
-  }): Promise<string[] | null>;
-  /**
-   * Discards served, unanswered session questions with seq > `seq`, deleting their predictions (ADR-0034). Returns
-   * the discarded IDs.
-   */
-  discardServedAfter(mimicId: string, seq: number): Promise<string[]>;
-  /** Removes derived rows built from evidence at or after `fromSeq` (ADR-0034). */
-  rollbackDerived(args: DerivedRollback): Promise<void>;
+  }): Promise<{ discarded: string[]; factIds: string[] } | null>;
   getAnswerRewindByIdempotencyKey(key: string): Promise<AnswerRewindRecord | null>;
   listAnswerRewinds(mimicId: string): Promise<AnswerRewindRecord[]>;
+  /** Scores whose answer no longer exists (undone, ADR-0034) are not written. */
   insertScores(recs: ScoreRecord[]): Promise<void>;
   listScoredPredictions(mimicId: string, roles: PredictionRole[]): Promise<ScoredPredictionRow[]>;
   // derived state

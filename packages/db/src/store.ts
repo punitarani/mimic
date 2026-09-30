@@ -31,10 +31,13 @@ import {
   type ScoredItemSource,
   type ScoredPredictionRow,
   type ScoreRecord,
+  SESSION_KINDS,
   type SnapshotRecord,
+  StaleEvidenceError,
   type Store,
   type TraitRecord,
 } from '@mimic/core';
+import type { SQL } from 'drizzle-orm';
 import {
   and,
   asc,
@@ -117,6 +120,7 @@ const toMimic = (r: MRow): MimicRecord => ({
   consentResearch: r.consentResearch,
   split: r.split,
   seqMax: r.seqMax,
+  evidenceEpoch: r.evidenceEpoch,
   snapshotVersion: r.snapshotVersion,
   spendUsd: r.spendUsd,
   createdAt: r.createdAt,
@@ -127,6 +131,17 @@ const toMimic = (r: MRow): MimicRecord => ({
 function isUniqueViolation(e: unknown): boolean {
   return /UNIQUE constraint failed/i.test(String((e as { cause?: unknown }).cause ?? e));
 }
+
+/**
+ * A batch guard fired. Guards set a NOT NULL column from a subquery that is NULL when the condition fails, which
+ * aborts the whole batch (a D1 batch is one transaction) with no trigger and no extra round trip (ADR-0034).
+ */
+function isGuardViolation(e: unknown, column: string): boolean {
+  return String((e as { cause?: unknown }).cause ?? e).includes(`NOT NULL constraint failed: ${column}`);
+}
+
+/** Session kinds as SQL values, from the same list as `isSessionKind`. */
+const SESSION_KIND_LIST = [...SESSION_KINDS];
 
 const toQuestion = (r: QRow): QuestionRecord => {
   const q: QuestionRecord = {
@@ -246,15 +261,62 @@ function idChunks(ids: string[]): string[][] {
 }
 
 export class DrizzleStore implements Store {
-  constructor(readonly db: MimicDb) {}
+  constructor(
+    readonly db: MimicDb,
+    private readonly epoch: { mimicId: string; epoch: number } | null = null,
+  ) {}
+
+  guarded(mimicId: string, epoch: number): Store {
+    return new DrizzleStore(this.db, { mimicId, epoch });
+  }
+
+  /**
+   * Sets the mimic's `updated_at` to itself, or to NULL (aborting the batch) when `evidence_epoch` moved on
+   * (ADR-0034). The subquery aliases the table so it reads the stored row, not the one being updated.
+   */
+  private epochGuard(mimicId: string, epoch: number) {
+    return this.db
+      .update(s.mimics)
+      .set({
+        updatedAt: sql`(select g.updated_at from mimics g where g.id = ${mimicId} and g.evidence_epoch = ${epoch})`,
+      })
+      .where(eq(s.mimics.id, mimicId));
+  }
+
+  /**
+   * Runs statements as one batch, behind the epoch guard when this store is guarded. Returns each statement's
+   * result (the guard's is dropped).
+   */
+  private async write(stmts: BatchItem<'sqlite'>[]): Promise<unknown[]> {
+    if (!stmts.length) return [];
+    if (!this.epoch) return this.db.batch(stmts as Batch);
+    try {
+      const res = await this.db.batch([
+        this.epochGuard(this.epoch.mimicId, this.epoch.epoch),
+        ...stmts,
+      ] as Batch);
+      return res.slice(1);
+    } catch (e) {
+      if (isGuardViolation(e, 'mimics.updated_at')) throw new StaleEvidenceError();
+      throw e;
+    }
+  }
+
+  /** Insert statements for `rows`, chunked by their column count to stay under D1's parameter limit. */
+  private inserts<T extends object>(
+    table: Parameters<MimicDb['insert']>[0],
+    rows: T[],
+  ): BatchItem<'sqlite'>[] {
+    if (!rows.length) return [];
+    const cols = Object.keys(rows[0]!).length;
+    return chunk(rows, cols).map((part) => this.db.insert(table).values(part as never));
+  }
 
   private async insertChunked<T extends object>(
     table: Parameters<MimicDb['insert']>[0],
     rows: T[],
   ): Promise<void> {
-    if (!rows.length) return;
-    const cols = Object.keys(rows[0]!).length;
-    for (const part of chunk(rows, cols)) await this.db.insert(table).values(part as never);
+    await this.write(this.inserts(table, rows));
   }
 
   // participants
@@ -452,7 +514,8 @@ export class DrizzleStore implements Store {
       stmts.push(this.db.insert(s.predictions).values(part));
     }
     try {
-      await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+      // Guarded, a serve whose state was built before an undo writes nothing (ADR-0034).
+      await this.write(stmts);
     } catch (e) {
       if (isUniqueViolation(e)) return false;
       throw e;
@@ -500,22 +563,30 @@ export class DrizzleStore implements Store {
     return rows.map(toAnswer);
   }
   async recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }) {
+    const a = args.answer;
     const stmts: BatchItem<'sqlite'>[] = [
-      this.db.insert(s.answers).values(args.answer),
-      this.db
-        .update(s.questions)
-        .set({ status: 'answered' })
-        .where(eq(s.questions.id, args.answer.questionId)),
+      // The guard: the seq comes from the question, still served at that seq. Feedback that moved it (ADR-0032) or
+      // an undo that discarded it (ADR-0034) leaves it NULL, and the whole batch aborts, so no answer ever lands on a
+      // question that isn't being asked.
+      this.db.insert(s.answers).values({
+        ...a,
+        seq: sql`(select q.seq from questions q where q.id = ${a.questionId} and q.status = 'served' and q.seq = ${a.seq})`,
+      }),
+      this.db.update(s.questions).set({ status: 'answered' }).where(eq(s.questions.id, a.questionId)),
     ];
     // A shadow racing an undo can leave a score for the retracted answer; this answer's scores replace it.
     for (const ids of idChunks(args.scores.map((x) => x.predictionId)))
       stmts.push(this.db.delete(s.scores).where(inArray(s.scores.predictionId, ids)));
-    const scoreRows = args.scores.map((x) => ({ ...x, mimicId: args.answer.mimicId }));
-    for (const part of chunk(scoreRows, 8)) stmts.push(this.db.insert(s.scores).values(part));
+    stmts.push(
+      ...this.inserts(
+        s.scores,
+        args.scores.map((x) => ({ ...x, mimicId: a.mimicId })),
+      ),
+    );
     try {
-      await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+      await this.db.batch(stmts as Batch);
     } catch (e) {
-      if (isUniqueViolation(e)) return false;
+      if (isUniqueViolation(e) || isGuardViolation(e, 'answers.seq')) return false;
       throw e;
     }
     return true;
@@ -561,19 +632,25 @@ export class DrizzleStore implements Store {
     return true;
   }
   async insertScores(recs: ScoreRecord[]) {
-    if (!recs.length) return;
-    const answers = await this.db
-      .select({ id: s.answers.id, mimicId: s.answers.mimicId })
-      .from(s.answers)
-      .where(inArray(s.answers.id, [...new Set(recs.map((r) => r.answerId))]))
-      .all();
-    const mimicOf = new Map(answers.map((a) => [a.id, a.mimicId]));
-    // An answer that is gone (undone, ADR-0034) scores nothing.
-    const rows = recs.flatMap((r) => {
-      const mimicId = mimicOf.get(r.answerId);
-      return mimicId ? [{ ...r, mimicId }] : [];
-    });
-    for (const part of chunk(rows, 8)) await this.db.insert(s.scores).values(part).onConflictDoNothing();
+    const byAnswer = new Map<string, ScoreRecord[]>();
+    for (const r of recs) byAnswer.set(r.answerId, [...(byAnswer.get(r.answerId) ?? []), r]);
+    for (const [answerId, rows] of byAnswer) {
+      // Each row takes its mimic_id from its answer in the same statement, so a score for an answer undone
+      // meanwhile (ADR-0034) aborts instead of landing as an orphan.
+      const mimicId = sql`(select a.mimic_id from answers a where a.id = ${answerId})`;
+      try {
+        await this.write(
+          chunk(rows, 8).map((part) =>
+            this.db
+              .insert(s.scores)
+              .values(part.map((r) => ({ ...r, mimicId })))
+              .onConflictDoNothing(),
+          ),
+        );
+      } catch (e) {
+        if (!isGuardViolation(e, 'scores.mimic_id')) throw e;
+      }
+    }
   }
 
   // rewinds (ADR-0034)
@@ -582,124 +659,87 @@ export class DrizzleStore implements Store {
     requeue: QuestionRecord[];
     derived: DerivedRollback;
   }) {
-    const { rewind, requeue, derived } = args;
-    const still = await this.db
-      .select({ id: s.answers.id })
-      .from(s.answers)
-      .where(eq(s.answers.id, rewind.answerId))
-      .get();
-    if (!still) return null;
-    const predsOf = (questionIds: string[]) =>
-      this.db
-        .select({ id: s.predictions.id })
-        .from(s.predictions)
-        .where(inArray(s.predictions.questionId, questionIds));
-    // First: a concurrent undo of the same answer fails here (unique answer_id) and the whole batch rolls back.
+    const { rewind: r, requeue, derived } = args;
+    const t = r.seq;
+    const sessionKinds = sql.join(
+      SESSION_KIND_LIST.map((k) => sql`${k}`),
+      sql`, `,
+    );
+    // The guard, checked inside the batch: the answer is still there, nothing was answered after it, and nothing was
+    // asked or taught on the mimic page after it. Otherwise `value` is NULL and the whole batch aborts.
+    const guarded = sql`(select a.value from answers a where a.id = ${r.answerId}
+      and not exists (select 1 from answers b where b.mimic_id = ${r.mimicId} and b.seq > ${t})
+      and not exists (select 1 from questions q where q.mimic_id = ${r.mimicId} and q.seq > ${t}
+        and q.kind not in (${sessionKinds})))`;
+    const predsOf = this.db
+      .select({ id: s.predictions.id })
+      .from(s.predictions)
+      .where(eq(s.predictions.questionId, r.questionId));
+    // A concurrent undo of the same answer fails on the unique answer_id, also aborting the batch.
     const stmts: BatchItem<'sqlite'>[] = [
-      this.db.insert(s.answerRewinds).values(rewind),
+      this.db.insert(s.answerRewinds).values({ ...r, value: guarded }),
       this.db
         .delete(s.scores)
-        .where(
-          or(
-            eq(s.scores.answerId, rewind.answerId),
-            inArray(s.scores.predictionId, predsOf([rewind.questionId])),
-          ),
-        ),
-      this.db.delete(s.answers).where(eq(s.answers.id, rewind.answerId)),
+        .where(or(eq(s.scores.answerId, r.answerId), inArray(s.scores.predictionId, predsOf))),
+      this.db.delete(s.answers).where(eq(s.answers.id, r.answerId)),
       this.db
         .update(s.questions)
         .set({ status: 'served' })
-        .where(and(eq(s.questions.id, rewind.questionId), eq(s.questions.status, 'answered'))),
+        .where(and(eq(s.questions.id, r.questionId), eq(s.questions.status, 'answered'))),
     ];
-    // By condition rather than by ID, so a serve that committed after the engine read is caught too.
-    const discard = this.discardStmts(rewind.mimicId, rewind.seq);
-    stmts.push(...discard.stmts);
+    // By condition, not by the IDs the engine read, so a serve that committed after that read is caught too.
+    stmts.push(...this.discardStmts(r.mimicId, t));
     const discardAt = stmts.length - 1;
-    for (const part of chunk(requeue.map(fromQuestion), 19))
-      stmts.push(this.db.insert(s.questions).values(part));
     stmts.push(
-      this.db
-        .delete(s.fidelity)
-        .where(and(eq(s.fidelity.mimicId, rewind.mimicId), gte(s.fidelity.seqUpTo, rewind.seq))),
+      ...this.inserts(s.questions, requeue.map(fromQuestion)),
+      this.db.delete(s.fidelity).where(and(eq(s.fidelity.mimicId, r.mimicId), gte(s.fidelity.seqUpTo, t))),
+      // Derived writes and serves still holding the old epoch are refused from here on (Store.guarded).
       this.db
         .update(s.mimics)
-        .set({ seqMax: rewind.seq, updatedAt: rewind.rewoundAt })
-        .where(eq(s.mimics.id, rewind.mimicId)),
-      ...this.derivedStmts(derived),
+        .set({ seqMax: t, evidenceEpoch: sql`${s.mimics.evidenceEpoch} + 1`, updatedAt: r.rewoundAt })
+        .where(eq(s.mimics.id, r.mimicId)),
     );
+    const derivedAt = stmts.length;
+    const d = this.derivedStmts(derived);
+    stmts.push(...d.stmts);
     try {
       const res = await this.db.batch(stmts as Batch);
-      return (res[discardAt] as Array<{ id: string }>).map((r) => r.id);
+      const ids = (x: unknown) => (x as Array<{ id: string }>).map((row) => row.id);
+      return {
+        discarded: ids(res[discardAt]),
+        factIds: d.factsAt.flatMap((i) => ids(res[derivedAt + i])),
+      };
     } catch (e) {
-      if (/UNIQUE constraint failed/i.test(String((e as { cause?: unknown }).cause ?? e))) return null;
+      if (isUniqueViolation(e) || isGuardViolation(e, 'answer_rewinds.value')) return null;
       throw e;
     }
   }
-  async discardServedAfter(mimicId: string, seq: number) {
-    const { stmts } = this.discardStmts(mimicId, seq);
-    const res = await this.db.batch(stmts as Batch);
-    return (res.at(-1) as Array<{ id: string }>).map((r) => r.id);
-  }
-  /** The last statement returns the discarded question IDs. */
-  private discardStmts(mimicId: string, seq: number): { stmts: BatchItem<'sqlite'>[] } {
+  /** Discards served session questions after `seq`, with their predictions; the last statement returns their IDs. */
+  private discardStmts(mimicId: string, seq: number): BatchItem<'sqlite'>[] {
     const q = s.questions;
     const servedAfter = and(
       eq(q.mimicId, mimicId),
       gt(q.seq, seq),
       eq(q.status, 'served'),
-      inArray(q.kind, ['anchor', 'adaptive', 'repeat']),
+      inArray(q.kind, SESSION_KIND_LIST),
     );
     const ids = this.db.select({ id: q.id }).from(q).where(servedAfter);
     const preds = this.db
       .select({ id: s.predictions.id })
       .from(s.predictions)
       .where(inArray(s.predictions.questionId, ids));
-    return {
-      stmts: [
-        this.db.delete(s.scores).where(inArray(s.scores.predictionId, preds)),
-        this.db.delete(s.predictions).where(inArray(s.predictions.questionId, ids)),
-        this.db.update(q).set({ status: 'discarded', seq: null }).where(servedAfter).returning({ id: q.id }),
-      ],
-    };
-  }
-  async rollbackDerived(args: DerivedRollback) {
-    await this.db.batch(this.derivedStmts(args) as Batch);
+    return [
+      this.db.delete(s.scores).where(inArray(s.scores.predictionId, preds)),
+      this.db.delete(s.predictions).where(inArray(s.predictions.questionId, ids)),
+      this.db.update(q).set({ status: 'discarded', seq: null }).where(servedAfter).returning({ id: q.id }),
+    ];
   }
   /**
    * Derived rows built from evidence at or after `fromSeq`. Trait estimates are rebuilt from what remains of the
-   * history with the monotonic upsert's rule (highest seqUpTo, first write wins ties), so they match it exactly.
+   * history with the same query serving and replay read. `factsAt` indexes the statements returning removed facts.
    */
-  private derivedStmts(d: DerivedRollback): BatchItem<'sqlite'>[] {
+  private derivedStmts(d: DerivedRollback): { stmts: BatchItem<'sqlite'>[]; factsAt: number[] } {
     const { mimicId, fromSeq } = d;
-    // Query builder only (no raw `run`): D1's batch accepts built queries, and this runs on D1 and libSQL alike.
-    const h = s.traitHistory;
-    const { id: _id, ...cols } = getTableColumns(h);
-    const ranked = this.db
-      .select({
-        ...cols,
-        rn: sql<number>`row_number() over (partition by ${h.facetId}, ${h.method} order by ${h.seqUpTo} desc, ${h.id} asc)`.as(
-          'rn',
-        ),
-      })
-      .from(h)
-      .where(eq(h.mimicId, mimicId))
-      .as('ranked');
-    const latest = this.db
-      .select({
-        mimicId: ranked.mimicId,
-        facetId: ranked.facetId,
-        method: ranked.method,
-        seqUpTo: ranked.seqUpTo,
-        mean: ranked.mean,
-        distJson: ranked.distJson,
-        confidence: ranked.confidence,
-        nEvidence: ranked.nEvidence,
-        configHash: ranked.configHash,
-        modelSnapshot: ranked.modelSnapshot,
-        createdAt: ranked.createdAt,
-      })
-      .from(ranked)
-      .where(eq(ranked.rn, 1));
     const insightsFrom = this.db
       .select({ id: s.insights.id })
       .from(s.insights)
@@ -709,7 +749,7 @@ export class DrizzleStore implements Store {
         .delete(s.traitHistory)
         .where(and(eq(s.traitHistory.mimicId, mimicId), gte(s.traitHistory.seqUpTo, fromSeq))),
       this.db.delete(s.traitEstimates).where(eq(s.traitEstimates.mimicId, mimicId)),
-      this.db.insert(s.traitEstimates).select(latest),
+      this.db.insert(s.traitEstimates).select(this.latestTraits(eq(s.traitHistory.mimicId, mimicId))),
       this.db
         .update(s.insights)
         .set({ status: 'active', statusChangedAt: null, supersededSeq: null })
@@ -727,42 +767,44 @@ export class DrizzleStore implements Store {
         .delete(s.insights)
         .where(and(eq(s.insights.mimicId, mimicId), gte(s.insights.seqUpTo, fromSeq))),
     ];
-    for (const ids of idChunks(d.factIds)) {
+    // Reflection facts from a reflection at or after `fromSeq`, whatever they cite; older rows by citation.
+    const factsAt: number[] = [];
+    const factGroups = [undefined, ...idChunks(d.factIds)];
+    for (const legacy of factGroups) {
+      const cond = and(
+        eq(s.facts.mimicId, mimicId),
+        eq(s.facts.source, 'reflection'),
+        legacy ? inArray(s.facts.id, legacy) : gte(s.facts.seqUpTo, fromSeq),
+      );
+      const factIds = this.db.select({ id: s.facts.id }).from(s.facts).where(cond);
       stmts.push(
         this.db
           .delete(s.kgEdges)
-          .where(and(eq(s.kgEdges.mimicId, mimicId), inArray(s.kgEdges.sourceRef, ids))),
-        this.db.delete(s.facts).where(and(eq(s.facts.mimicId, mimicId), inArray(s.facts.id, ids))),
+          .where(and(eq(s.kgEdges.mimicId, mimicId), inArray(s.kgEdges.sourceRef, factIds))),
       );
+      factsAt.push(stmts.length);
+      stmts.push(this.db.delete(s.facts).where(cond).returning({ id: s.facts.id }));
     }
-    // Reflection nodes left without an edge.
+    const edgesOf = (col: typeof s.kgEdges.src | typeof s.kgEdges.dst) =>
+      this.db.select({ id: col }).from(s.kgEdges).where(eq(s.kgEdges.mimicId, mimicId));
     stmts.push(
+      // Reflection nodes left without an edge.
       this.db
         .delete(s.kgNodes)
         .where(
           and(
             eq(s.kgNodes.mimicId, mimicId),
             eq(s.kgNodes.source, 'reflection'),
-            notInArray(
-              s.kgNodes.id,
-              this.db.select({ id: s.kgEdges.dst }).from(s.kgEdges).where(eq(s.kgEdges.mimicId, mimicId)),
-            ),
-            notInArray(
-              s.kgNodes.id,
-              this.db.select({ id: s.kgEdges.src }).from(s.kgEdges).where(eq(s.kgEdges.mimicId, mimicId)),
-            ),
+            notInArray(s.kgNodes.id, edgesOf(s.kgEdges.dst)),
+            notInArray(s.kgNodes.id, edgesOf(s.kgEdges.src)),
           ),
         ),
-    );
-    // Persona drafts cite the evidence up to their seq (ADR-0033); the page drafts again on request.
-    stmts.push(
+      // Persona drafts cite the evidence up to their seq (ADR-0033); the page drafts again on request.
       this.db
         .delete(s.personaDrafts)
         .where(and(eq(s.personaDrafts.mimicId, mimicId), gte(s.personaDrafts.seqUpTo, fromSeq))),
     );
-    for (const keys of idChunks(d.jobKeys))
-      stmts.push(this.db.delete(s.jobs).where(inArray(s.jobs.key, keys)));
-    return stmts;
+    return { stmts, factsAt };
   }
   async getAnswerRewindByIdempotencyKey(key: string) {
     const r = await this.db
@@ -826,7 +868,11 @@ export class DrizzleStore implements Store {
       .all();
     return rows.map(({ id: _id, ...r }) => toTrait(r));
   }
-  async listTraitsAsOf(mimicId: string, at: number, beforeSeq: number) {
+  /**
+   * Per facet and method, the history row with the highest seqUpTo among `where`, first write winning ties: the
+   * monotonic upsert's rule. Serving, replay and the undo's rebuild of `trait_estimates` all use this one query.
+   */
+  private latestTraits(where: SQL | undefined) {
     const h = s.traitHistory;
     const { id: _id, ...cols } = getTableColumns(h);
     const ranked = this.db
@@ -837,10 +883,31 @@ export class DrizzleStore implements Store {
         ),
       })
       .from(h)
-      .where(and(eq(h.mimicId, mimicId), lte(h.createdAt, at), lt(h.seqUpTo, beforeSeq)))
+      .where(where)
       .as('ranked');
-    const rows = await this.db.select().from(ranked).where(eq(ranked.rank, 1)).all();
-    return rows.map(({ rank: _rank, ...r }) => toTrait(r));
+    return this.db
+      .select({
+        mimicId: ranked.mimicId,
+        facetId: ranked.facetId,
+        method: ranked.method,
+        seqUpTo: ranked.seqUpTo,
+        mean: ranked.mean,
+        distJson: ranked.distJson,
+        confidence: ranked.confidence,
+        nEvidence: ranked.nEvidence,
+        configHash: ranked.configHash,
+        modelSnapshot: ranked.modelSnapshot,
+        createdAt: ranked.createdAt,
+      })
+      .from(ranked)
+      .where(eq(ranked.rank, 1));
+  }
+  async listTraitsAsOf(mimicId: string, at: number, beforeSeq: number) {
+    const h = s.traitHistory;
+    const rows = await this.latestTraits(
+      and(eq(h.mimicId, mimicId), lte(h.createdAt, at), lt(h.seqUpTo, beforeSeq)),
+    ).all();
+    return rows.map(toTrait);
   }
   async upsertTraits(recs: TraitRecord[]) {
     if (!recs.length) return 0;
@@ -867,8 +934,8 @@ export class DrizzleStore implements Store {
           }),
       );
     }
-    for (const part of chunk(rows, 11)) stmts.push(this.db.insert(s.traitHistory).values(part));
-    await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    stmts.push(...this.inserts(s.traitHistory, rows));
+    await this.write(stmts);
     return rows.length;
   }
   async listInsights(mimicId: string): Promise<InsightRecord[]> {
@@ -904,10 +971,12 @@ export class DrizzleStore implements Store {
     );
   }
   async updateInsightStatus(id: string, status: InsightRecord['status'], at: number, seq?: number) {
-    await this.db
-      .update(s.insights)
-      .set({ status, statusChangedAt: at, supersededSeq: status === 'superseded' ? (seq ?? null) : null })
-      .where(eq(s.insights.id, id));
+    await this.write([
+      this.db
+        .update(s.insights)
+        .set({ status, statusChangedAt: at, supersededSeq: status === 'superseded' ? (seq ?? null) : null })
+        .where(eq(s.insights.id, id)),
+    ]);
   }
   async listKg(mimicId: string) {
     const [nodes, edges] = await Promise.all([
@@ -930,14 +999,14 @@ export class DrizzleStore implements Store {
     };
   }
   async insertKg(nodes: KgNodeRecord[], edges: KgEdgeRecord[]) {
-    if (nodes.length) {
-      const rows = nodes.map(({ props, ...n }) => ({ ...n, propsJson: JSON.stringify(props) }));
-      for (const part of chunk(rows, 7)) await this.db.insert(s.kgNodes).values(part).onConflictDoNothing();
-    }
-    await this.insertChunked(s.kgEdges, edges);
+    const rows = nodes.map(({ props, ...n }) => ({ ...n, propsJson: JSON.stringify(props) }));
+    await this.write([
+      ...chunk(rows, 7).map((part) => this.db.insert(s.kgNodes).values(part).onConflictDoNothing()),
+      ...this.inserts(s.kgEdges, edges),
+    ]);
   }
   async insertFidelity(rec: FidelityRecord) {
-    await this.db.insert(s.fidelity).values(rec);
+    await this.write([this.db.insert(s.fidelity).values(rec)]);
   }
   async listFidelity(mimicId: string) {
     const rows = await this.db
@@ -949,7 +1018,7 @@ export class DrizzleStore implements Store {
     return rows.map(({ id: _id, ...r }) => r);
   }
   async insertSnapshot(rec: SnapshotRecord) {
-    await this.db.insert(s.snapshots).values(rec);
+    await this.write([this.db.insert(s.snapshots).values(rec)]);
   }
   async listSnapshots(mimicId: string) {
     return this.db
@@ -987,9 +1056,11 @@ export class DrizzleStore implements Store {
   // Persona.md (ADR-0033)
   async insertPersonaDraft(rec: PersonaDraftRecord) {
     const { draft, ...row } = rec;
-    await this.db
-      .insert(s.personaDrafts)
-      .values({ ...row, draftJson: JSON.stringify(PersonaDraft.parse(draft)) });
+    await this.write([
+      this.db
+        .insert(s.personaDrafts)
+        .values({ ...row, draftJson: JSON.stringify(PersonaDraft.parse(draft)) }),
+    ]);
   }
   async latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null> {
     const row = await this.db

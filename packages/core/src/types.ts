@@ -14,8 +14,9 @@ export function learnsFrom(kind: QKind): boolean {
 }
 
 /** Kinds the session serves. `playground` and `feedback` are written by the person on the mimic page instead. */
+export const SESSION_KINDS = ['anchor', 'adaptive', 'repeat'] as const satisfies readonly QKind[];
 export function isSessionKind(kind: QKind): boolean {
-  return kind === 'anchor' || kind === 'adaptive' || kind === 'repeat';
+  return (SESSION_KINDS as readonly QKind[]).includes(kind);
 }
 
 /** Kinds scored for fidelity, shadows and backfill (PLAN §9.10): the session's new questions. */
