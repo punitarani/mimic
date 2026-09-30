@@ -7,6 +7,7 @@ import {
   type MimicData,
   pickRepeat,
   SECTION_BUDGETS,
+  toStateEvidence,
   validateDraft,
 } from '../src';
 
@@ -186,6 +187,50 @@ describe('state builder (PLAN §9.9)', () => {
       answer: 'Option A for 1',
       options: ['Option A for 1', 'Option B for 1'],
     });
+  });
+
+  it('marks decisive and torn answers with latency hints, from the median over the sealed evidence', () => {
+    const m = mimic(12);
+    for (const e of m.evidence) e.latencyMs = 3000;
+    m.evidence[1]!.latencyMs = 500; // quick
+    m.evidence[2]!.latencyMs = 9000; // slow
+    m.evidence[11]!.latencyMs = 100; // seq 12: quick, but only when sealed in
+    const s = buildState(m, opts({ latencyHints: true, beforeSeq: 12 }));
+    expect(s.meta.builder).toBe('full.v2');
+    expect(s.evidence[0]!.pace).toBeUndefined();
+    expect(s.evidence[1]!.pace).toBe('quick');
+    expect(s.evidence[2]!.pace).toBe('slow');
+    expect(s.evidence.map((e) => e.seq)).not.toContain(12);
+    const plain = buildState(m, opts({ beforeSeq: 12 }));
+    expect(plain.meta.builder).toBe('full.v1');
+    expect(plain.evidence.every((e) => e.pace === undefined)).toBe(true);
+    expect(plain.meta.stateHash).not.toBe(s.meta.stateHash);
+    // The hints are deterministic and need at least three timed answers.
+    expect(buildState(m, opts({ latencyHints: true, beforeSeq: 12 })).meta.stateHash).toBe(s.meta.stateHash);
+    const few = mimic(2);
+    few.evidence[0]!.latencyMs = 100;
+    few.evidence[1]!.latencyMs = 9000;
+    expect(buildState(few, opts({ latencyHints: true })).evidence.every((e) => e.pace === undefined)).toBe(
+      true,
+    );
+    expect(buildState(m, opts({ latencyHints: true, contextOnly: true })).meta.builder).toBe('context.v1');
+  });
+
+  it('`xs.map(toStateEvidence)` never injects a median (the index is not a latency)', () => {
+    const items = Array.from({ length: 5 }, (_, i) => item(i + 1, { latencyMs: 3000 }));
+    // The compiler rejects `items.map(toStateEvidence)` now; the runtime guard covers untyped callers.
+    const mapped = items.map((e, i) => toStateEvidence(e, i as unknown as { medianLatencyMs: number }));
+    expect(mapped.every((e) => e.pace === undefined)).toBe(true);
+    expect(
+      items.map((e) => toStateEvidence(e, { medianLatencyMs: 3000 })).every((e) => e.pace === undefined),
+    ).toBe(true);
+    expect(toStateEvidence(item(1, { latencyMs: 100 }), { medianLatencyMs: 3000 }).pace).toBe('quick');
+    // The budget is costed as rendered: with hints on, pace marks count toward it.
+    const m = mimic(200);
+    for (const e of m.evidence) e.latencyMs = e.seq % 2 ? 100 : 30000;
+    const s = buildState(m, opts({ budgetTokens: 2000, latencyHints: true }));
+    expect(s.meta.tokens).toBeLessThanOrEqual(2000);
+    expect(s.evidence.some((e) => e.pace !== undefined)).toBe(true);
   });
 });
 

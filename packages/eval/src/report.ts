@@ -80,10 +80,11 @@ export function renderReport(run: EvalRunRecord): string {
     lines.push(
       '## Pool-restricted selection (biased; iteration only)',
       '',
-      '| Budget | People | Accuracy on the rest |',
-      '| --- | --- | --- |',
+      '| Selector | Budget | People | Accuracy on the rest |',
+      '| --- | --- | --- | --- |',
       ...((m.results as Array<Record<string, unknown>>) ?? []).map(
-        (r) => `| ${String(r.budget)} | ${String(r.people)} | ${pct(r.accuracy)} |`,
+        (r) =>
+          `| ${String(r.selector ?? (spec.selector as { type?: string } | undefined)?.type ?? '')} | ${String(r.budget)} | ${String(r.people)} | ${pct(r.accuracy)} |`,
       ),
       '',
     );

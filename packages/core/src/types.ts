@@ -88,6 +88,11 @@ export interface StateEvidence {
   options: string[];
   answer: string;
   why?: string;
+  /**
+   * With `stateBuilder.latencyHints`: 'quick' when answered in under half the person's median latency (a decisive
+   * answer), 'slow' when over twice it (a torn one). Docs/SELECTION.md §8.
+   */
+  pace?: 'quick' | 'slow';
 }
 
 export interface PersonState {
