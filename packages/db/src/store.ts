@@ -1,0 +1,686 @@
+import {
+  type AnswerRecord,
+  type CandidateRecord,
+  type ConfigRecord,
+  type EvalRunRecord,
+  type ExperimentRecord,
+  type FactRecord,
+  type FidelityRecord,
+  type InsightRecord,
+  type JobRecord,
+  type KgEdgeRecord,
+  type KgNodeRecord,
+  type MimicFacetRecord,
+  type MimicRecord,
+  type ModelCallRecord,
+  Option,
+  type PredictionRecord,
+  type PredictionRole,
+  type QuestionRecord,
+  type QuestionStatus,
+  type ScoredPredictionRow,
+  type ScoreRecord,
+  type SnapshotRecord,
+  type Store,
+  type TraitRecord,
+} from '@mimic/core';
+import { and, asc, desc, eq, gte, inArray, like, sql } from 'drizzle-orm';
+import type { BatchItem, BatchResponse } from 'drizzle-orm/batch';
+import type { BaseSQLiteDatabase } from 'drizzle-orm/sqlite-core';
+import { z } from 'zod';
+import * as s from './schema';
+
+type Schema = typeof s;
+/** D1 (Workers) and libSQL (Node) drizzle databases both satisfy this: async + atomic batch. */
+export type MimicDb = BaseSQLiteDatabase<'async', unknown, Schema> & {
+  batch<U extends BatchItem<'sqlite'>, T extends Readonly<[U, ...U[]]>>(batch: T): Promise<BatchResponse<T>>;
+};
+
+/** D1 allows at most 100 bound parameters per statement. */
+const MAX_PARAMS = 100;
+
+function chunk<T>(rows: T[], cols: number): T[][] {
+  const size = Math.max(1, Math.floor(MAX_PARAMS / cols));
+  const out: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out;
+}
+
+function parse<T>(schema: z.ZodType<T>, text: string | null | undefined, fallback: T): T {
+  if (text === null || text === undefined) return fallback;
+  const r = schema.safeParse(JSON.parse(text));
+  if (!r.success) throw new Error(`Invalid JSON column: ${r.error.message}`);
+  return r.data;
+}
+
+const Dist = z.record(z.string(), z.number());
+const StrArr = z.array(z.string());
+const IntArr = z.array(z.number().int());
+const Options = z.array(Option);
+const Obj = z.record(z.string(), z.unknown());
+const Arms = z.array(z.object({ arm: z.string(), configHash: z.string(), weight: z.number() }));
+
+type QRow = typeof s.questions.$inferSelect;
+type PRow = typeof s.predictions.$inferSelect;
+type MRow = typeof s.mimics.$inferSelect;
+type TRow = typeof s.traitEstimates.$inferSelect;
+
+const toMimic = (r: MRow): MimicRecord => ({
+  id: r.id,
+  participantId: r.participantId,
+  displayName: r.displayName,
+  location: r.location,
+  occupation: r.occupation,
+  employer: r.employer,
+  links: parse(StrArr, r.linksJson, []),
+  status: r.status,
+  identityState: r.identityState,
+  configHash: r.configHash,
+  experimentId: r.experimentId,
+  arm: r.arm,
+  consentApp: r.consentApp,
+  consentSearch: r.consentSearch,
+  consentResearch: r.consentResearch,
+  split: r.split,
+  seqMax: r.seqMax,
+  snapshotVersion: r.snapshotVersion,
+  spendUsd: r.spendUsd,
+  createdAt: r.createdAt,
+  updatedAt: r.updatedAt,
+});
+
+const toQuestion = (r: QRow): QuestionRecord => {
+  const q: QuestionRecord = {
+    id: r.id,
+    mimicId: r.mimicId,
+    seq: r.seq,
+    kind: r.kind,
+    type: r.type,
+    domain: r.domain,
+    prompt: r.prompt,
+    options: parse(Options, r.optionsJson, []),
+    facetIds: parse(StrArr, r.facetIdsJson, []),
+    provenance: { generator: r.generator, configHash: r.configHash, promptVersion: r.promptVersion },
+    status: r.status,
+    quality: parse(Obj, r.qualityJson, null as Record<string, unknown> | null),
+    createdAt: r.createdAt,
+    servedAt: r.servedAt,
+  };
+  if (r.repeatOf) q.repeatOf = r.repeatOf;
+  if (r.itemKey) q.itemKey = r.itemKey;
+  return q;
+};
+
+const fromQuestion = (q: QuestionRecord): typeof s.questions.$inferInsert => ({
+  id: q.id,
+  mimicId: q.mimicId,
+  seq: q.seq,
+  kind: q.kind,
+  type: q.type,
+  domain: q.domain,
+  prompt: q.prompt,
+  optionsJson: JSON.stringify(q.options),
+  facetIdsJson: JSON.stringify(q.facetIds),
+  repeatOf: q.repeatOf ?? null,
+  itemKey: q.itemKey ?? null,
+  status: q.status,
+  configHash: q.provenance.configHash,
+  promptVersion: q.provenance.promptVersion,
+  generator: q.provenance.generator,
+  qualityJson: q.quality ? JSON.stringify(q.quality) : null,
+  createdAt: q.createdAt,
+  servedAt: q.servedAt,
+});
+
+const toPrediction = (r: PRow): PredictionRecord => ({
+  id: r.id,
+  questionId: r.questionId,
+  mimicId: r.mimicId,
+  predictorId: r.predictorId,
+  role: r.role,
+  dist: parse(Dist, r.distJson, {}),
+  confidence: r.confidence,
+  stateHash: r.stateHash,
+  evidenceSeqMax: r.evidenceSeqMax,
+  configHash: r.configHash,
+  promptVersion: r.promptVersion,
+  modelSnapshot: r.modelSnapshot,
+  costUsd: r.costUsd,
+  latencyMs: r.latencyMs,
+  ok: r.ok,
+  error: r.error,
+  fallback: r.fallback,
+  createdAt: r.createdAt,
+});
+
+const fromPrediction = (p: PredictionRecord): typeof s.predictions.$inferInsert => ({
+  ...p,
+  distJson: JSON.stringify(p.dist),
+});
+
+const toTrait = (r: TRow): TraitRecord => ({
+  mimicId: r.mimicId,
+  facetId: r.facetId,
+  method: r.method,
+  seqUpTo: r.seqUpTo,
+  mean: r.mean,
+  dist: parse(Dist, r.distJson, {}),
+  confidence: r.confidence,
+  nEvidence: r.nEvidence,
+  configHash: r.configHash,
+  modelSnapshot: r.modelSnapshot,
+  createdAt: r.createdAt,
+});
+
+const fromTrait = (t: TraitRecord) => ({
+  mimicId: t.mimicId,
+  facetId: t.facetId,
+  method: t.method,
+  seqUpTo: t.seqUpTo,
+  mean: t.mean,
+  distJson: JSON.stringify(t.dist),
+  confidence: t.confidence,
+  nEvidence: t.nEvidence,
+  configHash: t.configHash,
+  modelSnapshot: t.modelSnapshot,
+  createdAt: t.createdAt,
+});
+
+const toAnswer = (r: typeof s.answers.$inferSelect): AnswerRecord => ({ ...r });
+
+export class DrizzleStore implements Store {
+  constructor(readonly db: MimicDb) {}
+
+  private async insertChunked<T extends object>(
+    table: Parameters<MimicDb['insert']>[0],
+    rows: T[],
+  ): Promise<void> {
+    if (!rows.length) return;
+    const cols = Object.keys(rows[0]!).length;
+    for (const part of chunk(rows, cols)) await this.db.insert(table).values(part as never);
+  }
+
+  // participants
+  async ensureParticipant(id: string, now: number) {
+    await this.db.insert(s.participants).values({ id, createdAt: now }).onConflictDoNothing();
+  }
+
+  // configs & experiments
+  async putConfig(rec: ConfigRecord) {
+    await this.db.insert(s.configs).values(rec).onConflictDoNothing();
+  }
+  async getConfig(hash: string) {
+    return (await this.db.select().from(s.configs).where(eq(s.configs.hash, hash)).get()) ?? null;
+  }
+  async listConfigs() {
+    return this.db.select().from(s.configs).orderBy(asc(s.configs.createdAt)).all();
+  }
+  async putExperiment(rec: ExperimentRecord) {
+    const row = {
+      id: rec.id,
+      name: rec.name,
+      status: rec.status,
+      armsJson: JSON.stringify(rec.arms),
+      createdAt: rec.createdAt,
+    };
+    await this.db
+      .insert(s.experiments)
+      .values(row)
+      .onConflictDoUpdate({
+        target: s.experiments.id,
+        set: { name: row.name, status: row.status, armsJson: row.armsJson },
+      });
+  }
+  async listExperiments(): Promise<ExperimentRecord[]> {
+    const rows = await this.db.select().from(s.experiments).orderBy(asc(s.experiments.createdAt)).all();
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      status: r.status,
+      arms: parse(Arms, r.armsJson, []),
+      createdAt: r.createdAt,
+    }));
+  }
+
+  // mimics
+  async insertMimic(m: MimicRecord) {
+    const { links, ...rest } = m;
+    await this.db.insert(s.mimics).values({ ...rest, linksJson: JSON.stringify(links) });
+  }
+  async getMimic(id: string) {
+    const r = await this.db.select().from(s.mimics).where(eq(s.mimics.id, id)).get();
+    return r ? toMimic(r) : null;
+  }
+  async listMimics(filter: { participantId?: string; consentResearch?: boolean }) {
+    const conds = [];
+    if (filter.participantId) conds.push(eq(s.mimics.participantId, filter.participantId));
+    if (filter.consentResearch !== undefined)
+      conds.push(eq(s.mimics.consentResearch, filter.consentResearch));
+    const rows = await this.db
+      .select()
+      .from(s.mimics)
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(s.mimics.createdAt))
+      .all();
+    return rows.map(toMimic);
+  }
+  async updateMimic(id: string, patch: Partial<Omit<MimicRecord, 'id'>>) {
+    const { links, ...rest } = patch;
+    const set: Partial<typeof s.mimics.$inferInsert> = { ...rest };
+    if (links) set.linksJson = JSON.stringify(links);
+    if (Object.keys(set).length) await this.db.update(s.mimics).set(set).where(eq(s.mimics.id, id));
+  }
+  async addSpend(id: string, usd: number) {
+    await this.db
+      .update(s.mimics)
+      .set({ spendUsd: sql`${s.mimics.spendUsd} + ${usd}` })
+      .where(eq(s.mimics.id, id));
+  }
+  async deleteMimic(id: string) {
+    const stmts = [
+      ...s.MIMIC_TABLES.map((t) => this.db.delete(t).where(eq(t.mimicId, id))),
+      this.db.delete(s.jobs).where(like(s.jobs.key, `%:${id}%`)),
+      this.db.delete(s.mimics).where(eq(s.mimics.id, id)),
+    ];
+    await this.db.batch(stmts as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+
+  // identity
+  async insertCandidates(recs: CandidateRecord[]) {
+    await this.insertChunked(s.identityCandidates, recs);
+  }
+  async listCandidates(mimicId: string) {
+    return this.db
+      .select()
+      .from(s.identityCandidates)
+      .where(eq(s.identityCandidates.mimicId, mimicId))
+      .orderBy(asc(s.identityCandidates.rank))
+      .all();
+  }
+  async updateCandidate(id: string, patch: Partial<Pick<CandidateRecord, 'status' | 'jevSamePersonP'>>) {
+    await this.db.update(s.identityCandidates).set(patch).where(eq(s.identityCandidates.id, id));
+  }
+  async insertFacts(recs: FactRecord[]) {
+    await this.insertChunked(s.facts, recs);
+  }
+  async listFacts(mimicId: string) {
+    return this.db
+      .select()
+      .from(s.facts)
+      .where(eq(s.facts.mimicId, mimicId))
+      .orderBy(asc(s.facts.createdAt))
+      .all();
+  }
+  async updateFact(mimicId: string, id: string, patch: Pick<FactRecord, 'userState'>) {
+    const r = await this.db
+      .update(s.facts)
+      .set(patch)
+      .where(and(eq(s.facts.id, id), eq(s.facts.mimicId, mimicId)))
+      .returning({ id: s.facts.id });
+    return r.length > 0;
+  }
+
+  // questions
+  async insertQuestions(recs: QuestionRecord[]) {
+    await this.insertChunked(s.questions, recs.map(fromQuestion));
+  }
+  async getQuestion(id: string) {
+    const r = await this.db.select().from(s.questions).where(eq(s.questions.id, id)).get();
+    return r ? toQuestion(r) : null;
+  }
+  async listQuestions(mimicId: string, status?: QuestionStatus[]) {
+    const rows = await this.db
+      .select()
+      .from(s.questions)
+      .where(
+        status?.length
+          ? and(eq(s.questions.mimicId, mimicId), inArray(s.questions.status, status))
+          : eq(s.questions.mimicId, mimicId),
+      )
+      .orderBy(asc(s.questions.createdAt))
+      .all();
+    return rows.map(toQuestion);
+  }
+  async updateQuestionStatus(id: string, status: QuestionStatus) {
+    await this.db.update(s.questions).set({ status }).where(eq(s.questions.id, id));
+  }
+  async serveQuestion(args: {
+    questionId: string;
+    mimicId: string;
+    seq: number;
+    servedAt: number;
+    predictions: PredictionRecord[];
+  }) {
+    const stmts: BatchItem<'sqlite'>[] = [
+      this.db
+        .update(s.questions)
+        .set({ seq: args.seq, status: 'served', servedAt: args.servedAt })
+        .where(and(eq(s.questions.id, args.questionId), eq(s.questions.status, 'pooled'))),
+      this.db
+        .update(s.mimics)
+        .set({ seqMax: sql`max(${s.mimics.seqMax}, ${args.seq})`, updatedAt: args.servedAt })
+        .where(eq(s.mimics.id, args.mimicId)),
+    ];
+    for (const part of chunk(args.predictions.map(fromPrediction), 19)) {
+      stmts.push(this.db.insert(s.predictions).values(part));
+    }
+    try {
+      await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    } catch (e) {
+      if (/UNIQUE constraint failed/i.test(String((e as { cause?: unknown }).cause ?? e))) return false;
+      throw e;
+    }
+    const q = await this.getQuestion(args.questionId);
+    return q?.seq === args.seq && q.status === 'served';
+  }
+
+  // predictions & answers
+  async insertPredictions(recs: PredictionRecord[]) {
+    await this.insertChunked(s.predictions, recs.map(fromPrediction));
+  }
+  async listPredictions(filter: { mimicId?: string; questionId?: string; roles?: PredictionRole[] }) {
+    const conds = [];
+    if (filter.mimicId) conds.push(eq(s.predictions.mimicId, filter.mimicId));
+    if (filter.questionId) conds.push(eq(s.predictions.questionId, filter.questionId));
+    if (filter.roles?.length) conds.push(inArray(s.predictions.role, filter.roles));
+    const rows = await this.db
+      .select()
+      .from(s.predictions)
+      .where(and(...conds))
+      .orderBy(asc(s.predictions.createdAt))
+      .all();
+    return rows.map(toPrediction);
+  }
+  async getAnswerByIdempotencyKey(key: string) {
+    const r = await this.db.select().from(s.answers).where(eq(s.answers.idempotencyKey, key)).get();
+    return r ? toAnswer(r) : null;
+  }
+  async getAnswerForQuestion(questionId: string) {
+    const r = await this.db.select().from(s.answers).where(eq(s.answers.questionId, questionId)).get();
+    return r ? toAnswer(r) : null;
+  }
+  async listAnswers(mimicId: string) {
+    const rows = await this.db
+      .select()
+      .from(s.answers)
+      .where(eq(s.answers.mimicId, mimicId))
+      .orderBy(asc(s.answers.seq))
+      .all();
+    return rows.map(toAnswer);
+  }
+  async recordAnswer(args: { answer: AnswerRecord; scores: ScoreRecord[] }) {
+    const stmts: BatchItem<'sqlite'>[] = [
+      this.db.insert(s.answers).values(args.answer),
+      this.db
+        .update(s.questions)
+        .set({ status: 'answered' })
+        .where(eq(s.questions.id, args.answer.questionId)),
+    ];
+    const scoreRows = args.scores.map((x) => ({ ...x, mimicId: args.answer.mimicId }));
+    for (const part of chunk(scoreRows, 8)) stmts.push(this.db.insert(s.scores).values(part));
+    await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+  async insertScores(recs: ScoreRecord[]) {
+    if (!recs.length) return;
+    const answers = await this.db
+      .select({ id: s.answers.id, mimicId: s.answers.mimicId })
+      .from(s.answers)
+      .where(inArray(s.answers.id, [...new Set(recs.map((r) => r.answerId))]))
+      .all();
+    const mimicOf = new Map(answers.map((a) => [a.id, a.mimicId]));
+    const rows = recs.map((r) => ({ ...r, mimicId: mimicOf.get(r.answerId) ?? '' }));
+    for (const part of chunk(rows, 8)) await this.db.insert(s.scores).values(part).onConflictDoNothing();
+  }
+  async listScoredPredictions(mimicId: string, roles: PredictionRole[]): Promise<ScoredPredictionRow[]> {
+    const rows = await this.db
+      .select({ p: s.predictions, sc: s.scores, q: s.questions })
+      .from(s.scores)
+      .innerJoin(s.predictions, eq(s.predictions.id, s.scores.predictionId))
+      .innerJoin(s.questions, eq(s.questions.id, s.predictions.questionId))
+      .where(and(eq(s.scores.mimicId, mimicId), inArray(s.predictions.role, roles)))
+      .orderBy(asc(s.questions.seq))
+      .all();
+    return rows.map((r) => ({
+      prediction: toPrediction(r.p),
+      score: {
+        predictionId: r.sc.predictionId,
+        answerId: r.sc.answerId,
+        top1: r.sc.top1,
+        itemAcc: r.sc.itemAcc,
+        logLoss: r.sc.logLoss,
+        brier: r.sc.brier,
+        createdAt: r.sc.createdAt,
+      },
+      question: {
+        id: r.q.id,
+        kind: r.q.kind,
+        type: r.q.type,
+        seq: r.q.seq,
+        ...(r.q.itemKey ? { itemKey: r.q.itemKey } : {}),
+      },
+    }));
+  }
+
+  // derived state
+  async listTraits(mimicId: string) {
+    return (
+      await this.db.select().from(s.traitEstimates).where(eq(s.traitEstimates.mimicId, mimicId)).all()
+    ).map(toTrait);
+  }
+  async listTraitHistory(mimicId: string) {
+    const rows = await this.db
+      .select()
+      .from(s.traitHistory)
+      .where(eq(s.traitHistory.mimicId, mimicId))
+      .orderBy(asc(s.traitHistory.id))
+      .all();
+    return rows.map(({ id: _id, ...r }) => toTrait(r));
+  }
+  async upsertTraits(recs: TraitRecord[]) {
+    if (!recs.length) return 0;
+    const rows = recs.map(fromTrait);
+    const stmts: BatchItem<'sqlite'>[] = [];
+    for (const row of rows) {
+      stmts.push(
+        this.db
+          .insert(s.traitEstimates)
+          .values(row)
+          .onConflictDoUpdate({
+            target: [s.traitEstimates.mimicId, s.traitEstimates.facetId, s.traitEstimates.method],
+            set: {
+              seqUpTo: row.seqUpTo,
+              mean: row.mean,
+              distJson: row.distJson,
+              confidence: row.confidence,
+              nEvidence: row.nEvidence,
+              configHash: row.configHash,
+              modelSnapshot: row.modelSnapshot,
+              createdAt: row.createdAt,
+            },
+            setWhere: sql`excluded.seq_up_to > ${s.traitEstimates.seqUpTo}`,
+          }),
+      );
+    }
+    for (const part of chunk(rows, 11)) stmts.push(this.db.insert(s.traitHistory).values(part));
+    await this.db.batch(stmts as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+    return rows.length;
+  }
+  async listInsights(mimicId: string): Promise<InsightRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(s.insights)
+      .where(eq(s.insights.mimicId, mimicId))
+      .orderBy(asc(s.insights.createdAt))
+      .all();
+    return rows.map((r) => ({
+      id: r.id,
+      mimicId: r.mimicId,
+      seqUpTo: r.seqUpTo,
+      text: r.text,
+      facetIds: parse(StrArr, r.facetIdsJson, []),
+      evidenceSeqs: parse(IntArr, r.evidenceSeqsJson, []),
+      confidence: r.confidence,
+      model: r.model,
+      promptVersion: r.promptVersion,
+      status: r.status,
+      createdAt: r.createdAt,
+    }));
+  }
+  async insertInsights(recs: InsightRecord[]) {
+    await this.insertChunked(
+      s.insights,
+      recs.map(({ facetIds, evidenceSeqs, ...r }) => ({
+        ...r,
+        facetIdsJson: JSON.stringify(facetIds),
+        evidenceSeqsJson: JSON.stringify(evidenceSeqs),
+      })),
+    );
+  }
+  async updateInsightStatus(id: string, status: InsightRecord['status']) {
+    await this.db.update(s.insights).set({ status }).where(eq(s.insights.id, id));
+  }
+  async listKg(mimicId: string) {
+    const [nodes, edges] = await Promise.all([
+      this.db
+        .select()
+        .from(s.kgNodes)
+        .where(eq(s.kgNodes.mimicId, mimicId))
+        .orderBy(asc(s.kgNodes.createdAt))
+        .all(),
+      this.db
+        .select()
+        .from(s.kgEdges)
+        .where(eq(s.kgEdges.mimicId, mimicId))
+        .orderBy(asc(s.kgEdges.createdAt))
+        .all(),
+    ]);
+    return {
+      nodes: nodes.map(({ propsJson, ...n }): KgNodeRecord => ({ ...n, props: parse(Obj, propsJson, {}) })),
+      edges: edges as KgEdgeRecord[],
+    };
+  }
+  async insertKg(nodes: KgNodeRecord[], edges: KgEdgeRecord[]) {
+    if (nodes.length) {
+      const rows = nodes.map(({ props, ...n }) => ({ ...n, propsJson: JSON.stringify(props) }));
+      for (const part of chunk(rows, 7)) await this.db.insert(s.kgNodes).values(part).onConflictDoNothing();
+    }
+    await this.insertChunked(s.kgEdges, edges);
+  }
+  async insertFidelity(rec: FidelityRecord) {
+    await this.db.insert(s.fidelity).values(rec);
+  }
+  async listFidelity(mimicId: string) {
+    const rows = await this.db
+      .select()
+      .from(s.fidelity)
+      .where(eq(s.fidelity.mimicId, mimicId))
+      .orderBy(asc(s.fidelity.seqUpTo), asc(s.fidelity.id))
+      .all();
+    return rows.map(({ id: _id, ...r }) => r);
+  }
+  async insertSnapshot(rec: SnapshotRecord) {
+    await this.db.insert(s.snapshots).values(rec);
+  }
+  async listSnapshots(mimicId: string) {
+    return this.db
+      .select()
+      .from(s.snapshots)
+      .where(eq(s.snapshots.mimicId, mimicId))
+      .orderBy(asc(s.snapshots.version))
+      .all();
+  }
+  async listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]> {
+    const rows = await this.db
+      .select()
+      .from(s.mimicFacets)
+      .where(eq(s.mimicFacets.mimicId, mimicId))
+      .orderBy(asc(s.mimicFacets.createdAt))
+      .all();
+    return rows.map((r) => ({
+      mimicId: r.mimicId,
+      facet: JSON.parse(r.json),
+      source: r.source,
+      createdAt: r.createdAt,
+    }));
+  }
+  async insertMimicFacets(recs: MimicFacetRecord[]) {
+    const rows = recs.map((r) => ({
+      mimicId: r.mimicId,
+      facetId: r.facet.id,
+      json: JSON.stringify(r.facet),
+      source: r.source,
+      createdAt: r.createdAt,
+    }));
+    for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
+  }
+
+  // jobs
+  async getJob(key: string) {
+    return (await this.db.select().from(s.jobs).where(eq(s.jobs.key, key)).get()) ?? null;
+  }
+  async putJob(rec: JobRecord) {
+    await this.db
+      .insert(s.jobs)
+      .values(rec)
+      .onConflictDoUpdate({
+        target: s.jobs.key,
+        set: {
+          status: rec.status,
+          attempts: rec.attempts,
+          lastError: rec.lastError,
+          updatedAt: rec.updatedAt,
+        },
+      });
+  }
+
+  // observability
+  async insertModelCall(rec: ModelCallRecord) {
+    await this.db.insert(s.modelCalls).values(rec);
+  }
+  async listModelCalls(filter: { mimicId?: string; since?: number; limit?: number }) {
+    const conds = [];
+    if (filter.mimicId) conds.push(eq(s.modelCalls.mimicId, filter.mimicId));
+    if (filter.since) conds.push(gte(s.modelCalls.createdAt, filter.since));
+    return this.db
+      .select()
+      .from(s.modelCalls)
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(s.modelCalls.createdAt))
+      .limit(filter.limit ?? 1000)
+      .all();
+  }
+
+  // evals
+  async putEvalRun(rec: EvalRunRecord) {
+    const row = {
+      id: rec.id,
+      name: rec.name,
+      specJson: JSON.stringify(rec.spec),
+      datasetHash: rec.datasetHash,
+      status: rec.status,
+      metricsJson: rec.metrics ? JSON.stringify(rec.metrics) : null,
+      r2ReportKey: rec.r2ReportKey,
+      createdAt: rec.createdAt,
+    };
+    await this.db
+      .insert(s.evalRuns)
+      .values(row)
+      .onConflictDoUpdate({
+        target: s.evalRuns.id,
+        set: { status: row.status, metricsJson: row.metricsJson, r2ReportKey: row.r2ReportKey },
+      });
+  }
+  async listEvalRuns(): Promise<EvalRunRecord[]> {
+    const rows = await this.db.select().from(s.evalRuns).orderBy(desc(s.evalRuns.createdAt)).all();
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      spec: parse(Obj, r.specJson, {}),
+      datasetHash: r.datasetHash,
+      status: r.status,
+      metrics: parse(Obj, r.metricsJson, null as Record<string, unknown> | null),
+      r2ReportKey: r.r2ReportKey,
+      createdAt: r.createdAt,
+    }));
+  }
+}

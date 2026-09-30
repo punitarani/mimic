@@ -1,0 +1,538 @@
+import { hashJson } from '../hash';
+import { type Job, jobKey } from '../jobs';
+import {
+  generateCandidates,
+  generateHypotheses,
+  generateOccupationFacets,
+  psychometricTraits,
+  readTraits,
+  reflect,
+  runQualityGates,
+} from '../learning';
+import { getAnchorSet } from '../ontology';
+import { makePredictor } from '../predictors';
+import { scorePrediction } from '../scoring';
+import { facetCoverage } from '../selectors';
+import { buildState, cosine, toStateEvidence } from '../state-builder';
+import type { FactRecord, InsightRecord, KgEdgeRecord, KgNodeRecord, QuestionRecord } from '../store';
+import type { Domain, PersonState } from '../types';
+import { writeSnapshot } from './artifact';
+import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
+import { ctxFor, type EngineDeps, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
+import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
+import { JEV_PROMPT_VERSION, MAX_POOL, MIN_POOL } from './session';
+
+export const MAX_JOB_ATTEMPTS = 5;
+
+/**
+ * Runs one job idempotently via the `jobs` ledger (PLAN §6.4). Returns 'skipped' for duplicates. Throws on failure
+ * so the queue retries with backoff; after MAX_JOB_ATTEMPTS the queue's dead-letter queue takes over.
+ */
+export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skipped'> {
+  const key = jobKey(job);
+  const prev = await deps.store.getJob(key);
+  if (prev?.status === 'done') return 'skipped';
+  const attempts = (prev?.attempts ?? 0) + 1;
+  await deps.store.putJob({
+    key,
+    type: job.type,
+    status: 'running',
+    attempts,
+    lastError: null,
+    updatedAt: deps.clock(),
+  });
+  try {
+    await dispatch(deps, job, key);
+    await deps.store.putJob({
+      key,
+      type: job.type,
+      status: 'done',
+      attempts,
+      lastError: null,
+      updatedAt: deps.clock(),
+    });
+    return 'done';
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await deps.store.putJob({
+      key,
+      type: job.type,
+      status: 'failed',
+      attempts,
+      lastError: msg.slice(0, 1000),
+      updatedAt: deps.clock(),
+    });
+    throw e;
+  }
+}
+
+async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> {
+  // A job for a deleted mimic is a no-op.
+  if (job.type !== 'noop' && !(await deps.store.getMimic(job.mimicId))) return;
+  switch (job.type) {
+    case 'noop':
+      return;
+    case 'identity.search':
+      return runIdentitySearch(deps, job.mimicId, key);
+    case 'identity.enrich':
+      return runIdentityEnrich(deps, job.mimicId, job.candidateId, key);
+    case 'pool.refill':
+      return runPoolRefill(deps, job.mimicId, key);
+    case 'predict.shadow':
+      return runShadow(deps, job.mimicId, job.questionId, job.predictorId, key);
+    case 'learn.answer':
+      return runLearn(deps, job.mimicId, job.seq, key);
+    case 'hypotheses.refresh':
+      return runHypotheses(deps, job.mimicId, job.seqUpTo, key);
+    case 'snapshot.write':
+      await writeSnapshot(deps, job.mimicId, job.seqUpTo);
+      return;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// predict.shadow (PLAN §9.6): the same sealed state (identical stateHash) as the primary.
+// ---------------------------------------------------------------------------------------------------------------
+
+export async function runShadow(
+  deps: EngineDeps,
+  mimicId: string,
+  questionId: string,
+  predictorId: string,
+  key?: string,
+): Promise<void> {
+  const m = await requireMimic(deps, mimicId);
+  const q = await deps.store.getQuestion(questionId);
+  if (!q || q.mimicId !== m.id) return;
+  const preds = await deps.store.listPredictions({ questionId });
+  if (preds.some((p) => p.role === 'shadow' && p.predictorId === predictorId)) return;
+  const primary = preds.find((p) => p.role === 'primary');
+  if (!primary) return;
+  const raw = await deps.blobs.get(stateBlobKey(m.id, primary.stateHash));
+  if (!raw) throw new Error(`Sealed state ${primary.stateHash} missing`);
+  const state = JSON.parse(raw) as PersonState;
+  const { meta, ...body } = state;
+  if (hashJson(body) !== meta.stateHash) throw new Error('Sealed state hash mismatch');
+
+  const predictor = makePredictor(deps.gateway, predictorId, ctxFor(m, 'predict.shadow', key));
+  const [r] = await predictor.predict(state, [q]);
+  const now = deps.clock();
+  const rec = {
+    id: deps.newId(),
+    questionId: q.id,
+    mimicId: m.id,
+    predictorId,
+    role: 'shadow' as const,
+    dist: r!.dist,
+    confidence: r!.confidence ?? null,
+    stateHash: meta.stateHash,
+    evidenceSeqMax: meta.evidenceSeqMax,
+    configHash: m.configHash,
+    promptVersion: predictorId.startsWith('jev:') ? JEV_PROMPT_VERSION : 'predict.v1',
+    modelSnapshot: r!.modelSnapshot,
+    costUsd: r!.costUsd,
+    latencyMs: r!.latencyMs,
+    ok: r!.ok,
+    error: r!.error ?? null,
+    fallback: false,
+    createdAt: now,
+  };
+  await deps.store.insertPredictions([rec]);
+  // Sealing is defined by state contents, so a shadow may finish after the answer and still be scored.
+  const answer = await deps.store.getAnswerForQuestion(q.id);
+  if (answer && rec.ok) {
+    await deps.store.insertScores([
+      {
+        predictionId: rec.id,
+        answerId: answer.id,
+        ...scorePrediction(q.type, rec.dist, answer.value),
+        createdAt: now,
+      },
+    ]);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// pool.refill (PLAN §9.4)
+// ---------------------------------------------------------------------------------------------------------------
+
+export const DEDUPE_SIMILARITY = 0.9;
+
+export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: string): Promise<void> {
+  const m = await requireMimic(deps, mimicId);
+  const cfg = await loadConfig(deps, m.configHash);
+  const loaded = await loadMimicData(deps, m);
+  const pool = loaded.questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled');
+  if (pool.length >= MIN_POOL) return;
+  if (m.spendUsd >= cfg.session.budgetUsd) return;
+  const facets = await facetsFor(deps, m, cfg);
+  const counts = facetCounts(loaded.questions);
+  for (const q of pool) for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
+  const traitConf = new Map(
+    loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t.confidence]),
+  );
+  const targets = [...facets]
+    .sort(
+      (a, b) =>
+        facetCoverage(counts, a.id) - facetCoverage(counts, b.id) ||
+        (traitConf.get(a.id) ?? 0) - (traitConf.get(b.id) ?? 0) ||
+        a.id.localeCompare(b.id),
+    )
+    .slice(0, 5)
+    .map((f) => f.id);
+  const n = Math.min(cfg.generator.batchSize, MAX_POOL - pool.length + 4);
+  const mix = cfg.generator.domainMix;
+  const total = mix.core + mix.casual + mix.professional || 1;
+  const quota: Record<Domain, number> = {
+    core: Math.round((n * mix.core) / total),
+    casual: Math.round((n * mix.casual) / total),
+    professional: 0,
+  };
+  quota.professional = Math.max(0, n - quota.core - quota.casual);
+
+  const state = buildState(
+    loaded.data,
+    stateOptions(cfg, Number.MAX_SAFE_INTEGER, { strategy: 'structured' }),
+  );
+  const traitSummary = (state.traits ?? [])
+    .filter((t) => t.confidence >= 0.3)
+    .slice(0, 12)
+    .map((t) => `${t.facet}=${t.mean}`)
+    .join(', ');
+  const recent = loaded.questions
+    .filter((q) => q.seq !== null)
+    .sort((a, b) => (b.seq ?? 0) - (a.seq ?? 0))
+    .slice(0, 10)
+    .map((q) => q.prompt);
+  const ctx = ctxFor(m, 'pool.generate', key);
+  const gen = await generateCandidates(deps.gateway, ctx, {
+    model: cfg.generator.model,
+    reasoningEffort: cfg.generator.reasoningEffort,
+    facets,
+    targets,
+    quota,
+    identity: state.identity,
+    traitSummary,
+    recentPrompts: recent,
+    n,
+  });
+  if (!gen.drafts.length) return;
+
+  const gates = await runQualityGates(deps.gateway, ctxFor(m, 'pool.gate', key), jevModel(deps), gen.drafts);
+  const passed = gen.drafts.map((d, i) => ({ d, g: gates[i]! })).filter((x) => x.g.passed);
+  if (!passed.length) return;
+
+  // Dedupe: cosine > 0.9 against asked or pooled questions, and within the batch.
+  let vectors: number[][] | null = null;
+  try {
+    vectors = (
+      await deps.gateway.embed(
+        ctxFor(m, 'embed.question', key),
+        passed.map((x) => x.d.prompt),
+      )
+    ).vectors;
+  } catch {
+    vectors = null;
+  }
+  const existing = loaded.questions.filter((q) => q.kind !== 'repeat' && q.status !== 'discarded');
+  const existingVecs = vectors
+    ? await deps.vectors.getByIds(existing.map((q) => vectorId.question(m.id, q.id))).catch(() => [])
+    : [];
+  const kept: Array<{ d: (typeof passed)[number]['d']; g: (typeof passed)[number]['g']; v?: number[] }> = [];
+  const lowerPrompts = new Set(existing.map((q) => q.prompt.toLowerCase()));
+  passed.forEach((x, i) => {
+    if (lowerPrompts.has(x.d.prompt.toLowerCase())) return;
+    const v = vectors?.[i];
+    if (v) {
+      const dup =
+        existingVecs.some((e) => cosine(e.values, v) > DEDUPE_SIMILARITY) ||
+        kept.some((k) => k.v && cosine(k.v, v) > DEDUPE_SIMILARITY);
+      if (dup) return;
+    }
+    lowerPrompts.add(x.d.prompt.toLowerCase());
+    kept.push(v ? { ...x, v } : x);
+  });
+
+  const now = deps.clock();
+  const recs: QuestionRecord[] = kept.slice(0, MAX_POOL - pool.length).map(({ d, g }, i) => ({
+    id: deps.newId(),
+    mimicId: m.id,
+    seq: null,
+    kind: 'adaptive',
+    type: d.type,
+    domain: d.domain,
+    prompt: d.prompt,
+    options: d.options,
+    facetIds: d.facetIds,
+    provenance: {
+      generator: cfg.generator.model,
+      configHash: m.configHash,
+      promptVersion: cfg.generator.promptVersion,
+    },
+    status: 'pooled',
+    quality: { gates: g.p, rationale: d.rationale ?? null },
+    createdAt: now + i,
+    servedAt: null,
+  }));
+  if (!recs.length) return;
+  await deps.store.insertQuestions(recs);
+  const vecRecs = recs.flatMap((r, i) => {
+    const v = kept[i]?.v;
+    return v
+      ? [
+          {
+            id: vectorId.question(m.id, r.id),
+            values: v,
+            metadata: { mimicId: m.id, kind: 'question' as const, facetIds: r.facetIds.join(','), seq: 0 },
+          },
+        ]
+      : [];
+  });
+  if (vecRecs.length) await deps.vectors.upsert(vecRecs).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// learn.answer (PLAN §9.8)
+// ---------------------------------------------------------------------------------------------------------------
+
+export const SNAPSHOT_DEBOUNCE_SECONDS = 10;
+
+export async function runLearn(deps: EngineDeps, mimicId: string, seq: number, key?: string): Promise<void> {
+  const m = await requireMimic(deps, mimicId);
+  const cfg = await loadConfig(deps, m.configHash);
+  const loaded = await loadMimicData(deps, m);
+  const item = loaded.data.evidence.find((e) => e.seq === seq);
+  if (!item || (item.kind !== 'anchor' && item.kind !== 'adaptive')) return;
+  const learnable = loaded.data.evidence.filter((e) => e.kind === 'anchor' || e.kind === 'adaptive');
+  const nAnswered = learnable.filter((e) => e.seq <= seq).length;
+
+  // 1) Embed the Q&A (plus the "why").
+  try {
+    const text = `${item.prompt} → ${toStateEvidence(item).answer}${item.why ? ` (why: ${item.why})` : ''}`;
+    const emb = await deps.gateway.embed(ctxFor(m, 'embed.qa', key), [text]);
+    await deps.vectors.upsert([
+      {
+        id: vectorId.qa(m.id, seq),
+        values: emb.vectors[0]!,
+        metadata: { mimicId: m.id, kind: 'qa', facetIds: item.facetIds.join(','), seq },
+      },
+    ]);
+  } catch {
+    // Index only; rebuildable from evidence.
+  }
+
+  const facets = await facetsFor(deps, m, cfg);
+
+  // 2) Trait read (Jev) on the state including this answer; psychometric scoring for Big Five anchors.
+  const traitWrites = [];
+  const psych = psychometricTraits(
+    [
+      {
+        seq,
+        itemKey: loaded.questions.find((q) => q.id === item.questionId)?.itemKey ?? null,
+        answer: item.answer,
+      },
+    ],
+    getAnchorSet(cfg.anchors.setId),
+  );
+  for (const t of psych)
+    traitWrites.push({
+      ...t,
+      mimicId: m.id,
+      configHash: m.configHash,
+      modelSnapshot: null,
+      createdAt: deps.clock(),
+    });
+  if (
+    cfg.traitReader.type === 'jev' &&
+    cfg.traitReader.everyN > 0 &&
+    nAnswered % cfg.traitReader.everyN === 0
+  ) {
+    // Traits are read from identity + evidence only, so a read never anchors on the previous read.
+    const state = buildState(loaded.data, stateOptions(cfg, seq + 1, { strategy: 'raw' }));
+    const counts = new Map<string, number>();
+    for (const e of learnable.filter((x) => x.seq <= seq))
+      for (const f of e.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
+    const { traits, modelSnapshot } = await readTraits(
+      deps.gateway,
+      ctxFor(m, 'traits.read', key),
+      jevModel(deps),
+      state,
+      facets,
+      seq,
+      counts,
+    );
+    for (const t of traits)
+      traitWrites.push({
+        ...t,
+        mimicId: m.id,
+        configHash: m.configHash,
+        modelSnapshot,
+        createdAt: deps.clock(),
+      });
+  }
+  if (traitWrites.length) await deps.store.upsertTraits(traitWrites);
+
+  // 3) Reflection every N answers, with the citation guard.
+  if (cfg.reflector.model && cfg.reflector.everyN > 0 && nAnswered % cfg.reflector.everyN === 0) {
+    await runReflection(deps, m.id, seq, key);
+    if (cfg.selector.type === 'bald')
+      await deps.jobs.enqueue({ type: 'hypotheses.refresh', mimicId: m.id, seqUpTo: seq });
+  }
+
+  // 4) Occupation facets, on the first learn after identity is settled.
+  const settled = m.identityState === 'done' || m.identityState === 'skipped';
+  if (settled && m.occupation && cfg.generator.model && !facets.some((f) => f.occupation)) {
+    try {
+      const occ = await generateOccupationFacets(deps.gateway, ctxFor(m, 'facets.occupation', key), {
+        model: cfg.generator.model,
+        occupation: m.occupation,
+        employer: m.employer,
+      });
+      const known = new Set(facets.map((f) => f.id));
+      const fresh = occ.filter((f) => !known.has(f.id));
+      if (fresh.length) {
+        await deps.store.insertMimicFacets(
+          fresh.map((facet) => ({ mimicId: m.id, facet, source: 'occfacets.v1', createdAt: deps.clock() })),
+        );
+      }
+    } catch {
+      // Optional enrichment; retried on a later learn.
+    }
+  }
+
+  // 5) Debounced snapshot.
+  await deps.jobs.enqueue(
+    { type: 'snapshot.write', mimicId: m.id, seqUpTo: seq },
+    { delaySeconds: SNAPSHOT_DEBOUNCE_SECONDS },
+  );
+}
+
+export async function runReflection(
+  deps: EngineDeps,
+  mimicId: string,
+  seq: number,
+  key?: string,
+): Promise<void> {
+  const m = await requireMimic(deps, mimicId);
+  const cfg = await loadConfig(deps, m.configHash);
+  if (!cfg.reflector.model) return;
+  const loaded = await loadMimicData(deps, m);
+  const existing = loaded.data.insights;
+  if (existing.some((i) => i.seqUpTo >= seq)) return; // monotonic
+  const facets = await facetsFor(deps, m, cfg);
+  const lastReflected = existing.reduce((a, i) => Math.max(a, i.seqUpTo), 0);
+  const learnable = loaded.data.evidence
+    .filter((e) => (e.kind === 'anchor' || e.kind === 'adaptive') && e.seq <= seq)
+    .map(toStateEvidence);
+  const newEvidence = learnable.filter((e) => e.seq > lastReflected);
+  const earlier = learnable.filter((e) => e.seq <= lastReflected).slice(-20);
+  const delta = await reflect(deps.gateway, ctxFor(m, 'reflect', key), {
+    model: cfg.reflector.model,
+    facets,
+    existing: existing.map((i) => ({ id: i.id, text: i.text, evidenceSeqs: i.evidenceSeqs })),
+    newEvidence,
+    earlierEvidence: earlier,
+  });
+  const now = deps.clock();
+  for (const c of delta.contradictions) await deps.store.updateInsightStatus(c.insightId, 'superseded');
+  const insights: InsightRecord[] = delta.insights.map((i) => ({
+    id: deps.newId(),
+    mimicId: m.id,
+    seqUpTo: seq,
+    text: i.text,
+    facetIds: i.facetIds,
+    evidenceSeqs: i.evidenceSeqs,
+    confidence: i.confidence,
+    model: delta.modelSnapshot,
+    promptVersion: cfg.reflector.promptVersion,
+    status: 'active',
+    createdAt: now,
+  }));
+  if (insights.length) await deps.store.insertInsights(insights);
+  const facts: FactRecord[] = delta.facts.map((f) => ({
+    id: deps.newId(),
+    mimicId: m.id,
+    predicate: f.predicate,
+    object: f.object,
+    source: 'reflection',
+    sourceRef: `answers:${f.evidenceSeqs.join(',')}`,
+    sourceUrl: null,
+    confidence: 0.6,
+    userState: 'active',
+    createdAt: now,
+  }));
+  await addFacts(deps, m, facts);
+  // Link insights to facet nodes in the KG.
+  const kg = await deps.store.listKg(m.id);
+  const nodes: KgNodeRecord[] = [];
+  const edges: KgEdgeRecord[] = [];
+  const have = new Set(kg.nodes.map((n) => n.id));
+  for (const i of insights) {
+    for (const f of i.facetIds) {
+      const id = `${m.id}:facet:${f}`;
+      if (!have.has(id)) {
+        have.add(id);
+        nodes.push({
+          id,
+          mimicId: m.id,
+          type: 'Facet',
+          label: facets.find((x) => x.id === f)?.name ?? f,
+          props: { facetId: f },
+          source: 'reflection',
+          createdAt: now,
+        });
+      }
+      edges.push({
+        id: deps.newId(),
+        mimicId: m.id,
+        src: personNodeId(m.id),
+        dst: id,
+        predicate: 'exhibits',
+        weight: i.confidence,
+        source: 'reflection',
+        sourceRef: i.id,
+        createdAt: now,
+      });
+    }
+  }
+  if (nodes.length || edges.length) await deps.store.insertKg(nodes, edges);
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// hypotheses.refresh (BALD, PLAN §9.5)
+// ---------------------------------------------------------------------------------------------------------------
+
+export async function runHypotheses(
+  deps: EngineDeps,
+  mimicId: string,
+  seqUpTo: number,
+  key?: string,
+): Promise<void> {
+  const m = await requireMimic(deps, mimicId);
+  const cfg = await loadConfig(deps, m.configHash);
+  if (cfg.selector.type !== 'bald') return;
+  const cur = await deps.kv.get(`hyp:${m.id}`);
+  if (cur) {
+    try {
+      if ((JSON.parse(cur) as { seqUpTo: number }).seqUpTo >= seqUpTo) return;
+    } catch {}
+  }
+  const loaded = await loadMimicData(deps, m);
+  const state = buildState(loaded.data, stateOptions(cfg, seqUpTo + 1));
+  const facets = await facetsFor(deps, m, cfg);
+  const conf = new Map(
+    loaded.data.traits.filter((t) => t.method === 'jev').map((t) => [t.facetId, t.confidence]),
+  );
+  const lowFacets = [...facets]
+    .sort((a, b) => (conf.get(a.id) ?? 0) - (conf.get(b.id) ?? 0))
+    .slice(0, 6)
+    .map((f) => f.id);
+  const hypotheses = await generateHypotheses(deps.gateway, ctxFor(m, 'hypotheses', key), {
+    model: cfg.reflector.model ?? cfg.generator.model,
+    state,
+    lowFacets,
+    k: cfg.selector.k,
+  });
+  if (hypotheses.length) await deps.kv.put(`hyp:${m.id}`, JSON.stringify({ seqUpTo, hypotheses }));
+}

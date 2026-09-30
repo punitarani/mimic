@@ -1,0 +1,467 @@
+{
+  "version": "v1",
+  "facets": [
+    {
+      "id": "openness",
+      "group": "Personality",
+      "name": "openness",
+      "low": "Prefers the familiar",
+      "high": "Seeks novelty and ideas",
+      "labels": [
+        "Strongly prefers the familiar",
+        "Leans toward the familiar",
+        "Balanced",
+        "Leans toward novelty and ideas",
+        "Strongly seeks novelty and ideas"
+      ]
+    },
+    {
+      "id": "conscientiousness",
+      "group": "Personality",
+      "name": "conscientiousness",
+      "low": "Flexible, spontaneous",
+      "high": "Organized, disciplined",
+      "labels": [
+        "Very flexible and spontaneous",
+        "Leans flexible",
+        "Balanced",
+        "Leans organized",
+        "Very organized and disciplined"
+      ]
+    },
+    {
+      "id": "extraversion",
+      "group": "Personality",
+      "name": "extraversion",
+      "low": "Reserved",
+      "high": "Outgoing",
+      "labels": [
+        "Very reserved",
+        "Leans reserved",
+        "Balanced",
+        "Leans outgoing",
+        "Very outgoing"
+      ]
+    },
+    {
+      "id": "agreeableness",
+      "group": "Personality",
+      "name": "agreeableness",
+      "low": "Challenging",
+      "high": "Accommodating",
+      "labels": [
+        "Very challenging",
+        "Leans challenging",
+        "Balanced",
+        "Leans accommodating",
+        "Very accommodating"
+      ]
+    },
+    {
+      "id": "emotional_stability",
+      "group": "Personality",
+      "name": "emotional stability",
+      "low": "Easily stressed",
+      "high": "Even-keeled",
+      "labels": [
+        "Very easily stressed",
+        "Leans easily stressed",
+        "Balanced",
+        "Leans even-keeled",
+        "Very even-keeled"
+      ]
+    },
+    {
+      "id": "openness_to_change",
+      "group": "Values",
+      "name": "openness to change",
+      "low": "Tradition and stability",
+      "high": "Independence and stimulation",
+      "labels": [
+        "Strongly values tradition and stability",
+        "Leans toward tradition and stability",
+        "Balanced",
+        "Leans toward independence and stimulation",
+        "Strongly values independence and stimulation"
+      ]
+    },
+    {
+      "id": "self_enhancement",
+      "group": "Values",
+      "name": "self-enhancement",
+      "low": "Modest ambitions",
+      "high": "Achievement and status",
+      "labels": [
+        "Very modest ambitions",
+        "Leans modest",
+        "Balanced",
+        "Leans toward achievement and status",
+        "Strongly driven by achievement and status"
+      ]
+    },
+    {
+      "id": "conservation",
+      "group": "Values",
+      "name": "conservation",
+      "low": "Questions rules",
+      "high": "Values order and security",
+      "labels": [
+        "Strongly questions rules",
+        "Leans toward questioning rules",
+        "Balanced",
+        "Leans toward order and security",
+        "Strongly values order and security"
+      ]
+    },
+    {
+      "id": "self_transcendence",
+      "group": "Values",
+      "name": "self-transcendence",
+      "low": "Focus on self",
+      "high": "Focus on others' welfare",
+      "labels": [
+        "Strongly focused on self",
+        "Leans toward self",
+        "Balanced",
+        "Leans toward others' welfare",
+        "Strongly focused on others' welfare"
+      ]
+    },
+    {
+      "id": "risk_tolerance",
+      "group": "Decisions",
+      "name": "risk tolerance",
+      "low": "Avoids risk",
+      "high": "Seeks risk",
+      "labels": [
+        "Strongly avoids risk",
+        "Leans cautious",
+        "Balanced",
+        "Leans toward risk",
+        "Strongly seeks risk"
+      ]
+    },
+    {
+      "id": "patience",
+      "group": "Decisions",
+      "name": "patience",
+      "low": "Wants it now",
+      "high": "Waits for more later",
+      "labels": [
+        "Strongly wants it now",
+        "Leans toward now",
+        "Balanced",
+        "Leans toward waiting for more",
+        "Strongly prefers waiting for more later"
+      ]
+    },
+    {
+      "id": "loss_aversion",
+      "group": "Decisions",
+      "name": "loss aversion",
+      "low": "Losses and gains weigh the same",
+      "high": "Losses loom larger",
+      "labels": [
+        "Losses and gains weigh the same",
+        "Losses weigh slightly more",
+        "Losses weigh somewhat more",
+        "Losses weigh clearly more",
+        "Losses loom much larger than gains"
+      ]
+    },
+    {
+      "id": "ambiguity_tolerance",
+      "group": "Decisions",
+      "name": "ambiguity tolerance",
+      "low": "Needs certainty",
+      "high": "Comfortable with unknowns",
+      "labels": [
+        "Strongly needs certainty",
+        "Leans toward certainty",
+        "Balanced",
+        "Leans comfortable with unknowns",
+        "Very comfortable with unknowns"
+      ]
+    },
+    {
+      "id": "maximizing",
+      "group": "Decisions",
+      "name": "maximizing",
+      "low": "Good enough is fine",
+      "high": "Must find the best",
+      "labels": [
+        "Good enough is always fine",
+        "Leans toward good enough",
+        "Balanced",
+        "Leans toward finding the best",
+        "Must always find the best"
+      ]
+    },
+    {
+      "id": "deliberation",
+      "group": "Decisions",
+      "name": "deliberation",
+      "low": "Goes with gut",
+      "high": "Thinks it through",
+      "labels": [
+        "Always goes with gut",
+        "Leans toward gut",
+        "Balanced",
+        "Leans toward thinking it through",
+        "Always thinks it through"
+      ]
+    },
+    {
+      "id": "trust",
+      "group": "Social",
+      "name": "trust",
+      "low": "Wary of others",
+      "high": "Trusts by default",
+      "labels": [
+        "Very wary of others",
+        "Leans wary",
+        "Balanced",
+        "Leans trusting",
+        "Trusts by default"
+      ]
+    },
+    {
+      "id": "reciprocity",
+      "group": "Social",
+      "name": "reciprocity",
+      "low": "Transactional",
+      "high": "Strongly fair and reciprocal",
+      "labels": [
+        "Very transactional",
+        "Leans transactional",
+        "Balanced",
+        "Leans fair and reciprocal",
+        "Strongly fair and reciprocal"
+      ]
+    },
+    {
+      "id": "conformity",
+      "group": "Social",
+      "name": "conformity",
+      "low": "Goes own way",
+      "high": "Follows the group",
+      "labels": [
+        "Strongly goes own way",
+        "Leans toward own way",
+        "Balanced",
+        "Leans toward the group",
+        "Strongly follows the group"
+      ]
+    },
+    {
+      "id": "conflict_directness",
+      "group": "Social",
+      "name": "conflict directness",
+      "low": "Avoids conflict",
+      "high": "Addresses it head-on",
+      "labels": [
+        "Strongly avoids conflict",
+        "Leans toward avoiding conflict",
+        "Balanced",
+        "Leans toward addressing it",
+        "Addresses conflict head-on"
+      ]
+    },
+    {
+      "id": "autonomy",
+      "group": "Work",
+      "name": "autonomy",
+      "low": "Prefers direction",
+      "high": "Prefers full ownership",
+      "labels": [
+        "Strongly prefers direction",
+        "Leans toward direction",
+        "Balanced",
+        "Leans toward ownership",
+        "Strongly prefers full ownership"
+      ]
+    },
+    {
+      "id": "planning",
+      "group": "Work",
+      "name": "planning",
+      "low": "Improvises",
+      "high": "Plans ahead",
+      "labels": [
+        "Always improvises",
+        "Leans toward improvising",
+        "Balanced",
+        "Leans toward planning",
+        "Always plans ahead"
+      ]
+    },
+    {
+      "id": "detail_orientation",
+      "group": "Work",
+      "name": "detail orientation",
+      "low": "Big picture",
+      "high": "Details",
+      "labels": [
+        "Strongly big-picture",
+        "Leans big-picture",
+        "Balanced",
+        "Leans detail-oriented",
+        "Strongly detail-oriented"
+      ]
+    },
+    {
+      "id": "collaboration",
+      "group": "Work",
+      "name": "collaboration",
+      "low": "Works alone",
+      "high": "Works with others",
+      "labels": [
+        "Strongly prefers working alone",
+        "Leans toward working alone",
+        "Balanced",
+        "Leans toward working with others",
+        "Strongly prefers working with others"
+      ]
+    },
+    {
+      "id": "leadership_drive",
+      "group": "Work",
+      "name": "leadership drive",
+      "low": "Prefers to contribute",
+      "high": "Prefers to lead",
+      "labels": [
+        "Strongly prefers to contribute",
+        "Leans toward contributing",
+        "Balanced",
+        "Leans toward leading",
+        "Strongly prefers to lead"
+      ]
+    },
+    {
+      "id": "speed_vs_quality",
+      "group": "Work",
+      "name": "speed vs. quality",
+      "low": "Polish first",
+      "high": "Ship fast",
+      "labels": [
+        "Always polishes first",
+        "Leans toward polish",
+        "Balanced",
+        "Leans toward shipping fast",
+        "Always ships fast"
+      ]
+    },
+    {
+      "id": "routine",
+      "group": "Everyday",
+      "name": "routine",
+      "low": "Spontaneous days",
+      "high": "Structured routines",
+      "labels": [
+        "Very spontaneous days",
+        "Leans spontaneous",
+        "Balanced",
+        "Leans toward routines",
+        "Very structured routines"
+      ]
+    },
+    {
+      "id": "social_energy",
+      "group": "Everyday",
+      "name": "social energy",
+      "low": "Recharges alone",
+      "high": "Recharges with people",
+      "labels": [
+        "Strongly recharges alone",
+        "Leans toward recharging alone",
+        "Balanced",
+        "Leans toward recharging with people",
+        "Strongly recharges with people"
+      ]
+    },
+    {
+      "id": "spending_style",
+      "group": "Everyday",
+      "name": "spending style",
+      "low": "Frugal",
+      "high": "Indulgent",
+      "labels": [
+        "Very frugal",
+        "Leans frugal",
+        "Balanced",
+        "Leans indulgent",
+        "Very indulgent"
+      ]
+    },
+    {
+      "id": "taste_novelty",
+      "group": "Everyday",
+      "name": "taste novelty",
+      "low": "Sticks with favorites",
+      "high": "Tries new things",
+      "labels": [
+        "Always sticks with favorites",
+        "Leans toward favorites",
+        "Balanced",
+        "Leans toward new things",
+        "Always tries new things"
+      ]
+    },
+    {
+      "id": "directness",
+      "group": "Communication",
+      "name": "directness",
+      "low": "Diplomatic, indirect",
+      "high": "Blunt",
+      "labels": [
+        "Very diplomatic and indirect",
+        "Leans diplomatic",
+        "Balanced",
+        "Leans blunt",
+        "Very blunt"
+      ]
+    },
+    {
+      "id": "formality",
+      "group": "Communication",
+      "name": "formality",
+      "low": "Casual",
+      "high": "Formal",
+      "labels": [
+        "Very casual",
+        "Leans casual",
+        "Balanced",
+        "Leans formal",
+        "Very formal"
+      ]
+    },
+    {
+      "id": "verbosity",
+      "group": "Communication",
+      "name": "verbosity",
+      "low": "Brief",
+      "high": "Detailed",
+      "labels": [
+        "Very brief",
+        "Leans brief",
+        "Balanced",
+        "Leans detailed",
+        "Very detailed"
+      ]
+    },
+    {
+      "id": "humor",
+      "group": "Communication",
+      "name": "humor",
+      "low": "Serious",
+      "high": "Playful",
+      "labels": [
+        "Very serious",
+        "Leans serious",
+        "Balanced",
+        "Leans playful",
+        "Very playful"
+      ]
+    }
+  ]
+}

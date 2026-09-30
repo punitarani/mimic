@@ -1,0 +1,23 @@
+{
+  "name": "@mimic/adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests --exclude 'test/live/**'",
+    "test:live": "vitest run test/live"
+  },
+  "dependencies": {
+    "@mimic/core": "workspace:*",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "~4.1.11",
+    "@types/node": "^22.15.0"
+  }
+}

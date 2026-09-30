@@ -1,0 +1,17 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", ".open-next/**", "dist/**"]
+    },
+    "typecheck": { "dependsOn": [], "outputs": [] },
+    "test": { "outputs": [], "env": ["LIVE"] },
+    "test:live": {
+      "cache": false,
+      "env": ["LIVE", "EGRESS_RELAY", "OPENROUTER_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"]
+    },
+    "dev": { "cache": false, "persistent": true }
+  }
+}

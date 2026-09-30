@@ -1,0 +1,62 @@
+// Mimic web: Next.js on Workers via OpenNext. Produces jobs; apps/worker consumes them (PLAN §6.3).
+// Local dev: `next dev` gets these bindings through getPlatformProxy, sharing ../../.wrangler/state with the worker.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "mimic-web",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-08-15",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
+  "observability": { "enabled": true },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mimic",
+      "database_id": "local-mimic",
+      "migrations_dir": "../../packages/db/migrations"
+    }
+  ],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "mimic-blobs" }],
+  "kv_namespaces": [{ "binding": "CACHE", "id": "local-cache" }],
+  "queues": { "producers": [{ "binding": "JOBS", "queue": "mimic-jobs" }] },
+  "ratelimits": [{ "name": "RL", "namespace_id": "1001", "simple": { "limit": 120, "period": 60 } }],
+  "vars": { "VECTOR_BACKEND": "sql", "EMBEDDINGS_PROVIDER": "openrouter" },
+  "env": {
+    "preview": {
+      "name": "mimic-web-preview",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "mimic-preview",
+          "database_id": "REPLACE_ME_PREVIEW_D1_ID",
+          "migrations_dir": "../../packages/db/migrations"
+        }
+      ],
+      "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "mimic-blobs-preview" }],
+      "kv_namespaces": [{ "binding": "CACHE", "id": "REPLACE_ME_PREVIEW_KV_ID" }],
+      "vectorize": [{ "binding": "VEC", "index_name": "mimic-qa-preview" }],
+      "ai": { "binding": "AI" },
+      "queues": { "producers": [{ "binding": "JOBS", "queue": "mimic-jobs-preview" }] },
+      "ratelimits": [{ "name": "RL", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } }],
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" }
+    },
+    "prod": {
+      "name": "mimic-web-prod",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "mimic-prod",
+          "database_id": "REPLACE_ME_PROD_D1_ID",
+          "migrations_dir": "../../packages/db/migrations"
+        }
+      ],
+      "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "mimic-blobs-prod" }],
+      "kv_namespaces": [{ "binding": "CACHE", "id": "REPLACE_ME_PROD_KV_ID" }],
+      "vectorize": [{ "binding": "VEC", "index_name": "mimic-qa-prod" }],
+      "ai": { "binding": "AI" },
+      "queues": { "producers": [{ "binding": "JOBS", "queue": "mimic-jobs-prod" }] },
+      "ratelimits": [{ "name": "RL", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } }],
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" }
+    }
+  }
+}

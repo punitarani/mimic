@@ -1,0 +1,291 @@
+{
+  "setId": "anchors.v1",
+  "items": [
+    {
+      "itemKey": "anchors.v1/bf_extraversion",
+      "type": "score",
+      "domain": "core",
+      "prompt": "How well does this describe you? \"I am the life of the party.\"",
+      "options": [
+        {
+          "key": "0",
+          "label": "Very inaccurate"
+        },
+        {
+          "key": "1",
+          "label": "Moderately inaccurate"
+        },
+        {
+          "key": "2",
+          "label": "Neither accurate nor inaccurate"
+        },
+        {
+          "key": "3",
+          "label": "Moderately accurate"
+        },
+        {
+          "key": "4",
+          "label": "Very accurate"
+        }
+      ],
+      "facetIds": [
+        "extraversion"
+      ],
+      "psychometric": {
+        "facetId": "extraversion",
+        "reverse": false
+      }
+    },
+    {
+      "itemKey": "anchors.v1/bf_agreeableness",
+      "type": "score",
+      "domain": "core",
+      "prompt": "How well does this describe you? \"I sympathize with others' feelings.\"",
+      "options": [
+        {
+          "key": "0",
+          "label": "Very inaccurate"
+        },
+        {
+          "key": "1",
+          "label": "Moderately inaccurate"
+        },
+        {
+          "key": "2",
+          "label": "Neither accurate nor inaccurate"
+        },
+        {
+          "key": "3",
+          "label": "Moderately accurate"
+        },
+        {
+          "key": "4",
+          "label": "Very accurate"
+        }
+      ],
+      "facetIds": [
+        "agreeableness"
+      ],
+      "psychometric": {
+        "facetId": "agreeableness",
+        "reverse": false
+      }
+    },
+    {
+      "itemKey": "anchors.v1/bf_conscientiousness",
+      "type": "score",
+      "domain": "core",
+      "prompt": "How well does this describe you? \"I get chores done right away.\"",
+      "options": [
+        {
+          "key": "0",
+          "label": "Very inaccurate"
+        },
+        {
+          "key": "1",
+          "label": "Moderately inaccurate"
+        },
+        {
+          "key": "2",
+          "label": "Neither accurate nor inaccurate"
+        },
+        {
+          "key": "3",
+          "label": "Moderately accurate"
+        },
+        {
+          "key": "4",
+          "label": "Very accurate"
+        }
+      ],
+      "facetIds": [
+        "conscientiousness"
+      ],
+      "psychometric": {
+        "facetId": "conscientiousness",
+        "reverse": false
+      }
+    },
+    {
+      "itemKey": "anchors.v1/bf_emotional_stability",
+      "type": "score",
+      "domain": "core",
+      "prompt": "How well does this describe you? \"I am relaxed most of the time.\"",
+      "options": [
+        {
+          "key": "0",
+          "label": "Very inaccurate"
+        },
+        {
+          "key": "1",
+          "label": "Moderately inaccurate"
+        },
+        {
+          "key": "2",
+          "label": "Neither accurate nor inaccurate"
+        },
+        {
+          "key": "3",
+          "label": "Moderately accurate"
+        },
+        {
+          "key": "4",
+          "label": "Very accurate"
+        }
+      ],
+      "facetIds": [
+        "emotional_stability"
+      ],
+      "psychometric": {
+        "facetId": "emotional_stability",
+        "reverse": false
+      }
+    },
+    {
+      "itemKey": "anchors.v1/bf_openness",
+      "type": "score",
+      "domain": "core",
+      "prompt": "How well does this describe you? \"I have a vivid imagination.\"",
+      "options": [
+        {
+          "key": "0",
+          "label": "Very inaccurate"
+        },
+        {
+          "key": "1",
+          "label": "Moderately inaccurate"
+        },
+        {
+          "key": "2",
+          "label": "Neither accurate nor inaccurate"
+        },
+        {
+          "key": "3",
+          "label": "Moderately accurate"
+        },
+        {
+          "key": "4",
+          "label": "Very accurate"
+        }
+      ],
+      "facetIds": [
+        "openness"
+      ],
+      "psychometric": {
+        "facetId": "openness",
+        "reverse": false
+      }
+    },
+    {
+      "itemKey": "anchors.v1/risk_gamble",
+      "type": "choice",
+      "domain": "core",
+      "prompt": "Which would you take?",
+      "options": [
+        {
+          "key": "a",
+          "label": "$500 for sure"
+        },
+        {
+          "key": "b",
+          "label": "A coin flip: $1,100 if heads, nothing if tails"
+        }
+      ],
+      "facetIds": [
+        "risk_tolerance",
+        "loss_aversion"
+      ]
+    },
+    {
+      "itemKey": "anchors.v1/intertemporal",
+      "type": "choice",
+      "domain": "core",
+      "prompt": "Which would you rather receive?",
+      "options": [
+        {
+          "key": "a",
+          "label": "$100 today"
+        },
+        {
+          "key": "b",
+          "label": "$120 in one month"
+        }
+      ],
+      "facetIds": [
+        "patience"
+      ]
+    },
+    {
+      "itemKey": "anchors.v1/trust_game",
+      "type": "choice",
+      "domain": "core",
+      "prompt": "You get $10. Whatever you send a stranger triples, and they decide how much to send back. How much do you send?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Nothing"
+        },
+        {
+          "key": "b",
+          "label": "$3"
+        },
+        {
+          "key": "c",
+          "label": "$5"
+        },
+        {
+          "key": "d",
+          "label": "All $10"
+        }
+      ],
+      "facetIds": [
+        "trust",
+        "reciprocity"
+      ]
+    },
+    {
+      "itemKey": "anchors.v1/work_ship_or_polish",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Your project is due Friday and it's 80% done. Your manager offers a one-week extension. You:",
+      "options": [
+        {
+          "key": "a",
+          "label": "Ship it Friday and improve it after"
+        },
+        {
+          "key": "b",
+          "label": "Take the extra week to get it right"
+        }
+      ],
+      "facetIds": [
+        "speed_vs_quality",
+        "detail_orientation"
+      ]
+    },
+    {
+      "itemKey": "anchors.v1/free_saturday",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You have a free Saturday with no plans. What sounds best?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Meeting up with friends"
+        },
+        {
+          "key": "b",
+          "label": "A quiet day at home"
+        },
+        {
+          "key": "c",
+          "label": "Exploring somewhere new on your own"
+        }
+      ],
+      "facetIds": [
+        "social_energy",
+        "taste_novelty"
+      ]
+    }
+  ]
+}

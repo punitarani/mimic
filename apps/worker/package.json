@@ -1,0 +1,28 @@
+{
+  "name": "@mimic/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --persist-to ../../.wrangler/state --show-interactive-dev-session=false",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "deploy:preview": "wrangler deploy --env preview",
+    "deploy:prod": "wrangler deploy --env prod",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv"
+  },
+  "dependencies": {
+    "@mimic/adapters": "workspace:*",
+    "@mimic/core": "workspace:*",
+    "@mimic/db": "workspace:*",
+    "drizzle-orm": "^0.45.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260929.1",
+    "typescript": "~5.9.3",
+    "vitest": "~4.1.11",
+    "wrangler": "^4.144.0"
+  }
+}

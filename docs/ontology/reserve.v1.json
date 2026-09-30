@@ -1,0 +1,460 @@
+{
+  "setId": "reserve.v1",
+  "items": [
+    {
+      "itemKey": "reserve.v1/restaurant",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "At a restaurant you love, do you usually order your favorite dish or something new?",
+      "options": [
+        {
+          "key": "a",
+          "label": "My favorite"
+        },
+        {
+          "key": "b",
+          "label": "Something new"
+        }
+      ],
+      "facetIds": [
+        "taste_novelty"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/feedback_style",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "A colleague's draft has a serious flaw. How do you tell them?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Say it plainly, right away"
+        },
+        {
+          "key": "b",
+          "label": "Start with what works, then raise it gently"
+        },
+        {
+          "key": "c",
+          "label": "Ask questions until they spot it themselves"
+        }
+      ],
+      "facetIds": [
+        "directness",
+        "conflict_directness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/trip_planning",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "For a week-long trip, how much do you plan before you leave?",
+      "options": [
+        {
+          "key": "a",
+          "label": "A day-by-day itinerary"
+        },
+        {
+          "key": "b",
+          "label": "A few must-dos, the rest open"
+        },
+        {
+          "key": "c",
+          "label": "Just the flights and a bed"
+        }
+      ],
+      "facetIds": [
+        "planning",
+        "routine"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/big_purchase",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "Buying new headphones, how much research do you do?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Buy the first decent pair"
+        },
+        {
+          "key": "1",
+          "label": "Glance at a review"
+        },
+        {
+          "key": "2",
+          "label": "Compare a few options"
+        },
+        {
+          "key": "3",
+          "label": "Read several reviews"
+        },
+        {
+          "key": "4",
+          "label": "Research until I find the best"
+        }
+      ],
+      "facetIds": [
+        "maximizing",
+        "deliberation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/lead_or_contribute",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "A new project team forms and nobody is in charge yet. You:",
+      "options": [
+        {
+          "key": "a",
+          "label": "Step up to lead it"
+        },
+        {
+          "key": "b",
+          "label": "Take on a key piece and let someone else lead"
+        }
+      ],
+      "facetIds": [
+        "leadership_drive",
+        "autonomy"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/group_dinner",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "Friends pick a restaurant you don't love. Would you suggest a different place?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "conformity",
+        "conflict_directness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/unclear_task",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "You're handed a task with vague requirements and a tight deadline. You:",
+      "options": [
+        {
+          "key": "a",
+          "label": "Start building and adjust as you learn"
+        },
+        {
+          "key": "b",
+          "label": "Pin down the requirements before starting"
+        }
+      ],
+      "facetIds": [
+        "ambiguity_tolerance",
+        "planning"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/solo_or_team",
+      "type": "score",
+      "domain": "professional",
+      "prompt": "For a hard problem at work, where do you do your best thinking?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Entirely alone"
+        },
+        {
+          "key": "1",
+          "label": "Mostly alone"
+        },
+        {
+          "key": "2",
+          "label": "A mix"
+        },
+        {
+          "key": "3",
+          "label": "Mostly with others"
+        },
+        {
+          "key": "4",
+          "label": "Entirely with others"
+        }
+      ],
+      "facetIds": [
+        "collaboration"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/message_length",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "You need a decision from a busy colleague. Your message is:",
+      "options": [
+        {
+          "key": "a",
+          "label": "One line with the question"
+        },
+        {
+          "key": "b",
+          "label": "A short paragraph with context"
+        },
+        {
+          "key": "c",
+          "label": "A full write-up with options"
+        }
+      ],
+      "facetIds": [
+        "verbosity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/windfall",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You unexpectedly get a $300 gift card for any store. You:",
+      "options": [
+        {
+          "key": "a",
+          "label": "Treat yourself to something fun"
+        },
+        {
+          "key": "b",
+          "label": "Use it for things you would buy anyway"
+        }
+      ],
+      "facetIds": [
+        "spending_style"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/help_stranger",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "Would you give up 30 minutes of your evening to help a neighbor you barely know move a couch?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "self_transcendence",
+        "agreeableness"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/job_offer",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Two job offers with equal pay. Which appeals more?",
+      "options": [
+        {
+          "key": "a",
+          "label": "A stable company with a clear path"
+        },
+        {
+          "key": "b",
+          "label": "A young startup with a bigger role"
+        }
+      ],
+      "facetIds": [
+        "risk_tolerance",
+        "openness_to_change"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/rules",
+      "type": "score",
+      "domain": "professional",
+      "prompt": "A team process feels pointless to you. What do you do?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Ignore it and do it my way"
+        },
+        {
+          "key": "1",
+          "label": "Work around it quietly"
+        },
+        {
+          "key": "2",
+          "label": "Follow it but raise concerns"
+        },
+        {
+          "key": "3",
+          "label": "Follow it and assume there is a reason"
+        },
+        {
+          "key": "4",
+          "label": "Follow it exactly"
+        }
+      ],
+      "facetIds": [
+        "conservation",
+        "conformity"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/joke_meeting",
+      "type": "noul",
+      "domain": "professional",
+      "prompt": "In a tense meeting, would you crack a joke to lighten the mood?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "humor"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/email_tone",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Writing to a senior person you have never met, you open with:",
+      "options": [
+        {
+          "key": "a",
+          "label": "\"Hi [first name],\""
+        },
+        {
+          "key": "b",
+          "label": "\"Dear [full name],\""
+        }
+      ],
+      "facetIds": [
+        "formality"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/recognition",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Which would feel better after a big win at work?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Public credit in front of leadership"
+        },
+        {
+          "key": "b",
+          "label": "A quiet thank-you from the people you helped"
+        }
+      ],
+      "facetIds": [
+        "self_enhancement",
+        "self_transcendence"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/lost_wallet",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You lose $50 and find $50 on the same day. How do you feel by evening?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Even, it balanced out"
+        },
+        {
+          "key": "b",
+          "label": "Still annoyed about the loss"
+        },
+        {
+          "key": "c",
+          "label": "Happy about the find"
+        }
+      ],
+      "facetIds": [
+        "loss_aversion",
+        "emotional_stability"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/morning",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "How similar are your weekday mornings to each other?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Never the same"
+        },
+        {
+          "key": "1",
+          "label": "Mostly different"
+        },
+        {
+          "key": "2",
+          "label": "Somewhat similar"
+        },
+        {
+          "key": "3",
+          "label": "Mostly the same"
+        },
+        {
+          "key": "4",
+          "label": "Identical routine"
+        }
+      ],
+      "facetIds": [
+        "routine"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/review_detail",
+      "type": "choice",
+      "domain": "professional",
+      "prompt": "Reviewing a teammate’s work, what do you look at first?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Whether the overall approach makes sense"
+        },
+        {
+          "key": "b",
+          "label": "Whether the details are correct"
+        }
+      ],
+      "facetIds": [
+        "detail_orientation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/gut_call",
+      "type": "noul",
+      "domain": "core",
+      "prompt": "Choosing between two apartments you like equally, would you decide on gut feeling?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "deliberation"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+# Local dev secrets for the web app. Copy to .dev.vars (gitignored).
+# In the Claude Code remote env, provider keys are injected by the proxy: leave them empty and keep EGRESS_RELAY.
+OPENROUTER_API_KEY=
+EXA_API_KEY=
+PARALLEL_API_KEY=
+PERPLEXITY_API_KEY=
+EGRESS_RELAY=http://127.0.0.1:8790
+SESSION_SECRET=dev-only-session-secret-change-me
+ADMIN_EMAILS=dev@localhost
+INVITE_CODES=mimic-dev
+DEV_MODE=1

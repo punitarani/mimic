@@ -1,0 +1,7 @@
+# Local dev secrets for the worker. Copy to .dev.vars (gitignored).
+# In the Claude Code remote env, keys are injected by the proxy: leave them empty and keep EGRESS_RELAY set.
+OPENROUTER_API_KEY=
+EXA_API_KEY=
+PARALLEL_API_KEY=
+PERPLEXITY_API_KEY=
+EGRESS_RELAY=http://127.0.0.1:8790

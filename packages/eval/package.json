@@ -1,0 +1,28 @@
+{
+  "name": "@mimic/eval",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "mimic-eval": "./bin/mimic-eval.mjs"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "cli": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@libsql/client": "^0.18.0",
+    "@mimic/adapters": "workspace:*",
+    "@mimic/core": "workspace:*",
+    "@mimic/db": "workspace:*",
+    "drizzle-orm": "^0.45.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "~5.9.3",
+    "vitest": "~4.1.11",
+    "@types/node": "^22.15.0"
+  }
+}

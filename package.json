@@ -1,0 +1,29 @@
+{
+  "name": "mimic",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "turbo run test",
+    "test:live": "LIVE=1 turbo run test:live --concurrency=1",
+    "db:generate": "pnpm --filter @mimic/db generate",
+    "db:migrate:local": "pnpm --filter @mimic/worker exec wrangler d1 migrations apply DB --local --persist-to ../../.wrangler/state",
+    "db:migrate:preview": "pnpm --filter @mimic/worker exec wrangler d1 migrations apply DB --remote --env preview",
+    "db:migrate:prod": "pnpm --filter @mimic/worker exec wrangler d1 migrations apply DB --remote --env prod",
+    "deploy:preview": "pnpm db:migrate:preview && pnpm --filter @mimic/worker deploy:preview && pnpm --filter @mimic/web deploy:preview",
+    "deploy:prod": "pnpm db:migrate:prod && pnpm --filter @mimic/worker deploy:prod && pnpm --filter @mimic/web deploy:prod",
+    "eval": "pnpm --filter @mimic/eval exec tsx src/cli.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "turbo": "^2.11.5",
+    "typescript": "~5.9.3"
+  }
+}
