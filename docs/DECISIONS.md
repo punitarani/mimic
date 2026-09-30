@@ -943,3 +943,85 @@ fidelity counts the re-answer like any answer.
 
 Schema: `answer_rewinds`, `mimics.evidence_epoch`, `facts.seq_up_to`, `insights.superseded_seq`
 (migration `0005_answer_rewinds`).
+
+## ADR-0037 — Backfill accuracy: failure kinds, bounded retries, paced and deduplicated runs (2026-09-30)
+
+After the ADR-0025 backfill, the lab showed Qwen3.8 Flash with 142 failed predictions (78%) and a p50 of 35 s, and
+MiMo V2.6 Flash at 7.8 s. Some of that is the models, and some was how the backfill ran and what it recorded.
+
+**What was the model.** Live `predict.v1` calls, sent one at a time on 8 sealed states from an offline session,
+measured:
+
+| Model | Latency | Result |
+| --- | --- | --- |
+| Qwen3.8 Flash (`effort: low`, 3000 max tokens) | 21–67 s | 3 of 8 spent all 3000 tokens on reasoning and returned no content (`finish_reason: length`) |
+| Qwen3.8 Flash (`effort: low`, 8000 max tokens) | 18–104 s | 7 of 7 valid, with up to 4.5K reasoning tokens; plus one HTTP 429 from Alibaba |
+| Qwen3.8 Flash (`effort: none`) | 1.7–2.7 s | 8 of 8 valid, no reasoning tokens |
+| MiMo V2.6 Flash | 3–11 s | one of 8 was "Provider returned an empty response", in a 200 |
+| GLM 5.3 Flash | 1–3.5 s | 8 of 8 valid |
+
+So Qwen's latency is real at `effort: low`: its provider doesn't cap reasoning at that effort. Its failures were
+mostly the 3000-token cap, recorded as "invalid JSON output". Whether to give it more tokens, run it with reasoning
+off (a prompt variant, ADR-0028) or drop it is a separate decision; this ADR doesn't change the predictor.
+
+**What was the backfill.**
+
+1. **Failed calls were stored as the model failing, forever.** A 429 or a provider error made `LlmPredictor` return
+   a failed prediction, and `runShadow` stored it and marked the job done, so nothing ever retried it. The budget
+   guard did the same on a mimic near its $0.50 session cap.
+2. **Latency counted retries.** Adapters timed a call from before the first attempt, so a success after a 429
+   included the failed attempt and the backoff.
+3. **No pacing.** Each run enqueued every prediction at once, which draws rate limits and slower answers, and queues
+   ahead of live sessions' jobs.
+
+**Decisions.**
+
+- **Failures have a kind, stored with the prediction** (`predictions.error_kind`, main's `errorKind` plus one):
+  - `output`: the model answered but the answer was unusable. Invalid JSON, options not covered, Jev's missing or
+    wrong-typed answer, and now named cutoffs: `output cut off at max_tokens (…)` when `finish_reason` is `length`,
+    and the provider's content filter.
+  - `timeout`: the model didn't answer within the call's timeout. Chat calls no longer retry a timeout in-request
+    (`retryTimeouts: false`): a retry bills a second generation and would record only the fast answers.
+  - `transport`: the call failed before the model answered. `retryable` says whether it may succeed later: rate
+    limits, 5xx, network errors, malformed responses, a 200 carrying an OpenRouter `error` body or a choice with
+    `finish_reason: error`. The budget guard and other 4xx are not.
+  - `output` and `timeout` are the model's: stored at once, counted, never redone. The optimizer still treats a
+    timeout as transient, as before.
+- **Retries are bounded.** A retryable failure makes `runShadow` throw so the queue retries it with backoff. On the
+  last attempt (`MAX_JOB_ATTEMPTS`, from the ledger) it's stored as a `transport` failure instead. The cron's
+  missing-shadow repair then sees the row and stops; it also skips a live shadow whose job used up its attempts.
+- **Latency is the attempt that answered.** `requestJson` returns it with `attempts`, and `model_calls.attempts`
+  records how many HTTP attempts each call took, so retry pressure stays visible.
+- **Backfill predictions are `backfill.shadow` jobs, keyed without a run** (`backfill.shadow:{mimic}:{question}:
+  {predictor}`), so the ledger dedupes them across runs. They are logged as `predict.backfill`.
+- **Pacing.** `backfill.predictor` enqueues them for every (consented) mimic, `60 / perMinute` seconds apart as one
+  stream (default 30 a minute per predictor, `--rate`), through `enqueueBatch` (Queues' `sendBatch`, 100 at a
+  time). `backfill.mimic` does the same for one named mimic from `offsetSeconds`; the CLI staggers several.
+- **Run limits.** A run enqueues at most 5,000, and nothing delayed past 12 h (`backfillLimit`). The CLI says when
+  a run stops there, and a re-run enqueues the rest. The options are part of the job keys, so a job the cron
+  requeues from the ledger keeps its rate.
+- **In flight.** Each prediction is written to the ledger as `queued` (a new status) due at its time before it's
+  sent. The missing rule, in the engine and the CLI, skips a question whose live or backfill shadow job is queued,
+  running or being retried, and not stale. So a re-run never doubles the pace, and neither the cron nor a backfill
+  races a live shadow. A queued job still not done 15 minutes after its time is stale, and the cron requeues it,
+  which also repairs a lost message.
+- **One shadow per question and predictor.** The partial unique index `predictions_shadow_uq` makes a concurrent
+  second run of the same shadow a no-op (`Store.insertShadow` returns whether it stored). The migration first
+  keeps the best of any existing duplicates: ok first, then the earliest.
+- **Legacy failures are classified in the migration:** Jev's `Error: Expected …`, the two LlmPredictor messages and
+  a missing answer are `output`; anything that timed out is `timeout`; the rest is `transport`.
+- **Backfills are held to the session's share of the budget, like shadows** (ADR-0035). A mimic that has spent it
+  is skipped when a run is planned, and a backfilled prediction it refuses is skipped, not stored. The calls are
+  logged as `predict.backfill` (session scope).
+- **Consent is checked again when each prediction runs**, since a paced run can span hours. Named mimics
+  (`--mimic`) skip the check unless `--consented`.
+- **`--retry-failed`** redoes this predictor's `transport` failures, carried on each job. `insertShadow` deletes
+  the failed row and stores the new one atomically, and deletes only failed shadow rows, never primary or baseline
+  ones.
+- **The dry run explains failures.** It splits them by kind and lists the most common messages. It also reports
+  predictions in flight, estimates cost from every charged prediction (unusable output included), and gives the
+  duration and any run limit at the chosen rate. `packages/eval/test/backfill.test.ts` runs the CLI's SQL against
+  the real schema, checks it against the engine's rule, and checks the CLI's copies of the engine's constants.
+- **Queue batches still run all their jobs at once.** Capping them would make live jobs wait behind slow shadows.
+  Pacing keeps backfill batches small; a live burst larger than six calls waiting on headers can still add a
+  little queueing to a shadow's latency.

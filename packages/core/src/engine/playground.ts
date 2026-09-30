@@ -136,6 +136,7 @@ export async function predictPlayground(
     latencyMs: r.latencyMs,
     ok: r.ok,
     error: r.error ?? null,
+    errorKind: r.ok ? null : (r.errorKind ?? null),
     fallback: false,
     createdAt: now,
   });

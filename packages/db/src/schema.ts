@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /** PLAN §8. IDs are ULIDs; timestamps are integer ms; *_json columns are validated with zod on read. */
@@ -136,6 +137,8 @@ export const predictions = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
+    /** Failed rows only: 'output' | 'timeout' (the model's) | 'transport' (the call's); ADR-0037. */
+    errorKind: text('error_kind', { enum: ['output', 'timeout', 'transport'] }),
     fallback: bool('fallback').notNull().default(false),
     /** `role = hypothesis` only: `{hypothesis set seqUpTo}:{index}` (ADR-0027). */
     hypothesis: text('hypothesis'),
@@ -144,6 +147,8 @@ export const predictions = sqliteTable(
   (t) => [
     index('predictions_mimic_idx').on(t.mimicId),
     index('predictions_question_role_idx').on(t.questionId, t.role),
+    // One shadow per question and predictor, however many runs race to store it (ADR-0037).
+    uniqueIndex('predictions_shadow_uq').on(t.questionId, t.predictorId).where(sql`${t.role} = 'shadow'`),
   ],
 );
 
@@ -324,6 +329,8 @@ export const modelCalls = sqliteTable(
     latencyMs: integer('latency_ms').notNull(),
     ok: bool('ok').notNull(),
     error: text('error'),
+    /** HTTP attempts it took: retries after a 429 or 5xx, which latencyMs (the answering attempt) leaves out. */
+    attempts: integer('attempts').notNull().default(1),
     configHash: text('config_hash'),
     r2TraceKey: text('r2_trace_key').notNull(),
     createdAt: integer('created_at').notNull(),
@@ -372,7 +379,7 @@ export const evalRuns = sqliteTable('eval_runs', {
 export const jobs = sqliteTable('jobs', {
   key: text('key').primaryKey(),
   type: text('type').notNull(),
-  status: text('status', { enum: ['running', 'done', 'failed'] }).notNull(),
+  status: text('status', { enum: ['queued', 'running', 'done', 'failed'] }).notNull(),
   attempts: integer('attempts').notNull(),
   lastError: text('last_error'),
   updatedAt: integer('updated_at').notNull(),

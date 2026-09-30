@@ -582,9 +582,7 @@ describe('undo the latest answer (ADR-0036)', () => {
     const shadows = engine.queue.drain().filter((j) => j.type === 'predict.shadow');
     expect(shadows.length).toBeGreaterThan(0);
     // The undo commits after the shadow read the primary but before it inserts.
-    const racing = interleave('insertPredictions', () =>
-      rewindLastAnswer(engine.deps, id, { questionId: q3.id }),
-    );
+    const racing = interleave('insertShadow', () => rewindLastAnswer(engine.deps, id, { questionId: q3.id }));
     await runJob(racing, shadows[0]!);
     for (const j of shadows.slice(1)) await runJob(engine.deps, j);
     expect(await store.getQuestion(next.question.id)).toMatchObject({ status: 'discarded' });

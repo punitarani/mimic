@@ -207,16 +207,18 @@ const toPrediction = (r: PRow): PredictionRecord => ({
   latencyMs: r.latencyMs,
   ok: r.ok,
   error: r.error,
+  errorKind: r.errorKind,
   fallback: r.fallback,
   hypothesis: r.hypothesis,
   createdAt: r.createdAt,
 });
 
-/** 20 columns per row (D1's 100-parameter limit bounds the batch size below). */
-const PREDICTION_COLS = 20;
+/** 21 columns per row (D1's 100-parameter limit bounds the batch size below). */
+const PREDICTION_COLS = 21;
 const fromPrediction = (p: PredictionRecord): typeof s.predictions.$inferInsert => ({
   ...p,
   hypothesis: p.hypothesis ?? null,
+  errorKind: p.errorKind ?? null,
   distJson: JSON.stringify(p.dist),
 });
 
@@ -527,6 +529,25 @@ export class DrizzleStore implements Store {
   // predictions & answers
   async insertPredictions(recs: PredictionRecord[]) {
     await this.insertChunked(s.predictions, recs.map(fromPrediction));
+  }
+  async insertShadow(rec: PredictionRecord, replaceIds: string[] = []) {
+    const stmts: BatchItem<'sqlite'>[] = chunk(replaceIds, 2).map((part) =>
+      this.db
+        .delete(s.predictions)
+        .where(
+          and(inArray(s.predictions.id, part), eq(s.predictions.role, 'shadow'), eq(s.predictions.ok, false)),
+        ),
+    );
+    const insert = this.db
+      .insert(s.predictions)
+      .values(fromPrediction({ ...rec, role: 'shadow' }))
+      .onConflictDoNothing()
+      .returning({ id: s.predictions.id });
+    const results = await this.db.batch([...stmts, insert] as unknown as [
+      BatchItem<'sqlite'>,
+      ...BatchItem<'sqlite'>[],
+    ]);
+    return (results.at(-1) as Array<{ id: string }>).length > 0;
   }
   async deletePredictions(ids: string[]) {
     for (const part of idChunks(ids))
@@ -1184,11 +1205,40 @@ export class DrizzleStore implements Store {
       });
   }
 
+  async putJobs(recs: JobRecord[]) {
+    const stmts = chunk(recs, 6).map((part) =>
+      this.db
+        .insert(s.jobs)
+        .values(part)
+        .onConflictDoUpdate({
+          target: s.jobs.key,
+          set: {
+            status: sql`excluded.status`,
+            attempts: sql`excluded.attempts`,
+            lastError: sql`excluded.last_error`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        }),
+    );
+    if (stmts.length)
+      await this.db.batch(stmts as unknown as [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]]);
+  }
+
+  async listJobs(prefix: string) {
+    // A key range, so the primary-key index serves it (the cron asks for every active mimic).
+    const end = prefix.slice(0, -1) + String.fromCharCode(prefix.charCodeAt(prefix.length - 1) + 1);
+    return this.db
+      .select()
+      .from(s.jobs)
+      .where(and(gte(s.jobs.key, prefix), lt(s.jobs.key, end)))
+      .all();
+  }
+
   async listStaleJobs(before: number, limit: number) {
     return this.db
       .select()
       .from(s.jobs)
-      .where(and(inArray(s.jobs.status, ['running', 'failed']), lt(s.jobs.updatedAt, before)))
+      .where(and(inArray(s.jobs.status, ['queued', 'running', 'failed']), lt(s.jobs.updatedAt, before)))
       .orderBy(asc(s.jobs.updatedAt))
       .limit(limit)
       .all();
