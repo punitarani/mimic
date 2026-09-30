@@ -364,7 +364,13 @@ export async function optimize(
       const it = state.iteration;
       const parent = sampleParent(state.pool, state.split.val, rng);
       const component = run.components[(it - 1) % run.components.length]!;
-      const batch = shuffle(train, rng).slice(0, run.minibatch);
+      // One person per minibatch, so no reflection prompt mixes people's answers (invariant 8).
+      const people = [...new Set(train.map((i) => i.mimicId))];
+      const person = people[Math.floor(rng() * people.length)]!;
+      const batch = shuffle(
+        train.filter((i) => i.mimicId === person),
+        rng,
+      ).slice(0, run.minibatch);
       const parentRecs = await evaluate(parent.candidate, batch);
       const parentScore = mean(parentRecs.map((r) => r.value));
       const log = (h: Omit<HistoryEntry, 'iteration' | 'parent' | 'component'>) => {

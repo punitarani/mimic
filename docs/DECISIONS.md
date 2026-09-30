@@ -417,6 +417,14 @@ more than the measured noise floor, then a full validation pass. Choices:
   iteration that could not be validated within either is not started. Runs are resumable from `--run-dir`.
 - *Cost:* Jev components are the default target because Jev bills input only (about $0.0001 per question), so a run
   is dominated by reflection calls.
+- *One person per reflection:* each minibatch is drawn from one person, and `diagnose` makes one call per person, so
+  no prompt mixes people's answers (invariant 8). Names are left out of the cases as well. These are offline analysis
+  calls on consented, scrubbed data, and their output passes the leakage lint before it can reach a product prompt.
+- *Tooling prompts are versioned:* the reflection and diagnosis prompts (`optimize.reflect.v1`,
+  `optimize.diagnose.v1`) live in `packages/eval/src/optimize/reflect.ts`, are recorded on each run and mirrored to
+  `docs/prompts/optimize/` with a sync test. A reply that breaks a rule gets one repair turn naming the problems.
+- *Transport failures are not scores:* a prediction that fails for a provider error (after one retry) is not cached,
+  so a resumed run asks again; a malformed output is the candidate's fault and is scored as a failure.
 
 **Shipping.** A winner is never deployed by the optimizer. It writes the candidate and a `PREDICT_PROMPTS` entry to
 paste; registering it is a code change reviewed like any other, then `pnpm backfill --predictor <id>@<version>` gives a

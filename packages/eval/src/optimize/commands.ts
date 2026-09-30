@@ -15,6 +15,7 @@ import { datasetHash } from '../export';
 import { openLocalEngine } from '../local';
 import { publishReport, renderReport, writeReport } from '../report';
 import {
+  BudgetStop,
   breakdown,
   type Candidate,
   CandidateInput,
@@ -30,8 +31,8 @@ import {
   storedRecords,
 } from './evaluate';
 import { DEFAULT_COMPONENTS, type OptimizeSpec, optimize, variantSnippet } from './gepa';
-import { type EvalInstance, loadInstances } from './instances';
-import { diagnose } from './reflect';
+import { type EvalInstance, loadInstances, personLabel } from './instances';
+import { DIAGNOSE_PROMPT_VERSION, diagnose, REFLECT_PROMPT_VERSION } from './reflect';
 
 /** Offline reflection model for optimization runs: strong, and cheap at the ~10–40 calls a run makes (ADR-0027). */
 export const DEFAULT_REFLECTION_MODEL = 'anthropic/claude-sonnet-5.5';
@@ -233,26 +234,44 @@ export async function evaluateCmd(argv: string[]) {
     });
     const meter = new Meter(positive('max-usd', values['max-usd'], false));
     const results: Array<{ c: Candidate; recs: EvalRecord[] }> = [];
+    const concurrency = positive('concurrency', values.concurrency);
+    let stopReason: string | null = null;
     try {
       for (const c of cands) {
-        const recs = await evaluateCandidate(c, loaded.instances, {
-          gateway: engine.deps.gateway,
-          meter,
-          concurrency: positive('concurrency', values.concurrency),
-        });
+        let recs: EvalRecord[];
+        try {
+          recs = await evaluateCandidate(c, loaded.instances, {
+            gateway: engine.deps.gateway,
+            meter,
+            concurrency,
+          });
+        } catch (e) {
+          // The spend cap stops new work; report the candidates already scored instead of discarding them.
+          if (!(e instanceof BudgetStop) || !results.length) throw e;
+          stopReason = `${e.message}; ${c.label} and later candidates were not scored`;
+          console.warn(`stopped: ${stopReason}`);
+          break;
+        }
         results.push({ c, recs });
         console.log(
           `${c.label}: log loss ${breakdown(recs).all.logLoss.toFixed(4)} ($${meter.usd.toFixed(4)} so far)`,
         );
       }
       let noise: number | null = null;
-      if (values.repeat) {
-        const again = await evaluateCandidate(cands[0]!, loaded.instances, {
-          gateway: engine.deps.gateway,
-          meter,
-          fresh: true,
-        });
-        noise = noiseSd(results[0]!.recs, again);
+      if (values.repeat && !stopReason) {
+        try {
+          const again = await evaluateCandidate(cands[0]!, loaded.instances, {
+            gateway: engine.deps.gateway,
+            meter,
+            concurrency,
+            fresh: true,
+          });
+          noise = noiseSd(results[0]!.recs, again);
+        } catch (e) {
+          if (!(e instanceof BudgetStop)) throw e;
+          stopReason = `${e.message}; the repeat pass was not completed`;
+          console.warn(`stopped: ${stopReason}`);
+        }
       }
       writeFileSync(
         join(runDir, 'records.jsonl'),
@@ -269,6 +288,7 @@ export async function evaluateCmd(argv: string[]) {
           instances: loaded.instances.length,
           costUsd: meter.usd,
           noiseSd: noise,
+          stopReason,
           candidates: results.map(({ c, recs }, i) => ({
             label: c.label,
             hash: c.hash,
@@ -305,7 +325,8 @@ export async function diagnoseCmd(argv: string[]) {
       ...COMMON,
       predictor: { type: 'string', default: 'jev:typesafe/jev-1.13' },
       role: { type: 'string', default: 'primary' },
-      cases: { type: 'string', default: '40' },
+      cases: { type: 'string', default: '30' },
+      people: { type: 'string', default: '3' },
       'reflection-model': { type: 'string', default: DEFAULT_REFLECTION_MODEL },
     },
   });
@@ -319,37 +340,52 @@ export async function diagnoseCmd(argv: string[]) {
   );
   if (!recs.length)
     throw new Error(`no stored ${values.role} predictions from ${values.predictor} in ${values.split}`);
-  // Mostly the costliest misses, plus a sample of the rest so the analysis sees what works too.
-  const n = Number(values.cases);
-  const worst = [...recs].sort((a, b) => a.value - b.value).slice(0, Math.ceil(n * 0.7));
-  const rest = shuffle(
-    recs.filter((r) => !worst.includes(r)),
-    seededRng(values.seed),
-  ).slice(0, n - worst.length);
+  // One call per person (invariant 8: no prompt mixes people), for the people with the most predictions, each on
+  // mostly their costliest misses plus a sample of the rest, so the analysis also sees what works.
+  const n = positive('cases', values.cases);
+  const maxPeople = positive('people', values.people);
+  const byPerson = new Map<string, EvalRecord[]>();
+  for (const r of recs) {
+    const list = byPerson.get(r.mimicId);
+    if (list) list.push(r);
+    else byPerson.set(r.mimicId, [r]);
+  }
+  const people = [...byPerson.entries()].sort((x, y) => y[1].length - x[1].length).slice(0, maxPeople);
   const out = resolve(values.out ?? `data/diagnose/${ulid()}.md`);
   mkdirSync(dirname(out), { recursive: true });
-  // The call is logged next to the report (invariant 5), like evaluate and optimize do in their run directories.
+  // The calls are logged next to the report (invariant 5), like evaluate and optimize do in their run directories.
   const engine = await openLocalEngine({
     db: join(dirname(out), 'calls.sqlite'),
     blobsDir: join(dirname(out), 'traces'),
     providers: values.offline ? 'offline' : 'live',
   });
+  const sections: string[] = [];
+  let total = 0;
   try {
-    const { markdown, costUsd } = await diagnose(
-      engine.deps.gateway,
-      values['reflection-model'],
-      values.predictor,
-      byId,
-      [...worst, ...rest],
-    );
-    writeFileSync(
-      out,
-      `# Diagnosis: ${values.predictor} (${values.role}, ${values.split})\n\n${recs.length} stored predictions; ${worst.length + rest.length} cases shown to ${values['reflection-model']} ($${costUsd.toFixed(4)}).\n\n${markdown}\n`,
-    );
-    console.log(`${markdown}\n\n→ ${out} (local only)`);
+    for (const [mimicId, rs] of people) {
+      const worst = [...rs].sort((x, y) => x.value - y.value).slice(0, Math.ceil(n * 0.7));
+      const rest = shuffle(
+        rs.filter((r) => !worst.includes(r)),
+        seededRng(`${values.seed}:${mimicId}`),
+      ).slice(0, n - worst.length);
+      const { markdown, costUsd } = await diagnose(
+        engine.deps.gateway,
+        values['reflection-model'],
+        values.predictor,
+        byId,
+        [...worst, ...rest],
+      );
+      total += costUsd;
+      sections.push(
+        `## ${personLabel(mimicId)} (${rs.length} predictions, ${worst.length + rest.length} cases)\n\n${markdown}`,
+      );
+    }
   } finally {
     engine.close();
   }
+  const body = `# Diagnosis: ${values.predictor} (${values.role}, ${values.split})\n\n${recs.length} stored predictions from ${byPerson.size} people; ${people.length} analysed one person per call by ${values['reflection-model']} (prompt ${DIAGNOSE_PROMPT_VERSION}, $${total.toFixed(4)}).\n\n${sections.join('\n\n')}\n`;
+  writeFileSync(out, body);
+  console.log(`${body}\n→ ${out} (local only: it describes people's answers)`);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -432,6 +468,7 @@ export async function optimizeCmd(argv: string[]) {
       ...spec,
       seed: spec.rngSeed,
       seedCandidate: spec.seed,
+      reflectPrompt: REFLECT_PROMPT_VERSION,
       data: loaded.files.length,
     },
     datasetHash: loaded.datasetHash,

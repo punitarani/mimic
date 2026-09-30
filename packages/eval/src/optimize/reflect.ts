@@ -70,6 +70,13 @@ export function leakageProblems(text: string, parent: string, corpus: LeakCorpus
 // Reflection
 // ---------------------------------------------------------------------------------------------------------------
 
+/**
+ * The optimizer's own prompts are offline research tooling, never product prompts; they are versioned here, recorded
+ * on every run, and mirrored to docs/prompts/optimize/ (a change means a new version).
+ */
+export const REFLECT_PROMPT_VERSION = 'optimize.reflect.v1';
+export const DIAGNOSE_PROMPT_VERSION = 'optimize.diagnose.v1';
+
 export const REFLECT_SYSTEM = `You improve one text component of a system that predicts how a specific person will answer a typed question
 (multiple choice, yes/no, or a 5-point scale), given that person's profile and earlier answers. The system outputs a
 probability for every option and is scored by log loss on the person's real answer, so both accuracy and calibration
@@ -169,10 +176,18 @@ export async function proposeComponent(
   let text: string | null = null;
   let problems: string[] = [];
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await gateway.chat(
-      { purpose: 'eval.reflect' },
-      { model, messages, reasoningEffort: 'low', maxTokens: 6000 },
-    );
+    let res: Awaited<ReturnType<Gateway['chat']>>;
+    try {
+      res = await gateway.chat(
+        { purpose: 'eval.reflect' },
+        { model, messages, reasoningEffort: 'low', maxTokens: 6000 },
+      );
+    } catch (e) {
+      // A failed repair turn must not lose the first reply's cost (the caller meters it against the spend cap).
+      if (attempt === 0) throw e;
+      const msg = e instanceof Error ? e.message : String(e);
+      return { text, problems: [...problems, `repair turn failed: ${msg.slice(0, 200)}`], costUsd, calls: 1 };
+    }
     costUsd += res.usage.costUsd;
     text = parseReflection(res.content);
     problems = text ? check(text) : ['no <component> in the reply'];
@@ -226,4 +241,40 @@ export async function diagnose(
     },
   );
   return { markdown: res.content.trim(), costUsd: res.usage.costUsd };
+}
+
+/** docs/prompts/optimize/{id}.md for the optimizer's prompts (checked by test/docs-sync.test.ts; `gen:docs` writes). */
+export function toolingPromptDocs(): Record<string, string> {
+  const doc = (id: string, title: string, system: string, input: string) =>
+    `# ${id} — ${title}
+
+> Generated from \`packages/eval/src/optimize/reflect.ts\`. Offline research tooling (ADR-0027), never a product
+> prompt; a change means a new version ID.
+
+## System
+
+\`\`\`
+${system}
+\`\`\`
+
+## Input
+
+\`\`\`
+${input}
+\`\`\`
+`;
+  return {
+    [`docs/prompts/optimize/${REFLECT_PROMPT_VERSION}.md`]: doc(
+      REFLECT_PROMPT_VERSION,
+      'Reflection (rewrite one component)',
+      REFLECT_SYSTEM,
+      'COMPONENT, ROLE, PREDICTOR, PLACEHOLDERS, WORD LIMIT, CURRENT TEXT, THE OTHER COMPONENTS, CASES (one person per call:\nInputs, Generated outputs, Correct answer, Feedback). One repair turn names any problems with the reply.',
+    ),
+    [`docs/prompts/optimize/${DIAGNOSE_PROMPT_VERSION}.md`]: doc(
+      DIAGNOSE_PROMPT_VERSION,
+      'Failure analysis',
+      DIAGNOSE_SYSTEM,
+      'PREDICTOR, CASES (one person per call: Inputs, Generated outputs, Correct answer, Feedback).',
+    ),
+  };
 }

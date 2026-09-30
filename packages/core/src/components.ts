@@ -174,7 +174,10 @@ export function placeholdersOf(text: string): string[] {
 
 /** Replaces the known placeholders of a component; anything else in braces is left alone. */
 export function fill(template: string, vars: Record<string, string>): string {
-  return template.replace(PLACEHOLDER, (all, name: string) => (name in vars ? vars[name]! : all));
+  // Own keys only: `{constructor}` or `{toString}` must stay literal, not expand to a prototype function's source.
+  return template.replace(PLACEHOLDER, (all, name: string) =>
+    Object.hasOwn(vars, name) ? vars[name]! : all,
+  );
 }
 
 /** Problems with a component's text: missing or unknown placeholders, empty text, too many words. */

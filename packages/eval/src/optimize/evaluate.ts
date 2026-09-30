@@ -294,13 +294,21 @@ export async function mapLimit<T, R>(
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
+  // On the first error no new item starts, but items already in flight finish (and are recorded by `fn`) before the
+  // error is rethrown, so work that was paid for is never orphaned behind an early rejection.
+  let error: { e: unknown } | null = null;
   const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
-    while (next < items.length) {
+    while (!error && next < items.length) {
       const i = next++;
-      out[i] = await fn(items[i]!, i);
+      try {
+        out[i] = await fn(items[i]!, i);
+      } catch (e) {
+        error ??= { e };
+      }
     }
   });
   await Promise.all(workers);
+  if (error) throw (error as { e: unknown }).e;
   return out;
 }
 
@@ -362,6 +370,9 @@ export async function evaluateCandidate(
     g.forEach((inst, j) => {
       const rec = toRecord(inst, c.hash, predictor.id, res[j]!);
       out.set(inst.id, rec);
+      // A transport failure (still failing after the retry) is the provider's fault, not the candidate's: don't cache
+      // it, so a resumed run or a later comparison re-asks instead of scoring an outage as a permanent penalty.
+      if (!rec.ok && !OUTPUT_ERRORS.has(rec.error ?? '')) return;
       // A fresh pass (the noise floor) is a second sample, not the candidate's score: keep the first in the cache.
       if (!opts.fresh || !opts.cache?.has(key(inst))) opts.cache?.set(key(inst), rec);
     });
@@ -661,7 +672,9 @@ export function selfConsistencyOf(instances: EvalInstance[]): Record<string, { n
 
 /** For the reflective dataset: the state trimmed to identity plus the answers most related to the question. */
 export function stateExcerpt(inst: EvalInstance, maxLines = 8): string {
+  // No name: cases from several people share one reflection prompt, and a name is never useful to the rewrite.
   const id = Object.entries(inst.state.identity)
+    .filter(([k]) => k !== 'name')
     .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join('; ') : String(v)}`)
     .join(' | ');
   const related = inst.state.evidence

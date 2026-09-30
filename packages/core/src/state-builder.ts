@@ -257,7 +257,6 @@ export function renderStateText(
     lines.push('', 'INSIGHTS');
     for (const i of state.insights) lines.push(`- ${i.text} [answers ${i.evidence.join(', ')}]`);
   }
-  if (state.hypothesis) lines.push('', 'HYPOTHESIS', state.hypothesis);
   if (state.evidence.length) {
     lines.push('', 'ANSWERS');
     for (const e of state.evidence) lines.push(renderEvidenceLine(e, c['state.evidence.line']));
