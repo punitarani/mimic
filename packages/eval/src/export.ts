@@ -6,6 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Client } from '@libsql/client';
 import { openLocalDb } from '@mimic/db/local';
+import { remoteFlags, WORKER_DIR } from './wrangler';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -32,8 +33,8 @@ function d1Export(env: 'preview' | 'prod'): string {
   const file = join(dir, 'data.sql');
   const r = spawnSync(
     'pnpm',
-    ['exec', 'wrangler', 'd1', 'export', 'DB', '--remote', '--env', env, '--no-schema', '--output', file],
-    { cwd: join(ROOT, 'apps/worker'), encoding: 'utf8' },
+    ['exec', 'wrangler', 'd1', 'export', 'DB', ...remoteFlags(env), '--no-schema', '--output', file],
+    { cwd: WORKER_DIR, encoding: 'utf8' },
   );
   if (r.status !== 0 || !existsSync(file))
     throw new Error(`wrangler d1 export failed:\n${r.stderr || r.stdout}`);

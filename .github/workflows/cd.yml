@@ -1,0 +1,79 @@
+# Deploy to Cloudflare, and only what CI already went green on.
+#
+# Triggered by CI completing on main (`workflow_run`), so "gated on CI" is structural: a red run never reaches
+# these jobs. Everything checks out `workflow_run.head_sha`, not `main`: if two commits land close together, the
+# second must not deploy on the first one's test result.
+#
+# Doppler is the source of truth for every credential and secret, including the Cloudflare token and account id.
+# The only GitHub secret is `DOPPLER_TOKEN` (a service token for the mimic project's prd config), on the
+# `production` environment. `scripts/deploy` does the rest (docs/DEPLOY.md):
+#   preflight → find-or-create Cloudflare resources → D1 migrations → worker → web → Access for /lab → smoke test.
+# Nothing is created by hand, and every step is idempotent, so a re-run is always safe.
+
+name: CD
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  # Manual deploy of the chosen ref, e.g. to re-run after fixing a Doppler value.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one in flight: a half-applied migration or a half-rolled deploy is worse
+# than waiting.
+concurrency:
+  group: cd-production
+  cancel-in-progress: false
+
+env:
+  SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+jobs:
+  # Every name the deploy reads is in Doppler, APP_URL matches the custom domain, and the Cloudflare token is
+  # active: a gap fails here in seconds, with its name, before anything is touched. Values are never printed.
+  preflight:
+    name: preflight (Doppler, Cloudflare)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ env.SHA }}" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: dopplerhq/cli-action@v3
+      - name: Everything the deploy reads is in place
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+        run: doppler run -- node scripts/deploy/preflight.mjs --env prod
+
+  deploy:
+    name: deploy (Cloudflare Workers)
+    needs: preflight
+    runs-on: ubuntu-latest
+    # A hung deploy holds the concurrency group, and the next release with it.
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://mimic.punitarani.com
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: "${{ env.SHA }}" }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: dopplerhq/cli-action@v3
+      # One command, the same one you'd run locally: `doppler run -- pnpm deploy:prod`.
+      - name: Resources, migrations, worker, web, Access, smoke test
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
+          CI: "1"
+        run: doppler run -- pnpm deploy:prod

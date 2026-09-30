@@ -241,3 +241,27 @@ Behaviour choices:
 - **Knowledge graph:** Session v2's panel has no knowledge-graph map, so the map moved to `/m/[id]/mimic`.
 - **Evidence chips:** the design's chip popover also shows "Mimic guessed". The snapshot doesn't carry the
   mimic's guess per evidence item, so the popover shows the question and the person's answer only.
+
+## ADR-0022 — Continuous deployment to Cloudflare from Doppler (2026-09-30)
+
+Prod deploys itself: `.github/workflows/cd.yml` runs when CI completes green on `main`, checks out the commit CI
+tested, and runs `doppler run -- pnpm deploy:prod`. The steps are in `docs/DEPLOY.md`. `scripts/provision.sh`, the
+per-app deploy scripts and `db:migrate:{preview,prod}` are gone.
+
+- **Doppler is the source of truth.** The only GitHub secret is `DOPPLER_TOKEN`, on the `production` environment.
+  Secrets go up with each deploy (`wrangler deploy --secrets-file`), so Doppler and the Workers can't drift, and a
+  first deploy works. `wrangler secret bulk` would need the Worker to exist already, and wrangler refuses to create
+  a Worker whose `secrets.required` are unset. Each Worker's `secrets.required` lists the names it gets.
+- **Resources are found or created by name** through the Cloudflare API on every deploy. Wrangler's
+  auto-provisioning is not used: it gives each Worker its own KV namespace and never creates queues or Vectorize
+  indexes. Real IDs go into a gitignored `wrangler.deploy.jsonc`; the checked-in configs keep `REPLACE_ME_*`. The
+  eval CLI's remote commands use the same generated file (`pnpm deploy:config`).
+- **The lab is behind Cloudflare Access in prod.** The deploy creates the Access app and policy. The web Worker is
+  reachable only on `mimic.punitarani.com`, because `workers_dev` and `preview_urls` are off. Preview is on
+  `workers.dev` with no Access in front, so it gets no `ADMIN_EMAILS` and its lab is closed.
+- **Gates:**
+  - A preflight job fails fast, naming anything missing.
+  - Migrations run before code.
+  - A smoke test checks the landing page, `/api/health` and the Access redirect on `/lab`.
+  - Deploys are serialised and never cancelled mid-flight.
+- **Only prod is deployed continuously.** Preview is deployed by hand from any Doppler config.

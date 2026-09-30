@@ -1,7 +1,8 @@
 // Mimic worker: queue consumer (async jobs) + cron. PLAN §6.5.
 // Local dev (top level) uses Miniflare: D1/R2/KV/Queues are local; Vectorize and Workers AI have no local mode,
 // so dev uses the SQL vector index and OpenRouter embeddings instead (ADR-0003, ADR-0005).
-// preview/prod resource IDs are created by scripts/provision.sh; replace the REPLACE_ME values with its output.
+// preview/prod: resources are found or created, and their IDs filled in (REPLACE_ME_* → wrangler.deploy.jsonc), by
+// scripts/deploy on every deploy. No URL is served in deployed envs: the worker only consumes the queue and runs cron.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "mimic-worker",
@@ -37,6 +38,8 @@
   "env": {
     "preview": {
       "name": "mimic-worker-preview",
+      "workers_dev": false,
+      "preview_urls": false,
       "triggers": { "crons": ["*/30 * * * *"] },
       "d1_databases": [
         {
@@ -63,10 +66,14 @@
         ]
       },
       "ratelimits": [{ "name": "RL", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } }],
-      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" }
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
+      // Pushed from Doppler with each deploy (scripts/deploy). Not inherited: listed per environment.
+      "secrets": { "required": ["OPENROUTER_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"] }
     },
     "prod": {
       "name": "mimic-worker-prod",
+      "workers_dev": false,
+      "preview_urls": false,
       "triggers": { "crons": ["*/30 * * * *"] },
       "d1_databases": [
         {
@@ -93,7 +100,8 @@
         ]
       },
       "ratelimits": [{ "name": "RL", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } }],
-      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" }
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
+      "secrets": { "required": ["OPENROUTER_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"] }
     }
   }
 }

@@ -17,8 +17,9 @@ pnpm check                  # lint + typecheck + test (use this before every com
 pnpm test                   # vitest; no live provider calls
 pnpm test:live              # live smoke tests; requires keys (or the dev proxy) and LIVE=1
 pnpm db:generate            # drizzle-kit generate
-pnpm db:migrate:local | db:migrate:preview | db:migrate:prod
-pnpm deploy:preview | deploy:prod
+pnpm db:migrate:local       # remote migrations run as part of each deploy
+doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
+doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
 pnpm eval -- <export|replay|select|import|report|session> ...
 ```
 
@@ -42,7 +43,7 @@ packages/adapters  OpenRouter chat, Jev decisions, OpenAI-decisions stub, Exa, P
 packages/db        Drizzle schema + migrations + Store; R2/KV/Vectorize helpers; runtime wiring (db/runtime)
 packages/eval      Node CLI for offline evaluation and the scripted session loop
 docs/              PLAN.md, DECISIONS.md, ontology/*.json, prompts/*.md (generated from packages/core)
-scripts/           dev orchestrator, egress relay, provisioning
+scripts/           dev orchestrator, egress relay, deploy (resources, secrets, Access, smoke)
 ```
 
 ## Invariants (PLAN §3). Never break these.
@@ -83,7 +84,9 @@ Check the provider's current docs, since these APIs are new and change: OpenRout
 - Bindings (both apps): `DB` (D1), `BLOBS` (R2), `CACHE` (KV), `VEC` (Vectorize, metadata indexes on `mimicId` and `kind`; deployed envs only), `JOBS` (Queue), `AI` (Workers AI; deployed envs only), `RL` (rate limiter).
 - Secrets: `OPENROUTER_API_KEY`, `EXA_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY` (optional), `SESSION_SECRET`, `ADMIN_EMAILS`, `INVITE_CODES`. Keep local copies in `.dev.vars`, which is gitignored.
 - Local dev in the Claude Code remote env: provider keys are injected by the outbound proxy and can't be read. `EGRESS_RELAY=http://127.0.0.1:8790` routes provider calls from workerd and Next through `scripts/egress-relay.mjs`, which uses Node's proxy-aware fetch (ADR-0002). Parallel's API host is blocked by this env's egress policy.
-- Environments: dev (local), preview and prod, each with separate resources (`scripts/provision.sh`).
+- Environments: dev (local), preview and prod, each with separate resources. Prod deploys from `.github/workflows/cd.yml`
+  after green CI on `main`. Every secret lives in Doppler (`mimic/prd`); the only GitHub secret is `DOPPLER_TOKEN`.
+  `scripts/deploy` finds or creates the resources and pushes secrets on each deploy (docs/DEPLOY.md, ADR-0022).
 
 ## Definition of done (every milestone)
 

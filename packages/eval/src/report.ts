@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
+import { remoteFlags, WORKER_DIR } from './wrangler';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
@@ -106,11 +107,10 @@ const BUCKET: Record<string, string> = {
   prod: 'mimic-blobs-prod',
 };
 
-function wrangler(args: string[], env: string): void {
-  const where =
-    env === 'local' ? ['--local', '--persist-to', '../../.wrangler/state'] : ['--remote', '--env', env];
+function wrangler(args: string[], env: 'local' | 'preview' | 'prod'): void {
+  const where = env === 'local' ? ['--local', '--persist-to', '../../.wrangler/state'] : remoteFlags(env);
   const r = spawnSync('pnpm', ['exec', 'wrangler', ...args, ...where], {
-    cwd: join(ROOT, 'apps/worker'),
+    cwd: WORKER_DIR,
     encoding: 'utf8',
   });
   if (r.status !== 0)

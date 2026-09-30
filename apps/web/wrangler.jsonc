@@ -1,5 +1,6 @@
 // Mimic web: Next.js on Workers via OpenNext. Produces jobs; apps/worker consumes them (PLAN §6.3).
 // Local dev: `next dev` gets these bindings through getPlatformProxy, sharing ../../.wrangler/state with the worker.
+// preview/prod: resource IDs are filled in at deploy time (REPLACE_ME_* → wrangler.deploy.jsonc) by scripts/deploy.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "mimic-web",
@@ -38,10 +39,19 @@
       "ai": { "binding": "AI" },
       "queues": { "producers": [{ "binding": "JOBS", "queue": "mimic-jobs-preview" }] },
       "ratelimits": [{ "name": "RL", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } }],
-      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" }
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
+      // Pushed from Doppler with each deploy (scripts/deploy). Not inherited: listed per environment.
+      // No ADMIN_EMAILS: preview is served on workers.dev with no Access in front, where the Access email header
+      // could be forged, so its lab stays closed (ADR-0022).
+      "secrets": { "required": ["OPENROUTER_API_KEY", "SESSION_SECRET", "INVITE_CODES"] }
     },
     "prod": {
       "name": "mimic-web-prod",
+      // The public hostname. /lab and /api/lab sit behind Cloudflare Access on it (scripts/deploy/access.mjs), so
+      // workers.dev and preview URLs are off: they would serve the lab without Access in front.
+      "routes": [{ "pattern": "mimic.punitarani.com", "custom_domain": true }],
+      "workers_dev": false,
+      "preview_urls": false,
       "d1_databases": [
         {
           "binding": "DB",
@@ -56,7 +66,8 @@
       "ai": { "binding": "AI" },
       "queues": { "producers": [{ "binding": "JOBS", "queue": "mimic-jobs-prod" }] },
       "ratelimits": [{ "name": "RL", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } }],
-      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" }
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
+      "secrets": { "required": ["OPENROUTER_API_KEY", "SESSION_SECRET", "INVITE_CODES", "ADMIN_EMAILS"] }
     }
   }
 }

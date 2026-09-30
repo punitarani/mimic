@@ -18,3 +18,6 @@ data/
 .DS_Store
 artifacts/tmp
 next-env.d.ts
+
+# Generated per deploy by scripts/deploy (real resource IDs)
+wrangler.deploy.jsonc
