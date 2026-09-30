@@ -94,6 +94,8 @@ const MIMIC_TABLES = [
   'snapshots',
   'mimic_facets',
   'vectors',
+  'persona_drafts',
+  'persona_curations',
 ];
 
 /**
@@ -142,6 +144,8 @@ export async function scrubExport(
     await client.execute({ sql: 'delete from mimics where id = ?', args: [id] });
   }
   await client.execute('delete from jobs');
+  // Persona.md curation is the person's own writing and choices, not research data (ADR-0027).
+  await client.execute('delete from persona_curations');
   await client.execute('delete from vectors');
   await client.execute('delete from participants where id not in (select participant_id from mimics)');
 

@@ -22,6 +22,13 @@
       "when": 1790735485680,
       "tag": "0002_state_at",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1790763281507,
+      "tag": "0003_persona",
+      "breakpoints": true
     }
   ]
 }

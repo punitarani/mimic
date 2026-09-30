@@ -356,6 +356,31 @@ export const mimicFacets = sqliteTable(
   (t) => [primaryKey({ columns: [t.mimicId, t.facetId] })],
 );
 
+/** ADR-0027: `persona.v1` drafts, derived from a snapshot; the latest feeds Persona.md. */
+export const personaDrafts = sqliteTable(
+  'persona_drafts',
+  {
+    id: text('id').primaryKey(),
+    mimicId: text('mimic_id').notNull(),
+    snapshotVersion: integer('snapshot_version').notNull(),
+    seqUpTo: integer('seq_up_to').notNull(),
+    configHash: text('config_hash').notNull(),
+    promptVersion: text('prompt_version').notNull(),
+    model: text('model').notNull(),
+    modelSnapshot: text('model_snapshot').notNull(),
+    draftJson: text('draft_json').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('persona_drafts_mimic_idx').on(t.mimicId, t.createdAt)],
+);
+
+/** ADR-0027: the person's choices for Persona.md (sections, hidden items, edits, their own words). */
+export const personaCurations = sqliteTable('persona_curations', {
+  mimicId: text('mimic_id').primaryKey(),
+  json: text('json').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 /** ADR-0003: local stand-in for Vectorize (dev and the Node CLI). */
 export const vectors = sqliteTable(
   'vectors',
@@ -388,4 +413,6 @@ export const MIMIC_TABLES = [
   snapshots,
   mimicFacets,
   vectors,
+  personaDrafts,
+  personaCurations,
 ] as const;

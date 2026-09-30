@@ -2,6 +2,8 @@ import type {
   AnswerResult,
   ExperimentRecord,
   NextResult,
+  PersonaCuration,
+  PersonaView,
   PlaygroundPrediction,
   PublicQuestion,
   UiSnapshot,
@@ -116,6 +118,10 @@ export const api = {
     call<{ draft: Draft }>('POST', `/api/mimics/${id}/ask`, { scenario }),
   predict: (id: string, question: Draft & { rationale: boolean }) =>
     call<PlaygroundPrediction>('POST', `/api/mimics/${id}/ask`, { question }),
+  persona: (id: string) => call<PersonaView>('GET', `/api/mimics/${id}/persona`),
+  draftPersona: (id: string) => call<PersonaView>('POST', `/api/mimics/${id}/persona`),
+  curatePersona: (id: string, curation: PersonaCuration) =>
+    call<PersonaView>('PUT', `/api/mimics/${id}/persona`, curation),
   stop: (id: string) => call<{ snapshotVersion: number | null }>('POST', `/api/mimics/${id}/stop`),
   remove: (id: string) => call<{ deleted: true }>('DELETE', `/api/mimics/${id}`),
   // Lab (admin only)

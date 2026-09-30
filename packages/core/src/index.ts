@@ -10,6 +10,7 @@ export * from './jobs';
 export * from './learning';
 export * from './metrics';
 export * from './ontology';
+export * from './persona';
 export * from './predictors';
 export * from './prompts';
 export * from './repeats';

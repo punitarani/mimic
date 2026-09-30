@@ -402,6 +402,9 @@ experiments         id, name, status, arms_json [{arm, config_hash, weight}], cr
 snapshots           mimic_id, version, r2_key, seq_up_to, created_at
 eval_runs           id, name, spec_json, dataset_hash, status, metrics_json, r2_report_key, created_at
 jobs                key PK, type, status, attempts, last_error, updated_at    (idempotency ledger)
+persona_drafts      id, mimic_id, snapshot_version, seq_up_to, config_hash, prompt_version, model,
+                    model_snapshot, draft_json, created_at                    (persona.v1, §8.3)
+persona_curations   mimic_id PK, json, updated_at                             (the person's choices, §8.3)
 ```
 
 KG node types follow schema.org names where one exists.
@@ -457,6 +460,28 @@ Using a mimic means running any predictor against its snapshot.
 - **Answer outbox.** Answers are written to IndexedDB first with an idempotency key, then POSTed, and retried on reconnect. The server enforces uniqueness on `idempotency_key`.
 - **Session identity.** A signed, httpOnly `participant_id` cookie. Nothing sensitive goes in localStorage.
 - **On load.** Render from cache immediately, then revalidate.
+
+### 8.3 Persona.md
+
+`mimic.json` is for running predictors. `Persona.md` is for people's own agents: a Markdown portrait that any agent
+can read to represent the person, with decision-making first (ADR-0027). It is a view with three inputs:
+
+1. **The latest snapshot** (§8.1), written fresh if evidence moved past it. The deterministic sections come from it:
+   background (intake and sourced facts, with sources), measured tendencies (each facet's label, poles and certainty),
+   cited insights, facets not known yet, and a decision record of the person's real answers and reasons. Repeats are
+   left out of the record.
+2. **The latest `persona.v1` draft** (optional). One LLM call writes a summary and cited statements in seven
+   sections: how they decide, rules of thumb, tradeoffs, values, beliefs and opinions, biases and blind spots, and
+   how they come across. It never sees the person's name. The reflector's citation guard applies: a statement
+   without a real answer seq is dropped. Drafts store the snapshot, config, prompt version and model snapshot, and
+   say how many answers have arrived since.
+3. **The person's curation:** the name to use, their own words (first in the file, and they override anything
+   inferred), sections on or off, hidden items, and rewordings of drafted statements.
+
+Curation only filters and rewords the file. It never feeds back into states, traits or predictions. The file opens
+with instructions for the reading agent (reason as this person would, say when the file is silent, don't invent
+facts) and the fidelity numbers, so the agent knows how far to trust it. Citations appear only for answers that are
+in the file. Hard delete covers both tables; research exports keep drafts and always drop curations.
 
 ---
 
@@ -671,7 +696,8 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | `/new` | Intake (§9.1). Required fields are marked, and each consent is explained in one line. An invite link (`?invite=CODE`) fills the code in and locks the field. |
 | `/m/[id]/identity` | Search progress, "Is one of these you?", then fact review with remove toggles. "Skip" is always available. |
 | `/m/[id]` | The session. |
-| `/m/[id]/mimic` | Talk to your mimic (§9.11); download `mimic.json`; delete the mimic. |
+| `/m/[id]/mimic` | Talk to your mimic (§9.11); download `mimic.json` and `Persona.md`; delete the mimic. |
+| `/m/[id]/persona` | Curate `Persona.md` (§8.3): write or rewrite the inferred sections, include or hide sections and items, reword statements, add your own words; preview, copy and download. |
 | `/lab` | Admin only. |
 
 **Session layout.** On desktop, the model panel sits on the left (about 40%) and the question on the right. On mobile, the question fills the screen, and a compact fidelity chip at the top opens the panel as a bottom sheet.
@@ -729,6 +755,10 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `POST /api/mimics/:id/answers` | `{ questionId, value, why?, latencyMs, idempotencyKey }` → `{ reveal?, fidelity }` | |
 | `POST /api/mimics/:id/ask` | scenario → typed question + prediction | Playground |
 | `GET /api/mimics/:id/export` | → latest `mimic.json` | |
+| `GET /api/mimics/:id/persona` | → Persona view: sections, items, curation, rendered Markdown | §8.3 |
+| `POST /api/mimics/:id/persona` | → new `persona.v1` draft, then the view | One LLM call; rate-limited, budget-guarded |
+| `PUT /api/mimics/:id/persona` | curation → view | Unknown item keys are pruned |
+| `GET /api/mimics/:id/persona.md` | → `Persona.md` (text/markdown) | |
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 

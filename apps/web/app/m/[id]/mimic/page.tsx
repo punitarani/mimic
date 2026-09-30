@@ -33,6 +33,7 @@ export default function MimicPage() {
           )}
         </section>
         <Playground id={id} />
+        <Persona id={id} />
         <Manage id={id} />
       </main>
     </div>
@@ -229,6 +230,27 @@ function Playground({ id }: { id: string }) {
   );
 }
 
+/** Persona.md (ADR-0027): a portable portrait for any agent, curated on its own page. */
+function Persona({ id }: { id: string }) {
+  return (
+    <section aria-labelledby="persona-h" className="space-y-3">
+      <h2 id="persona-h" className="text-lg font-medium">
+        Take your mimic anywhere
+      </h2>
+      <p className="text-[15px] text-muted">
+        Persona.md is a file any AI agent can read to represent you: your values, beliefs, opinions and
+        biases, and above all how you make decisions. You choose what goes in.
+      </p>
+      <Link
+        href={`/m/${id}/persona`}
+        className="inline-flex h-10 items-center rounded-[10px] bg-graphite px-4 text-[15px] font-medium text-fog hover:bg-graphite-soft"
+      >
+        Curate Persona.md
+      </Link>
+    </section>
+  );
+}
+
 function Manage({ id }: { id: string }) {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
@@ -246,6 +268,13 @@ function Manage({ id }: { id: string }) {
           download
         >
           Download mimic.json
+        </a>
+        <a
+          href={`/api/mimics/${id}/persona.md`}
+          className="inline-flex h-10 items-center rounded-[10px] border border-line bg-raised px-4 text-[15px] font-medium hover:border-line-strong"
+          download
+        >
+          Download Persona.md
         </a>
         {!confirming ? (
           <Button variant="secondary" onClick={() => setConfirming(true)}>

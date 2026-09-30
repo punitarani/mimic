@@ -14,6 +14,10 @@ import {
   type MimicRecord,
   type ModelCallRecord,
   Option,
+  PersonaCuration,
+  type PersonaCurationRecord,
+  PersonaDraft,
+  type PersonaDraftRecord,
   type PredictionRecord,
   type PredictionRole,
   type QuestionRecord,
@@ -632,6 +636,45 @@ export class DrizzleStore implements Store {
       createdAt: r.createdAt,
     }));
     for (const part of chunk(rows, 5)) await this.db.insert(s.mimicFacets).values(part).onConflictDoNothing();
+  }
+
+  // Persona.md (ADR-0027)
+  async insertPersonaDraft(rec: PersonaDraftRecord) {
+    const { draft, ...row } = rec;
+    await this.db
+      .insert(s.personaDrafts)
+      .values({ ...row, draftJson: JSON.stringify(PersonaDraft.parse(draft)) });
+  }
+  async latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null> {
+    const row = await this.db
+      .select()
+      .from(s.personaDrafts)
+      .where(eq(s.personaDrafts.mimicId, mimicId))
+      .orderBy(desc(s.personaDrafts.createdAt), desc(s.personaDrafts.id))
+      .get();
+    if (!row) return null;
+    const { draftJson, ...rest } = row;
+    return { ...rest, draft: parse(PersonaDraft, draftJson, { summary: '', statements: [] }) };
+  }
+  async getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null> {
+    const row = await this.db
+      .select()
+      .from(s.personaCurations)
+      .where(eq(s.personaCurations.mimicId, mimicId))
+      .get();
+    if (!row) return null;
+    return {
+      mimicId: row.mimicId,
+      curation: parse(PersonaCuration, row.json, PersonaCuration.parse({})),
+      updatedAt: row.updatedAt,
+    };
+  }
+  async putPersonaCuration(rec: PersonaCurationRecord) {
+    const json = JSON.stringify(PersonaCuration.parse(rec.curation));
+    await this.db
+      .insert(s.personaCurations)
+      .values({ mimicId: rec.mimicId, json, updatedAt: rec.updatedAt })
+      .onConflictDoUpdate({ target: s.personaCurations.mimicId, set: { json, updatedAt: rec.updatedAt } });
   }
 
   // jobs

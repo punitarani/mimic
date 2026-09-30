@@ -1,4 +1,5 @@
 import type { FidelityState } from './fidelity';
+import type { PersonaCuration, PersonaDraft } from './persona';
 import type { Distribution, Facet, Insight, Question, TraitEstimate } from './types';
 
 export type MimicStatus = 'intake' | 'identity' | 'learning' | 'paused' | 'archived';
@@ -189,6 +190,27 @@ export interface SnapshotRecord {
   createdAt: number;
 }
 
+/** A `persona.v1` draft (ADR-0027): derived from one snapshot, versioned, recomputable. */
+export interface PersonaDraftRecord {
+  id: string;
+  mimicId: string;
+  snapshotVersion: number;
+  seqUpTo: number;
+  configHash: string;
+  promptVersion: string;
+  model: string;
+  modelSnapshot: string;
+  draft: PersonaDraft;
+  createdAt: number;
+}
+
+/** The person's choices for Persona.md: one row per mimic. */
+export interface PersonaCurationRecord {
+  mimicId: string;
+  curation: PersonaCuration;
+  updatedAt: number;
+}
+
 export interface ConfigRecord {
   hash: string;
   json: string;
@@ -320,6 +342,11 @@ export interface Store {
   insertSnapshot(rec: SnapshotRecord): Promise<void>;
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;
+  // Persona.md (ADR-0027)
+  insertPersonaDraft(rec: PersonaDraftRecord): Promise<void>;
+  latestPersonaDraft(mimicId: string): Promise<PersonaDraftRecord | null>;
+  getPersonaCuration(mimicId: string): Promise<PersonaCurationRecord | null>;
+  putPersonaCuration(rec: PersonaCurationRecord): Promise<void>;
   insertMimicFacets(recs: MimicFacetRecord[]): Promise<void>;
   // jobs ledger
   getJob(key: string): Promise<JobRecord | null>;

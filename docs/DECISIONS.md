@@ -377,3 +377,31 @@ landing page's button carries it to `/new`.
   Suspense boundary whose fallback is the same form with no code, so the static HTML is what it was before, and
   hydration only fills the field in.
 - Disabled inputs now share one look (`components/ui.tsx`): surface background, muted text, no hover border.
+
+## ADR-0027 — Persona.md: a curated, portable portrait for any agent (2026-09-30)
+
+`mimic.json` is a research artifact: it lets a predictor run against a person's state. People also want to bring
+themselves to the agents they already use, which read prose, not trait vectors. `Persona.md` is that file: values,
+beliefs, opinions and biases, and above all how the person thinks and decides. PLAN §8.3 describes it.
+
+- **A view, not new evidence.** The file is built from the latest snapshot, the latest `persona.v1` draft and the
+  person's curation. The deterministic sections need no model call, so the file downloads even before a draft exists.
+  Curation filters and rewords the file only; nothing flows back into states, traits or predictions, so invariants 1
+  and 3 are untouched.
+- **One new prompt, `persona.v1`.** It runs on the reflector's model (the generator's when reflection is off) at
+  `reasoning.effort: medium`, since it's a one-off per request and quality matters more than latency. Not adding a
+  config field keeps every existing config hash valid; the draft row records the config hash, prompt version, model
+  and model snapshot instead (invariant 4). The call goes through the gateway (invariant 5) and the budget guard.
+- **Citations or nothing.** Like the reflector, every statement must cite real answer seqs or it is dropped, and at
+  most six survive per section. Statements resting on one answer are marked tentative. Citations in the file point
+  into the decision record at its end, and are shown only for answers that are in the file.
+- **No name to the writer.** The writer gets location, occupation, sourced facts, tendencies, insights and answers,
+  and refers to the person as "they". The name is added only when the file is rendered.
+- **Curation keys are content hashes** (`st:` + sha of section and text, `fact:`, `ins:`, `ex:{seq}`, `trait:{facet}`),
+  so hiding a fact or an answer survives a rewrite. Keys that match no item are pruned on save, and edits to
+  statements that a rewrite changes are dropped.
+- **Storage.** `persona_drafts` (append-only, one row per draft) and `persona_curations` (one row per mimic). Both are
+  in the hard-delete scope. Research exports keep drafts, as derived data, and always drop curations, which are the
+  person's own writing.
+- **Synchronous.** Drafting is a route handler call like the playground's, not a queue job: the person is waiting
+  on the page for it, and it is one LLM call.
