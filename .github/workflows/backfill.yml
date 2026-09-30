@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       predictors:
-        description: Predictor IDs, comma-separated, e.g. llm:xiaomi/mimo-v2.6-flash,llm:qwen/qwen3.8-flash
+        description: Predictor IDs, comma-separated, e.g. llm:qwen/qwen3.8-flash@predict.v1-direct,llm:xiaomi/mimo-v2.6-flash
         required: true
         type: string
       scope:

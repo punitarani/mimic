@@ -1025,3 +1025,32 @@ off (a prompt variant, ADR-0028) or drop it is a separate decision; this ADR doe
 - **Queue batches still run all their jobs at once.** Capping them would make live jobs wait behind slow shadows.
   Pacing keeps backfill batches small; a live burst larger than six calls waiting on headers can still add a
   little queueing to a shadow's latency.
+
+## ADR-0038 — Qwen3.8 Flash runs with reasoning off: `predict.v1-direct` and `cfg.default.v5` (2026-09-30)
+
+ADR-0025 added `llm:qwen/qwen3.8-flash` as a shadow after one live call. At the incumbent harness (`reasoning.effort:
+low`, 3000 max tokens) its provider doesn't honor low effort. ADR-0037's measurements on 8 sealed states:
+
+| Qwen3.8 Flash | Valid | p50 | $ per 1k |
+| --- | --- | --- | --- |
+| effort low, 3000 max tokens (`predict.v1`) | 5 of 8; the rest spent all 3000 tokens reasoning | 59 s | $1.07 |
+| effort low, 8000 max tokens | 7 of 7 | 49 s | $1.20 |
+| reasoning off (`predict.v1-direct`, through `LlmPredictor`) | 7 of 8; one keyed an option by its label | 1.8 s | $0.07 |
+
+The prod lab agreed: 78% failed, 35 s p50 over what did succeed. Almost every failure is the token cap, which also
+makes the successes a biased sample: the questions Qwen happened to reason about briefly.
+
+**Decision.**
+- **A registered prompt variant, `predict.v1-direct`:** the incumbent `predict.v1` text with `harness.reasoningEffort:
+  'none'`. It changes nothing but the effort, so it is addressable for any model as `llm:<model>@predict.v1-direct`
+  (ADR-0028), and every prediction stores it as its prompt version (invariant 4).
+- **`cfg.default.v5` is `cfg.default.v4` with the Qwen shadow as `llm:qwen/qwen3.8-flash@predict.v1-direct`.** The
+  other shadows are unchanged. At effort low they reason for only tens to a few hundred tokens, so reasoning off is
+  the closest match for Qwen to the condition they run in. Configs are immutable: mimics created under v3 and v4 keep
+  `llm:qwen/qwen3.8-flash`, and its predictions stay in the record (with their failures now marked `output`,
+  ADR-0037).
+- **Backfill the new predictor** over served questions (`pnpm backfill --predictor
+  llm:qwen/qwen3.8-flash@predict.v1-direct`, ADR-0024), so the lab compares it on the same questions as the others.
+
+Whether reasoning helps Qwen's accuracy at all is left to the lab. `llm:qwen/qwen3.8-flash` remains as a
+predictor ID, and the 8000-token harness can be registered as its own variant if that comparison is wanted.
