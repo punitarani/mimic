@@ -115,6 +115,31 @@ html {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* No double-tap zoom when tapping answers quickly. Pinch zoom and scrolling still work. */
+  touch-action: manipulation;
+}
+
+/*
+ * iOS zooms into any focused field whose font is under 16px and stays zoomed after blur. So on touch screens every
+ * text field is 16px, whatever size its utilities ask for (this rule is unlayered, so it beats them). Desktop keeps
+ * the design's 13–15px. Don't use maximum-scale in the viewport instead: Android then blocks pinch zoom.
+ */
+@media (any-pointer: coarse) {
+  input:not(
+    [type="checkbox"],
+    [type="radio"],
+    [type="range"],
+    [type="color"],
+    [type="file"],
+    [type="button"],
+    [type="submit"],
+    [type="reset"],
+    [type="image"]
+  ),
+  textarea,
+  select {
+    font-size: 16px;
+  }
 }
 
 body {
