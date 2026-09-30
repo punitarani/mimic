@@ -347,3 +347,28 @@ failures and cost, and say nothing about accuracy. Everything live, probe includ
     control;
   - the 30-turn session test runs 1 primary, 1 baseline and 6 shadows per scored question, each recording its
     prompt version.
+
+## M10: ontology v2, reserve.v2, gen.v3 and gates.v3 (ADR-0042)
+
+Three kinds of evidence, kept apart. Nothing below comes from real people, and nothing is a measure of prediction
+accuracy.
+
+- **Offline fakes (tests, deterministic).**
+  - `packages/core/test/ontology-v2.test.ts` (10 tests): v1 facets unchanged; 34 new facets, each with poles, five
+    labels, its group's category and a research anchor; sensitive facets only inside their area's category, with
+    every area covered; at least two reserve.v2 items per new facet, each a valid question on known facets, no
+    self-rating forms, no "prefer not to say"; gates.v2 word for word unchanged; the sensitive gate asking only
+    about untagged areas; `concrete` and `demeaning` failures; unasked gates never fail.
+  - `packages/eval/test/generation-v3.test.ts` (7 tests, sessions under the candidate): every generated question
+    gated with gates.v3 and its areas recorded; the fakes' self-rating, untagged religious and loaded drafts never
+    pooled, and the political one pooled only with politics consented; no sensitive facet without consent; the
+    generator shown categories, a quota and only consented sensitive facets; reflect.v2 and hyp.v2 in the traces;
+    reserve.v2 carrying a session spread across facets; and an online reproduction at a 100% state-hash match.
+  - `packages/eval/test/scope.test.ts`: no workplace scenes without "Work and money".
+- **Live gate calibration (hand-labelled questions, live Jev).** `docs/reports/m10-gates.md`: 133 labelled items
+  and a 40-item held-out set. Concrete AUC 0.990, sensitive 0.993, demeaning 0.960, leading 0.948. On the held-out
+  set 34 of 36 good drafts passed. Labels are the implementer's.
+- **Live scripted sessions (a scripted answerer, live generator, gates and selector).**
+  `docs/reports/m10-concreteness.md`: 46 of 48 served adaptive questions concrete by hand (96%), 13 of 48 in
+  workplace scenes, and no sensitive facet reached by question 30 even with consent (the sweep is M12's).
+  Scripted, so not a result about people.
