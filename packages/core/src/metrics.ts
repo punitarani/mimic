@@ -192,3 +192,13 @@ export function itemAcrossPeople(
     meanDispersionRatio: disp.length ? mean(disp) : null,
   };
 }
+
+/**
+ * Number of answered questions after which a fidelity series (one value per answered question) is ≥ `target` and
+ * stays there through its last value; null if it never settles there. A single early crossing doesn't count.
+ */
+export function questionsToSustain(series: number[], target: number): number | null {
+  if (!series.length) return null;
+  const lastBelow = series.findLastIndex((x) => x < target);
+  return lastBelow === series.length - 1 ? null : lastBelow + 2;
+}

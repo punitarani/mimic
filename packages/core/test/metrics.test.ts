@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { callMetrics, predictorMetrics, type ScoredRow } from '../src';
+import { callMetrics, predictorMetrics, questionsToSustain, type ScoredRow } from '../src';
 
 const row = (q: string, predictorId: string, role: ScoredRow['role'], itemAcc: number): ScoredRow => ({
   mimicId: 'm',
@@ -52,5 +52,16 @@ describe('lab metrics', () => {
       models: ['m1', 'm2'],
     });
     expect(c[0]!.p50LatencyMs).toBe(20);
+  });
+});
+
+describe('questionsToSustain (E3)', () => {
+  it('counts questions until fidelity reaches the target and stays there', () => {
+    expect(questionsToSustain([0.9, 0.5, 0.6, 0.8, 0.76, 0.9], 0.75)).toBe(4);
+    expect(questionsToSustain([0.8, 0.9], 0.75)).toBe(1);
+  });
+  it('ignores an early crossing that falls back', () => {
+    expect(questionsToSustain([0.9, 0.7, 0.6], 0.75)).toBeNull();
+    expect(questionsToSustain([], 0.75)).toBeNull();
   });
 });

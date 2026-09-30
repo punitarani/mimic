@@ -22,7 +22,8 @@ const Upsert = z.object({
         weight: z.number().positive(),
       }),
     )
-    .min(1),
+    .min(1)
+    .refine((arms) => new Set(arms.map((a) => a.arm)).size === arms.length, 'Arm names must be unique'),
 });
 
 /**
@@ -37,13 +38,17 @@ export const POST = handle(async (req: Request) => {
     if (!(await d.store.getConfig(a.configHash))) return fail(400, `Unknown config ${a.configHash}`);
   }
   const existing = await d.store.listExperiments();
+  const prev = existing.find((e) => e.id === input.id);
+  if (input.id && !prev) return fail(404, 'Experiment not found');
+  // Allocation is hash(mimicId) over the arms, so changing arms would silently re-assign future mimics.
+  if (prev && JSON.stringify(prev.arms) !== JSON.stringify(input.arms))
+    return fail(409, 'Arms are fixed once an experiment exists; create a new experiment instead.');
   if (input.status === 'active') {
     for (const e of existing) {
       if (e.status === 'active' && e.id !== input.id)
         await d.store.putExperiment({ ...e, status: 'stopped' });
     }
   }
-  const prev = existing.find((e) => e.id === input.id);
   const rec = {
     id: input.id ?? ulid(),
     name: input.name,

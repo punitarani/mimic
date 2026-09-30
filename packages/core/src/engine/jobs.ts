@@ -67,7 +67,8 @@ export async function runJob(deps: EngineDeps, job: Job): Promise<'done' | 'skip
   }
 }
 
-export const STALE_JOB_MS = 30 * 60 * 1000;
+/** A queue consumer invocation can't run past 15 minutes on Workers, so a job `running` longer than that is dead. */
+export const STALE_JOB_MS = 15 * 60 * 1000;
 
 /**
  * Cron safety net: re-enqueues jobs stuck in `running`/`failed` (for example a lost message in local dev). Queues

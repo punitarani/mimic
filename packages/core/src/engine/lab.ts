@@ -4,6 +4,8 @@ import {
   callMetrics,
   type PredictorMetrics,
   predictorMetrics,
+  quantile,
+  questionsToSustain,
   type ScoredRow,
 } from '../metrics';
 import type { ConfigRecord, EvalRunRecord, ExperimentRecord } from '../store';
@@ -16,7 +18,17 @@ export interface ArmCurve {
   points: Array<{ k: number; fidelity: number; n: number }>;
   meanSpendUsd: number;
   meanFinalFidelity: number | null;
+  /** E3 (PLAN §12.7): mean fidelity after 20 answered questions, over mimics that got that far. */
+  fidelityAt20: number | null;
+  /**
+   * E3: median number of answered questions after which fidelity is ≥ FIDELITY_TARGET and stays there through the
+   * mimic's last answer (a single early crossing is noise), over mimics that got there.
+   */
+  questionsToTarget: number | null;
+  reachedTarget: number;
 }
+
+export const FIDELITY_TARGET = 0.75;
 
 export interface InvariantReport {
   servedQuestions: number;
@@ -44,6 +56,8 @@ export interface LabOverview {
   spend: { totalUsd: number; meanPerMimicUsd: number; p95PerMimicUsd: number };
   configs: ConfigRecord[];
   experiments: ExperimentRecord[];
+  /** The experiment the arm curves are restricted to; null = every mimic, grouped by arm. */
+  armExperimentId: string | null;
   evalRuns: EvalRunRecord[];
 }
 
@@ -53,12 +67,16 @@ export interface LabOverview {
  */
 export async function labOverview(
   deps: EngineDeps,
-  opts: { includeAll?: boolean } = {},
+  opts: { includeAll?: boolean; experimentId?: string | null } = {},
 ): Promise<LabOverview> {
+  const armExperimentId = opts.experimentId ?? null;
   const mimics = await deps.store.listMimics(opts.includeAll ? {} : { consentResearch: true });
   const rows: ScoredRow[] = [];
   const failures: Array<{ predictorId: string; role: string }> = [];
-  const byArm = new Map<string, { final: number[]; spend: number[]; byK: Map<number, number[]> }>();
+  const byArm = new Map<
+    string,
+    { final: number[]; spend: number[]; byK: Map<number, number[]>; toTarget: number[] }
+  >();
   const inv: InvariantReport = {
     servedQuestions: 0,
     incomplete: 0,
@@ -114,9 +132,15 @@ export async function labOverview(
       inv.sealingViolations += ps.filter((p) => p.evidenceSeqMax >= q.seq!).length;
     }
 
+    if (armExperimentId && m.experimentId !== armExperimentId) continue;
     const arm = m.arm ?? 'default';
-    const a = byArm.get(arm) ?? { final: [], spend: [], byK: new Map<number, number[]>() };
+    const a = byArm.get(arm) ?? { final: [], spend: [], byK: new Map<number, number[]>(), toTarget: [] };
     a.spend.push(m.spendUsd);
+    const k = questionsToSustain(
+      fid.map((f) => f.fidelity),
+      FIDELITY_TARGET,
+    );
+    if (k !== null) a.toTarget.push(k);
     // Fidelity after k answered questions: the k-th fidelity row.
     fid.forEach((f, i) => {
       const k = i + 1;
@@ -134,7 +158,14 @@ export async function labOverview(
       .map(([k, v]) => ({ k, fidelity: v.reduce((s, x) => s + x, 0) / v.length, n: v.length })),
     meanSpendUsd: a.spend.reduce((s, x) => s + x, 0) / (a.spend.length || 1),
     meanFinalFidelity: a.final.length ? a.final.reduce((s, x) => s + x, 0) / a.final.length : null,
+    fidelityAt20: (() => {
+      const v = a.byK.get(20);
+      return v?.length ? v.reduce((s, x) => s + x, 0) / v.length : null;
+    })(),
+    questionsToTarget: a.toTarget.length ? quantile(a.toTarget, 0.5) : null,
+    reachedTarget: a.toTarget.length,
   }));
+  arms.sort((x, y) => x.arm.localeCompare(y.arm));
 
   const since = deps.clock() - 30 * 24 * 3600 * 1000;
   const mimicIds = new Set(mimics.map((m) => m.id));
@@ -163,6 +194,7 @@ export async function labOverview(
     },
     configs,
     experiments,
+    armExperimentId,
     evalRuns,
   };
 }

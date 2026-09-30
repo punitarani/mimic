@@ -1,4 +1,11 @@
-import type { AnswerResult, NextResult, PlaygroundPrediction, PublicQuestion, UiSnapshot } from '@mimic/core';
+import type {
+  AnswerResult,
+  ExperimentRecord,
+  NextResult,
+  PlaygroundPrediction,
+  PublicQuestion,
+  UiSnapshot,
+} from '@mimic/core';
 
 /** Browser → our route handlers only. Keys stay server-side (PLAN §3.10). */
 export class ApiError extends Error {
@@ -103,4 +110,15 @@ export const api = {
     call<PlaygroundPrediction>('POST', `/api/mimics/${id}/ask`, { question }),
   stop: (id: string) => call<{ snapshotVersion: number | null }>('POST', `/api/mimics/${id}/stop`),
   remove: (id: string) => call<{ deleted: true }>('DELETE', `/api/mimics/${id}`),
+  // Lab (admin only)
+  createConfig: (label: string, config: unknown) =>
+    call<{ hash: string }>('POST', '/api/lab/configs', { label, config }),
+  saveExperiment: (e: ExperimentRequest) => call<ExperimentRecord>('POST', '/api/lab/experiments', e),
 };
+
+export interface ExperimentRequest {
+  id?: string;
+  name: string;
+  status: ExperimentRecord['status'];
+  arms: ExperimentRecord['arms'];
+}

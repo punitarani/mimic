@@ -67,8 +67,12 @@ export const MimicJson = z.object({
 });
 export type MimicJson = z.infer<typeof MimicJson>;
 
-export function snapshotKey(mimicId: string, version: number): string {
-  return `snapshots/${mimicId}/v${version}.json`;
+/**
+ * Unique per write attempt: two writers racing for the same version can never overwrite a committed snapshot's
+ * blob (snapshots are immutable). The D1 row records the key; hard delete removes the whole prefix.
+ */
+export function snapshotKey(mimicId: string, version: number, attemptId: string): string {
+  return `snapshots/${mimicId}/v${version}-${attemptId}.json`;
 }
 
 export async function buildMimicJson(deps: EngineDeps, mimicId: string, version: number): Promise<MimicJson> {
@@ -166,15 +170,21 @@ export async function writeSnapshot(
   if (latest && latest.seqUpTo >= Math.max(seqUpTo ?? 0, currentSeq)) return null;
   const version = (latest?.version ?? 0) + 1;
   const doc = await buildMimicJson(deps, m.id, version);
-  const key = snapshotKey(m.id, version);
+  const key = snapshotKey(m.id, version, deps.newId());
   await deps.blobs.put(key, JSON.stringify(doc), 'application/json');
-  await deps.store.insertSnapshot({
-    mimicId: m.id,
-    version,
-    r2Key: key,
-    seqUpTo: doc.seqUpTo,
-    createdAt: deps.clock(),
-  });
+  try {
+    await deps.store.insertSnapshot({
+      mimicId: m.id,
+      version,
+      r2Key: key,
+      seqUpTo: doc.seqUpTo,
+      createdAt: deps.clock(),
+    });
+  } catch (e) {
+    // Another writer took this version (primary key); drop our blob and let the job retry.
+    await deps.blobs.delete([key]);
+    throw e;
+  }
   await deps.store.updateMimic(m.id, { snapshotVersion: version, updatedAt: deps.clock() });
   return version;
 }

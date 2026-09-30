@@ -131,3 +131,29 @@ the pipeline only and are not research results.
   set the anchor order.
 - Found and fixed along the way: the local cron never ran in dev (ADR-0019), and the dataset hash drifted as eval
   runs were recorded (ADR-0018).
+
+## M8 Experiments and BALD
+
+- In the browser (`docs/media/m8-create-experiment.webm`, `m8-experiment-created.png`), `/lab`:
+  1. derived `cfg.bald.v1` from the default config (selector `bald`, K = 4);
+  2. started the two-arm experiment "E3 selector: entropy vs BALD" (weights 1:1).
+- Four research-consented dev mimics ran 20 answers each through the live API. Allocation by `hash(mimicId)` put 2
+  in each arm, each with its arm's config:
+  - BALD mimics made 36 `select.bald` Jev calls each (9 adaptive selections × K = 4) on hypotheses refreshed after
+    reflection, and still exactly one sealed `predict.primary` per question.
+  - `/lab` shows per-arm fidelity-vs-questions curves, fidelity per dollar, fidelity at 20, and questions to a
+    sustained fidelity of 0.75 (`m8-arms.png`).
+  - Cost per mimic: entropy $0.023, BALD $0.033.
+  - Answers came from a scripted rule-based answerer, so the arm difference means nothing; this validates the
+    machinery only.
+- Invariants over all 222 served questions: 0 incomplete, 0 shadow-state mismatches, 0 non-context baselines, 0
+  sealing violations.
+- Tests (`packages/eval/test/experiments.test.ts`, offline):
+  - A two-arm experiment allocates six people across both arms with their configs.
+  - BALD runs on hypotheses with separate call attribution and one primary per question.
+  - The lab's experiment-scoped arm curves cover ≥ 20 points with fidelity at 20.
+  - Unit tests cover the sustained-target metric.
+- Found and fixed:
+  - Concurrent `snapshot.write` jobs could overwrite a committed snapshot blob. A deterministic race test fails on
+    the old keying (ADR-0020).
+  - Worker hot reloads in dev left jobs `running` for 30 minutes; the stale window is now 15 minutes.

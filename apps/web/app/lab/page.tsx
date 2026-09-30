@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { TopBar } from '@/components/brand';
 import { LineChart, ScatterChart } from '@/components/charts';
+import { ExperimentsPanel } from '@/components/lab-experiments';
 import { deps, isAdmin } from '@/lib/server';
 
 export const dynamic = 'force-dynamic';
@@ -14,11 +15,20 @@ const num = (x: number, d = 3) => x.toFixed(d);
 const usd = (x: number) => (x < 0.01 ? `$${x.toFixed(4)}` : `$${x.toFixed(2)}`);
 const ms = (x: number) => `${Math.round(x)} ms`;
 
-export default async function Lab({ searchParams }: { searchParams: Promise<{ all?: string }> }) {
+export default async function Lab({
+  searchParams,
+}: {
+  searchParams: Promise<{ all?: string; exp?: string }>;
+}) {
   const { deps: d, env } = await deps();
   if (!(await isAdmin(env))) notFound();
-  const includeAll = (await searchParams).all === '1';
-  const o = await labOverview(d, { includeAll });
+  const sp = await searchParams;
+  const includeAll = sp.all === '1';
+  // Arm curves default to the active experiment; `exp=all` groups every mimic by arm.
+  const active = (await d.store.listExperiments()).find((e) => e.status === 'active');
+  const experimentId = sp.exp === 'all' ? null : (sp.exp ?? active?.id ?? null);
+  const o = await labOverview(d, { includeAll, experimentId });
+  const href = (exp: string) => `/lab?${new URLSearchParams({ ...(includeAll ? { all: '1' } : {}), exp })}`;
   const inv = o.invariants;
   const invOk =
     !inv.incomplete && !inv.shadowStateMismatches && !inv.nonContextBaselines && !inv.sealingViolations;
@@ -122,27 +132,70 @@ export default async function Lab({ searchParams }: { searchParams: Promise<{ al
           />
         </Section>
 
-        <div className="grid gap-10 lg:grid-cols-2">
-          <Section title="Fidelity vs. questions, per arm">
-            <LineChart
-              xLabel="Questions answered"
-              yLabel="Fidelity"
-              series={o.arms.map((a) => ({
-                name: `${a.arm} (${a.mimics})`,
-                points: a.points.map((p) => ({ x: p.k, y: p.fidelity })),
-              }))}
+        <Section
+          title="Experiment arms"
+          note="Fidelity after k answered questions, averaged over the arm's mimics that got that far. E3's primary metrics: questions until fidelity reaches ≥ 0.75 and stays there, and fidelity at 20 questions."
+        >
+          <nav className="mb-4 flex flex-wrap gap-2 text-[13px]">
+            {[{ id: 'all', name: 'All mimics by arm' }, ...o.experiments].map((e) => {
+              const on = (o.armExperimentId ?? 'all') === e.id;
+              return (
+                <Link
+                  key={e.id}
+                  href={href(e.id)}
+                  className={`rounded-full border px-3 py-1 ${on ? 'border-graphite' : 'border-line text-muted'}`}
+                >
+                  {e.name}
+                </Link>
+              );
+            })}
+          </nav>
+          <div className="grid gap-10 lg:grid-cols-2">
+            <div>
+              <h3 className="mb-2 text-[14px] font-medium">Fidelity vs. questions, per arm</h3>
+              <LineChart
+                xLabel="Questions answered"
+                yLabel="Fidelity"
+                series={o.arms.map((a) => ({
+                  name: `${a.arm} (${a.mimics})`,
+                  points: a.points.map((p) => ({ x: p.k, y: p.fidelity })),
+                }))}
+              />
+            </div>
+            <div>
+              <h3 className="mb-2 text-[14px] font-medium">Fidelity per dollar</h3>
+              <ScatterChart
+                xLabel="Mean spend per mimic (USD)"
+                yLabel="Final fidelity"
+                points={o.arms
+                  .filter((a) => a.meanFinalFidelity !== null)
+                  .map((a) => ({ label: a.arm, x: a.meanSpendUsd, y: a.meanFinalFidelity! }))}
+              />
+            </div>
+          </div>
+          <div className="mt-4">
+            <Table
+              head={['Arm', 'Mimics', 'Final fidelity', 'Fidelity at 20', 'Questions to 0.75', 'Mean spend']}
+              rows={o.arms.map((a) => [
+                a.arm,
+                a.mimics,
+                pct(a.meanFinalFidelity, 1),
+                pct(a.fidelityAt20, 1),
+                a.questionsToTarget === null
+                  ? `— (0 of ${a.mimics})`
+                  : `${a.questionsToTarget} (${a.reachedTarget} of ${a.mimics})`,
+                usd(a.meanSpendUsd),
+              ])}
             />
-          </Section>
-          <Section title="Fidelity per dollar">
-            <ScatterChart
-              xLabel="Mean spend per mimic (USD)"
-              yLabel="Final fidelity"
-              points={o.arms
-                .filter((a) => a.meanFinalFidelity !== null)
-                .map((a) => ({ label: a.arm, x: a.meanSpendUsd, y: a.meanFinalFidelity! }))}
-            />
-          </Section>
-        </div>
+          </div>
+        </Section>
+
+        <Section
+          title="Configs and experiments"
+          note="Configs are immutable; experiments allocate new mimics by hash(mimicId)."
+        >
+          <ExperimentsPanel configs={o.configs} experiments={o.experiments} />
+        </Section>
 
         <Section title="Cost and latency per call type" note="From model_calls, last 30 days.">
           <Table
@@ -162,33 +215,7 @@ export default async function Lab({ searchParams }: { searchParams: Promise<{ al
           />
         </Section>
 
-        <div className="grid gap-10 lg:grid-cols-3">
-          <Section title="Configs">
-            <ul className="space-y-1 text-[13px]">
-              {o.configs.map((c) => (
-                <li key={c.hash}>
-                  <span className="font-medium">{c.label ?? 'unlabeled'}</span>{' '}
-                  <code className="text-muted">{c.hash.slice(0, 12)}</code>
-                </li>
-              ))}
-            </ul>
-          </Section>
-          <Section title="Experiments">
-            {o.experiments.length === 0 ? (
-              <p className="text-[13px] text-muted">None yet.</p>
-            ) : (
-              <ul className="space-y-2 text-[13px]">
-                {o.experiments.map((e) => (
-                  <li key={e.id}>
-                    <span className="font-medium">{e.name}</span> · {e.status}
-                    <div className="text-muted">
-                      {e.arms.map((a) => `${a.arm} (${a.weight}) ${a.configHash.slice(0, 8)}`).join(' · ')}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Section>
+        <div>
           <Section title="Eval runs">
             {o.evalRuns.length === 0 ? (
               <p className="text-[13px] text-muted">

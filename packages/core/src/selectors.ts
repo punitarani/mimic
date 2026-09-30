@@ -15,6 +15,8 @@ export interface SelectContext {
   rng: () => number;
   /** BALD persona hypotheses (PLAN §9.5). */
   hypotheses?: string[];
+  /** Predictor for BALD's hypothesis calls (same model; logged under its own purpose). Defaults to `primary`. */
+  explore?: Predictor;
 }
 
 export interface Selection {
@@ -140,7 +142,7 @@ export class BaldSelector implements Selector {
     }
     const [primaryPreds, ...hypPreds] = await Promise.all([
       ctx.primary.predict(ctx.state, ctx.pool),
-      ...hyps.map((h) => ctx.primary.predict(withHypothesis(ctx.state, h), ctx.pool)),
+      ...hyps.map((h) => (ctx.explore ?? ctx.primary).predict(withHypothesis(ctx.state, h), ctx.pool)),
     ]);
     let best = -1;
     let bestScore = Number.NEGATIVE_INFINITY;

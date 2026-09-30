@@ -185,3 +185,23 @@ existed. Each such shadow is enqueued for questions served more than 10 minutes 
 blob, so a late shadow is still sealed (PLAN §3.1), and job keys make repeats no-ops. On local dev data the first
 run requeued 12 stale jobs and enqueued 51 missing shadows; the lab's invariant monitor went from 25 incomplete
 questions to 0.
+
+## ADR-0020 — Experiments, the arms UI and BALD attribution (2026-09-30)
+
+- `/lab` registers configs (derived from an existing one in a JSON editor, validated by the `PipelineConfig` schema,
+  identified by hash) and builds experiments: two or more uniquely named arms, each a config with a weight.
+  Starting an experiment stops the active one. Arms are fixed once an experiment exists (the API returns 409),
+  because allocation is `hash(mimicId)` over the arms. Changing them would silently re-assign future mimics
+  mid-experiment; only the status can change.
+- Arm curves are scoped to one experiment: the active one by default, any experiment via `?exp=`, or every mimic
+  grouped by arm via `exp=all`. Each arm reports mean final fidelity and E3's primary metrics (PLAN §12.7):
+  - fidelity at 20 questions;
+  - the median number of questions after which fidelity is ≥ 0.75 and stays there through the last answer, with
+    how many mimics got there. Fidelity after one or two answers is noise; a "first crossing" definition reported
+    1 question for an arm whose fidelity then fell to 44%.
+- BALD's K hypothesis calls use the same Jev model as the primary but are logged as `select.bald`, so cost per call
+  type separates exploration from the sealed primary (still one `predict.primary` per question).
+- Snapshot blobs are keyed per write attempt (`v{n}-{id}.json`). Live, two `snapshot.write` jobs raced for the same
+  version: the loser's R2 put had already overwritten the winner's committed blob before its D1 insert failed. Now
+  the loser deletes its own blob and retries.
+- Stale jobs are requeued after 15 minutes (was 30), the Workers limit for one consumer invocation.

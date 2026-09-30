@@ -286,7 +286,14 @@ async function serveWithPredictions(
         coverage: (q) => questionCoverage(counts, q),
         redundancy,
         rng,
-        ...(hypotheses ? { hypotheses } : {}),
+        ...(hypotheses
+          ? {
+              hypotheses,
+              explore: primarySpec.startsWith('jev:')
+                ? new JevPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'select.bald'))
+                : new LlmPredictor(deps.gateway, primarySpec.slice(4), ctxFor(m, 'select.bald')),
+            }
+          : {}),
       }),
     );
     chosen = sel.question as QuestionRecord;

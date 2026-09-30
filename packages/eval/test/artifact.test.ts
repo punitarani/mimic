@@ -10,6 +10,7 @@ import {
   searchCacheKey,
   serveNext,
   submitAnswer,
+  writeSnapshot,
 } from '@mimic/core';
 import { schema } from '@mimic/db';
 import type { MemoryBlobs, MemoryKv } from '@mimic/db/local';
@@ -59,6 +60,49 @@ async function session(consentSearch: boolean, turns: number, name = 'Avery Quin
 type Db = { all: (q: unknown) => Promise<Array<Record<string, unknown>>> };
 
 describe('mimic artifact (M6)', () => {
+  it('never overwrites a committed snapshot when two writers race for the same version', async () => {
+    let t = Date.now();
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline', clock: () => (t += 1_000) });
+    const m = await session(false, 3);
+    const next = await serveNext(engine.deps, m.id);
+    if (next.status !== 'question') throw new Error(next.status);
+    await submitAnswer(engine.deps, m.id, {
+      questionId: next.question.id,
+      value: next.question.options[0]!.key,
+      latencyMs: 900,
+      idempotencyKey: `k-race-${m.id}`,
+    });
+    // Writer 1 reads the latest version, then stalls before its blob write until writer 2 has committed.
+    const blobs = engine.deps.blobs;
+    const put = blobs.put.bind(blobs);
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let stalled = false;
+    blobs.put = async (key, body, type) => {
+      if (key.startsWith(`snapshots/${m.id}/`) && !stalled) {
+        stalled = true;
+        await gate;
+      }
+      return put(key, body, type);
+    };
+    const w1 = writeSnapshot(engine.deps, m.id).then(
+      () => 'ok',
+      () => 'conflict',
+    );
+    while (!stalled) await new Promise((r) => setTimeout(r, 5));
+    const v = await writeSnapshot(engine.deps, m.id);
+    const row = (await engine.deps.store.listSnapshots(m.id)).find((x) => x.version === v)!;
+    const committed = await blobs.get(row.r2Key);
+    release();
+    expect(await w1).toBe('conflict');
+    // The committed snapshot is untouched, and the loser left no blob behind.
+    expect(await blobs.get(row.r2Key)).toBe(committed);
+    const snaps = await engine.deps.store.listSnapshots(m.id);
+    expect((await blobs.list(`snapshots/${m.id}/`)).sort()).toEqual(snaps.map((x) => x.r2Key).sort());
+  }, 60_000);
+
   it('exports a snapshot that validates against mimic/1', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await session(true, 12);
