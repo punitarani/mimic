@@ -115,8 +115,6 @@ html {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* No double-tap zoom when tapping answers quickly. Pinch zoom and scrolling still work. */
-  touch-action: manipulation;
 }
 
 /*
@@ -154,12 +152,28 @@ button {
   background: var(--ink16);
 }
 
-/* In the base layer so a component's own rounded-* utility wins: focus shouldn't reshape a button. */
+/* In the base layer so a component's own utilities win: rounded-* (focus shouldn't reshape a button) and touch-*. */
 @layer base {
   :focus-visible {
     outline: 2px solid var(--ink);
     outline-offset: 2px;
     border-radius: 6px;
+  }
+
+  /*
+   * No double-tap zoom when tapping answers quickly. Set on the controls, not on html: WebKit resets touch-action at
+   * every scroll container (the session's question pane is one), so a value on html never reaches the answers.
+   * Pinch zoom and scrolling still work, and double-tapping text still zooms.
+   */
+  a,
+  button,
+  input,
+  select,
+  textarea,
+  label,
+  summary,
+  [role="button"] {
+    touch-action: manipulation;
   }
 }
 
