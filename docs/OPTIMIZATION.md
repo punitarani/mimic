@@ -44,11 +44,13 @@ variant's shared harness and other `modelHarness` entries are carried over, so o
 | Version | What changes | Why |
 | --- | --- | --- |
 | `predict.v1`, `jev-predict.v1` | Nothing: the incumbent prompts and harness | The default for unsuffixed IDs |
-| `predict.v2` | Reasoning and caps per model: a low effort for GPT-6 Luna, DeepSeek and GLM; a 1,024-token budget for MiMo Flash and Qwen Flash, which take no effort level; caps at about twice the largest measured completion. Option labels are accepted as keys | ADR-0037: Qwen truncated on long states under the old 3,000 cap; medium effort bought nothing measurable; Qwen and GLM sometimes key a scale by its labels |
-| `jev-predict.v2` | Jev's distribution sharpened down by a calibration temperature of 4 (same argmax) | ADR-0037: fitted on the prod dev person, held-out log loss 1.804 → 1.124 and ECE 0.267 → 0.098 |
+| `predict.v2` | Reasoning and caps per model: a low effort for GPT-6 Luna, DeepSeek and GLM; a 1,024-token budget for MiMo Flash and Qwen Flash, which take no effort level; caps at about twice the largest measured completion. The answer's keys are an enum of the options, with labels re-keyed as a fallback. Runs only on the five models it lists | ADR-0037: Qwen truncated on long states under the old 3,000 cap; medium effort bought nothing measurable; Qwen and GLM sometimes keyed a scale by its labels |
+| `jev-predict.v2` | Jev's distribution softened by a calibration temperature of 4 (same top pick; accuracy on score questions can move) | ADR-0037: fitted on the prod dev person, held-out log loss 1.804 → 1.124 and ECE 0.267 → 0.098 |
 
-`cfg.default.v5` runs every LLM shadow on `predict.v2` and adds `jev-predict.v2` as a shadow beside the unchanged
-primary.
+`cfg.default.v5` runs every LLM shadow on `predict.v2`; the primary is unchanged. `jev-predict.v2` is not a shadow
+(that would be a second identical Jev call): `evaluate --from stored` derives it from the stored primary as rows with
+the role `derived`, for free. It also seeds Actions → Optimize, and it is the version to name when calibration is
+promoted to primary.
 
 > Scope: how to turn the two real sessions we have (50–90 questions each) plus Twin-2K-500 into an honest eval loop,
 > and how to run DSPy/GEPA-style reflective optimization over the prompts and the harness without breaking the

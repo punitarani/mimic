@@ -2,8 +2,10 @@ import { z } from 'zod';
 import {
   DEFAULT_PROMPT_VERSION,
   fill,
+  type PredictHarness,
   type PredictPrompt,
   promptHash,
+  reasoningOf,
   resolvePredictPrompt,
 } from './components';
 import { parsePredictorId, predictorIdProblem } from './config';
@@ -121,6 +123,31 @@ const REASONED_SCHEMA = {
   additionalProperties: false,
 } as const;
 
+/**
+ * The JSON schema an LLM answers in: `probs`, or `reasoned` (a rationale first). With `keyEnum` the key field is an
+ * enum of this question's option keys, so a provider that enforces the schema can't return labels or invented keys.
+ */
+export function probsSchema(
+  h: Pick<PredictHarness, 'schema' | 'keyEnum'>,
+  keys: string[],
+): Record<string, unknown> {
+  const base: Record<string, unknown> =
+    h.schema === 'reasoned' ? REASONED_SCHEMA : PROMPTS['predict.v1'].schema;
+  if (!h.keyEnum) return base;
+  const probs = {
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: { key: { type: 'string', enum: keys }, p: { type: 'number' } },
+      required: ['key', 'p'],
+      additionalProperties: false,
+    },
+  };
+  return h.schema === 'reasoned'
+    ? { ...REASONED_SCHEMA, properties: { ...REASONED_SCHEMA.properties, probs } }
+    : { ...base, properties: { probs } };
+}
+
 /** LLM shadow predictor (PLAN §9.6, prompt predict.v1 by default). One chat call per question, run in parallel. */
 export class LlmPredictor implements Predictor {
   readonly id: string;
@@ -163,14 +190,9 @@ export class LlmPredictor implements Predictor {
       const res = await this.gateway.chat(this.ctx, {
         model: this.model,
         messages: this.messages(stateText, q),
-        jsonSchema: {
-          name: 'probs',
-          schema: h.schema === 'reasoned' ? REASONED_SCHEMA : PROMPTS['predict.v1'].schema,
-        },
+        jsonSchema: { name: 'probs', schema: probsSchema(h, keys) },
         // One reasoning control, so the logged request (invariant 5) shows what was sent.
-        ...(h.reasoningMaxTokens
-          ? { reasoningMaxTokens: h.reasoningMaxTokens }
-          : { reasoningEffort: h.reasoningEffort }),
+        ...reasoningOf(h),
         maxTokens: h.maxTokens,
       });
       const base = {

@@ -5,12 +5,20 @@ import {
   componentProblems,
   componentReadBy,
   fill,
+  harnessProblems,
   INCUMBENT_COMPONENTS,
   INCUMBENT_HARNESS,
   PREDICT_PROMPTS,
+  reasoningOf,
   resolvePredictPrompt,
 } from '../src/components';
-import { configHash, DEFAULT_CONFIG, PipelineConfig, parsePredictorId } from '../src/config';
+import {
+  configHash,
+  DEFAULT_CONFIG,
+  PipelineConfig,
+  parsePredictorId,
+  predictorIdProblem,
+} from '../src/config';
 import { temperatureScale } from '../src/distribution';
 import { Gateway } from '../src/gateway';
 import { predictionQuestion } from '../src/jev';
@@ -19,6 +27,7 @@ import {
   keyedByLabel,
   LlmPredictor,
   makePredictor,
+  probsSchema,
   promptVersionOf,
 } from '../src/predictors';
 import { PROMPTS } from '../src/prompts';
@@ -243,10 +252,24 @@ describe('per-model reasoning budgets and calibration (ADR-0037)', () => {
     expect(qwen.maxTokens).toBeGreaterThan(qwen.reasoningMaxTokens! + 500);
     const glm = resolvePredictPrompt('predict.v2', 'llm', 'z-ai/glm-5.3-flash').harness;
     expect(glm).toMatchObject({ reasoningEffort: 'low', reasoningMaxTokens: null, maxTokens: 3000 });
-    // A model the variant doesn't list keeps the incumbent harness (plus label keys, which every model gets); the
-    // text is the incumbent's for every model.
+    // A model the variant doesn't list has no measured settings, so it can't be named with predict.v2 (no silent
+    // fallback to the incumbent's effort and cap); the text is the incumbent's for every model.
+    expect(predictorIdProblem('llm:acme/other@predict.v2')).toMatch(
+      /no measured reasoning settings for acme\/other/,
+    );
+    expect(predictorIdProblem('llm:qwen/qwen3.8-flash:nitro@predict.v2')).toMatch(
+      /no measured reasoning settings/,
+    );
+    expect(() =>
+      PipelineConfig.parse({
+        ...DEFAULT_CONFIG,
+        predictor: { primary: DEFAULT_CONFIG.predictor.primary, shadows: ['llm:acme/other@predict.v2'] },
+      }),
+    ).toThrow(/no measured reasoning settings/);
+    for (const id of DEFAULT_CONFIG.predictor.shadows) expect(predictorIdProblem(id)).toBeNull();
     expect(resolvePredictPrompt('predict.v2', 'llm', 'acme/other').harness).toEqual({
       ...INCUMBENT_HARNESS,
+      keyEnum: true,
       labelKeys: true,
     });
     expect(resolvePredictPrompt('predict.v2', 'llm', 'qwen/qwen3.8-flash').components).toEqual(
@@ -277,6 +300,39 @@ describe('per-model reasoning budgets and calibration (ADR-0037)', () => {
     ).predict(state, [q('choice')]);
     expect(v1[0]).not.toHaveProperty('reasoningMaxTokens');
     expect(v1[0]!.maxTokens).toBe(3000);
+    // One reasoning control per request, so the logged request is what was sent.
+    expect(seen[0]).not.toHaveProperty('reasoningEffort');
+    expect(v1[0]).toMatchObject({ reasoningEffort: 'low' });
+    // predict.v2 pins the answer's keys to the options; the incumbent's schema is untouched (same object).
+    const items = (
+      seen[0]!.jsonSchema!.schema as { properties: { probs: { items: { properties: { key: unknown } } } } }
+    ).properties.probs.items.properties.key;
+    expect(items).toEqual({ type: 'string', enum: ['a', 'b'] });
+    expect(v1[0]!.jsonSchema!.schema).toBe(PROMPTS['predict.v1'].schema);
+  });
+
+  it('keeps room for the answer and never sends a zero budget as no budget', () => {
+    const h = { ...INCUMBENT_HARNESS, reasoningMaxTokens: 1024, maxTokens: 2048 };
+    expect(harnessProblems(h)).toEqual([]);
+    expect(harnessProblems({ ...h, maxTokens: 1200 })).toEqual([
+      expect.stringMatching(/leaves under 256 tokens/),
+    ]);
+    expect(harnessProblems({ ...h, reasoningMaxTokens: 0 })[0]).toMatch(/positive integer or null/);
+    expect(reasoningOf({ reasoningEffort: 'low', reasoningMaxTokens: 0 })).toEqual({ reasoningMaxTokens: 0 });
+    expect(reasoningOf({ reasoningEffort: 'low', reasoningMaxTokens: null })).toEqual({
+      reasoningEffort: 'low',
+    });
+    // Every registered variant, on every model it lists, leaves room for the answer.
+    for (const v of Object.values(PREDICT_PROMPTS))
+      for (const m of Object.keys(v.modelHarness ?? { any: {} }))
+        expect(harnessProblems(resolvePredictPrompt(v.id, v.kind, m).harness)).toEqual([]);
+    // The reasoned schema keeps its rationale field when keys are pinned.
+    const reasoned = probsSchema({ schema: 'reasoned', keyEnum: true }, ['x', 'y']) as {
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+    expect(Object.keys(reasoned.properties)).toEqual(['reasoning', 'probs']);
+    expect(reasoned.required).toEqual(['reasoning', 'probs']);
   });
 
   it('accepts option labels as keys under predict.v2, only when they cover every option unambiguously', async () => {

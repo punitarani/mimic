@@ -16,6 +16,7 @@ import {
   breakdown,
   calibrationFits,
   changedComponents,
+  derivedCalibrations,
   evaluateCandidate,
   feedbackFor,
   jevRequests,
@@ -152,6 +153,44 @@ describe('evaluate', () => {
     const t = temperatureScale({ a: 0.9, b: 0.1 }, 2);
     expect(t.a).toBeLessThan(0.9);
     expect(t.a! + t.b!).toBeCloseTo(1);
+  });
+
+  it('derives calibrated Jev from the stored primary for free, and reports what calibration does to accuracy', () => {
+    const recs = storedRecords(instances);
+    const primary = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13|primary');
+    const derived = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13@jev-predict.v2|derived');
+    expect(derived).toHaveLength(primary.length);
+    for (const d of derived) {
+      const p = primary.find((x) => x.instanceId === d.instanceId)!;
+      expect(d.costUsd).toBe(0);
+      if (p.ok) expect(d.dist).toEqual(temperatureScale(p.dist, 4));
+    }
+    // Only calibration-only variants of the primary's own templates are derived; LLM primaries have none.
+    expect(derivedCalibrations('jev:typesafe/jev-1.13')).toEqual([
+      { predictorId: 'jev:typesafe/jev-1.13@jev-predict.v2', t: 4 },
+    ]);
+    expect(derivedCalibrations('llm:deepseek/deepseek-v4.1-flash')).toEqual([]);
+    // Fits report test accuracy before and after, and pool only LLM shadows with the primary.
+    const fits = calibrationFits(instances);
+    for (const f of fits.filter((x) => x.nTest > 0)) {
+      expect(f.testAccBefore).toBeTypeOf('number');
+      expect(f.testAccAfter).toBeTypeOf('number');
+    }
+    for (const f of fits.filter((x) => x.method.startsWith('log-linear pool')))
+      expect(f.predictor.startsWith('llm:')).toBe(true);
+  });
+
+  it('refuses a candidate whose reasoning budget leaves no room for the answer, or a model a variant does not list', () => {
+    expect(() =>
+      resolveCandidate({
+        predictor: 'llm:qwen/qwen3.8-flash@predict.v2',
+        harness: { reasoningMaxTokens: 4096 },
+      }),
+    ).toThrow(/leaves under 256 tokens/);
+    expect(() => resolveCandidate({ predictor: 'llm:acme/other@predict.v2' })).toThrow(
+      /no measured reasoning/,
+    );
+    expect(resolveCandidate({ predictor: 'llm:acme/other' }).prompt.harness.maxTokens).toBe(3000);
   });
 
   it('writes feedback from the answer, the reason, the baseline and repeat agreement', () => {
@@ -431,6 +470,18 @@ describe('optimize (GEPA loop, offline)', () => {
     expect(r.improved).toBe(false);
   }, 60_000);
 
+  it('stops at the deadline before an iteration that might not finish, keeping time for the holdout', async () => {
+    // Each iteration takes a minute on this clock; with 2.5 minutes left after the first, a second doesn't fit.
+    let t = 0;
+    const r = await optimize(
+      { gateway: gateway(), runDir: tmp(), log: () => {}, now: () => (t += 60_000), deadline: 150_000 },
+      spec,
+      instances,
+    );
+    expect(r.state.stopReason).toMatch(/time limit/);
+    expect(r.state.iteration).toBe(1);
+  }, 60_000);
+
   it('samples parents from the Pareto front', () => {
     const mk = (hash: string, scores: Record<string, number>) => ({
       candidate: { hash } as never,
@@ -462,13 +513,33 @@ describe('optimize (GEPA loop, offline)', () => {
         'RUN',
       )!;
     const qwen = snippet('llm:qwen/qwen3.8-flash@predict.v2', 'predict.v3');
-    expect(qwen).toContain('harness: {"labelKeys":true},');
+    expect(qwen).toContain('harness: {"keyEnum":true,"labelKeys":true},');
     expect(qwen).toContain('"qwen/qwen3.8-flash":{"reasoningMaxTokens":1024,"maxTokens":2048}');
     // The other models keep their predict.v2 settings, so the winner can replace predict.v2 on every shadow.
     expect(qwen).toContain('"xiaomi/mimo-v2.6-flash":{"reasoningMaxTokens":1024,"maxTokens":2048}');
     expect(qwen).toContain('"deepseek/deepseek-v4.1-flash":{"reasoningEffort":"low","maxTokens":6000}');
     expect(snippet('llm:qwen/qwen3.8-flash', 'predict.v3')).toContain('harness: {},');
     expect(snippet('llm:qwen/qwen3.8-flash', 'predict.v3')).not.toContain('modelHarness');
+    // A change that isn't reasoning or a cap describes the prompt, so it is shared by every model (finding: a
+    // `reasoned` schema scoped to one model would leave the others on `probs` with rewritten components).
+    const reasoned = (predictor: string) =>
+      variantSnippet(
+        {
+          suggestedVersion: 'predict.v3',
+          best: {
+            candidate: resolveCandidate({ predictor, harness: { schema: 'reasoned', maxTokens: 5000 } }),
+          },
+          state: { spec: { name: 'x' } },
+        } as never,
+        'RUN',
+      )!;
+    const fromV1 = reasoned('llm:deepseek/deepseek-v4.1-flash');
+    expect(fromV1).toContain('harness: {"schema":"reasoned"},');
+    expect(fromV1).toContain('modelHarness: {"deepseek/deepseek-v4.1-flash":{"maxTokens":5000}},');
+    const fromV2 = reasoned('llm:deepseek/deepseek-v4.1-flash@predict.v2');
+    expect(fromV2).toContain('harness: {"keyEnum":true,"labelKeys":true,"schema":"reasoned"},');
+    expect(fromV2).toContain('"deepseek/deepseek-v4.1-flash":{"reasoningEffort":"low","maxTokens":5000}');
+    expect(fromV2).toContain('"qwen/qwen3.8-flash":{"reasoningMaxTokens":1024,"maxTokens":2048}');
     const jev = snippet('jev:typesafe/jev-1.13@jev-predict.v2', 'jev-predict.v3');
     expect(jev).toContain('harness: {"calibrationTemperature":4},');
     expect(jev).not.toContain('modelHarness');

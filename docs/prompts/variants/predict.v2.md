@@ -4,17 +4,18 @@
 
 - Predictor kind: `llm` (use as `llm:<model>@predict.v2`)
 - Source: ADR-0037: reasoning usage measured per model on long states
-- Harness (models not listed below): `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":1,"labelKeys":true}`
+- Harness (every model): `{"schema":"probs","jevState":"json","calibrationTemperature":1,"keyEnum":true,"labelKeys":true}`
+- Models: only those listed below.
 
 ## Per-model harness
 
-| Model | Reasoning | Token cap (reasoning and answer) | Other settings |
-| --- | --- | --- | --- |
-| `openai/gpt-6-luna` | effort low | 1500 | — |
-| `deepseek/deepseek-v4.1-flash` | effort low | 6000 | — |
-| `z-ai/glm-5.3-flash` | effort low | 3000 | — |
-| `xiaomi/mimo-v2.6-flash` | budget 1024 tokens | 2048 | — |
-| `qwen/qwen3.8-flash` | budget 1024 tokens | 2048 | — |
+| Model | Reasoning | Token cap (reasoning and answer) |
+| --- | --- | --- |
+| `openai/gpt-6-luna` | effort low | 1500 |
+| `deepseek/deepseek-v4.1-flash` | effort low | 6000 |
+| `z-ai/glm-5.3-flash` | effort low | 3000 |
+| `xiaomi/mimo-v2.6-flash` | budget 1024 tokens | 2048 |
+| `qwen/qwen3.8-flash` | budget 1024 tokens | 2048 |
 
 ## predict.system (incumbent)
 

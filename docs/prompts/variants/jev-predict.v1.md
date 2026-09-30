@@ -4,7 +4,7 @@
 
 - Predictor kind: `jev` (use as `jev:<model>@jev-predict.v1`)
 - Source: PLAN §9.6
-- Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":1,"labelKeys":false}`
+- Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":1,"keyEnum":false,"labelKeys":false}`
 
 ## jev.instructions (incumbent)
 

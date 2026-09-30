@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { DEFAULT_PROMPT_VERSION, PREDICT_PROMPTS } from './components';
+import { DEFAULT_PROMPT_VERSION, harnessProblems, PREDICT_PROMPTS, resolvePredictPrompt } from './components';
 import { canonicalJson, sha256Hex } from './hash';
 
 /**
@@ -19,6 +19,11 @@ export function predictorIdProblem(id: string): string | null {
   const v = PREDICT_PROMPTS[spec.promptVersion];
   if (!v) return `unknown prediction prompt version in ${id}`;
   if (v.kind !== spec.kind) return `${spec.promptVersion} is a ${v.kind} prompt, not ${spec.kind}`;
+  // Reasoning settings and caps are measured per model (ADR-0037): no silent fallback for a model a variant doesn't list.
+  if (v.modelHarness && !Object.hasOwn(v.modelHarness, spec.model))
+    return `${spec.promptVersion} has no measured reasoning settings for ${spec.model} (it lists ${Object.keys(v.modelHarness).join(', ')}); register a version that lists it`;
+  const problems = harnessProblems(resolvePredictPrompt(spec.promptVersion, spec.kind, spec.model).harness);
+  if (problems.length) return `${id}: ${problems.join('; ')}`;
   return null;
 }
 
@@ -162,9 +167,10 @@ export const DEFAULT_CONFIG_V4: PipelineConfig = {
 
 /**
  * `cfg.default.v5` (ADR-0037): v4 with every LLM shadow on `predict.v2` (reasoning set per model: a low effort, or a
- * 1,024-token budget for models that only take one, and caps sized from measured usage), plus Jev with a calibration
- * temperature (`jev-predict.v2`) as a shadow beside the primary. The primary is unchanged. Older mimics keep their
- * config; `pnpm backfill` adds the new shadows to questions already served.
+ * 1,024-token budget for models that only take one, caps sized from measured usage, and the answer's keys pinned to
+ * the options). The primary is unchanged; calibrated Jev (`jev-predict.v2`) is measured from the stored primary for
+ * free rather than by a second Jev call. Older mimics keep their config; `pnpm backfill` adds the new shadows to
+ * questions already served.
  */
 export const DEFAULT_CONFIG: PipelineConfig = {
   ...DEFAULT_CONFIG_V4,
@@ -176,7 +182,6 @@ export const DEFAULT_CONFIG: PipelineConfig = {
       `llm:${LLM.glm}@predict.v2`,
       `llm:${LLM.mimoFlash}@predict.v2`,
       `llm:${LLM.qwenFlash}@predict.v2`,
-      `jev:${JEV_MODEL}@jev-predict.v2`,
     ],
   },
 };

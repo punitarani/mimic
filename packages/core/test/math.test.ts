@@ -161,15 +161,15 @@ describe('hashing and config (PLAN §7.1)', () => {
 
   it('pins the hash of cfg.default.v5 and its predecessors (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
-    // v5 (ADR-0037): v4 with every LLM shadow on predict.v2 and calibrated Jev as a shadow; nothing else changes.
-    expect(
-      DEFAULT_CONFIG.predictor.shadows.every(
-        (s) => s.endsWith('@predict.v2') || s.endsWith('@jev-predict.v2'),
-      ),
-    ).toBe(true);
+    // v5 (ADR-0037): v4 with every LLM shadow on predict.v2; nothing else changes. Calibrated Jev is derived from the
+    // stored primary, not a second Jev call.
+    expect(DEFAULT_CONFIG.predictor.shadows).toHaveLength(DEFAULT_CONFIG_V4.predictor.shadows.length);
+    expect(DEFAULT_CONFIG.predictor.shadows).toEqual(
+      DEFAULT_CONFIG_V4.predictor.shadows.map((s) => `${s}@predict.v2`),
+    );
     expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V4.predictor }).toEqual(DEFAULT_CONFIG_V4);
     expect(configHash(DEFAULT_CONFIG)).toBe(
-      '42d9672dfebede0b013cd8d3e7c144f94283662553cd0aaaa31a08395c723d97',
+      '2e6d0eddc9857338cf716455091b5912e9e9d1b120cbc98afb0feaabf0dbf331',
     );
     expect(configHash(DEFAULT_CONFIG_V4)).toBe(
       '9783a40b1abf03d36281002a627336edfec98930f993cb62f542a206916460c3',

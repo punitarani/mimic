@@ -2,10 +2,12 @@
 // a cent. Keys come from the environment; in the Claude Code remote env the outbound proxy injects them.
 import {
   DEFAULT_CONFIG,
-  DEFAULT_PROMPT_VERSION,
-  PROMPTS,
+  Gateway,
+  LlmPredictor,
+  type PersonState,
   parsePredictorId,
-  resolvePredictPrompt,
+  type Question,
+  ulid,
 } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
@@ -68,39 +70,54 @@ describe.skipIf(!LIVE)('live providers', () => {
     expect(r.usage.costUsd).toBeGreaterThan(0);
   }, 60_000);
 
-  // One call per LLM shadow in the default config, with the exact request that shadow makes: its prompt version's
-  // text, reasoning control (effort or budget) and cap for that model (ADR-0037).
-  const shadows = DEFAULT_CONFIG.predictor.shadows
-    .map(parsePredictorId)
-    .filter((p) => p.kind === 'llm')
-    .map((p) => ({
-      model: p.model,
-      prompt: resolvePredictPrompt(p.promptVersion ?? DEFAULT_PROMPT_VERSION.llm, 'llm', p.model),
-    }));
+  // One prediction per LLM shadow in the default config, through the real LlmPredictor: its prompt version's text,
+  // schema (with the option-key enum), reasoning control and cap for that model (ADR-0037).
+  const shadows = DEFAULT_CONFIG.predictor.shadows.map(parsePredictorId).filter((p) => p.kind === 'llm');
   it.each(shadows.map((s) => [s.model, s] as const))(
     'shadow %s returns a valid distribution',
-    async (_, { model, prompt }) => {
-      const h = prompt.harness;
-      const r = await new OpenRouterChat(or).chat({
-        model,
-        messages: [
-          { role: 'system', content: prompt.components['predict.system'] },
+    async (_, spec) => {
+      const gateway = new Gateway({
+        decisions: new JevDecisions(or),
+        llm: new OpenRouterChat(or),
+        log: { write: async () => {} },
+        clock: Date.now,
+        newId: ulid,
+      });
+      const predictor = new LlmPredictor(gateway, spec.model, { purpose: 'live.test' }, spec.promptVersion);
+      const state: PersonState = {
+        identity: { occupation: 'Teacher', location: 'Lisbon' },
+        traits: [],
+        insights: [],
+        evidence: [
           {
-            role: 'user',
-            content:
-              'STATE:\nidentity: teacher in Lisbon\nevidence:\n- Prefers quiet weekends (seq 1)\n\n' +
-              'QUESTION: A friend invites you to a loud party on Saturday. Do you go?\nOPTIONS:\nyes: Yes\nno: No',
+            seq: 1,
+            q: 'Quiet weekend or a night out?',
+            type: 'choice',
+            options: ['Quiet weekend', 'Night out'],
+            answer: 'Quiet weekend',
           },
         ],
-        jsonSchema: { name: 'probs', schema: PROMPTS['predict.v1'].schema },
-        ...(h.reasoningMaxTokens
-          ? { reasoningMaxTokens: h.reasoningMaxTokens }
-          : { reasoningEffort: h.reasoningEffort }),
-        maxTokens: h.maxTokens,
-      });
-      const probs = JSON.parse(r.content).probs as Array<{ key: string; p: number }>;
-      expect(probs.map((x) => x.key).sort()).toEqual(['no', 'yes']);
-      expect(r.usage.costUsd).toBeGreaterThan(0);
+        meta: { evidenceSeqMax: 1, stateHash: 'live', builder: 'full', tokens: 60 },
+      };
+      const question: Question = {
+        id: ulid(),
+        mimicId: 'live',
+        seq: 2,
+        kind: 'adaptive',
+        type: 'score',
+        domain: 'casual',
+        prompt: 'How often do you go to loud parties?',
+        options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Always'].map((label, i) => ({
+          key: String(i),
+          label,
+        })),
+        facetIds: [],
+        provenance: { generator: 'live', configHash: 'live', promptVersion: 'live' },
+      };
+      const [r] = await predictor.predict(state, [question]);
+      expect(r!.error ?? null).toBeNull();
+      expect(Object.keys(r!.dist).sort()).toEqual(['0', '1', '2', '3', '4']);
+      expect(r!.costUsd).toBeGreaterThan(0);
     },
     90_000,
   );

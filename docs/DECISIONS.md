@@ -1001,23 +1001,45 @@ The checks turned up three things:
 - **One degenerate loop.** After the label fix, Qwen's one failure listed invented option keys (a to z, then aa and
   on) until it hit the cap. A larger cap would only make that failure cost more.
 
+Both key problems come from the schema, which let `key` be any string. With the key as an enum of the options
+(`keyEnum`), a final round of the five shadows over the same 120 states each had these results across 602 calls:
+
+- 0 failures and 0 truncations;
+- 0 keys outside the enum, so every provider enforces it;
+- largest completions all under their caps (DeepSeek 2,382, GLM 1,380, Qwen 1,178).
+
 **Decision.**
 
 - **`ChatRequest.reasoningMaxTokens`** is sent as OpenRouter `reasoning.max_tokens` and wins over the effort. Only one
   of the two is ever sent, and `max_tokens` still covers reasoning and answer together.
-- **The prompt harness gains `reasoningMaxTokens`, `calibrationTemperature` and `labelKeys`.**
-  - `calibrationTemperature` post-scales a predictor's distribution: p ∝ max(p, P_FLOOR)^(1/T). This keeps the
-    argmax.
-  - `labelKeys` re-keys an LLM answer from option labels to option keys. It applies only when every option is then
-    covered by exactly one entry, so a partial or ambiguous answer still fails.
-  - All three default to the incumbent's behaviour (no budget, T = 1, keys only), so every existing prompt version,
-    config hash, request and stored prediction is unchanged.
+- **The prompt harness gains `reasoningMaxTokens`, `calibrationTemperature`, `keyEnum` and `labelKeys`.**
+  - `calibrationTemperature` post-scales a predictor's distribution: p ∝ max(p, P_FLOOR)^(1/T).
+    - It keeps the argmax, so top-1 accuracy, and item accuracy on choice and yes/no questions, don't change.
+    - Score questions are scored by expected index, and a temperature above 1 moves that toward the middle of the
+      scale. This helps a confident miss and costs a confident hit.
+    - The stored report's fits show test accuracy before and after, next to log loss. Check that column before
+      promoting a calibrated primary.
+  - `keyEnum` makes the answer's `key` field an enum of the question's option keys, in a per-question JSON schema.
+    With the strict schema that is already required, a provider that enforces it can't return labels or invent
+    options.
+  - `labelKeys` re-keys an LLM answer from option labels to option keys, as a fallback for a provider that doesn't
+    enforce the enum. It applies only when every option is then covered by exactly one entry, so a partial or
+    ambiguous answer still fails.
+  - All four default to the incumbent's behaviour (no budget, T = 1, a plain string key, keys only), so every
+    existing prompt version, config hash, request and stored prediction is unchanged. Each request carries one
+    reasoning control (`reasoningOf`), and a budget of 0 is sent as 0, not dropped.
+  - A resolved harness must leave at least 256 tokens for the answer after a reasoning budget (`harnessProblems`).
+    Registered variants are checked by a test, candidates are refused before anything is spent, and predictor IDs
+    are refused on parse.
   - Eval candidate hashes include the full harness, so they do change. An optimize run directory from before this
     change can't be resumed, and its cached predictions are paid for again.
-- **A registered variant may override the harness per model** (`modelHarness`), resolved as incumbent → variant →
-  model.
-- **`predict.v2`**: the incumbent prompt text with `labelKeys` on for every model, plus the settings below. A model
-  that isn't listed otherwise keeps the incumbent harness.
+- **A registered variant may set reasoning control and caps per model** (`modelHarness`, only
+  `PER_MODEL_HARNESS_KEYS`), resolved as incumbent → variant → model. A variant that has them runs only on the models
+  it lists: `predictorIdProblem` refuses any other model, in configs, backfill and the optimizer. So a new model, or
+  a routing variant like `:nitro`, gets measured settings and never silently falls back to the incumbent's effort
+  and 3,000 cap, which is the failure this ADR fixes.
+- **`predict.v2`**: the incumbent prompt text with `keyEnum` and `labelKeys` on, plus the settings below, for these
+  five models only.
 
   | Model | Reasoning | `max_tokens` |
   | --- | --- | --- |
@@ -1035,32 +1057,42 @@ The checks turned up three things:
   A cap guards against runaways, and it is not a price. A normal call costs the same under any cap, and a truncated
   call is billed for its whole cap and then fails. So a generous cap costs almost nothing, and one that is too tight
   wastes the call.
-- **`jev-predict.v2`**: Jev's incumbent templates at T = 4. Jev bills input only, so this shadow costs the same as
-  the primary.
-  - It makes its own Jev call instead of rescaling the primary's stored answer. That is the same path any Jev template
-    variant takes, and a GEPA winner seeded from it will need that path.
-  - Jev's run-to-run noise, about 0.03 nats per question, is small next to the 0.68 nats the calibration gained.
-  - The stored report's temperature fit on the primary measures the same effect for free.
-- **`cfg.default.v5`** is v4 with these changes:
-  - the five LLM shadows move to `@predict.v2`;
-  - `jev:typesafe/jev-1.13@jev-predict.v2` is added as a shadow;
-  - the primary stays uncalibrated Jev.
+- **`jev-predict.v2`**: Jev's incumbent templates at T = 4. It is registered, but it is not a default shadow.
+  - As a shadow it would send a second, identical Jev request on the primary's sealed state. CLAUDE.md says to batch
+    Jev questions that share a state, and the comparison would pick up Jev's run-to-run noise (about 0.03 nats).
+  - Instead `evaluate --from stored` derives it: every registered Jev variant that differs from the stored primary
+    only by calibration temperature gets rows with the role `derived`, from the primary's own answers rescaled.
+    Those rows appear in every table (by split, person and question type, with accuracy and lift), at no cost and
+    with no noise.
+  - It remains the seed for Jev template search, and the version to name when calibration is promoted to primary.
+- **`cfg.default.v5`** is v4 with the five LLM shadows on `@predict.v2`. The primary stays uncalibrated Jev.
 
   New mimics get v5. Existing mimics keep their config, and `pnpm backfill` gives their served questions the new
   shadows (ADR-0024).
 - **The calibration grid in `evaluate --from stored` now runs 0.25–16 (46 steps).** This is because the old top of 4
-  was the fitted value.
-- **Actions → Optimize defaults to seeding from `jev:typesafe/jev-1.13@jev-predict.v2`, with 2,500 metric calls.**
-  `max_usd` binds first, so GEPA searches templates on top of the calibration and not against it.
-- **The optimizer's `PREDICT_PROMPTS` snippet keeps a winning LLM's reasoning settings under that model's
-  `modelHarness` entry.** A setting measured for one model never reaches another, and the seed variant's settings
-  for the other models are carried over, so the winner can replace it on every shadow.
+  was the fitted value. Pooling fits pair the primary with LLM shadows only, since a Jev shadow pooled with the Jev
+  primary is a temperature fit under another name.
+- **Actions → Optimize seeds from `jev:typesafe/jev-1.13@jev-predict.v2` by default,** so GEPA searches templates on
+  top of the calibration and not against it. Its caps:
+  - 30 iterations (now a workflow input) and 2,500 metric calls. Each iteration is two minibatches and a
+    validation pass.
+  - The run stops at whichever cap it reaches first. For a Jev seed at the defaults, that is the 30 iterations,
+    after about 2,400 predictions and roughly $0.7–1.3, well under the $2 `max_usd`.
+  - `--max-minutes 140` stops the loop cleanly inside the job's 180-minute timeout. No iteration starts that might
+    not finish, with as long again kept for the holdout.
+  - The result is uploaded even after a cancel or timeout.
+- **The optimizer's `PREDICT_PROMPTS` snippet starts from the seed variant's harness and adds the run's changes.**
+  - A change to reasoning or a cap goes under the optimized model's `modelHarness` entry, so a setting measured for
+    one model never reaches another.
+  - Any other change (the schema, keys, calibration) describes the prompt, so every model shares it.
+  - The seed's entries for the other models are carried over, so the winner can replace the seed on every shadow.
 
-**Why not promote calibrated Jev to primary now.** It was fitted on one person and checked on two. A shadow on every
-new question gives the online evidence first. Promoting it later is a one-line config change. The pooling fits also
-put almost no weight on the primary against any LLM shadow, which is worth revisiting once `predict.v2` has been
-backfilled.
+**Why not promote calibrated Jev to primary now.** It was fitted on one person and checked on two. The derived rows
+give the evidence on every new question: log loss, and accuracy per question type, since calibration changes accuracy
+on score questions. Promoting it later is a one-line config change (`primary: jev:typesafe/jev-1.13@jev-predict.v2`).
+The pooling fits also put almost no weight on the primary against any LLM shadow, which is worth revisiting once
+`predict.v2` has been backfilled.
 
-**Cost.** At the table's prices, the six v5 shadows cost about $0.0024 per scored question together. That is about a
+**Cost.** At the table's prices, the five v5 shadows cost about $0.0023 per scored question together. That is about a
 quarter less than the five v4 shadows ($0.0031), because Qwen's unbounded reasoning was the costliest. Calibrated Jev
-adds about $0.00015. Backfilling the six over the 232 questions served so far costs about $0.55.
+costs nothing. Backfilling the five over the 232 questions served so far costs about $0.53.

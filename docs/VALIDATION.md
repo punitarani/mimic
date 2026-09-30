@@ -280,31 +280,42 @@ only; scripted answers say nothing about real people. The whole live smoke cost 
 ## Reasoning budgets per model and calibrated Jev (ADR-0037)
 
 Checked in the Claude Code environment on states from two scripted 72-turn sessions. These runs measure token use,
-failures and cost, and say nothing about accuracy. Everything live, probe included, cost about $0.40.
+failures and cost, and say nothing about accuracy. Everything live, probe included, cost about $0.70.
 
 - **Probe:** 8 long states per model and setting (seq 45 to 72), with an 8,000-token cap so nothing truncated. The
   table in ADR-0037 has the numbers. Medium effort bought nothing over low. Qwen Flash ignores effort, and a
   1,024-token budget was the smallest that kept every answer valid.
-- **End to end:** `pnpm eval -- evaluate --predictor <shadow>` ran over 120 states for each of the six v5 shadows,
-  plus the uncalibrated primary. Before the fixes below, there were 8 failures in 720 calls:
+- **End to end, first round:** `pnpm eval -- evaluate --predictor <shadow>` ran over 120 states for each shadow,
+  and for Jev with and without calibration. There were 8 failures in 720 calls:
   - DeepSeek reached 3,094 completion tokens, which is past the old 3,000 cap.
   - GLM truncated once, with its reasoning running to the first 1,500 cap.
   - Qwen seven times, and GLM once, keyed a 0–4 scale by its labels.
 
-  This led to raising the DeepSeek and GLM caps and adding the `labelKeys` harness flag. A rerun of Qwen and GLM left
-  one failure each in 120:
-  - GLM reasoned past its 1,500 cap once more; that rerun used the old cap, before it was raised to 3,000;
+  This led to raising the DeepSeek and GLM caps and adding label re-keying.
+- **Second round, Qwen and GLM:** one failure each in 120.
+  - GLM reasoned past the 1,500 cap once more. That run used the old cap, before it was raised to 3,000.
   - Qwen fell into a degenerate list of invented keys that ran to the cap.
-- **Live test** (`pnpm test:live -t shadow`): each LLM shadow in `DEFAULT_CONFIG` sends its exact resolved harness,
-  whether that is an effort or a budget, and returns a valid distribution. All five pass.
+- **Final round, after the xhigh review of #18:** the five v5 shadows, with the option keys as an enum in the schema,
+  ran over the same 120 states each. The results, across 602 calls:
+  - 0 failures;
+  - 0 truncations;
+  - 0 keys outside the enum, so every provider enforced it and the label fallback was never needed;
+  - largest completions of 259 (Luna), 629 (MiMo), 1,178 (Qwen), 1,380 (GLM) and 2,382 (DeepSeek), each under its cap.
+
+  MiMo had two transient malformed responses from OpenRouter, and the evaluator's single retry recovered both.
+- **Live test** (`pnpm test:live -t shadow`): each LLM shadow in `DEFAULT_CONFIG` runs through the real
+  `LlmPredictor` (prompt, schema, reasoning control and cap) on a 0–4 scale question. All five pass.
 - **Tests:**
-  - the adapter sends a budget or an effort, never both;
-  - `predict.v2` resolves per model, and unlisted models keep the incumbent harness;
-  - every default LLM shadow has measured settings;
-  - a Qwen `@predict.v2` request carries its budget and cap, and `predict.v1` requests are unchanged;
+  - the adapter sends a budget or an effort, never both, and sends a budget of 0 as 0;
+  - `predict.v2` resolves per model and refuses a model it doesn't list, in configs and candidates;
+  - every registered variant leaves room for the answer, and a candidate that doesn't is refused;
+  - a Qwen `@predict.v2` request carries its budget, cap and key enum, and `predict.v1` requests are unchanged;
   - labels are re-keyed only when they cover every option unambiguously, under `predict.v2` only;
-  - calibrated Jev keeps its pick;
-  - the v4 hash is unchanged, and v5 differs from v4 only in its predictors;
-  - an LLM winner's snippet keeps its settings under `modelHarness`;
-  - the 30-turn session test runs 1 primary, 1 baseline and 6 shadows per scored question, each recording its
+  - calibrated Jev keeps its pick, and noul confidence stays on Jev's scale;
+  - the stored report derives calibrated Jev from the primary at no cost, fits report test accuracy, and pools only
+    LLM shadows;
+  - the optimizer stops at a wall-clock deadline;
+  - a winner's snippet scopes reasoning and caps to its model and shares every other setting;
+  - the v4 hash is unchanged, and v5 is v4 with its shadows on `predict.v2`;
+  - the 30-turn session test runs 1 primary, 1 baseline and 5 shadows per scored question, each recording its
     prompt version.

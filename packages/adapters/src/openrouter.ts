@@ -79,7 +79,8 @@ export class OpenRouterChat implements LlmClient {
       };
     }
     // A budget and an effort are alternatives on OpenRouter; a budget is the only control some models honour.
-    if (req.reasoningMaxTokens) body.reasoning = { max_tokens: req.reasoningMaxTokens, exclude: true };
+    if (req.reasoningMaxTokens !== undefined)
+      body.reasoning = { max_tokens: req.reasoningMaxTokens, exclude: true };
     else if (req.reasoningEffort) body.reasoning = { effort: req.reasoningEffort, exclude: true };
     if (req.maxTokens) body.max_tokens = req.maxTokens;
     return body;

@@ -4,7 +4,7 @@
 
 - Predictor kind: `jev` (use as `jev:<model>@jev-predict.v2`)
 - Source: ADR-0037: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)
-- Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":4,"labelKeys":false}`
+- Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":4,"keyEnum":false,"labelKeys":false}`
 
 ## jev.instructions (incumbent)
 
