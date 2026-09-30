@@ -39,6 +39,12 @@ export const InfoIcon = (p: SVGProps<SVGSVGElement>) => (
     <path d="M12 8h.01" />
   </Icon>
 );
+export const UndoIcon = (p: SVGProps<SVGSVGElement>) => (
+  <Icon {...p}>
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+  </Icon>
+);
 export const DownloadIcon = (p: SVGProps<SVGSVGElement>) => (
   <Icon {...p}>
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

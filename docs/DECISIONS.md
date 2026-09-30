@@ -863,3 +863,83 @@ the two things they finish the session to do.
   a JSON number; an invalid one keeps its default and is logged once.
 - **UI.** `budgetUsd` in the snapshot is the whole cap. The session's end says what is left: the reserve for the
   mimic page, or, once everything is spent, that answers can still be taught there.
+
+## ADR-0036 — Undo the latest answer (2026-09-30)
+
+People mis-tap. The session page lets them take back their **latest** answer, once, and answer that question again:
+"Undo" sits next to Next during the reveal, and "Undo last answer" shows on the question after it. Both open a
+simple confirmation that names the question and the answer; while the undo runs the dialog can't be dismissed, and a
+refusal stays in it with the reason (the undo and delete confirmations share one `ConfirmDialog`). `POST /api/mimics/:id/rewind { questionId }` does the work; the client names the
+question it is undoing, so a double click or a stale tab gets a 409 instead of undoing something else. The button is
+only offered for an answer this page sent and the server confirmed (not while it waits in the offline outbox), and
+it is gone after a reload.
+
+What an undo of the answer at seq *t* does, in one D1 batch:
+
+- **The answer leaves the evidence.** It moves to a new `answer_rewinds` table (value, why, latency, whether the
+  guess was revealed, idempotency key, when it was given and undone). Hard delete and research exports cover the
+  table; exports scrub its idempotency keys like the answers'.
+- **The question comes back as it was.** Same row, same seq, same sealed predictions: they were built from answers
+  before *t* (PLAN §3.1), so they still are. Its scores and the fidelity rows from *t* on are deleted, and the
+  re-answer is scored against the same predictions.
+- **What was predicted from the retracted answer is discarded.** The next question is usually prefetched while the
+  reveal shows, and its sealed state holds answer *t*. Every served, unanswered session question after *t* is marked
+  `discarded` with `seq = null`, and its predictions are deleted (the model calls stay logged). The batch selects them
+  by condition, not by the IDs the engine read, and returns them; each gets a fresh pool copy with a new ID (so shadow
+  job keys don't collide), keeping `createdAt` so anchors keep their order, and its prompt embedding. A repeat probe
+  is dropped, since the repeat schedule picks it again.
+- **Derived state from *t* on is rolled back** (PLAN §3.3), so the re-answer is learned from scratch and the
+  monotonic writes don't block it: trait history rows with `seqUpTo ≥ t` are deleted and `trait_estimates` is rebuilt
+  from what remains with the same query serving and replay read; insights with `seqUpTo ≥ t` are deleted with their
+  KG edges; insights that reflection superseded are restored (`insights.superseded_seq` records which reflection did
+  it); reflection facts from a reflection at *t* or later are deleted whatever they cite (`facts.seq_up_to`; older
+  rows by the seqs they cite), with their KG edges and vectors, then reflection nodes left without an edge; persona
+  drafts covering seq ≥ *t* (ADR-0033) are deleted and drafted again on request; the Q&A vector for *t* and
+  hypotheses from *t* on are dropped.
+- **The mimic's `evidence_epoch` goes up by one.**
+
+**The batch decides, not the reads before it.** The engine checks the request first (latest session answer, one
+step only, nothing asked or taught since) for a clear 409, but the batch re-checks what matters atomically: its first
+statement records the rewind with `value` taken from a subquery that is NULL unless the answer still exists and
+nothing was answered, asked or taught after it. `value` is NOT NULL, so otherwise the whole batch aborts (a D1 batch
+is one transaction) and nothing changes. No trigger, no extra round trip; the same trick guards the other writes
+below. A second undo of the same answer fails on the unique `answer_id`.
+
+**Evidence epoch.** Every write built from data read before an undo must not land after it. Rather than re-checking
+in each writer, derived writes and serves go through `Store.guarded(mimicId, epoch)`, which puts a guard statement
+first in the batch: it sets `mimics.updated_at` to itself, or to NULL (aborting) when `evidence_epoch` has moved on.
+A refused write throws `StaleEvidenceError` and writes nothing. Guarded:
+
+- *Serving* (`serveQuestion`, session and repeat): a serve built before the undo is refused and built again, so
+  nothing stale is ever served, and `/next` makes no extra read to check.
+- *`learn.answer`*: trait upserts, reflection (insights, supersessions, facts, KG) and occupation facets. The job reads
+  the epoch once; a job whose answer is gone is a no-op, and one refused by its own answer's undo is marked done (a
+  retry would be refused again). One refused by the undo of a *later* answer, whose own answer stands, fails and is
+  retried. Vectors and KV can't join a D1 batch, so after its writes the job re-reads the epoch: if it moved, it
+  makes the Q&A vector match the answer now at that seq (or removes it), and reflection drops the vectors of facts
+  it wrote. Hypotheses are taken back the same way unless a newer set replaced them.
+- *Fidelity* after an answer, *snapshots* (retried once), and *persona drafts* (a 409 asks to try again).
+- `learn.answer` carries `answerId` in its key; `snapshot.write` and `hypotheses.refresh` carry the epoch, so jobs
+  queued before an undo never stand in for the re-answer's (old keys still parse).
+
+**Answers can't land on a discarded question.** `recordAnswer` takes the answer's seq from its question, still
+served at that seq, in the same statement. An answer that raced an undo (or feedback that moved the question,
+ADR-0032) aborts, and `submitAnswer` re-reads the question and returns 409. An idempotency key that was undone also
+gets a 409, so a retrying outbox or another tab can't bring the answer back.
+
+**Scores.** A score takes its `mimic_id` from its answer in the same statement, so a shadow scoring an answer undone
+meanwhile writes nothing. Found while testing, and older than undo: a shadow that inserts after the answer lists
+predictions, and looks for the answer before it is recorded, was scored by neither; `submitAnswer` now lists again
+after recording (deferred) and scores the stragglers (never `hypothesis` rows). A shadow that lands on a question
+discarded while it ran deletes its own prediction.
+
+**Snapshots.** A snapshot taken before an undo still holds the retracted answer, and after a re-answer it has the
+same answer count and seq, so ADR-0032's count check can't see it. `writeSnapshot` also treats a snapshot older than
+the last undo as stale. Its `createdAt` is now taken before it reads.
+
+**Research caveat.** A re-answer can be influenced by the guess the person saw before undoing. `answer_rewinds`
+marks every re-answered seq and whether the guess was revealed, so analysis can exclude or compare them. Headline
+fidelity counts the re-answer like any answer.
+
+Schema: `answer_rewinds`, `mimics.evidence_epoch`, `facts.seq_up_to`, `insights.superseded_seq`
+(migration `0005_answer_rewinds`).
