@@ -1567,6 +1567,13 @@ This ADR adds balance and ordering to the selector and the generator, and makes 
   question 30, groups by 20), R4 (consented sensitive facets by 30) and R7 (sensitive questions in the first five) per
   population (real, scripted, twin2k) and config, `--arm` per experiment arm. `pnpm eval -- select --series` records
   accuracy on the rest after every pick and questions to sustain 75%; `--categories` simulates a category turned off.
+- **Evidence** (`docs/reports/m12-rubric.md`; scripted answers throughout, so these test the mechanism, not people).
+  Offline, four people per config with every consent: the M10 candidate kept 0 of 4 within 15–40% per category,
+  touched 32 of 40 groups by question 20 and reached 20 of 44 sensitive facets by 30; v8 kept 4 of 4, 40 of 40 and 44
+  of 44. Live (real generator, gates and Jev), three sessions per run: without deadlines 25 of 28 groups and 16 of 20
+  sensitive facets; with them 28 of 28 and 20 of 20, every generated question concrete, no sensitive question before
+  question 11, and `replay --mode online` matching every state. Run c, on the final v8 build, is in the report.
+  Efficiency (R6) needs real answers and is measured by the E3b arm (ADR-0045).
 
 ## ADR-0048 — Learnings from the first prod reports: a calibrated primary (`cfg.default.v7`), an honest optimizer verdict, paired comparisons (2026-09-30)
 

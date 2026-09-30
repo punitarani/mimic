@@ -442,3 +442,22 @@ probe.
   - DeepSeek went to Wafer every time, at the same cost either way.
   - So the enum is not what slowed GLM or raised DeepSeek's cost in the backfill.
 
+
+## M12: category balance, trust ramp, coverage deadlines and cfg.default.v8 (ADR-0044)
+
+Nothing below comes from real people, and nothing is a measure of prediction accuracy.
+
+- **Offline fakes (tests, deterministic).** `packages/core/test/balance.test.ts`: category shares and group gaps,
+  quota and targets, the v4 regression (no new parts without the new fields), cap, floor, ramp (at 5 and 6 answers,
+  applied before every other rule), sweep, and both coverage deadlines. `packages/eval/test/balance.test.ts`: three
+  32-turn sessions under v8 keep every category within 15–40%, reach every consented sensitive facet by question 30
+  and every facet group by 20, ask nothing sensitive in the first five even with psychology off (three anchors),
+  record the balance terms, count the waiting anchors in the first quota, count answers as the belief does, and stay
+  labelled scripted after a research export. The same mechanism across four people per config is in
+  `docs/reports/m12-rubric.md` (M10 candidate vs v8).
+- **Live scripted sessions** (a scripted answerer; live gen.v3, gates.v3 and Jev; about $0.14 a session):
+  `docs/reports/m12-rubric.md`, runs a (no deadlines), b (deadlines) and c (final v8, resumed after a container
+  restart). Every generated question passed the concrete gate and, by hand, described a specific situation.
+  Scripted, so a check of the machinery, not a result.
+- **Replay.** `replay --mode online` matched every state of the run-b sessions (90 of 90) and of a local dev export.
+- **Not measured:** efficiency on real people (R6). It is the E3b arm's job (ADR-0045).
