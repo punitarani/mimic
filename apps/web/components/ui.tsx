@@ -100,7 +100,7 @@ export function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label htmlFor={htmlFor} className="block text-sm font-medium text-graphite">
+      <label id={`${htmlFor}-label`} htmlFor={htmlFor} className="block text-sm font-medium text-graphite">
         {label}
         {required ? (
           <span className="text-rust"> *</span>

@@ -1,9 +1,11 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import { type FormEvent, useState } from 'react';
+import { AutocompleteInput } from '@/components/autocomplete';
 import { TopBar } from '@/components/brand';
 import { Button, Checkbox, ErrorText, Field, Input } from '@/components/ui';
 import { api } from '@/lib/api';
+import { loadOccupations, loadPlaces } from '@/lib/autocomplete';
 
 export default function NewMimic() {
   const router = useRouter();
@@ -22,6 +24,7 @@ export default function NewMimic() {
   const [error, setError] = useState<string | null>(null);
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setF({ ...f, [k]: e.target.value });
+  const setValue = (k: keyof typeof f) => (v: string) => setF((prev) => ({ ...prev, [k]: v }));
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -75,23 +78,26 @@ export default function NewMimic() {
             label="Location"
             htmlFor="location"
             required
-            hint="City and country, for example Lisbon, Portugal."
+            hint="A city, state or country. Pick a suggestion or type your own."
           >
-            <Input
+            <AutocompleteInput
               id="location"
               value={f.location}
-              onChange={set('location')}
+              onChange={setValue('location')}
+              load={loadPlaces}
               required
-              autoComplete="address-level2"
+              autoComplete="off"
+              placeholder="Lisbon, Portugal"
             />
           </Field>
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="Occupation" htmlFor="occupation">
-              <Input
+              <AutocompleteInput
                 id="occupation"
                 value={f.occupation}
-                onChange={set('occupation')}
-                autoComplete="organization-title"
+                onChange={setValue('occupation')}
+                load={loadOccupations}
+                autoComplete="off"
               />
             </Field>
             <Field label="Employer" htmlFor="employer">
@@ -141,6 +147,12 @@ export default function NewMimic() {
           >
             {busy ? 'Creating…' : 'Continue'}
           </Button>
+          <p className="text-xs text-muted">
+            Place suggestions use GeoNames and the Countries States Cities Database (ODbL). Job titles include
+            information from the O*NET 30.3 Database by the U.S. Department of Labor, Employment and Training
+            Administration (USDOL/ETA), used under the CC BY 4.0 license, with titles added. O*NET® is a
+            trademark of USDOL/ETA.
+          </p>
         </form>
       </main>
     </div>

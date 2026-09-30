@@ -359,3 +359,31 @@ Configs are immutable, so mimics created under v2 keep MiMo Pro and its predicti
 new shadows reach questions served earlier through `pnpm backfill`, which now takes several predictors: repeated
 `--predictor` flags, or a comma-separated list, which is also what the Actions workflow takes. Every model is checked
 before anything is enqueued, and each predictor gets its own job.
+
+## ADR-0026 — Location and occupation autocomplete on `/new` (2026-09-30)
+
+The location and occupation fields on `/new` suggest as you type. A location can be a city, a state or province, or a
+country, e.g. "Cambridge, Massachusetts, United States", "Bavaria, Germany" or "Portugal". Suggestions only fill the
+text field. Anything typed is kept, so a village or a job title that isn't listed still works. The API and the
+`mimics` columns don't change: both are still free text.
+
+- **Data.** `apps/web/scripts/gen-autocomplete.mjs` (`pnpm --filter @mimic/web gen:autocomplete`) builds two static
+  files in `apps/web/public/autocomplete/`, which are committed and deterministic:
+  - `places.v1.json`: 250 countries and 5,306 subdivisions from `@countrystatecity/countries` (dr5hn, ODbL), plus
+    24,696 cities from `all-the-cities` (GeoNames, CC BY 4.0), about 355 KB gzipped. The cities are those with 15,000+
+    people, plus capitals. Each city takes its state from the nearest same-named dr5hn city, so the names agree. The
+    United Kingdom uses England, Scotland, Wales and Northern Ireland instead of counties. Taiwan and Kosovo are
+    listed only as countries.
+  - `occupations.v1.json`: 6,814 titles from O*NET 30.3 "Sample of Reported Titles" (USDOL/ETA, CC BY 4.0), plus a
+    short list of titles O*NET lacks (student, founder, retired, data scientist…). O*NET isn't on npm, so pass the
+    downloaded text file with `--onet`. The form carries the O*NET and ODbL attribution.
+- **Search.** The browser fetches a file when the field mounts and searches it in memory (`apps/web/lib/autocomplete.ts`,
+  a few ms per keystroke). Matches rank as: the whole name, then the start of a name or alias, then a word inside the
+  name, then a name followed by its region or country ("cambridge ma", "paris, france"). Within a rank, larger places
+  come first. Country codes and common aliases (UK, USA, UAE) match when typed in full.
+- **UI.** `components/autocomplete.tsx` is a WAI-ARIA combobox built on `downshift`'s `useCombobox`. It keeps the text
+  on blur and Escape rather than taking or clearing a suggestion.
+
+Rejected: a geocoding API (Photon, Mapbox). It would send what people type to a third party, add a network dependency
+and a key, and this environment's egress blocks it. Serving the data from a Worker route would put ~1 MB into the web
+Worker bundle for no gain.
