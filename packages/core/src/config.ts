@@ -45,11 +45,14 @@ export const LLM = {
   luna: 'openai/gpt-6-luna',
   deepseek: 'deepseek/deepseek-v4.1-flash',
   glm: 'z-ai/glm-5.3-flash',
+  mimo: 'xiaomi/mimo-v2.6-pro',
 } as const;
 export const EMBEDDING_MODEL = 'baai/bge-base-en-v1.5';
 
 /**
- * `cfg.default.v1`. Deviation (ADR-0004): generator and reflector default to DeepSeek V4.1 Flash, not GPT-6 Luna.
+ * `cfg.default.v2`: `cfg.default.v1` plus the MiMo V2.6 Pro shadow (ADR-0024). Configs are immutable, so mimics
+ * created under v1 keep v1; `pnpm backfill` adds the new shadow to their served questions. Deviation (ADR-0004):
+ * generator and reflector default to DeepSeek V4.1 Flash, not GPT-6 Luna.
  */
 export const DEFAULT_CONFIG: PipelineConfig = {
   version: 1,
@@ -65,7 +68,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   selector: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
   predictor: {
     primary: `jev:${JEV_MODEL}`,
-    shadows: [`llm:${LLM.luna}`, `llm:${LLM.deepseek}`, `llm:${LLM.glm}`],
+    shadows: [`llm:${LLM.luna}`, `llm:${LLM.deepseek}`, `llm:${LLM.glm}`, `llm:${LLM.mimo}`],
   },
   stateBuilder: { strategy: 'full', budgetTokens: 8000, retrievalK: 12, recentN: 6 },
   traitReader: { type: 'jev', everyN: 1 },
@@ -75,7 +78,7 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   session: { target: 30, budgetUsd: 0.5 },
   embedding: { model: EMBEDDING_MODEL },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v1';
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v2';
 
 export function configHash(config: PipelineConfig): string {
   return sha256Hex(canonicalJson(PipelineConfig.parse(config)));

@@ -1,0 +1,59 @@
+# Run a predictor over questions served before it existed (ADR-0024), against prod, from the Actions tab:
+# Actions → Backfill → Run workflow. A dry run unless "enqueue" is checked: it prints the missing count per scope and
+# a cost estimate from what the model has cost so far. Re-run the dry run to watch the count fall to 0.
+
+name: Backfill
+
+on:
+  workflow_dispatch:
+    inputs:
+      predictor:
+        description: Predictor ID, e.g. llm:xiaomi/mimo-v2.6-pro
+        required: true
+        type: string
+      scope:
+        description: Which mimics
+        type: choice
+        options: [consented, all]
+        default: consented
+      enqueue:
+        description: Enqueue the backfill (unchecked is a dry run)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backfill-production
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    name: Backfill ${{ inputs.predictor }} (prod)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Dependency-free Node script: no install needed.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Backfill
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREDICTOR: ${{ inputs.predictor }}
+          SCOPE: ${{ inputs.scope }}
+          ENQUEUE: ${{ inputs.enqueue }}
+        # Inputs reach the script as environment variables, never interpolated into the shell.
+        run: |
+          set -o pipefail
+          args=(--predictor "$PREDICTOR" --env prod)
+          [ "$SCOPE" = consented ] && args+=(--consented)
+          [ "$ENQUEUE" = true ] && args+=(--yes)
+          node scripts/backfill.mjs "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"

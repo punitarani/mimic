@@ -157,11 +157,20 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v1 (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v2 (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(
-      '913b29e8d48a8ba54702cb7878cc1e9079e379a0c784e5a213328a015b10843e',
+      'c597daa8c51b8105827893241dfcbf8396ca4dc4e0f3aa8d197447aca3f7d15c',
     );
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
+    // v2 is v1 plus the MiMo shadow (ADR-0024); mimics created under v1 still resolve to v1's row.
+    const v1: PipelineConfig = {
+      ...DEFAULT_CONFIG,
+      predictor: {
+        ...DEFAULT_CONFIG.predictor,
+        shadows: DEFAULT_CONFIG.predictor.shadows.filter((s) => s !== 'llm:xiaomi/mimo-v2.6-pro'),
+      },
+    };
+    expect(configHash(v1)).toBe('913b29e8d48a8ba54702cb7878cc1e9079e379a0c784e5a213328a015b10843e');
   });
 
   it('unitHash is stable and in [0, 1)', () => {

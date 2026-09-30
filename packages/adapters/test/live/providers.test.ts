@@ -1,5 +1,6 @@
 // Live smoke tests: one real call per provider. Run with `pnpm test:live` (LIVE=1). Each call costs a fraction of
 // a cent. Keys come from the environment; in the Claude Code remote env the outbound proxy injects them.
+import { DEFAULT_CONFIG, LLM_PREDICTOR_MAX_TOKENS, PROMPTS, parsePredictorId } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
   ExaPeopleSearch,
@@ -59,6 +60,37 @@ describe.skipIf(!LIVE)('live providers', () => {
     expect(JSON.parse(r.content)).toEqual({ ok: true });
     expect(r.usage.costUsd).toBeGreaterThan(0);
   }, 60_000);
+
+  // One call per LLM shadow in the default config, with the exact predict.v1 request a shadow makes.
+  const shadowModels = DEFAULT_CONFIG.predictor.shadows
+    .map(parsePredictorId)
+    .filter((p) => p.kind === 'llm')
+    .map((p) => p.model);
+  it.each(shadowModels)(
+    'shadow %s returns a predict.v1 distribution',
+    async (model) => {
+      const p = PROMPTS['predict.v1'];
+      const r = await new OpenRouterChat(or).chat({
+        model,
+        messages: [
+          { role: 'system', content: p.system },
+          {
+            role: 'user',
+            content:
+              'STATE:\nidentity: teacher in Lisbon\nevidence:\n- Prefers quiet weekends (seq 1)\n\n' +
+              'QUESTION: A friend invites you to a loud party on Saturday. Do you go?\nOPTIONS:\nyes: Yes\nno: No',
+          },
+        ],
+        jsonSchema: { name: 'probs', schema: p.schema },
+        reasoningEffort: 'low',
+        maxTokens: LLM_PREDICTOR_MAX_TOKENS,
+      });
+      const probs = JSON.parse(r.content).probs as Array<{ key: string; p: number }>;
+      expect(probs.map((x) => x.key).sort()).toEqual(['no', 'yes']);
+      expect(r.usage.costUsd).toBeGreaterThan(0);
+    },
+    90_000,
+  );
 
   it('embeddings return 768-d vectors', async () => {
     const r = await new OpenRouterEmbedder('baai/bge-base-en-v1.5', or).embed(['hello']);

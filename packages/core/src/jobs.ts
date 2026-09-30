@@ -14,6 +14,20 @@ export const Job = z.discriminatedUnion('type', [
   z.object({ type: z.literal('learn.answer'), mimicId: z.string(), seq: z.number().int() }),
   z.object({ type: z.literal('hypotheses.refresh'), mimicId: z.string(), seqUpTo: z.number().int() }),
   z.object({ type: z.literal('snapshot.write'), mimicId: z.string(), seqUpTo: z.number().int() }),
+  /** Backfill (ADR-0024): fans out one `backfill.mimic` per mimic. `runId` makes each run its own job. */
+  z.object({
+    type: z.literal('backfill.predictor'),
+    runId: z.string(),
+    predictorId: z.string(),
+    consentedOnly: z.boolean(),
+  }),
+  /** Enqueues `predict.shadow` for the mimic's served questions the predictor hasn't predicted yet. */
+  z.object({
+    type: z.literal('backfill.mimic'),
+    runId: z.string(),
+    mimicId: z.string(),
+    predictorId: z.string(),
+  }),
 ]);
 export type Job = z.infer<typeof Job>;
 
@@ -36,6 +50,11 @@ export function jobKey(job: Job): string {
       return `hypotheses.refresh:${job.mimicId}:${job.seqUpTo}`;
     case 'snapshot.write':
       return `snapshot.write:${job.mimicId}:${job.seqUpTo}`;
+    // Predictor IDs contain ':', so they come last.
+    case 'backfill.predictor':
+      return `backfill.predictor:${job.runId}:${job.consentedOnly ? 1 : 0}:${job.predictorId}`;
+    case 'backfill.mimic':
+      return `backfill.mimic:${job.runId}:${job.mimicId}:${job.predictorId}`;
   }
 }
 
@@ -63,6 +82,12 @@ export function jobFromKey(key: string): Job | null {
     case 'hypotheses.refresh':
     case 'snapshot.write':
       job = { type, mimicId: parts[0], seqUpTo: Number(parts[1]) };
+      break;
+    case 'backfill.predictor':
+      job = { type, runId: parts[0], consentedOnly: parts[1] === '1', predictorId: parts.slice(2).join(':') };
+      break;
+    case 'backfill.mimic':
+      job = { type, runId: parts[0], mimicId: parts[1], predictorId: parts.slice(2).join(':') };
       break;
   }
   const r = Job.safeParse(job);

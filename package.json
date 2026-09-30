@@ -11,7 +11,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
-    "test": "turbo run test && node --test scripts/deploy/*.test.mjs",
+    "test": "turbo run test && node --test scripts/*.test.mjs scripts/deploy/*.test.mjs",
     "test:live": "LIVE=1 turbo run test:live --concurrency=1",
     "db:generate": "pnpm --filter @mimic/db generate",
     "db:migrate:local": "pnpm --filter @mimic/worker exec wrangler d1 migrations apply DB --local --persist-to ../../.wrangler/state",
@@ -21,6 +21,7 @@
     "deploy:preview": "node scripts/deploy/deploy.mjs --env preview",
     "deploy:prod": "node scripts/deploy/deploy.mjs --env prod",
     "eval": "NODE_USE_ENV_PROXY=1 tsx packages/eval/src/cli.ts",
+    "backfill": "NODE_USE_ENV_PROXY=1 node scripts/backfill.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {

@@ -1,3 +1,4 @@
+import { parsePredictorId } from '../config';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
 import { type Job, jobFromKey, jobKey } from '../jobs';
@@ -19,7 +20,7 @@ import type { FactRecord, InsightRecord, KgEdgeRecord, KgNodeRecord, QuestionRec
 import type { Domain, PersonState } from '../types';
 import { writeSnapshot } from './artifact';
 import { facetCounts, loadMimicData, stateBlobKey, stateOptions, vectorId } from './data';
-import { ctxFor, type EngineDeps, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
+import { ctxFor, type EngineDeps, EngineError, facetsFor, jevModel, loadConfig, requireMimic } from './deps';
 import { addFacts, personNodeId, runIdentityEnrich, runIdentitySearch } from './identity';
 import { JEV_PROMPT_VERSION, MAX_POOL, MIN_POOL } from './session';
 
@@ -99,28 +100,82 @@ export async function enqueueMissingShadows(
 ): Promise<number> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  if (!cfg.predictor.shadows.length) return 0;
-  const [questions, shadows] = await Promise.all([
-    deps.store.listQuestions(m.id),
-    deps.store.listPredictions({ mimicId: m.id, roles: ['shadow'] }),
+  return enqueueMissingPredictions(deps, mimicId, servedBefore, cfg.predictor.shadows);
+}
+
+/**
+ * Enqueues a `predict.shadow` for each of `predictorIds` on each of the mimic's served anchor and adaptive questions
+ * that has no prediction from it yet, in any role. The same query as `pnpm backfill`'s dry run (scripts/backfill.mjs).
+ */
+export async function enqueueMissingPredictions(
+  deps: EngineDeps,
+  mimicId: string,
+  servedBefore: number,
+  predictorIds: readonly string[],
+): Promise<number> {
+  if (!predictorIds.length) return 0;
+  const [questions, predictions] = await Promise.all([
+    deps.store.listQuestions(mimicId),
+    deps.store.listPredictions({ mimicId }),
   ]);
-  const have = new Set(shadows.map((p) => `${p.questionId}|${p.predictorId}`));
+  const have = new Set(predictions.map((p) => `${p.questionId}|${p.predictorId}`));
+  // A shadow reads the primary's sealed state; without a primary there is nothing to predict from.
+  const sealed = new Set(predictions.filter((p) => p.role === 'primary').map((p) => p.questionId));
   let n = 0;
   for (const q of questions) {
     if (q.seq === null || q.servedAt === null || q.servedAt >= servedBefore) continue;
     if (q.kind !== 'anchor' && q.kind !== 'adaptive') continue;
-    for (const predictorId of cfg.predictor.shadows) {
+    if (!sealed.has(q.id)) continue;
+    for (const predictorId of predictorIds) {
       if (have.has(`${q.id}|${predictorId}`)) continue;
-      await deps.jobs.enqueue({ type: 'predict.shadow', mimicId: m.id, questionId: q.id, predictorId });
+      await deps.jobs.enqueue({ type: 'predict.shadow', mimicId, questionId: q.id, predictorId });
       n++;
     }
   }
   return n;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Backfill (ADR-0024): a new shadow model run over questions already served, on the same sealed states.
+// ---------------------------------------------------------------------------------------------------------------
+
+function checkPredictorId(id: string): void {
+  try {
+    parsePredictorId(id);
+  } catch (e) {
+    throw new EngineError('invalid', e instanceof Error ? e.message : String(e));
+  }
+}
+
+/** One `backfill.mimic` job per mimic (each stays small, however many mimics there are). */
+export async function runBackfillPredictor(
+  deps: EngineDeps,
+  job: { runId: string; predictorId: string; consentedOnly: boolean },
+): Promise<number> {
+  checkPredictorId(job.predictorId);
+  const mimics = await deps.store.listMimics(job.consentedOnly ? { consentResearch: true } : {});
+  for (const m of mimics) {
+    await deps.jobs.enqueue({
+      type: 'backfill.mimic',
+      runId: job.runId,
+      mimicId: m.id,
+      predictorId: job.predictorId,
+    });
+  }
+  return mimics.length;
+}
+
+export function runBackfillMimic(
+  deps: EngineDeps,
+  job: { mimicId: string; predictorId: string },
+): Promise<number> {
+  checkPredictorId(job.predictorId);
+  return enqueueMissingPredictions(deps, job.mimicId, deps.clock(), [job.predictorId]);
+}
+
 async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> {
   // A job for a deleted mimic is a no-op.
-  if (job.type !== 'noop' && !(await deps.store.getMimic(job.mimicId))) return;
+  if ('mimicId' in job && !(await deps.store.getMimic(job.mimicId))) return;
   switch (job.type) {
     case 'noop':
       return;
@@ -138,6 +193,12 @@ async function dispatch(deps: EngineDeps, job: Job, key: string): Promise<void> 
       return runHypotheses(deps, job.mimicId, job.seqUpTo, key);
     case 'snapshot.write':
       await writeSnapshot(deps, job.mimicId, job.seqUpTo);
+      return;
+    case 'backfill.predictor':
+      await runBackfillPredictor(deps, job);
+      return;
+    case 'backfill.mimic':
+      await runBackfillMimic(deps, job);
       return;
   }
 }

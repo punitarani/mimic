@@ -12,6 +12,14 @@ describe('job keys', () => {
       { type: 'learn.answer', mimicId: 'M', seq: 12 },
       { type: 'hypotheses.refresh', mimicId: 'M', seqUpTo: 20 },
       { type: 'snapshot.write', mimicId: 'M', seqUpTo: 20 },
+      {
+        type: 'backfill.predictor',
+        runId: 'R',
+        predictorId: 'llm:xiaomi/mimo-v2.6-pro',
+        consentedOnly: true,
+      },
+      { type: 'backfill.predictor', runId: 'R', predictorId: 'jev:typesafe/jev-1.13', consentedOnly: false },
+      { type: 'backfill.mimic', runId: 'R', mimicId: 'M', predictorId: 'llm:xiaomi/mimo-v2.6-pro' },
     ];
     for (const j of jobs) expect(jobFromKey(jobKey(j))).toEqual(j);
     expect(jobFromKey('bogus:1')).toBeNull();

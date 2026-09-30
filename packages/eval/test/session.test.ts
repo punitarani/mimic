@@ -55,7 +55,7 @@ describe('scripted 30-turn session (offline fakes)', () => {
     expect(checked).toBeGreaterThan(100);
   });
 
-  it('stores 1 primary, 1 context-only baseline and 3 shadows per scored question; none for repeats', async () => {
+  it('stores 1 primary, 1 context-only baseline and 4 shadows per scored question; none for repeats', async () => {
     const { store, blobs } = engine.deps;
     const questions = (await store.listQuestions(mimicId)).filter((q) => q.seq !== null);
     const repeats = questions.filter((q) => q.kind === 'repeat');
@@ -74,6 +74,7 @@ describe('scripted 30-turn session (offline fakes)', () => {
       expect(shadows.map((s) => s.predictorId).sort()).toEqual([
         'llm:deepseek/deepseek-v4.1-flash',
         'llm:openai/gpt-6-luna',
+        'llm:xiaomi/mimo-v2.6-pro',
         'llm:z-ai/glm-5.3-flash',
       ]);
       for (const s of shadows) expect(s.stateHash).toBe(primary[0]!.stateHash);
@@ -105,7 +106,7 @@ describe('scripted 30-turn session (offline fakes)', () => {
     expect(await enqueueMissingShadows(engine.deps, mimicId, Number.MAX_SAFE_INTEGER)).toBe(2);
     await engine.drain();
     const after = (await store.listPredictions({ questionId: q.id })).filter((p) => p.role === 'shadow');
-    expect(after).toHaveLength(3);
+    expect(after).toHaveLength(4);
     const primary = (await store.listPredictions({ questionId: q.id, roles: ['primary'] }))[0]!;
     for (const p of after) expect(p.stateHash).toBe(primary.stateHash);
     expect(await enqueueMissingShadows(engine.deps, mimicId, Number.MAX_SAFE_INTEGER)).toBe(0);
@@ -114,7 +115,7 @@ describe('scripted 30-turn session (offline fakes)', () => {
   it('scores every sealed prediction once the answer arrives, and appends fidelity', async () => {
     const { store } = engine.deps;
     const scored = await store.listScoredPredictions(mimicId, ['primary', 'baseline', 'shadow']);
-    expect(scored.length).toBe(28 * 5);
+    expect(scored.length).toBe(28 * 6);
     const fid = await store.listFidelity(mimicId);
     expect(fid).toHaveLength(30);
     expect(fid.at(-1)!.nRepeats).toBe(2);

@@ -300,3 +300,37 @@ scripts and `db:migrate:{preview,prod}` are gone.
   Nothing on the prediction path is cached across requests, because sealed states must be built from the database
   (invariant 1). A process-wide "config already stored" memo was considered and rejected. Deps are built per request,
   and in tests and the eval CLI one process talks to several databases, so the memo would skip real inserts.
+
+## ADR-0024 — MiMo V2.6 Pro shadow, and backfilling new predictors (2026-09-30)
+
+**MiMo V2.6 Pro shadow.** `llm:xiaomi/mimo-v2.6-pro` is now the fourth shadow. It runs through the same `predict.v1`
+JSON-schema prompt as the other LLM shadows. A live check returned a schema-valid distribution at about $0.0001–0.0007
+per prediction and 6–24 s. OpenRouter routed it to GMICloud or DeepInfra; the provider is part of `modelSnapshot`.
+
+Configs are immutable, so this is a new default, `cfg.default.v2`, which is `cfg.default.v1` plus the shadow. Both
+hashes are pinned in a test. Mimics created before v2 keep v1, and new mimics get v2, where the cron's
+missing-shadow repair covers MiMo too.
+
+**Backfill.** When a predictor is added, `pnpm backfill --predictor <id> [--env local|preview|prod] [--consented]
+[--mimic <id>]... [--yes]` gives it the questions served before it existed.
+
+- **Dry run by default.** The script:
+  - checks that the model exists on OpenRouter with structured outputs;
+  - counts the missing predictions per mimic;
+  - estimates cost from what this predictor has cost so far (never from a price table).
+- **`--yes`** publishes one job: through the Queues HTTP API in deployed envs, or through the `pnpm dev` worker's
+  `POST /__jobs` locally. That route exists only with `DEV_MODE=1`, and deployed workers serve no URL anyway.
+- **Two new job types:**
+  - `backfill.predictor` enqueues one `backfill.mimic` per mimic, optionally consented only.
+  - `backfill.mimic` enqueues `predict.shadow` for each served anchor or adaptive question that has a primary and no
+    prediction from that predictor, in any role. `enqueueMissingShadows` now uses the same rule, and the script's dry
+    run counts exactly those questions.
+- **Same path as a live shadow.** Each prediction reads the primary's sealed state blob, so it stays sealed (PLAN
+  §3.1). It is logged through the gateway (invariant 5), stored with the mimic's `configHash`, its own `predictorId`,
+  prompt version and model snapshot (invariant 4), and scored against the answer if there is one.
+- **Idempotent and safe to repeat.** Job keys and the existing-prediction check dedupe the work. A later run
+  (a new `runId`) enqueues only what is still missing, so re-running the dry run shows progress.
+
+Checked on local dev data: one mimic's 9 missing MiMo predictions ran through the real worker for $0.0043 in total.
+All 9 used the primary's sealed state, and 8 were scored; the ninth question was served but never answered. A
+re-run reported 0 missing.

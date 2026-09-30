@@ -42,6 +42,14 @@ export default {
         enqueued: `noop:${id}`,
       });
     }
+    // Local dev only: `pnpm backfill --env local` enqueues here. Deployed envs publish through the Queues HTTP API
+    // (and serve no URL at all: workers_dev is off).
+    if (url.pathname === '/__jobs' && req.method === 'POST' && env.DEV_MODE === '1') {
+      const parsed = Job.safeParse(await req.json().catch(() => null));
+      if (!parsed.success) return json({ error: parsed.error.message }, 400);
+      await env.JOBS.send(parsed.data);
+      return json({ enqueued: jobKey(parsed.data) });
+    }
     const m = url.pathname.match(/^\/health\/job\/(.+)$/);
     if (m) {
       const job = await deps(env).store.getJob(decodeURIComponent(m[1]!));
