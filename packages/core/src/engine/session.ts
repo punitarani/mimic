@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BEHIND_SHORTFALL, categoryShares, EXPOSURE_MIN_ADAPTIVE } from '../belief';
 import { DEFAULT_PROMPT_VERSION } from '../components';
 import type { PipelineConfig } from '../config';
 import { argmax } from '../distribution';
@@ -28,6 +29,8 @@ import {
   type Store,
 } from '../store';
 import {
+  CATEGORIES,
+  type Category,
   type Distribution,
   isScoredKind,
   isSessionKind,
@@ -271,16 +274,36 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
     return { status: 'question', question: toPublic({ ...rep, seq: at, status: 'served' }), progress };
   }
 
-  // 3) Adaptive pool (reserve bank when the generated pool is empty).
-  let pool = questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled' && inScope(q));
+  // 3) Adaptive pool (reserve bank when the generated pool is empty). Before the trust ramp opens, nothing touching
+  // a sensitive facet is offered at all (ADR-0044).
+  const ramp = rampAllows(cfg, loaded);
+  let pool = questions.filter((q) => q.kind === 'adaptive' && q.status === 'pooled' && inScope(q) && ramp(q));
   if (pool.length < MIN_POOL) {
     await deferred(deps, () => deps.jobs.enqueue({ type: 'pool.refill', mimicId: m.id, seq }));
   }
+  if (pool.length > 0) pool = [...pool, ...(await balanceTopUp(deps, m, cfg, loaded, pool, ramp))];
   if (pool.length === 0) {
-    pool = await addReserve(deps, m, cfg, questions, loaded.scope.blocked);
+    pool = await addReserve(deps, m, cfg, questions, loaded.scope.blocked, ramp);
     if (pool.length === 0) return { status: 'waiting', progress };
   }
   return serveWithPredictions(deps, m, cfg, loaded, stateAt, seq, null, pool, progress, rng);
+}
+
+/**
+ * The trust ramp (ADR-0044): until the person has answered `minAnswered` anchor and adaptive questions, a question
+ * touching a sensitive facet may not be served. Counts what the belief state counts: answered, in scope.
+ */
+export function rampAllows(
+  cfg: PipelineConfig,
+  loaded: Pick<LoadedMimic, 'questions' | 'scope'>,
+): (q: { facetIds: string[] }) => boolean {
+  const ramp = cfg.selector.type === 'voi' ? cfg.selector.trustRamp : undefined;
+  if (!ramp) return () => true;
+  const answered = loaded.questions.filter(
+    (q) => q.status === 'answered' && isScoredKind(q.kind) && !loaded.scope.hiddenQuestionIds.has(q.id),
+  ).length;
+  if (answered >= ramp.minAnswered) return () => true;
+  return (q) => !q.facetIds.some((f) => loaded.scope.sensitiveFacets.has(f));
 }
 
 async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
@@ -296,6 +319,48 @@ async function raced(deps: EngineDeps, mimicId: string): Promise<NextResult> {
 const RESERVE_BATCH = 3;
 
 /**
+ * Category balance backed by the reserve bank (ADR-0044): once a few adaptive questions are answered, a category
+ * below BEHIND_SHORTFALL of its even share with nothing waiting in the pool gets one reserve item, so a generator that
+ * missed its quota (or whose drafts the gates rejected) can't leave it behind. Configs without `balance` skip this.
+ */
+async function balanceTopUp(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  loaded: LoadedMimic,
+  pool: QuestionRecord[],
+  ramp: (q: { facetIds: string[] }) => boolean,
+): Promise<QuestionRecord[]> {
+  if (cfg.selector.type !== 'voi' || !cfg.selector.balance) return [];
+  const visible = loaded.questions.filter((q) => !loaded.scope.hiddenQuestionIds.has(q.id));
+  const nAdaptive = visible.filter((q) => q.kind === 'adaptive' && q.status === 'answered').length;
+  if (nAdaptive < EXPOSURE_MIN_ADAPTIVE) return [];
+  const facets = await facetsFor(deps, m, cfg);
+  const byId = new Map(facets.map((f) => [f.id, f]));
+  const shares = categoryShares(
+    facets,
+    visible
+      .filter((q) => (q.status === 'answered' || q.status === 'served') && isScoredKind(q.kind))
+      .map((q) => q.facetIds),
+  );
+  const inCategory = (q: { facetIds: string[] }, c: Category) =>
+    q.facetIds.some((f) => byId.get(f)?.category === c);
+  const missing = CATEGORIES.filter(
+    (c) => (shares[c]?.shortfall ?? 0) >= BEHIND_SHORTFALL && !pool.some((q) => inCategory(q, c)),
+  );
+  if (!missing.length) return [];
+  return addReserve(
+    deps,
+    m,
+    cfg,
+    loaded.questions,
+    loaded.scope.blocked,
+    (q) => ramp(q) && missing.some((c) => inCategory(q, c)),
+    missing.length,
+  );
+}
+
+/**
  * Reserve items for an empty pool (ADR-0006), from the config's set (ADR-0042), inside the person's scope. reserve.v1
  * keeps its fixed order; later sets put items whose facets have been asked least first, so a stalled generator
  * still spreads questions across what the person agreed to be asked about.
@@ -306,6 +371,8 @@ async function addReserve(
   cfg: PipelineConfig,
   questions: QuestionRecord[],
   blocked: ReadonlySet<string>,
+  allow: (q: { facetIds: string[] }) => boolean = () => true,
+  limit = RESERVE_BATCH,
 ): Promise<QuestionRecord[]> {
   const setId = reserveSetId(cfg);
   const used = new Set(questions.map((q) => q.itemKey).filter(Boolean));
@@ -314,7 +381,10 @@ async function addReserve(
   const professional = m.scope.categories.includes('work');
   let items = getReserveSet(setId).filter(
     (r) =>
-      !used.has(r.itemKey) && questionAllowed(r, blocked) && (professional || r.domain !== 'professional'),
+      !used.has(r.itemKey) &&
+      questionAllowed(r, blocked) &&
+      allow(r) &&
+      (professional || r.domain !== 'professional'),
   );
   if (setId !== 'reserve.v1') {
     const asked = new Map<string, number>();
@@ -326,7 +396,7 @@ async function addReserve(
       .sort((a, b) => a.l - b.l || a.i - b.i)
       .map((x) => x.r);
   }
-  const recs: QuestionRecord[] = items.slice(0, RESERVE_BATCH).map((item, i) => ({
+  const recs: QuestionRecord[] = items.slice(0, limit).map((item, i) => ({
     id: deps.newId(),
     mimicId: m.id,
     seq: null,

@@ -641,8 +641,9 @@ money" in scope, workplace scenes are rejected in code and the professional quot
 ### 9.5 Selection
 
 Every strategy scores pooled questions only. Repeat probes are scheduled outside the selector. The default since
-`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; the strategies
-below remain as controls and experiment arms.
+`cfg.default.v4` is `voi` (value of information), specified in `docs/SELECTION.md` and ADR-0027; `cfg.default.v7` adds
+category and facet-group balance, the trust ramp and the sensitive sweep (`docs/SELECTION.md` §5a, ADR-0044). The
+strategies below remain as controls and experiment arms.
 
 - **`random`** is the control arm.
 - **`coverage`** takes the facet with the lowest coverage, breaking ties randomly.

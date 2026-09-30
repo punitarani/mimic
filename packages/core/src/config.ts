@@ -66,6 +66,27 @@ export const PipelineConfig = z.object({
       nuBurden: z.number(),
       /** A candidate whose facets already take more than this share of the adaptive questions is skipped. */
       exposureCap: z.number().min(0).max(1),
+      /**
+       * Category and facet-group balance (ADR-0044): weights `category` and `group` take that share of the gap term
+       * from the facet and domain gaps, and a candidate whose categories all exceed `cap` of the questions is
+       * skipped. Optional and undefaulted, so older hashes are unchanged; absent, the gap term is v4's.
+       */
+      balance: z
+        .object({
+          category: z.number().min(0).max(1),
+          group: z.number().min(0).max(1),
+          cap: z.number().min(0).max(1),
+        })
+        .refine((b) => b.category + b.group <= 1, 'category + group must be at most 1')
+        .optional(),
+      /** Trust ramp and sensitive sweep (ADR-0044, `TrustRamp`). Optional and undefaulted. */
+      trustRamp: z
+        .object({
+          minAnswered: z.number().int().min(0),
+          sweepFrom: z.number().int().min(0),
+          sweepBonus: z.number().min(0).max(1),
+        })
+        .optional(),
     }),
   ]),
   /** Predictor IDs, optionally `@<version>` naming a registered prompt variant (ADR-0028); checked on parse. */
@@ -196,7 +217,7 @@ export const DEFAULT_CONFIG_V5: PipelineConfig = {
  * primary for free rather than by a second Jev call. Older mimics keep their config; `pnpm backfill` adds the new
  * shadows to questions already served.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V6: PipelineConfig = {
   ...DEFAULT_CONFIG_V5,
   predictor: {
     ...DEFAULT_CONFIG_V5.predictor,
@@ -210,7 +231,37 @@ export const DEFAULT_CONFIG: PipelineConfig = {
     ],
   },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v6';
+
+/**
+ * The v4 selector with category and facet-group balance and the trust ramp (ADR-0044): categories take 35% of the gap
+ * term and facet groups 25%; no category above 40% while another is below it; nothing sensitive before six answers;
+ * from ten answers, consented sensitive facets not yet asked about are targeted and preferred.
+ */
+export const VOI_SELECTOR_V7: Extract<PipelineConfig['selector'], { type: 'voi' }> = {
+  ...VOI_SELECTOR,
+  balance: { category: 0.35, group: 0.25, cap: 0.4 },
+  trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3 },
+};
+
+/**
+ * `cfg.default.v7` (ADR-0044): v6's predictors on ontology v2 (ADR-0042) with reserve.v2, concrete `gen.v3` questions
+ * checked by `gates.v3`, `reflect.v2`, an everyday-first domain mix, and the balanced, ramped selector. Sensitive
+ * areas are asked about only with the person's consent (ADR-0040, ADR-0043). Older mimics keep their config.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V6,
+  ontologyVersion: 'v2',
+  reserve: { setId: 'reserve.v2' },
+  generator: {
+    ...DEFAULT_CONFIG_V6.generator,
+    promptVersion: 'gen.v3',
+    gates: 'gates.v3',
+    domainMix: { core: 0.15, casual: 0.55, professional: 0.3 },
+  },
+  selector: VOI_SELECTOR_V7,
+  reflector: { ...DEFAULT_CONFIG_V6.reflector, promptVersion: 'reflect.v2' },
+};
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v7';
 
 /**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never

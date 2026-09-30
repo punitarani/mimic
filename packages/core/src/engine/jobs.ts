@@ -1,4 +1,12 @@
-import { domainQuota, overExposed, splitQuota, targetFacets } from '../belief';
+import {
+  categoryQuota,
+  categoryTargets,
+  domainQuota,
+  overExposed,
+  rampOpen,
+  splitQuota,
+  targetFacets,
+} from '../belief';
 import type { PipelineConfig } from '../config';
 import { BudgetExceededError } from '../gateway';
 import { hashJson } from '../hash';
@@ -558,6 +566,11 @@ export async function runShadow(
 // ---------------------------------------------------------------------------------------------------------------
 
 export const DEDUPE_SIMILARITY = 0.9;
+/**
+ * Targets per refill under category balance (ADR-0044): more than the five before, so untouched groups and the
+ * sensitive sweep fit in the first two refills with room left for the category quota.
+ */
+export const BALANCED_TARGETS = 8;
 
 /** hyp.v2 (ADR-0042) for configs on ontology v2 and later, which have sensitive facets; hyp.v1 before. */
 export function hypPromptVersion(cfg: PipelineConfig): 'hyp.v1' | 'hyp.v2' {
@@ -581,12 +594,34 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
   let quota: Record<Domain, number>;
   let targetDetails: ReturnType<typeof targetFacets> | undefined;
   let avoid: string[] | undefined;
+  let catQuota: ReturnType<typeof categoryQuota> | undefined;
+  let sensitiveAllowed = facets.filter((f) => f.sensitive).map((f) => f.id);
   if (cfg.generator.promptVersion === 'gen.v2' || cfg.generator.promptVersion === 'gen.v3') {
     // Belief-driven targets (docs/SELECTION.md §5): the facets with the highest need, each with why and the
     // person's current reading; the domain quota tilts toward the domains the mimic is weakest in.
-    const belief = beliefFromLoaded(loaded, facets, cfg, await loadBeliefSources(deps, m), { pooled: pool });
-    const cap = cfg.selector.type === 'voi' ? cfg.selector.exposureCap : 1;
-    targetDetails = targetFacets(belief, facets, 5, cap);
+    const voi = cfg.selector.type === 'voi' ? cfg.selector : undefined;
+    // Under balance, the anchors still waiting count as pooled: they are served before anything this batch writes.
+    const waitingAnchors = voi?.balance
+      ? loaded.questions.filter(
+          (q) => q.kind === 'anchor' && q.status === 'pooled' && !loaded.scope.hiddenQuestionIds.has(q.id),
+        )
+      : [];
+    const belief = beliefFromLoaded(loaded, facets, cfg, await loadBeliefSources(deps, m), {
+      pooled: [...pool, ...waitingAnchors],
+    });
+    const cap = voi ? voi.exposureCap : 1;
+    if (voi?.balance) {
+      // Category-aware targets and quota (ADR-0044). The anchors still waiting are served before anything this batch
+      // writes, so they count toward the trust ramp and the sweep.
+      const lookahead = waitingAnchors.length;
+      targetDetails = categoryTargets(belief, facets, BALANCED_TARGETS, {
+        exposureCap: cap,
+        lookahead,
+        ...(voi.trustRamp ? { ramp: voi.trustRamp } : {}),
+      });
+      catQuota = categoryQuota(belief, n);
+      if (!rampOpen(belief, voi.trustRamp, lookahead)) sensitiveAllowed = [];
+    } else targetDetails = targetFacets(belief, facets, 5, cap);
     targets = targetDetails.map((t) => t.id);
     avoid = facets.filter((f) => overExposed(belief, f.id, cap)).map((f) => f.id);
     quota = domainQuota(belief, mix, n);
@@ -643,8 +678,8 @@ export async function runPoolRefill(deps: EngineDeps, mimicId: string, key?: str
     professionalAllowed,
     ...(cfg.generator.promptVersion === 'gen.v3'
       ? {
-          categoryQuota: evenCategoryQuota(facets, n),
-          sensitiveAllowed: facets.filter((f) => f.sensitive).map((f) => f.id),
+          categoryQuota: catQuota ?? evenCategoryQuota(facets, n),
+          sensitiveAllowed,
         }
       : {}),
   });

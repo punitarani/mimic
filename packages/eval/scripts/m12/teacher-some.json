@@ -1,0 +1,7 @@
+{
+  "intake": { "name": "Jonas Weber", "location": "Leipzig, DE", "occupation": "Teacher" },
+  "consentResearch": true,
+  "consents": { "politics": true, "health": true },
+  "seed": "m12-teacher",
+  "policy": "consistent"
+}

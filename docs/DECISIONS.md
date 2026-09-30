@@ -1517,3 +1517,40 @@ or do, so the field now isn't rendered while the code is locked.
 - **Prerendered HTML is unchanged.** The Suspense fallback (ADR-0023) still renders the field, since the static page
   can't see the query string; hydration removes it for invite links, so the fields below move up once. Removing
   that shift would mean rendering `/new` per request, which ADR-0023 chose against.
+
+## ADR-0044 — Category balance, the trust ramp and `cfg.default.v7` (2026-09-30)
+
+ADR-0042 gave the loop concrete questions and 34 new facets, 11 of them opt-in sensitive, but selection still asked
+where the mimic was least sure. With the anchors (seven of ten on psychology) that kept sessions on psychology and
+life. On offline sessions under the M10 candidate with every consent, psychology took 50% of the first 30 questions
+and work 11%; no person had every facet group touched by question 20, and 20 of 44 consented sensitive facets were
+reached by question 30. With psychology off, one of two people was asked a sensitive question among the first five.
+This ADR adds balance and ordering to the selector and the generator, and makes the result the default.
+
+- **Selector** (`selector.balance`, `selector.trustRamp`; both optional and undefaulted, so v4–v6 score exactly as
+  before and keep their hashes; `docs/SELECTION.md` §5a):
+  - The belief gains category shares against an even split over the categories in scope, and facet-group gaps. Only
+    categories in scope exist, so nothing pulls toward a category the person turned off.
+  - The gap term gives 35% of its weight to the candidate's category shortfall and 25% to its group gap.
+  - Once four adaptive questions are answered: a candidate whose categories are all above 40% is skipped unless every
+    candidate is (the cap), and while a category is below 60% of its even share (15% with four), candidates in it go
+    first (the floor). The engine backs the floor with one reserve item from that category when the pool has none.
+  - Trust ramp: nothing touching a sensitive facet is served before six answers, enforced by the engine on the pool
+    and the reserve and by the selector with no exception. From ten answers, a candidate touching a consented
+    sensitive facet not yet asked about earns +0.3 (the sweep). Sensitive items later in an instrument are answered
+    more honestly (Tourangeau & Yan 2007); burden is unchanged, so early questions stay short.
+  - Selection diagnostics record `category`, `group` and `sweep`.
+- **Generator targets** (`categoryTargets`, `categoryQuota`): eight targets per refill under balance, in three passes:
+  untouched facet groups (preferring an unasked consented sensitive facet in the group once the sweep is on), then
+  the sweep (least asked areas first), then a category quota weighted `¼ + shortfall` with at least a quarter of the
+  targets. The anchors still waiting count as asked and toward the ramp, since they are served first. gen.v3 gets the
+  quota and, once the ramp is open, the consented sensitive facets.
+- **`cfg.default.v7`** = v6's predictors on ontology v2, reserve.v2, gen.v3, gates.v3, reflect.v2, domain mix core 15 /
+  casual 55 / professional 30, and `VOI_SELECTOR_V7` (v4 weights plus balance `{ category 0.35, group 0.25, cap 0.4 }`
+  and ramp `{ minAnswered 6, sweepFrom 10, sweepBonus 0.3 }`). v1–v6 hashes stay pinned; `cfg.m10.candidate` is now
+  built from v6 so it keeps its hash and isolates the selector in comparisons. New mimics get v7; existing mimics keep
+  their config.
+- **Measurement.** `pnpm eval -- rubric` reports R1 (generated questions passing `concrete`), R2 (category shares by
+  question 30, groups by 20), R4 (consented sensitive facets by 30) and R7 (sensitive questions in the first five) per
+  population (real, scripted, twin2k) and config, `--arm` per experiment arm. `pnpm eval -- select --series` records
+  accuracy on the rest after every pick and questions to sustain 75%; `--categories` simulates a category turned off.
