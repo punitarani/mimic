@@ -6,7 +6,18 @@ import {
   SENSITIVE_AREAS,
 } from '@mimic/core/scope';
 import { describe, expect, it } from 'vitest';
-import { canSave, narrows, notAsked, sameScope, setCategory, setConsent, setResearch } from './scope-form';
+import {
+  allowDeclined,
+  canSave,
+  confirmArea,
+  narrows,
+  notAsked,
+  sameScope,
+  setCategory,
+  setConsent,
+  setResearch,
+  unconfirmed,
+} from './scope-form';
 
 const all: MimicScope = {
   categories: ['psychology', 'values', 'life', 'work'],
@@ -63,5 +74,33 @@ describe('scope form (ADR-0043)', () => {
     );
     expect(sameScope(drafted, normalizeScope(drafted, true))).toBe(true);
     expect(sameScope(all, setConsent(all, 'money', false))).toBe(false);
+  });
+
+  it("ticking a special-category area confirms it; leaving intake's pre-ticked box does not (ADR-0050)", () => {
+    expect(unconfirmed(INTAKE_SCOPE)).toEqual(['politics', 'religion', 'sexuality', 'health']);
+    // Off and on again at intake is a choice.
+    const chosen = setConsent(setConsent(INTAKE_SCOPE, 'religion', false), 'religion', true);
+    expect(chosen.confirmed).toEqual({ religion: true });
+    expect(unconfirmed(chosen)).toEqual(['politics', 'sexuality', 'health']);
+    // Money isn't special-category: its consent alone is enough, and it never needs confirming.
+    expect(setConsent(DEFAULT_SCOPE, 'money', true).confirmed).toEqual({});
+    // The session check: "Ask me" confirms, "Don't ask" withdraws the consent and its research use.
+    const asked = confirmArea(INTAKE_SCOPE, 'politics', true);
+    expect(asked.confirmed).toEqual({ politics: true });
+    const refused = confirmArea({ ...INTAKE_SCOPE, researchConsents: { health: true } }, 'health', false);
+    expect(refused.consents.health).toBeUndefined();
+    expect(refused.researchConsents).toEqual({});
+    // Turning a category off forgets its confirmations; removing one narrows.
+    expect(setCategory(asked, 'values', false).confirmed).toEqual({});
+    expect(narrows(asked, INTAKE_SCOPE)).toBe(true);
+    expect(sameScope(asked, normalizeScope(asked, false))).toBe(true);
+    expect(sameScope(asked, INTAKE_SCOPE)).toBe(false);
+  });
+
+  it('asks about a declined facet again, one at a time or all at once (ADR-0050)', () => {
+    const declined: MimicScope = { ...all, declined: ['political_leaning', 'body_image'] };
+    expect(allowDeclined(declined, 'body_image').declined).toEqual(['political_leaning']);
+    expect(allowDeclined(declined).declined).toEqual([]);
+    expect(sameScope(declined, allowDeclined(declined, 'body_image'))).toBe(false);
   });
 });

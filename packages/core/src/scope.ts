@@ -31,7 +31,15 @@ const SpecialFlags = z.object({
 });
 
 /** Re-exported so client code can import everything about scope from `@mimic/core/scope` alone. */
-export { CATEGORIES, Category, SENSITIVE_AREAS, SensitiveArea, SPECIAL_AREAS, SpecialArea } from './types';
+export {
+  CATEGORIES,
+  Category,
+  isSpecialArea,
+  SENSITIVE_AREAS,
+  SensitiveArea,
+  SPECIAL_AREAS,
+  SpecialArea,
+} from './types';
 
 export const MimicScope = z.object({
   categories: z.array(Category).min(1).max(CATEGORIES.length),
@@ -39,6 +47,14 @@ export const MimicScope = z.object({
   consents: AreaFlags.default({}),
   /** Consent to research use of each special-category area (only with research consent overall). Absent means no. */
   researchConsents: SpecialFlags.default({}),
+  /**
+   * Special-category areas the person affirmatively chose (ADR-0050): ticked at intake or in Topics and consent, or
+   * confirmed in the session. A consent left at intake's pre-ticked default is stored but not confirmed, and its
+   * facets stay out of reach until it is. Absent means none confirmed.
+   */
+  confirmed: SpecialFlags.optional(),
+  /** Sensitive facets the person chose not to answer ("Prefer not to say", ADR-0050). Never asked again. */
+  declined: z.array(z.string().min(1).max(64)).max(200).optional(),
 });
 export type MimicScope = z.infer<typeof MimicScope>;
 
@@ -141,7 +157,8 @@ export const SELF_ONLY_NOTE = 'Your answers stay yours: they are only used to bu
 /**
  * The stored form: categories in canonical order, only `true` flags kept, consents dropped for deselected categories,
  * research consents kept only with the area's consent and research consent overall. Deselecting a category therefore
- * forgets its consents: reselecting it asks again.
+ * forgets its consents: reselecting it asks again. Confirmations are kept only for consented special areas, declined
+ * facets de-duplicated; both are left out when empty.
  */
 export function normalizeScope(scope: MimicScope, consentResearch: boolean): MimicScope {
   const selected = new Set(scope.categories);
@@ -154,16 +171,36 @@ export function normalizeScope(scope: MimicScope, consentResearch: boolean): Mim
   if (consentResearch)
     for (const a of SPECIAL_AREAS)
       if (scope.researchConsents[a] === true && consents[a]) researchConsents[a] = true;
-  return { categories, consents, researchConsents };
+  const confirmed: NonNullable<MimicScope['confirmed']> = {};
+  for (const a of SPECIAL_AREAS) if (scope.confirmed?.[a] === true && consents[a]) confirmed[a] = true;
+  const declined = [...new Set(scope.declined ?? [])];
+  return {
+    categories,
+    consents,
+    researchConsents,
+    ...(Object.keys(confirmed).length ? { confirmed } : {}),
+    ...(declined.length ? { declined } : {}),
+  };
 }
 
-/** A facet is reachable when its category is selected and, if sensitive, its area is consented. */
-export function facetAllowed(scope: MimicScope, f: Pick<Facet, 'category' | 'sensitive'>): boolean {
+/** A consented special-category area the person hasn't affirmatively chosen yet (ADR-0050). */
+export function unconfirmedAreas(scope: MimicScope): SpecialArea[] {
+  return SPECIAL_AREAS.filter((a) => scope.consents[a] === true && scope.confirmed?.[a] !== true);
+}
+
+/**
+ * A facet is reachable when its category is selected, the person hasn't declined it, and, if sensitive, its area is
+ * consented; a special-category area (politics, religion, sexuality, health) must also be confirmed (ADR-0050).
+ */
+export function facetAllowed(scope: MimicScope, f: Pick<Facet, 'id' | 'category' | 'sensitive'>): boolean {
   if (!scope.categories.includes(f.category)) return false;
-  return f.sensitive === undefined || scope.consents[f.sensitive] === true;
+  if (scope.declined?.includes(f.id)) return false;
+  if (f.sensitive === undefined) return true;
+  if (scope.consents[f.sensitive] !== true) return false;
+  return !isSpecialArea(f.sensitive) || scope.confirmed?.[f.sensitive] === true;
 }
 
-export function scopedFacets<F extends Pick<Facet, 'category' | 'sensitive'>>(
+export function scopedFacets<F extends Pick<Facet, 'id' | 'category' | 'sensitive'>>(
   scope: MimicScope,
   facets: F[],
 ): F[] {
@@ -178,12 +215,20 @@ export function blockedFacetIds(
 }
 
 /**
- * True when `after` removes something `before` allowed: a category or a sensitive consent. What was learned under
- * the old scope is then hidden (docs/CATEGORIES.md). Research-consent changes don't count: they only affect exports.
+ * True when `after` removes something `before` allowed: a category, a sensitive consent or a confirmation. What was
+ * learned under the old scope is then hidden (docs/CATEGORIES.md). Research-consent changes don't count: they only
+ * affect exports. Newly declined facets are reported separately (`newlyDeclined`).
  */
 export function scopeShrank(before: MimicScope, after: MimicScope): boolean {
   if (before.categories.some((c) => !after.categories.includes(c))) return true;
-  return SENSITIVE_AREAS.some((a) => before.consents[a] === true && after.consents[a] !== true);
+  if (SENSITIVE_AREAS.some((a) => before.consents[a] === true && after.consents[a] !== true)) return true;
+  return SPECIAL_AREAS.some((a) => before.confirmed?.[a] === true && after.confirmed?.[a] !== true);
+}
+
+/** Facets `after` declines that `before` didn't. */
+export function newlyDeclined(before: MimicScope, after: MimicScope): string[] {
+  const had = new Set(before.declined ?? []);
+  return (after.declined ?? []).filter((f) => !had.has(f));
 }
 
 /** A question is out of scope when any facet it touches is blocked. Unknown facet ids (twin imports) are not. */

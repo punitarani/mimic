@@ -110,12 +110,24 @@ function scopeColumns(scope: MimicScope) {
     categoriesJson: JSON.stringify(scope.categories),
     consentsJson: JSON.stringify(scope.consents),
     researchConsentsJson: JSON.stringify(scope.researchConsents),
+    confirmedJson: JSON.stringify(scope.confirmed ?? {}),
+    declinedJson: JSON.stringify(scope.declined ?? []),
   };
 }
 
 const ScopeCategories = MimicScope.shape.categories;
 const ScopeConsents = MimicScope.shape.consents.unwrap();
 const ScopeResearch = MimicScope.shape.researchConsents.unwrap();
+const ScopeConfirmed = MimicScope.shape.confirmed.unwrap();
+const ScopeDeclined = MimicScope.shape.declined.unwrap();
+
+/** Confirmations and declines are left out of the scope when empty, as `normalizeScope` leaves them (ADR-0050). */
+function scopeExtras(confirmed: NonNullable<MimicScope['confirmed']>, declined: string[]) {
+  return {
+    ...(Object.values(confirmed).some(Boolean) ? { confirmed } : {}),
+    ...(declined.length ? { declined } : {}),
+  };
+}
 
 const toMimic = (r: MRow): MimicRecord => ({
   id: r.id,
@@ -137,6 +149,7 @@ const toMimic = (r: MRow): MimicRecord => ({
     categories: parse(ScopeCategories, r.categoriesJson, [...DEFAULT_SCOPE.categories]),
     consents: parse(ScopeConsents, r.consentsJson, {}),
     researchConsents: parse(ScopeResearch, r.researchConsentsJson, {}),
+    ...scopeExtras(parse(ScopeConfirmed, r.confirmedJson, {}), parse(ScopeDeclined, r.declinedJson, [])),
   },
   scopeAt: r.scopeAt,
   split: r.split,

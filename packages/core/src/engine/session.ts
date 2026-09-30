@@ -5,7 +5,7 @@ import type { PipelineConfig } from '../config';
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
-import { getReserveSet, type ItemTemplate, reserveSetId } from '../ontology';
+import { allOntologyFacets, getReserveSet, type ItemTemplate, reserveSetId } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
 import { LlmPredictor, makePredictor, promptVersionOf, rawScale, selectionView } from '../predictors';
 import { pickRepeat } from '../repeats';
@@ -75,6 +75,8 @@ export interface PublicQuestion {
   type: Question['type'];
   prompt: string;
   options: Question['options'];
+  /** Touches a sensitive facet: the session offers "Prefer not to say" (ADR-0050). */
+  sensitive?: true;
 }
 
 export type NextResult =
@@ -86,6 +88,8 @@ export interface Progress {
   target: number;
 }
 
+const FACETS = allOntologyFacets();
+
 export function toPublic(q: QuestionRecord): PublicQuestion {
   return {
     id: q.id,
@@ -94,6 +98,7 @@ export function toPublic(q: QuestionRecord): PublicQuestion {
     type: q.type,
     prompt: q.prompt,
     options: q.options,
+    ...(q.facetIds.some((f) => FACETS.get(f)?.sensitive) ? { sensitive: true as const } : {}),
   };
 }
 

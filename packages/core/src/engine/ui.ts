@@ -1,14 +1,16 @@
 import type { FidelityResult } from '../fidelity';
-import { getFacetGroups } from '../ontology';
+import { allOntologyFacets, getFacetGroups, getOntology } from '../ontology';
 import type { MimicScope } from '../scope';
 import { facetCoverage } from '../selectors';
 import { toStateEvidence } from '../state-builder';
 import type { FactRecord, IdentityState, KgEdgeRecord, KgNodeRecord, MimicStatus } from '../store';
-import { type Insight, isScoredKind, isSessionKind } from '../types';
+import { type Insight, isScoredKind, isSessionKind, isSpecialArea } from '../types';
 import { facetCounts, loadMimicData } from './data';
 import { capsFor, type EngineDeps, facetsFor, loadConfig, requireMimic } from './deps';
 import { citedSeqs } from './rewind';
 import { fidelityFromRecord, MIN_POOL } from './session';
+
+const ALL_FACETS = allOntologyFacets();
 
 export interface UiFacet {
   id: string;
@@ -39,6 +41,10 @@ export interface UiSnapshot {
     /** What the person agreed to be asked about (ADR-0040), and when it last narrowed. */
     scope: MimicScope;
     scopeAt: number | null;
+    /** Facets the person chose not to answer ("Prefer not to say", ADR-0050), named so Topics and consent can list them. */
+    declined: Array<{ id: string; name: string }>;
+    /** The config's ontology has special-category facets, so unconfirmed areas are worth asking about (ADR-0050). */
+    asksSpecial: boolean;
     reveal: 'after_answer' | 'never';
     arm: string | null;
     createdAt: number;
@@ -240,6 +246,8 @@ export async function uiSnapshot(deps: EngineDeps, mimicId: string): Promise<UiS
       consentResearch: m.consentResearch,
       scope: m.scope,
       scopeAt: m.scopeAt,
+      declined: (m.scope.declined ?? []).map((f) => ({ id: f, name: ALL_FACETS.get(f)?.name ?? f })),
+      asksSpecial: getOntology(cfg.ontologyVersion).some((f) => !!f.sensitive && isSpecialArea(f.sensitive)),
       reveal: cfg.reveal,
       arm: m.arm,
       createdAt: m.createdAt,

@@ -72,7 +72,9 @@ export interface RubricPerson {
 export async function rubricPerson(deps: EngineDeps, m: MimicRecord): Promise<RubricPerson> {
   const cfg = await loadConfig(deps, m.configHash);
   const label = (await deps.store.getConfig(m.configHash))?.label ?? m.configHash.slice(0, 12);
-  const facets = await facetsFor(deps, m, cfg);
+  // A facet the person declined ("Prefer not to say", ADR-0050) was asked: it stays in scope here and counts as reached.
+  const declined = m.scope.declined ?? [];
+  const facets = await facetsFor(deps, { ...m, scope: { ...m.scope, declined: [] } }, cfg);
   const byId = new Map(facets.map((f) => [f.id, f]));
   const served = (await deps.store.listQuestions(m.id))
     .filter((q): q is QuestionRecord & { seq: number } => q.seq !== null && q.status !== 'discarded')
@@ -97,7 +99,7 @@ export async function rubricPerson(deps: EngineDeps, m: MimicRecord): Promise<Ru
   const groups = [...new Set(facets.map((f) => f.group))];
   const touched = new Set(upTo(BY.groups).flatMap((q) => q.facetIds.map((f) => byId.get(f)?.group)));
   const sensitive = facets.filter((f) => f.sensitive).map((f) => f.id);
-  const reached = new Set(upTo(BY.sensitive).flatMap((q) => q.facetIds));
+  const reached = new Set([...upTo(BY.sensitive).flatMap((q) => q.facetIds), ...declined]);
   const touchesSensitive = (q: QuestionRecord) => q.facetIds.some((f) => byId.get(f)?.sensitive);
   const firstSensitive = served.find(touchesSensitive);
 

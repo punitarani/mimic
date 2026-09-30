@@ -13,6 +13,7 @@ import {
 } from 'react';
 import { BottomSheet } from '@/components/session/bottom-sheet';
 import { ConfirmDialog } from '@/components/session/confirm-dialog';
+import { ConfirmTopics } from '@/components/session/confirm-topics';
 import { CheckIcon, CrossIcon, MinusIcon, UndoIcon } from '@/components/session/icons';
 import { ModelPanel } from '@/components/session/model-panel';
 import { Kbd, NextButton } from '@/components/session/next-button';
@@ -24,6 +25,7 @@ import { TopicsDialog } from '@/components/session/topics-dialog';
 import { cn, Spinner } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { enqueueAnswer, flushOutbox, newIdempotencyKey, pendingAnswers, sendAnswer } from '@/lib/outbox';
+import { unconfirmed } from '@/lib/scope-form';
 import { changeFromHistory, pct, verdictOf, whatChanged } from '@/lib/session-view';
 
 type Progress = NextResult['progress'];
@@ -93,6 +95,9 @@ export default function SessionPage() {
   const [confirmUndo, setConfirmUndo] = useState<Undoable | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [topicsOpen, setTopicsOpen] = useState(false);
+  /** "Not now" on the sensitive-topics check: asked again on the next visit (ADR-0050). */
+  const [confirmLater, setConfirmLater] = useState(false);
+  const [declining, setDeclining] = useState(false);
   const undoRef = useRef<HTMLButtonElement>(null);
   const done = useRef(new Set<string>());
   const shownAt = useRef(Date.now());
@@ -286,7 +291,7 @@ export default function SessionPage() {
    * again, which keeps it if it still fits and serves another if not.
    */
   const topicsSaved = useCallback(
-    async (change: ScopeChange) => {
+    async (change: ScopeChange, message?: string) => {
       setTopicsOpen(false);
       qc.setQueryData<UiSnapshot>(['snapshot', id], (old) =>
         old ? { ...old, mimic: { ...old.mimic, scope: change.scope, scopeAt: change.scopeAt } } : old,
@@ -299,13 +304,32 @@ export default function SessionPage() {
       }
       await qc.invalidateQueries({ queryKey: ['question', id] });
       setNotice(
-        change.discarded
-          ? 'Topics saved. Questions on topics you turned off were removed.'
-          : 'Topics saved. Your next questions follow them.',
+        message ??
+          (change.discarded
+            ? 'Topics saved. Questions on topics you turned off were removed.'
+            : 'Topics saved. Your next questions follow them.'),
       );
     },
     [qc, id, answered],
   );
+
+  /** "Prefer not to say" (ADR-0050): the question is dropped unanswered and its topic isn't asked about again. */
+  const decline = useCallback(async () => {
+    if (!current || declining) return;
+    setDeclining(true);
+    setError(null);
+    try {
+      const change = await api.decline(id, current.question.id);
+      await topicsSaved(
+        change,
+        "Skipped. We won't ask about that again; you can change this in Topics and consent.",
+      );
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'That could not be skipped. Try again.');
+    } finally {
+      setDeclining(false);
+    }
+  }, [current, declining, id, topicsSaved]);
 
   const cancelUndo = useCallback(() => {
     setConfirmUndo(null);
@@ -326,7 +350,7 @@ export default function SessionPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return;
-      if (document.querySelector('[role="menu"], [aria-modal="true"]')) return;
+      if (document.querySelector('[role="menu"], [aria-modal="true"], [data-confirm-topics]')) return;
       const target = e.target as HTMLElement | null;
       const typing = target?.tagName === 'TEXTAREA' || target?.tagName === 'INPUT';
       // Enter on another focused control (Undo, Finish for now) activates that control, not Next.
@@ -408,6 +432,10 @@ export default function SessionPage() {
   const progress = current?.progress ?? data?.progress ?? s?.progress;
   const target = progress?.target ?? 30;
   const answeredCount = progress?.answered ?? 0;
+  // The check before sensitive questions (ADR-0050): after the trust ramp's six answers (ADR-0044), between questions,
+  // only for configs that can ask about a special-category area, and only for areas left pre-ticked at intake.
+  const pendingAreas = s?.mimic.asksSpecial ? unconfirmed(s.mimic.scope) : [];
+  const showConfirm = !!s && pendingAreas.length > 0 && answeredCount >= 6 && !answered && !confirmLater;
   const counter = progress ? `${answeredCount + 1} of ~${target}` : '';
   const f = s?.fidelity;
   const calibrating = !s || s.progress.answered < s.progress.basics || !f;
@@ -495,7 +523,22 @@ export default function SessionPage() {
 
         <div className="no-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pb-2 lg:px-16 lg:pb-14">
           <div className="mt-auto w-full lg:mx-auto lg:my-auto lg:max-w-[640px]">
-            {q ? (
+            {showConfirm && s ? (
+              <ConfirmTopics
+                mimicId={id}
+                scope={s.mimic.scope}
+                areas={pendingAreas}
+                onSaved={(change) =>
+                  void topicsSaved(
+                    change,
+                    Object.keys(change.scope.confirmed ?? {}).length
+                      ? 'Thanks. Questions on the topics you chose will come up later.'
+                      : "Thanks. We won't ask about those topics.",
+                  )
+                }
+                onLater={() => setConfirmLater(true)}
+              />
+            ) : q ? (
               <QuestionView
                 q={q}
                 intro={
@@ -542,6 +585,8 @@ export default function SessionPage() {
                 }}
                 onOptionKey={onOptionKey}
                 tabIndexFor={tabIndexFor}
+                onDecline={q.sensitive && !answered ? () => void decline() : null}
+                declining={declining}
               />
             ) : data?.status === 'budget' ? (
               <Done
@@ -571,6 +616,7 @@ export default function SessionPage() {
           mimicId={id}
           scope={s.mimic.scope}
           consentResearch={s.mimic.consentResearch}
+          declined={s.mimic.declined}
           onClose={() => setTopicsOpen(false)}
           onSaved={(change) => void topicsSaved(change)}
         />
@@ -623,6 +669,9 @@ interface QuestionViewProps {
   optionRef: (i: number) => (el: HTMLButtonElement | null) => void;
   onOptionKey: (e: ReactKeyboardEvent<HTMLButtonElement>) => void;
   tabIndexFor: (i: number) => number;
+  /** "Prefer not to say" on a sensitive question, while it is unanswered (ADR-0050). */
+  onDecline: (() => void) | null;
+  declining: boolean;
 }
 
 function QuestionView(p: QuestionViewProps) {
@@ -721,6 +770,17 @@ function QuestionView(p: QuestionViewProps) {
                 : 'Add a reason (optional)'}
           </button>
           <div className="flex items-center gap-1 lg:gap-2">
+            {p.onDecline && (
+              <button
+                type="button"
+                onClick={p.onDecline}
+                disabled={p.declining || p.disabled}
+                title="Skip this question. We won't ask about this again."
+                className="inline-flex h-11 items-center rounded-[8px] px-2 text-[14px] last:-mr-2 font-medium leading-5 whitespace-nowrap text-slate hover:text-graphite disabled:cursor-default disabled:hover:text-slate focus-visible:rounded-[8px]"
+              >
+                {p.declining ? 'Skipping…' : 'Prefer not to say'}
+              </button>
+            )}
             {p.undo && (
               <button
                 ref={p.undo.ref}

@@ -30,6 +30,7 @@ import {
 const ALL: MimicScope = {
   ...DEFAULT_SCOPE,
   consents: { politics: true, religion: true, sexuality: true, health: true, money: true },
+  confirmed: { politics: true, religion: true, sexuality: true, health: true },
 };
 const scoped = (scope: MimicScope) => ONTOLOGY_V2.filter((f) => facetAllowed(scope, f));
 const RAMP = VOI_SELECTOR_V8.trustRamp!;
@@ -209,6 +210,7 @@ describe('category quota and targets (ADR-0044)', () => {
       ...ALL,
       categories: ['psychology', 'values', 'life'],
       consents: { politics: true },
+      confirmed: { politics: true },
     };
     const facets = scoped(scope);
     const b = buildBelief({

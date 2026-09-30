@@ -251,15 +251,16 @@ export interface Withheld {
 export async function scrubSpecialCategories(client: Client): Promise<Withheld> {
   const out = { questions: 0, traits: 0, insights: 0, facts: 0 };
   const ontology = allOntologyFacets();
-  const people = (
-    await client.execute('select id, categories_json, consents_json, research_consents_json from mimics')
-  ).rows;
+  // `select *`: data files made before ADR-0050 have no confirmation or decline columns, and read as none.
+  const people = (await client.execute('select * from mimics')).rows;
   for (const r of people) {
     const id = String(r.id);
     const parsed = MimicScope.safeParse({
       categories: json(r.categories_json, []),
       consents: json(r.consents_json, {}),
       researchConsents: json(r.research_consents_json, {}),
+      confirmed: json(r.confirmed_json, {}),
+      declined: json(r.declined_json, []),
     });
     if (!parsed.success) continue;
     const scope = parsed.data;
