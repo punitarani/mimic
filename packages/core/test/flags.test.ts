@@ -93,6 +93,18 @@ describe('flag registry (ADR-0051)', () => {
     ]);
   });
 
+  it('a flag over an unset setting is compared with the code default', () => {
+    // The live app served a $2 cap on 2026-09-30: with BUDGET_USD unset, that doubles the code default of $1.
+    const two = live().map((f) =>
+      f.key === 'budget-usd' ? { ...f, default_variation: '2', variations: { '2': 2 } } : f,
+    );
+    expect(checkFlags(two).warnings).toContain(
+      'budget-usd: serves 2 over the code default 1 (BUDGET_USD is unset here)',
+    );
+    const matched = checkFlags(two, { BUDGET_USD: '2' }).warnings;
+    expect(matched.some((w) => w.startsWith('budget-usd'))).toBe(false);
+  });
+
   it('fails on missing flags, unusable values that are served, and dangling variations', () => {
     const flags = live().filter((f) => f.key !== 'budget-usd');
     const model = flags.find((f) => f.key === 'decisions-model')!;

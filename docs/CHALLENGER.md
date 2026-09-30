@@ -86,7 +86,7 @@ its key, type, code default, the var it overrides, and the values it accepts.
     - a flag can't be evaluated through Flagship's evaluate API (the evaluation the Worker binding makes).
   - It **warns** about:
     - flags no code reads;
-    - flags that serve something other than their setting;
+    - flags that serve something other than their setting (or, with the setting unset, the code default);
     - an unusable variation nothing serves yet, such as `parallel` under `search-provider` (Parallel has no people
       search): switching to it would fall back to the setting.
   - `--create-missing` creates a missing flag at its setting's value; this needs Flagship App · Edit.

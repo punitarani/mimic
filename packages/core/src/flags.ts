@@ -272,11 +272,17 @@ export function checkFlags(
     for (const r of f.rules ?? [])
       if (r.serve_variation !== undefined && !Object.hasOwn(f.variations, r.serve_variation))
         problems.push(`${spec.key}: a rule serves "${r.serve_variation}", which does not exist`);
+    // What the code would do without the flag: the setting, or (unset here) the code default.
     const serving = spec.parse(f.variations[f.default_variation]);
-    if (spec.setting && serving !== null && settings[spec.setting] !== undefined) {
-      const current = spec.parse(settings[spec.setting]);
+    if (spec.setting && serving !== null) {
+      const set = settings[spec.setting];
+      const current = set !== undefined ? spec.parse(set) : spec.fallback;
       if (current !== null && current !== serving)
-        warnings.push(`${spec.key}: serves ${show(serving)} over ${spec.setting}=${show(current)}`);
+        warnings.push(
+          set !== undefined
+            ? `${spec.key}: serves ${show(serving)} over ${spec.setting}=${show(current)}`
+            : `${spec.key}: serves ${show(serving)} over the code default ${show(current)} (${spec.setting} is unset here)`,
+        );
     }
     if (!f.enabled) warnings.push(`${spec.key}: disabled, so it always serves its default variation`);
     if (f.rules?.length) warnings.push(`${spec.key}: ${f.rules.length} targeting rule(s) active`);
