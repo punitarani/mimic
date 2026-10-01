@@ -28,6 +28,7 @@ import {
   feedbackFor,
   jevRequests,
   Meter,
+  MIN_INTERVAL_PEOPLE,
   type Pair,
   pairedByPerson,
   pairedComparisons,
@@ -186,7 +187,7 @@ describe('evaluate', () => {
     expect(fits.some((f) => f.method === 'temperature')).toBe(true);
     // The primary also gets a temperature per band of answers in the state.
     expect(
-      fits.some((f) => f.predictor.endsWith('(primary)') && f.method.endsWith('answers in the state')),
+      fits.some((f) => f.predictor.endsWith('(primary)') && f.method.includes('answers in the state')),
     ).toBe(true);
     for (const f of fits) expect(f.fitAfter).toBeLessThanOrEqual(f.fitBefore + 1e-9);
     const t = temperatureScale({ a: 0.9, b: 0.1 }, 2);
@@ -216,6 +217,35 @@ describe('evaluate', () => {
     expect(byP.mean).toBeCloseTo(q.mean, 9);
     expect(byP.better + byP.worse).toBeLessThanOrEqual(byP.people);
     expect(byP.ciHigh - byP.ciLow).toBeGreaterThan((q.ciHigh - q.ciLow) * 0.5);
+  });
+
+  it('shows an interval over people only from five people, and says what hypothesis rows are', () => {
+    const recs = storedRecords(instances);
+    const twoPeople = new Set([...new Set(instances.map((i) => i.mimicId))].slice(0, 2));
+    const render = (rows: ReturnType<typeof againstPrimary>) =>
+      renderReport({
+        id: 'R',
+        name: 'stored',
+        spec: { kind: 'evaluate', mode: 'stored' },
+        datasetHash: 'h',
+        status: 'done',
+        metrics: {
+          people: rows[0]!.logLoss.people,
+          instances: rows[0]!.logLoss.n,
+          predictors: [{ predictor: PRIMARY, role: 'hypothesis', all: breakdown(recs.slice(0, 3)).all }],
+          againstPrimary: rows,
+        },
+        r2ReportKey: null,
+        createdAt: 0,
+      });
+    const derivedRow = (md: string) => md.split('\n').find((l) => l.includes('jev-derived.v1` (shadow)'))!;
+    expect(MIN_INTERVAL_PEOPLE).toBe(5);
+    const five = render(againstPrimary(recs));
+    expect(derivedRow(five)).toMatch(/\[[-+]\d/);
+    expect(five).toContain('`hypothesis` rows are');
+    const two = render(againstPrimary(recs.filter((r) => twoPeople.has(r.mimicId))));
+    expect(derivedRow(two)).toContain('[—]');
+    expect(derivedRow(two)).not.toMatch(/\[[-+]\d/);
   });
 
   it('scores residual skill against a leave-one-out item mean on shared items only (RESEARCH §1.2)', () => {

@@ -6,7 +6,7 @@ import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
 import { type ArmsReport, renderArms } from './arms';
 import { renderEnsemble } from './ensemble';
 import { type EvidenceReport, renderEvidence } from './evidence';
-import { VIEW_RULE } from './optimize/evaluate';
+import { MIN_INTERVAL_PEOPLE, VIEW_RULE } from './optimize/evaluate';
 import { type ProbeReport, renderProbes } from './probes';
 import { type RubricGroup, renderRubric } from './rubric';
 import { renderPopulation } from './synthesize';
@@ -296,6 +296,12 @@ function renderEvaluate(m: M): string[] {
     ),
     '',
   );
+  if (preds.some((p) => p.role === 'hypothesis'))
+    out.push(
+      "`hypothesis` rows are the primary's predictions under each of selection's persona hypotheses (PLAN §9.5), several",
+      'per question. They feed question selection and are not a predictor to compare.',
+      '',
+    );
   for (const [title, key] of [
     ['By split', 'bySplit'],
     ['By question type', 'byType'],
@@ -356,7 +362,9 @@ function renderEvaluate(m: M): string[] {
     );
   }
   const byPerson = (d: M, scale: number, digits: number) =>
-    `${signed(d.mean, digits, scale)} [${signed(d.ciLow, digits, scale)}, ${signed(d.ciHigh, digits, scale)}]`;
+    Number(d.people) < MIN_INTERVAL_PEOPLE
+      ? `${signed(d.mean, digits, scale)} [—]`
+      : `${signed(d.mean, digits, scale)} [${signed(d.ciLow, digits, scale)}, ${signed(d.ciHigh, digits, scale)}]`;
   const vs = m.againstPrimary as Array<M> | undefined;
   if (vs?.length) {
     out.push(
@@ -364,7 +372,7 @@ function renderEvaluate(m: M): string[] {
       '',
       "Each predictor minus the primary that served the same questions. A view shadow gets ADR-0065's verdict: it",
       `passes with higher accuracy and log loss no worse than +${VIEW_RULE.maxLogLossWorse} on at least ${VIEW_RULE.minPeople} people;`,
-      'read it on people who joined after E6 (`--since`).',
+      `read it on people who joined after E6 (\`--since\`). Under ${MIN_INTERVAL_PEOPLE} people an interval is only their spread, so none is shown.`,
       '',
       '| Primary | Predictor (role) | View | People | n | Δ log loss [90% CI] | Δ item accuracy, points [90% CI] | Better / worse (log loss) | Verdict |',
       '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
