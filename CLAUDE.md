@@ -84,7 +84,8 @@ If a task seems to require breaking one of these, stop and ask.
 - E6 (ADR-0053, `docs/EVIDENCE.md`) runs before E3b: it measures whether predictors learn from a person's answers,
   and from what form of them (`viewState`: `context`, `full`, `answers`, `derived`, `relevant`), on sealed served
   questions and Twin-2K-500. Run it from Actions → Evidence (`pnpm eval -- evidence`). `EVIDENCE_RULE` decides, and
-  was fixed before the first run.
+  was fixed before the first run. The first run's verdict is `questions` (`docs/reports/e6-evidence.md`): predictors learn
+  from Twin's survey answers but not from Mimic's served ones. E3b therefore waits for a held-out probe set (E7).
 - Scope and consent (ADR-0040, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and sensitive facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`), each behind its own consent (ticked by default at intake, ADR-0049); special-category areas also need a confirmation, and declined facets ("Prefer not to say") are blocked (ADR-0050, both enforced in `facetAllowed`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
 - Order prompts for caching: stable prefix (system, ontology, rules) first, variable content last.
 - Test with Vitest, using recorded fixtures in `packages/adapters/fixtures/`. CI makes no live calls. Worker code tests use `@cloudflare/vitest-pool-workers`.

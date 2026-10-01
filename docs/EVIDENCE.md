@@ -1,7 +1,7 @@
 # E6: what the mimic learns from
 
-v1 · 2026-10-01 · Status: pre-registered, not yet run. ADR-0053. Run it from Actions → Evidence once merged; the
-readout goes to `docs/reports/e6-evidence.md`.
+v1 · 2026-10-01 · Status: run on 2026-10-01 (eval run `01M3TJAEA5H0GB75D8Z11Q4MMA`, $2.07). Verdict: `questions`.
+Readout: `docs/reports/e6-evidence.md`. ADR-0053. Re-run from Actions → Evidence as people accumulate.
 
 E6 asks whether the mimic's predictions improve with a person's answers, and which form of those answers a predictor
 actually uses. Every arm predicts the same sealed questions, so it is a within-person, paired experiment. It needs no
@@ -83,7 +83,7 @@ view is a subset of the state and never adds to it, so sealing holds by construc
 
 | View | What the predictor sees | Tests |
 | --- | --- | --- |
-| `context` | Intake and sourced facts only. Its state hash equals the stored baseline's. | The floor |
+| `context` | Intake and sourced facts only, as the stored baseline saw them (same state hash on an unscrubbed export) | The floor |
 | `full` | The state as served: identity, traits, insights and answers | The incumbent |
 | `answers` | Identity and the answers; no traits or insights | H2 |
 | `derived` | Identity, traits and insights; no answers | H3 |
@@ -109,8 +109,11 @@ The LLM runs on served questions and on 40 Twin people at k = 30.
 - **One question per request** in every arm. Production asks Jev about a whole candidate pool at once. Here no arm
   differs from another by what else was in its batch.
 - **Reproduction checks.**
-  - The `context` arm's state hash must equal the stored baseline's.
-  - The `full` arm's state hash must equal the stored primary's.
+  - On an internal `--keep-identity` export, the `context` arm's state hash equals the stored baseline's, and the
+    `full` arm's equals the stored primary's.
+  - The workflow's export is scrubbed (ADR-0018): names become "Participant", and locations, employers, links and
+    place facts are removed. There no state can match, and the top-pick agreement below is the check that counts.
+    Every arm sees the same scrubbed identity.
   - The report gives top-pick agreement with both stored predictions, so the effect of batching is visible.
 - **No tuning.** Nothing is fitted or chosen on this data. The views, predictors, k values and rule are fixed here
   and in `EVIDENCE_RULE` before the first run.

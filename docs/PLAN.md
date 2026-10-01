@@ -951,6 +951,9 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   Twin-2K-500 at k = 10, 30 and 100. Primary metric: paired Δ log loss against `context` and against `full`.
   `EVIDENCE_RULE` decides whether a view replaces `full` for the primary. E6 runs before E3b: selection can pay off
   only through a predictor that learns from answers. Run it from Actions → Evidence (`pnpm eval -- evidence`).
+  Result (2026-10-01, `docs/reports/e6-evidence.md`): `questions`. Both predictors learn from Twin's survey answers
+  (Jev +6.2 points by k = 100), and neither from Mimic's served answers, so a held-out probe set (E7) comes before
+  E3b.
 
 ---
 
