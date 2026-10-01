@@ -1,4 +1,4 @@
-# Twin-2K-500 benchmark: states, policies, transfer and evidence (ADR-0056, ADR-0057, ADR-0053)
+# Twin-2K-500 benchmark: states, policies, transfer and evidence (ADR-0056, ADR-0057, ADR-0053, ADR-0062)
 
 A baseline for the research directions in `docs/RESEARCH.md`, run on imported people, not Mimic's. Twin-2K-500
 (Toubia et al., 2025, CC BY 4.0) gives each person's answers to waves 1–3 as evidence and their wave 4 answers as
@@ -15,8 +15,9 @@ held-out items. Nothing here is a result about a Mimic user, and nothing comes f
 | Baseline | The same model on the context-only state (identity, no answers), as invariant 6 requires |
 | Replay matrix | `full` (the served state: every answer until the §9.9 budget, then anchors + retrieved + recent), `raw`, and `card` (identity + traits + capped answers) under `mixed`, `recent`, `similar` and `surprise` at a cap of 12, and under `surprise` and `recent` at a cap of 6; two passes each, the second with per-question rows for paired comparisons |
 | Transfer | `pnpm eval -- transfer` at k = 30, 20 held-out targets per person, six views, with sealed `soul.v1` drafts written by DeepSeek V4.1 Flash; a DeepSeek reader (`predict.v2` settings) on 10 people, a Jev reader on 60 |
+| Calibrated | The card and `surprise` cells again with `decision:typesafe/jev-1.13@jev-predict.v2`, one pass with rows |
 | E6 | `pnpm eval -- evidence` on the same import at k = 10, 30 and 100 (ADR-0053), Jev calibrated, 20 targets per person |
-| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.73 for E6 |
+| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 for the Jev one, $0.73 for E6; about $4.50 in all |
 | Intervals | Paired by question, bootstrapped over people (2,000 resamples, 5th–95th percentile), so that correlated questions within a person do not narrow them |
 
 The commands are in `docs/VALIDATION.md` under this report's heading; report files, rows and traces stay in `data/`
@@ -44,8 +45,8 @@ The commands are in `docs/VALIDATION.md` under this report's heading; report fil
    (0.570 against 0.580). With a cap of 6 the same policy is −0.7 [−1.6, +0.1] points and −0.035 [−0.072, +0.001].
    Every other state gets worse on log loss as k grows (full: 1.128 → 1.281) while accuracy rises: on its raw scale
    Jev grows overconfident with evidence, and a state built from what the stereotype got wrong tempers that. The
-   calibrated primary (`@jev-predict.v2`) does the same job online with a temperature, so whether `surprise` still
-   helps after calibration is the test that decides it.
+   calibrated primary (`@jev-predict.v2`) does the same job online with a temperature; rerun with it (below),
+   `surprise` keeps a fifth of the log-loss gain (−0.017 [−0.027, −0.007]) and most of its dispersion advantage.
 5. **Six answers are enough early, and the cheapest state is not the worst.** A 6-answer `recent` card is +1.3
    [+0.4, +2.2] points over the full 10-answer state at k = 10 (335 against 534 tokens) and +0.9 [−0.5, +2.3] at k = 30
    (626 against 2,568), then −0.8 [−1.6, +0.0] at k = 100. Its log loss is worse throughout (+0.172 at k = 10). Fewer
@@ -62,7 +63,16 @@ The commands are in `docs/VALIDATION.md` under this report's heading; report fil
    nothing. The full SOUL.md carries the same answers as the state and is twice its size (4,270 against 2,192
    tokens), and still loses six points: prose around the evidence costs this reader accuracy. Ten people give
    intervals of roughly ±6 points, so only the ordering state > answers-bearing views > core > context is firm.
-   The Jev reader's row is below.
+8. **Jev reads a summary better than the answers it was written from.** The Jev reader on 60 people gets 61.9% from
+   the state text and 65.6% from the core SOUL.md, which holds DeepSeek's narrative of the same 30 answers and no
+   answers at all, at a large log-loss cost (1.582 against 1.071). E6 saw the same on served questions (`derived`
+   +4.8 points for Jev, no log-loss gain). An LLM doing the inference and Jev reading its conclusion is a pipeline
+   worth testing as a served shadow, with its own calibration.
+9. **The lift is transfer between domains, and what the state keeps decides which.** No held-out domain appears in
+   the first 100 answers. Party and ideology carry the policy items while the state holds them (+4.4) and not once
+   recency has dropped them (+1.2); materialism rows carry the product items (+11.5 at k = 100). Probability tasks
+   get the same prediction whatever the state. Lexical similarity does not find these links, so a similarity-based
+   state policy or retrieval cannot either.
 
 ## Replay matrix, second pass (60 people, 3,932 predictions per cell)
 
@@ -163,9 +173,99 @@ of the live state costs. Lift is against `context` (identity only) with the same
 No prediction failed; all ten drafts were written. The reader's `state` accuracy (59.4%) is below Jev's on the same
 kind of state (62.5% at k = 30 over 60 people), as E6 found for DeepSeek on this import.
 
-### Jev reader, 60 people, 20 targets each
+### Jev reader, 60 people, 20 targets each (raw scale)
 
-Pending: the run is in progress at the time of this commit and its table replaces this line.
+| View | Tokens | Accuracy | Top-1 | Log loss | Brier | ECE | Lift | Transfer loss | $/1k |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| context | 13 | 57.0% | 48.8% | 1.265 | 0.673 | 0.254 | — | +4.9 | $0.007 |
+| state | 2,195 | 61.9% | 56.0% | 1.071 | 0.569 | 0.169 | +4.9 | — | $0.011 |
+| card (12, surprise) | 956 | 62.8% | 55.6% | 1.099 | 0.569 | 0.165 | +5.8 | −1.0 | $0.009 |
+| soul-core | 2,798 | 65.6% | 57.3% | 1.582 | 0.621 | 0.189 | +8.5 | −3.7 | $0.012 |
+| soul-full | 4,017 | 66.2% | 59.2% | 1.187 | 0.555 | 0.148 | +9.2 | −4.3 | $0.015 |
+| mimic-json | 3,942 | 62.7% | 55.8% | 1.207 | 0.582 | 0.177 | +5.7 | −0.8 | $0.017 |
+
+1,200 targets; no prediction failed; 55 of 60 drafts were written and five timed out, so five people's soul views
+carried no narrative. A negative transfer loss means the export beat the live state. For Jev the ordering is the
+reverse of DeepSeek's: the narrative views win on accuracy (+3.7 points for the core profile, +4.3 for the full one)
+and the core profile, which holds the narrative and no answers, loses badly on log loss (1.582 against 1.071: Jev
+trusts a summary more than it should). The narrative is DeepSeek's reading of the same 30 answers, so the inference
+was done by the LLM and Jev read its conclusion. This is the same shape as E6's exploratory lead on served questions
+(`derived` gave Jev +4.8 points of accuracy and no log-loss gain), now on 60 people and 1,200 questions.
+
+## With the calibrated primary (`@jev-predict.v2`, the served config's)
+
+The same cells with the calibration temperature on, one pass, intervals over people. Log loss, Brier and ECE are now
+on the served scale.
+
+| State | k | Accuracy | Log loss | ECE | Dispersion | Δ accuracy vs served [90% CI] | Δ log loss vs served [90% CI] | People better / worse |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| baseline (context only) | – | 59.3% | 0.850 | 0.081 | — | — | — | — |
+| full (served) | 10 | 59.4% | 0.832 | 0.036 | 0.176 | — | — | — |
+| full (served) | 30 | 62.2% | 0.823 | 0.036 | 0.201 | — | — | — |
+| full (served) | 100 | 66.5% | 0.851 | 0.111 | 0.124 | — | — | — |
+| card 12 · mixed | 10 | 59.7% | 0.835 | 0.041 | 0.174 | +0.3 [−0.1, +0.8] | +0.003 [+0.001, +0.006] | 22 / 38 |
+| card 12 · mixed | 30 | 63.0% | 0.847 | 0.066 | 0.127 | +0.7 [−0.5, +2.0] | +0.024 [+0.002, +0.047] | 26 / 34 |
+| card 12 · mixed | 100 | 65.6% | 0.850 | 0.106 | 0.101 | −0.9 [−1.5, −0.2] | −0.001 [−0.007, +0.004] | 29 / 31 |
+| card 12 · surprise | 10 | 59.6% | 0.833 | 0.036 | 0.175 | +0.2 [−0.2, +0.6] | +0.001 [−0.002, +0.003] | 28 / 32 |
+| card 12 · surprise | 30 | 62.9% | 0.827 | 0.054 | 0.197 | +0.7 [−0.3, +1.7] | +0.004 [−0.008, +0.018] | 30 / 30 |
+| card 12 · surprise | 100 | 65.5% | 0.834 | 0.092 | 0.162 | −0.9 [−2.3, +0.3] | −0.017 [−0.027, −0.007] | 42 / 18 |
+| card 6 · surprise | 10 | 60.2% | 0.827 | 0.034 | 0.190 | +0.8 [−0.1, +1.8] | −0.005 [−0.010, +0.001] | 34 / 26 |
+| card 6 · surprise | 30 | 62.4% | 0.838 | 0.054 | 0.166 | +0.1 [−1.4, +1.8] | +0.015 [−0.005, +0.034] | 26 / 34 |
+| card 6 · surprise | 100 | 64.9% | 0.836 | 0.092 | 0.138 | −1.5 [−2.4, −0.6] | −0.016 [−0.022, −0.009] | 39 / 21 |
+
+- The accuracy picture is unchanged: the 12-answer card is level at k = 30 and about a point behind at k = 100.
+- `surprise` keeps a log-loss advantage after calibration, now −0.017 [−0.027, −0.007] with 42 of 60 people better,
+  a fifth of its raw-scale size. Most of the raw effect was the temperature's job.
+- Calibration drifts with the state as E6 saw: ECE 0.036 at k = 10 and 30, 0.111 at k = 100 for the served state.
+  The `surprise` card drifts least (0.092).
+- Dispersion is where the policies differ. At k = 30 the served state is at 0.201, the `mixed` card at 0.127 and the
+  `surprise` card at 0.197; at k = 100, 0.124, 0.101 and 0.162. Keeping the answers the stereotype got wrong keeps
+  the person's deviations from it, which is what dispersion measures.
+
+## Where the lift comes from
+
+The import's answer order and the held-out mix decide what "learning" could mean here. Wave 1–3 answers arrive in the
+survey's order: nine demographics (region, sex, age, race, citizenship, party, income, ideology, household), then
+sixty Big Five rows, then materialism and empathy scales, vocabulary, syllogisms, games, lotteries and the rest. The
+held-out wave 4 items are 61% product choices ("Please consider the following product category…", pick a product in
+a grocery store), 15% policy support ("Would you support or oppose…"), 12% probability tasks (decks, dice, marbles)
+and 12% other. No held-out domain appears in the first 100 answers, so nothing below is copying: every point of lift
+is transfer from demographics and personality scales to a decision in another domain.
+
+Beyond the §9.9 budget the replayed state is the 18 most recent answers: with no target questions to retrieve for,
+the similarity rank is empty and the builder falls back to recency, so at k = 100 the state holds answers 83–100
+(materialism and empathy rows) and none of the demographics. Production builds its state for the candidate batch and
+retrieves by lexical similarity to it, which this replay does not reproduce (nor does E6's Twin arm), and which would
+not find "party" for "a carbon tax" either.
+
+Lift of the served state by target domain, paired by question, intervals over people:
+
+| Target domain | Items | k | State holds | Baseline | Served state | Lift [90% CI] |
+| --- | --- | --- | --- | --- | --- | --- |
+| product choice | 2,400 | 30 | demographics + 21 Big Five rows | 55.0% | 59.3% | +4.3 [+1.8, +6.9] |
+| product choice | 2,400 | 100 | 18 materialism and empathy rows | 55.0% | 66.5% | +11.5 [+8.7, +14.5] |
+| policy support | 600 | 30 | demographics + 21 Big Five rows | 68.5% | 72.8% | +4.4 [+0.6, +8.1] |
+| policy support | 600 | 100 | 18 materialism and empathy rows | 68.5% | 69.6% | +1.2 [+0.5, +2.0] |
+| probability task | 452 | 30 | demographics + 21 Big Five rows | 75.2% | 75.2% | +0.0 [+0.0, +0.0] |
+| probability task | 452 | 100 | 18 materialism and empathy rows | 75.2% | 75.2% | +0.0 [+0.0, +0.0] |
+| other | 480 | 30 | demographics + 21 Big Five rows | 53.1% | 54.0% | +0.8 [−2.7, +4.4] |
+| other | 480 | 100 | 18 materialism and empathy rows | 53.1% | 53.8% | +0.6 [−2.3, +3.5] |
+
+Three things follow.
+
+- **What the state keeps decides which domains transfer.** Party and ideology (answers 6 and 8) carry the policy
+  items: +4.4 while the state holds them, +1.2 once recency has dropped them. The materialism rows carry the product
+  items: +11.5 at k = 100 against +4.3 when the state held demographics and Big Five rows instead. Product choices are
+  61% of the held-out items, so the headline lift at k = 100 is 96% product choice. Recency is domain-blind, and the
+  answers that matter most for a question are often the oldest ones.
+- **Some items are state-insensitive.** On the probability tasks Jev's prediction is the same whatever the state:
+  lift +0.0 with an empty interval on 452 items. The model has decided the person is irrelevant to a question about
+  decks and dice. Those items measure nothing about learning and should be reported apart.
+- **Lexical similarity does not find what transfers.** Sorting the held-out items by the nearest evidence prompt's
+  word overlap puts the product items in the middle tercile and the policy and probability items at the ends, so the
+  terciles order by domain, not by relatedness; "party" shares no words with "carbon tax", and "my belongings are
+  mindfully selected" none with a soft-drink choice. That is why `similar` and E6's `relevant` cannot beat `recent`
+  here, and why target-aware retrieval needs meaning, not words.
 
 ## E6 on the same import (ADR-0053)
 
@@ -193,16 +293,23 @@ too few to decide.
   by a temperature; calibration-sensitive conclusions (`surprise`, the small cards' log loss) need the calibrated
   primary before they carry over.
 - Transfer ran on 10 people for DeepSeek, and the soul drafts were written by the same model family that read them.
+- Beyond the budget the replayed state is recency-only (no target questions to retrieve for), where production
+  retrieves by lexical similarity to the candidate batch. At k = 100 "served state" here means the 18 most recent
+  answers; at k ≤ 30 nothing is dropped and the comparison is exact.
 - `ensemble` and `population` could not run on this import: it stores no shadow predictions and estimates no traits.
   Both wait for the consented cohort.
 
 ## Next
 
-1. Repeat the card and `surprise` cells with the calibrated primary (`@jev-predict.v2`), which decides whether
-   `surprise` is a calibration lever or nothing once the temperature is on.
-2. Put the card against E6's `relevant` on served questions once the cohort allows it (both are 8–12 answers; one is
-   target-aware, the other is a fixed card any agent can carry). The dispersion loss of every card is the number to
-   watch.
-3. Transfer with the Jev reader on 60 people (below, when complete), then a third reader family, and an export view
-   that is the state text itself: the DeepSeek numbers say the evidence block, not the narrative, is what an agent
-   needs, so SOUL.md should lead with it.
+What this changes in the agenda is written up in `docs/RESEARCH.md` §10 and in E7's design (`docs/PROBE.md`).
+
+1. A probe set with items at known transfer distances (E7), so that "learns from answers" is measured per distance
+   on served people, with shared items for item means and dispersion.
+2. Retrieval and compaction by meaning: an embedding or LLM-chosen "what matters for this question" step in place of
+   lexical similarity, and derived traits that keep party, income and materialism after the answers have left the
+   window. Test as `relevant`-style views on E7's probes.
+3. The LLM-written state for Jev: a reflector draft as the primary's state, calibrated on its own, shadowed on
+   served questions.
+4. Calibration as a function of state size, since one temperature holds at 30 answers and not at 100.
+5. The `surprise` card as the export for agents: level on accuracy at 30 answers, best dispersion of the compressed
+   states, half the tokens. Lead SOUL.md with the evidence block for LLM readers and with the narrative for Jev.

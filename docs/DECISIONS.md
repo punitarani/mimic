@@ -2244,3 +2244,30 @@ becomes evidence. It proposes questions.
   session.
 - **Not done:** a selection bonus where the footprint and the baseline disagree, a verification budget that lets a
   trusted source skip facets, and the retrieval-versus-generalisation split (docs/RESEARCH.md §4).
+
+## ADR-0062 — E7: a held-out probe set, and transfer distance as the yardstick (2026-10-01)
+
+**Context.** E6 returned `questions` (ADR-0053): predictors learn from Twin-2K-500's survey answers and not
+measurably from Mimic's served ones. The Twin benchmark (`docs/reports/twin-benchmark.md`) then showed what each
+side measures. On Twin, no held-out domain appears in the first 100 answers; the lift is transfer from demographics
+and personality scales to product choices (96% of it at k = 100 in 61% of the items), and party and ideology carry
+the policy items only while the state still holds them. Mimic's intake already supplies the demographics, and its
+selection makes every served question a far-transfer item. So the two datasets measure different distances, neither
+measures near transfer, and nothing measures the whole curve on one person. Next-question fidelity cannot be E3b's
+yardstick (ADR-0053's result), and no replacement existed.
+
+**Decision.** Add E7 to PLAN §12.7 and run it before E3b: a fixed, versioned probe bank (`probe.v1`) served to
+everyone at fixed positions (after 0, 10, 20 and 30 adaptive answers), fourteen items per person at four distances
+(a repeat, the same decision template, the same facet, an uncovered facet) plus three shared items with public item
+means, each predicted from the sealed state before it is shown and scored like any question. `PROBE_RULE` is fixed
+before the first readout. Design: `docs/PROBE.md`. Probes are a new question kind (`probe`), never selected or
+generated, behind the `probe-set` flag. The agenda (`docs/RESEARCH.md` §10) reorders around it: measurement first,
+then retrieval by meaning and compaction, then selection. Three cheap fixes go with it: a calibration temperature by
+evidence count, an evidence-only hash for the reproduction check, and state-insensitive items reported apart.
+
+**Consequences.** Fourteen more questions per session (about four minutes) and no new model spend. Learning is
+reported per distance, with a per-person ceiling from the repeats and individuation on shared items from the first
+person. E3b starts when the T2+T3 lift at 30 answers gives it a detectable effect with 64 people per arm, and not
+before. Twin stays a benchmark for ranking states, policies and readers on the same predictor and questions; it is
+not read as evidence about Mimic's people.
+

@@ -591,6 +591,18 @@ Intervals are paired by question and bootstrapped over people.
   Jev learns from these answers (+4.0 [+1.3, +6.7] points, log loss −0.049 [−0.074, −0.022] at k = 30); `relevant`
   is level with `full` at k = 30 and 100 at a third of the tokens; the rule returns `insufficient` because the import
   holds no served questions.
+- **Calibrated cells** (`--predictor decision:typesafe/jev-1.13@jev-predict.v2`, one pass): the card is level at
+  k = 30 and −0.9 [−1.5, −0.2] at k = 100; `surprise` keeps −0.017 [−0.027, −0.007] of log loss (42 of 60 people
+  better) and the best dispersion of the compressed states (0.197 against 0.127 for recency at k = 30); ECE drifts
+  from 0.036 at k = 30 to 0.111 at k = 100 for the served state.
+- **Jev transfer** (60 people, 1,200 targets, 55 drafts written and 5 timed out): state 61.9%, card 62.8%, core
+  SOUL.md 65.6% (log loss 1.582 against 1.071), full SOUL.md 66.2%, `mimic.json` 62.7%, context 57.0%. Jev reads
+  the narrative better than the answers it came from, and trusts it too much.
+- **Where the lift comes from** (no model calls; `rows.json` joined with the rebuilt states): no held-out domain is
+  among the first 100 answers; product choices (61% of items) carry 96% of the lift at k = 100; policy items gain
+  +4.4 while the state holds party and ideology and +1.2 once recency has dropped them; probability tasks (12%) get
+  the same prediction from every state. Beyond the budget the replayed state is the 18 most recent answers, since
+  replay builds states with no target to retrieve for.
 - **Not run:** `ensemble` and `population` need stored shadows and trait estimates, which an import has neither of.
 - **Fixed on the way:** a soul-draft timeout aborted the first Jev transfer run; the eval now counts a failed draft
   (`draftsFailed`) and continues without that person's narrative.

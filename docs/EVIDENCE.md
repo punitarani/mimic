@@ -1,7 +1,8 @@
 # E6: what the mimic learns from
 
 v1 · 2026-10-01 · Status: run on 2026-10-01 (eval run `01M3TJAEA5H0GB75D8Z11Q4MMA`, $2.07). Verdict: `questions`.
-Readout: `docs/reports/e6-evidence.md`. ADR-0053. Re-run from Actions → Evidence as people accumulate.
+Readout: `docs/reports/e6-evidence.md`. ADR-0053. Re-run from Actions → Evidence as people accumulate. What the
+run could not show, and what E7 does about it: §8 and `docs/PROBE.md` (ADR-0062).
 
 E6 asks whether the mimic's predictions improve with a person's answers, and which form of those answers a predictor
 actually uses. Every arm predicts the same sealed questions, so it is a within-person, paired experiment. It needs no
@@ -212,6 +213,46 @@ pnpm eval -- export --env prod --out data/prod.sqlite
 pnpm eval -- evidence --data data/prod.sqlite,data/twin.sqlite --max-usd 4
 pnpm eval -- evidence --data data/prod.sqlite --llm none --offline   # checks the machinery only, for free
 ```
+
+## 8. Limitations found after the run (2026-10-01)
+
+The Twin benchmark (`docs/reports/twin-benchmark.md`, 60 imported people, replay and E6 on the same import) showed
+what the first run's numbers rest on. Each point names what E7 (`docs/PROBE.md`) or the agenda (`docs/RESEARCH.md`
+§10) does about it.
+
+1. **Twin measures transfer from demographics and personality to product choices.** No held-out domain appears in a
+   person's first 100 answers, which are nine demographics, the Big Five and materialism and empathy scales. 61% of
+   the held-out items are product choices and they carry 96% of the lift at k = 100. Party and ideology carry the
+   policy items (+4.4 points while the state holds them, +1.2 once it has dropped them). Mimic's intake already puts
+   demographics in the context view, so "Jev learns on Twin" and "Jev doesn't learn on served questions" partly
+   measure the same thing from two sides: on Twin the answers supply what the served baseline already knows. The two
+   datasets are not one experiment with two outcomes. E7 asks the same items of everyone at known distances.
+2. **Served questions measure the far end only.** Selection moves each question to what is least known, so every
+   served question is a far-transfer item. Twin's are mid-distance items whose predictors sit early in the answer
+   order. Neither dataset measures near transfer, and nothing measures all three on one person. That is E7's tiers.
+3. **Six people decide nothing smaller than 5 points.** The served interval half-width was 0.042 nats on 330
+   questions; a Twin-sized effect (0.039) needs about four times the questions, about 25 consented people at the
+   current rate of 55 questions each. The rule's "learns" is unknown, not "no", until then.
+4. **What the state keeps decides what it can learn.** Beyond the §9.9 budget the Twin state held the 18 most recent
+   answers (the replay and this run's Twin arm build states with no target to retrieve for, where production
+   retrieves by lexical similarity to the candidate batch). Recency is domain-blind: the oldest answers were the ones
+   that carried the policy items. Lexical similarity would not have found them either: "party" shares no words with
+   "a carbon tax". `relevant` and the `similar` card are limited by their distance measure, not by the idea.
+5. **Some items are state-insensitive.** On Twin's probability tasks (12% of items) Jev's prediction is identical for
+   every view. A view comparison counts those as ties and dilutes every effect by their share. Report them apart.
+6. **Calibration is a function of state size.** T = 4 gives ECE 0.036 at 10 and 30 answers and 0.111 at 100 on Twin.
+   A view that changes the state's size changes its calibration, and log loss then mixes the two. The `surprise`
+   card (ADR-0056) drifts least, and the fix is a temperature by evidence count, fitted prequentially.
+7. **Jev reads summaries better than answers.** `derived` gave Jev +4.8 points on served questions and no log-loss
+   gain; the core SOUL.md (a DeepSeek narrative of 30 answers, no answers) gave the Jev reader +3.7 over the state
+   text on 60 Twin people at a large log-loss cost. One lead, seen twice. It needs its own calibration before it can
+   be read in log loss, and a served shadow before it means anything.
+8. **The reproduction check needs an evidence hash.** State hashes cannot match on a scrubbed export. A hash over the
+   answers alone (seqs, values, reasons), which scrubbing does not touch, would let the workflow check reproduction
+   without `--keep-identity`; `stateHash` stays as it is.
+9. **Individuation was unreadable on served data** (6 shared anchors). E7's shared items give across-person
+   correlation and dispersion on every person, and the Twin run shows dispersion is where state policies differ
+   (0.201 for the served state at k = 30, 0.127 for a recency card, 0.197 for a `surprise` card).
 
 ## References
 

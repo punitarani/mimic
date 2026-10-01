@@ -935,7 +935,7 @@ Every run records the dataset hash, config hash, model snapshots and seed.
 
 ### 12.5 External data
 
-Twin-2K-500 covers about 2,000 respondents, each with 500 input questions and 88 held-out questions, and is public on Hugging Face. It lets us benchmark predictors and selectors before we have users, once its items are mapped to our typed questions. Check the dataset's license and terms before importing it.
+Twin-2K-500 covers about 2,000 respondents, each with 500 input questions and 88 held-out questions, and is public on Hugging Face. It lets us benchmark predictors and selectors before we have users, once its items are mapped to our typed questions. Its answers arrive in the survey's order (demographics, then the Big Five, then materialism, empathy, reasoning, games and lotteries) and its held-out items are mostly product choices, so a lift on it is transfer from demographics and scales to consumer decisions, with no near-transfer item and no domain that Mimic's intake does not already cover (`docs/reports/twin-benchmark.md`). Check the dataset's license and terms before importing it.
 
 ### 12.6 Population priors (P1, flagged)
 
@@ -968,7 +968,16 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   only through a predictor that learns from answers. Run it from Actions → Evidence (`pnpm eval -- evidence`).
   Result (2026-10-01, `docs/reports/e6-evidence.md`): `questions`. Both predictors learn from Twin's survey answers
   (Jev +6.2 points by k = 100), and neither from Mimic's served answers, so a held-out probe set (E7) comes before
-  E3b.
+  E3b. The Twin benchmark (`docs/reports/twin-benchmark.md`) then showed that Twin's lift is transfer from
+  demographics and personality scales to product choices, which Mimic's intake already covers, and that what the
+  state keeps beyond the budget decides which domains transfer (`docs/EVIDENCE.md` §8).
+- **E7 Held-out probe set** (served, pre-registered; ADR-0062, `docs/PROBE.md`). Fourteen fixed probes per person at
+  four transfer distances (a repeat, the same template, the same facet, an uncovered facet) plus three items shared by
+  everyone with public item means, served at fixed positions (after 0, 10, 20 and 30 adaptive answers) and predicted
+  from the sealed state before they are shown. Primary metric: paired Δ log loss against the context baseline per
+  tier and position; residual lift, across-person correlation and dispersion on the shared items; test-retest
+  consistency as the per-person ceiling. `PROBE_RULE` decides when answers help at each distance and when E3b may
+  start. Behind the `probe-set` flag; readout `docs/reports/e7-probes.md`.
 
 ---
 

@@ -334,6 +334,9 @@ benchmark either way.
 
 | Step | Needs | Decides |
 | --- | --- | --- |
+| E7 probe set (`docs/PROBE.md`): bank, schedule, `probe` kind, readout | nothing; people to read it | §10.1, E3b's yardstick |
+| Evidence hash for the reproduction check; temperature by evidence count | nothing | §10.4, §10.5 |
+| Retrieval by meaning and the LLM-written state for Jev, as shadows on served questions | nothing | §10.2, §10.3 |
 | Run `transfer`, `ensemble`, `replay --evidence` on the consented cohort | people, ~$1 | §3.1, §2.1, §6.1 |
 | Residual metric in `evaluate` and `/lab` | nothing | §1.2 |
 | `jev-predict.v3` structured criteria; per-person temperature | nothing | §2.3, §2.4 |
@@ -342,3 +345,78 @@ benchmark either way.
 | Opening block, generate-to-split, VoI stopping, latency terms | exports | §1.1, §1.4, §1.5, §1.6 |
 | Population on the cohort; rectification recipe; Concordia memories | five people per facet | §5 |
 | Observation tokens, MCP server, observed-vs-stated weighting | §3.2 | §3.2 |
+
+---
+
+## 10. What E6 and the Twin benchmark changed
+
+E6 (`docs/EVIDENCE.md`, verdict `questions`) and the Twin benchmark (`docs/reports/twin-benchmark.md`) were the first
+measurements behind this agenda. They moved five things to the front of the queue and reframed the question every
+section above asks.
+
+### 10.1 Learning is a function of distance, and nothing measures it yet — E7
+
+Twin's lift is transfer from demographics and personality scales to product choices (96% of the lift at k = 100 sits
+in 61% of the items; no held-out domain appears in the first 100 answers). Served questions are the far end by
+construction: selection asks what is least known. Neither dataset measures near transfer, and no dataset measures
+all distances on one person, so "does the mimic learn from answers" has had no single answer. E7 (`docs/PROBE.md`)
+asks everyone the same items at four distances (a repeat, the same template, the same facet, an uncovered facet) and
+three shared items with public item means, predicted from the sealed state before they are shown. It gives the
+residual lift of §1.2 and the dispersion alarm of §8 on every person, a per-person ceiling, and the yardstick E3b
+needs. It is the first step of §9 now. Expect: near transfer at 10 answers, mid at 30, far not before compaction
+(§10.3) works.
+
+### 10.2 Retrieval by meaning, not words
+
+Beyond the budget the state keeps the recent and the lexically similar. Party and ideology carry policy items and
+materialism rows carry product items, and none of them share a word with the question they predict. Sorting Twin's
+items by nearest-prompt word overlap orders them by domain, not by relatedness, so `relevant` (E6) and the `similar`
+card (ADR-0056) are limited by their distance measure. **Build:** a question-conditioned retriever with embeddings
+(the state builder already takes `queryEmbedding`; the export does not carry vectors, so replay needs them computed
+once per export) and an LLM-chosen "which answers bear on this question" pass whose picks are logged as a view.
+**Experiment:** both as `relevant`-style views on E7's probes and on Twin's policy and product items, judged by
+lift per domain against the recency state. Pitfall: an LLM retriever that reads the question can smuggle a guess;
+log its picks and score the view, never its text.
+
+### 10.3 Compaction that keeps what the window loses
+
+The served state at 100 answers is the 18 most recent, and the answers that predicted policy support left with the
+window. Traits and insights exist to hold what the answers said after the answers are gone, and two findings say Jev
+reads them well: `derived` gave +4.8 points on served questions (E6, exploratory) and the core SOUL.md gave the Jev
+reader +3.7 over the state text on 60 Twin people, both with no log-loss gain or a loss. **Build:** the reflector
+writes the primary's state (an LLM-written state for Jev), calibrated on its own stored predictions, as a shadow
+predictor (`decision:typesafe/jev-1.13@jev-predict.v3` with a `stateView: derived+answers` harness). **Experiment:**
+served shadow, then E7's probes, with residual lift and dispersion beside accuracy, since a summary can be a
+stereotype written down. The `surprise` policy is the cheap version: it keeps the answers the stereotype got wrong
+and preserved dispersion (0.197 against 0.127 for recency at k = 30) at the same accuracy.
+
+### 10.4 Calibration by state size
+
+One temperature holds at 30 answers (ECE 0.036) and not at 100 (0.111). A view that changes the state's size changes
+its calibration, so every log-loss comparison between views mixes two effects. **Build:** T as a function of evidence
+count (or tokens), fitted prequentially on stored predictions as ADR-0048 fitted the constant; report ECE by k on
+every readout. Cheap and decisive; it goes before any view is judged on log loss again.
+
+### 10.5 The yardsticks themselves
+
+- **State-insensitive items.** On Twin's probability tasks the primary's distribution is the same for every view.
+  Such items are ties in any view comparison and dilute every effect by their share (12% there). Count them, report
+  them apart, and let E7 estimate their share on Mimic's questions.
+- **An evidence hash beside the state hash.** The reproduction check cannot match state hashes on a scrubbed
+  export. A hash over the answers alone (seqs, values, reasons) is scrub-invariant and would let the workflow check
+  reproduction every run.
+- **Power, stated.** Six people decide nothing under five points; a Twin-sized effect needs about 25 consented
+  people at 55 questions each. Readouts say "unknown" until then, as EVIDENCE_RULE does.
+- **Where the LLM shadows' lift came from.** DeepSeek's context-only prior beats every Jev view on served questions.
+  A better prior is worth having (an LLM or pooled primary within the latency target, E6's `model` branch), but it
+  is not learning, and a mimic that is only a better prior is a stereotype with a nicer voice. Residual lift and
+  dispersion, not accuracy, are what separate the two.
+
+### 10.6 What stands
+
+The directions in §1–§6 stand, with their order changed: measurement (E7) first, then the state (retrieval and
+compaction), then selection (E3b, the opening block, generate-to-split), since selection pays off only through a
+predictor whose state carries what the answers said. The card (ADR-0056) is ready as the export for agents: level
+with the served state at 30 answers, best dispersion among the compressed states, half the tokens. The footprint,
+the ledger and the population builder are unaffected by any of this.
+
