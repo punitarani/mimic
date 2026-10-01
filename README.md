@@ -122,7 +122,9 @@ Findings so far. These are about the models and the pipeline, not about people:
 - Jev is not bit-for-bit deterministic across calls, so replay compares within a tolerance.
 - Run-to-run noise per question is 0.031 nats for Jev and 0.14–0.20 for DeepSeek V4.1 Flash, which makes Jev the cheaper optimization target.
 
-Every design decision is logged as an ADR in [docs/DECISIONS.md](docs/DECISIONS.md).
+Every design decision is logged as an ADR in [docs/DECISIONS.md](docs/DECISIONS.md). The research agenda, with the
+experiments that decide each direction (fewer questions, the harness, transfer and self-evolving memory, footprints,
+populations for simulations, compression), is [docs/RESEARCH.md](docs/RESEARCH.md).
 
 ## License and contributing
 

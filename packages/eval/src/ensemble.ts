@@ -114,7 +114,7 @@ export function hedgeWeights(loss: Map<string, number>, eta: number, ids: string
   return new Map(ids.map((id, i) => [id, raw[i]! / sum]));
 }
 
-const stamp = (inst: EvalInstance, dist: Distribution, predictorId: string) =>
+const stamp = (dist: Distribution, predictorId: string) =>
   ({ dist, ok: true, costUsd: 0, latencyMs: 0, modelSnapshot: `derived:${predictorId}` }) as const;
 
 export function ensembleFromStored(
@@ -158,7 +158,7 @@ export function ensembleFromStored(
       for (const m of members) memberIds.add(m.id);
       const ids = members.map((m) => m.id);
       const add = (method: string, dist: Distribution) =>
-        records.get(method)!.push(toRecord(inst, method, `ensemble:${method}`, stamp(inst, dist, method)));
+        records.get(method)!.push(toRecord(inst, method, `ensemble:${method}`, stamp(dist, method)));
 
       add('primary', primary.dist);
       add(
