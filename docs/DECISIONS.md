@@ -1902,7 +1902,7 @@ $0.042/M. It is added as a challenger behind the Flagship string flag `decisions
     1 point lower, errors no more than 1 point higher, and latency and cost within 1.5×, on at least 200 predictions
     from at least 5 people.
 
-## ADR-0052 — E6: what the mimic learns from, before E3b (2026-10-01)
+## ADR-0053 — E6: what the mimic learns from, before E3b (2026-10-01)
 
 **Evidence.** The stored-predictions report of 2026-09-30 (6 consented people, 330 questions) shows the primary
 barely beating its own context-only baseline. Raw Jev gained +1.0 points of item accuracy (215 questions); calibrated
@@ -1930,7 +1930,8 @@ correlation across people improves.
     people improve and item accuracy drops by at most 1 point, on at least 200 questions from 5 people. Where Twin can
     test the view (`relevant`), its log-loss interval by person must also be below 0.
   - Otherwise the outcome names the bottleneck: the primary learns (start E3b), the model (E7: an LLM or pooled
-    primary), the questions, or nothing (check the harness).
+    primary), the questions, or nothing (check the harness). An outcome that rules a predictor out needs it measured
+    with the same minimum data; one cut short by the spend cap or not run is `insufficient`, not "doesn't learn".
 - **Reported beside the rule.**
   - Reproduction checks: state-hash match and top-pick agreement with the stored baseline and primary.
   - Lift by answers in the state (dose and response).

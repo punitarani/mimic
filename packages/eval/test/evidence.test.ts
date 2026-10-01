@@ -74,7 +74,7 @@ function row(
   return { dataset, predictor, view, against, identical: false, delta: clusteredDelta(a, b, 't') } as LiftRow;
 }
 
-describe('E6 analysis (ADR-0052)', () => {
+describe('E6 analysis (ADR-0053)', () => {
   it('measures the primary as served, and the default LLM', () => {
     expect(DEFAULT_JEV).toBe(DEFAULT_CONFIG.predictor.primary);
     expect(DEFAULT_LLM).toBe('llm:deepseek/deepseek-v4.1-flash@predict.v2');
@@ -139,15 +139,45 @@ describe('E6 analysis (ADR-0052)', () => {
     const vsFull = [row(SERVED, jev, 'answers', 'full', 0.02)];
     const jevFlat = row(SERVED, jev, 'full', 'context', 0);
     const jevLearns = row(SERVED, jev, 'full', 'context', -0.1);
+    const llmFlat = row(SERVED, llm, 'full', 'context', 0);
     const llmLearns = row(SERVED, llm, 'full', 'context', -0.1);
     const jevTwin = row(twin, jev, 'full', 'context', -0.1, 40);
+    const jevTwinFlat = row(twin, jev, 'full', 'context', 0, 40);
     expect(decideEvidence(vsFull, [jevLearns], jev, llm).outcome).toBe('learns');
     expect(decideEvidence(vsFull, [jevFlat, llmLearns], jev, llm).outcome).toBe('model');
-    expect(decideEvidence(vsFull, [jevFlat, jevTwin], jev, llm).outcome).toBe('questions');
-    expect(decideEvidence(vsFull, [jevFlat], jev, llm).outcome).toBe('none');
+    expect(decideEvidence(vsFull, [jevFlat, llmFlat, jevTwin], jev, llm).outcome).toBe('questions');
+    expect(decideEvidence(vsFull, [jevFlat, llmFlat, jevTwinFlat], jev, llm).outcome).toBe('none');
     expect(decideEvidence(vsFull, [row(SERVED, jev, 'full', 'context', 0, 3)], jev, llm).outcome).toBe(
       'insufficient',
     );
+  });
+
+  it('calls a predictor that was not measured, or measured on too little data, insufficient rather than flat', () => {
+    const vsFull = [row(SERVED, jev, 'answers', 'full', 0.02)];
+    const jevFlat = row(SERVED, jev, 'full', 'context', 0);
+    const llmFlat = row(SERVED, llm, 'full', 'context', 0);
+    const jevTwin = row(twin, jev, 'full', 'context', -0.1, 40);
+    // The LLM never ran (a spend cap, or --llm none): the model can't be ruled out.
+    expect(decideEvidence(vsFull, [jevFlat, jevTwin], jev, llm).outcome).toBe('insufficient');
+    expect(decideEvidence(vsFull, [jevFlat, jevTwin], jev, null).outcome).toBe('insufficient');
+    // The LLM learns, but on 3 people cut short by the cap: not enough to name the model.
+    const llmShort = row(SERVED, llm, 'full', 'context', -0.1, 3);
+    const v = decideEvidence(vsFull, [jevFlat, llmShort], jev, llm);
+    expect(v.outcome).toBe('insufficient');
+    expect(v.learns.find((l) => l.predictor === llm)).toMatchObject({ learns: true, enough: false });
+    // No Twin data: questions and nothing can't be told apart.
+    expect(decideEvidence(vsFull, [jevFlat, llmFlat], jev, llm).outcome).toBe('insufficient');
+    // Jev learns on Twin, but from 2 people, whose person bootstrap has no width.
+    const twinFew = row(twin, jev, 'full', 'context', -0.1, 2);
+    expect(decideEvidence(vsFull, [jevFlat, llmFlat, twinFew], jev, llm).outcome).toBe('insufficient');
+  });
+
+  it('names a view to ship only with a ship outcome', () => {
+    const lift = [row(SERVED, jev, 'full', 'context', 0, 3)];
+    const v = decideEvidence([row(SERVED, jev, 'answers', 'full', -0.05)], lift, jev, llm);
+    expect(v.checks.filter((c) => c.view === 'answers').every((c) => c.pass)).toBe(true);
+    expect(v.outcome).toBe('insufficient');
+    expect(v.ship).toBeNull();
   });
 
   it('plans the primary first, then Twin at the decision k, then the LLM, then the rest of the curve', () => {

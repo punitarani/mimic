@@ -584,19 +584,20 @@ export interface PairedDelta {
   ciHigh: number;
 }
 
-/** Paired bootstrap (1,000 resamples, seeded) of b − a over the instances both record sets share. */
+/** Paired bootstrap (1,000 resamples by default, seeded) of b − a over the instances both record sets share. */
 export function pairedDelta(
   a: EvalRecord[],
   b: EvalRecord[],
   metric: 'value' | 'itemAcc' | 'logLoss' = 'value',
   seed = 'paired',
+  resamples = 1000,
 ): PairedDelta {
   const bi = new Map(b.map((r) => [r.instanceId, r]));
   const d = a.filter((r) => bi.has(r.instanceId)).map((r) => bi.get(r.instanceId)![metric] - r[metric]);
   if (!d.length) return { n: 0, mean: 0, ciLow: 0, ciHigh: 0 };
   const rng = seededRng(seed);
   const samples: number[] = [];
-  for (let s = 0; s < 1000; s++) {
+  for (let s = 0; s < resamples; s++) {
     let sum = 0;
     for (let i = 0; i < d.length; i++) sum += d[Math.floor(rng() * d.length)]!;
     samples.push(sum / d.length);

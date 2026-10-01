@@ -945,7 +945,7 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   sweep), 1:1. Primary metric: fidelity at 20; then questions to sustain 0.75, and R2/R4/R7 per arm. About 64 real
   people per arm; read with `pnpm eval -- arms` (95% bootstrap intervals). Set up from the preset in `/lab`.
 - **E5 Generator LLM** (arms). Luna vs. DeepSeek vs. GLM, with the same selector.
-- **E6 Evidence use** (paired, offline on sealed states; ADR-0052, `docs/EVIDENCE.md`). Does the mimic learn from a
+- **E6 Evidence use** (paired, offline on sealed states; ADR-0053, `docs/EVIDENCE.md`). Does the mimic learn from a
   person's answers, and from what form of them? Jev and DeepSeek predict the same sealed questions from one view of the
   state each: `context`, `full`, `answers`, `derived` and `relevant` (`viewState`). It runs on served questions and on
   Twin-2K-500 at k = 10, 30 and 100. Primary metric: paired Δ log loss against `context` and against `full`.

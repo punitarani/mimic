@@ -6,8 +6,10 @@ import {
   type EvalRunRecord,
   type Gateway,
   itemAcrossPeople,
+  mean,
   parsePredictorId,
   quantile,
+  RELEVANT_K,
   STATE_VIEWS,
   type StateView,
   seededRng,
@@ -32,7 +34,7 @@ import { itemValue, predictedValue } from './replay';
 import { renderReport } from './report';
 
 /**
- * E6 (docs/EVIDENCE.md, ADR-0052): does the mimic learn from a person's answers, and from what form of them? Each arm
+ * E6 (docs/EVIDENCE.md, ADR-0053): does the mimic learn from a person's answers, and from what form of them? Each arm
  * is a predictor shown one view of the same sealed state (`viewState`): the context alone, the state as served, the
  * answers without derived traits and insights, the derived data without the answers, or the answers most related to
  * the question. Every arm predicts the identical instances, one question per request, so arms differ only by what the
@@ -55,7 +57,9 @@ export const twinKey = (k: number) => `twin@${k}`;
  *   so `answers` equals `full` there and `derived` equals `context`): the log-loss interval by person is below 0 and
  *   accuracy drops by at most `maxAccuracyDrop`, on at least `minTwinPeople` people.
  * A predictor "learns" on a dataset when `full` against `context` lowers log loss with the interval below 0 (by
- * question on served questions, by person on Twin) and raises mean item accuracy.
+ * question on served questions, by person on Twin) and raises mean item accuracy. That is measured only with as much
+ * data as the view checks need (`minServedInstances` from `minServedPeople` people served; `minTwinPeople` on Twin);
+ * an outcome that depends on a measurement with less (a spend cap, `--llm none`, no Twin data) is `insufficient`.
  */
 export const EVIDENCE_RULE = {
   twinK: 30,
@@ -96,11 +100,10 @@ export interface Delta {
   logLoss: Interval & { byQuestion: [number, number] };
 }
 
-const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-
 /**
  * b − a over the instances both arms scored. The interval resamples people (2,000 resamples, seeded, 5th–95th
- * percentile), since questions from one person are not independent; the by-question interval is reported beside it.
+ * percentile), since questions from one person are not independent; the by-question interval (the same 2,000
+ * resamples) is reported beside it.
  */
 export function clusteredDelta(a: EvalRecord[], b: EvalRecord[], seed: string): Delta {
   const bi = new Map(b.map((r) => [r.instanceId, r]));
@@ -129,8 +132,8 @@ export function clusteredDelta(a: EvalRecord[], b: EvalRecord[], seed: string): 
   };
   const recA = pairs.map((p) => p.r);
   const recB = pairs.map((p) => p.s);
-  const qAcc = pairedDelta(recA, recB, 'itemAcc', `${seed}:qacc`);
-  const qLl = pairedDelta(recA, recB, 'logLoss', `${seed}:qll`);
+  const qAcc = pairedDelta(recA, recB, 'itemAcc', `${seed}:qacc`, RESAMPLES);
+  const qLl = pairedDelta(recA, recB, 'logLoss', `${seed}:qll`, RESAMPLES);
   return {
     n: pairs.length,
     people: people.length,
@@ -203,7 +206,8 @@ export interface EvidenceVerdict {
   outcome: Outcome;
   summary: string;
   checks: RuleCheck[];
-  learns: Array<{ predictor: string; dataset: string; learns: boolean; detail: string }>;
+  /** `enough`: the measurement has the data the rule needs; without it, `learns` decides nothing. */
+  learns: Array<{ predictor: string; dataset: string; learns: boolean; enough: boolean; detail: string }>;
 }
 
 export interface EvidenceReport {
@@ -356,17 +360,24 @@ function learnsOn(
   lift: LiftRow[],
   predictor: string,
   dataset: string,
+  rule: typeof EVIDENCE_RULE,
 ): EvidenceVerdict['learns'][number] | null {
   const row = lift.find((l) => l.predictor === predictor && l.dataset === dataset && l.view === 'full');
   if (!row) return null;
   const d = row.delta;
   const hi = dataset === SERVED ? d.logLoss.byQuestion[1] : d.logLoss.ciHigh;
+  // A spend cap can cut an arm short; a person bootstrap over one or two people has no width at all.
+  const enough =
+    dataset === SERVED
+      ? d.n >= rule.minServedInstances && d.people >= rule.minServedPeople
+      : d.people >= rule.minTwinPeople;
   const learns = d.n > 0 && hi < 0 && d.itemAcc.mean > 0;
   return {
     predictor,
     dataset,
     learns,
-    detail: `full − context: log loss ${nats(d.logLoss.mean)} (90% CI upper ${nats(hi)}), item accuracy ${pts(d.itemAcc.mean)} points, n = ${d.n} from ${peopleN(d.people)}`,
+    enough,
+    detail: `full − context: log loss ${nats(d.logLoss.mean)} (90% CI upper ${nats(hi)}), item accuracy ${pts(d.itemAcc.mean)} points, n = ${d.n} from ${peopleN(d.people)}${enough ? '' : ' (too little data to decide)'}`,
   };
 }
 
@@ -469,29 +480,39 @@ export function decideEvidence(
   }
 
   const learns = [jev, ...(llm ? [llm] : [])]
-    .flatMap((p) => [learnsOn(lift, p, SERVED), learnsOn(lift, p, twin)])
+    .flatMap((p) => [learnsOn(lift, p, SERVED, rule), learnsOn(lift, p, twin, rule)])
     .filter((x): x is NonNullable<typeof x> => !!x);
-  const did = (p: string | null, dataset: string) =>
-    !!p && !!learns.find((l) => l.predictor === p && l.dataset === dataset)?.learns;
+  const at = (p: string | null, dataset: string) =>
+    p ? learns.find((l) => l.predictor === p && l.dataset === dataset) : undefined;
+  // An outcome below `learns` rules predictors out, so it needs each one measured with enough data: one that wasn't run
+  // (a spend cap, `--llm none`, no Twin data) is unknown, not a predictor that doesn't learn.
+  const measured = (p: string | null, dataset: string) => !!at(p, dataset)?.enough;
+  const did = (p: string | null, dataset: string) => measured(p, dataset) && !!at(p, dataset)?.learns;
 
   const served = lift.find((l) => l.predictor === jev && l.dataset === SERVED && l.view === 'full')?.delta;
-  const ship = passed.sort((a, b) => a.served - b.served)[0]?.view ?? null;
+  const best = passed.sort((a, b) => a.served - b.served)[0]?.view ?? null;
   let outcome: Outcome;
   let summary: string;
   if (!served || served.n < rule.minServedInstances || served.people < rule.minServedPeople) {
     outcome = 'insufficient';
     summary = `Too little served data for a verdict (needs ${rule.minServedInstances} questions from ${rule.minServedPeople} people).`;
-  } else if (ship) {
+  } else if (best) {
     outcome = 'ship';
-    summary = `Ship the \`${ship}\` view: register it as a Jev prompt version, backfill it as a shadow, and promote it in a new default config if it holds on new people.`;
+    summary = `Ship the \`${best}\` view: register it as a Jev prompt version, backfill it as a shadow, and promote it in a new default config if it holds on new people.`;
   } else if (did(jev, SERVED)) {
     outcome = 'learns';
     summary =
       'The primary learns from the answers as served, and no view beats the full state. Selection experiments (E3b) can start.';
+  } else if (!measured(llm, SERVED)) {
+    outcome = 'insufficient';
+    summary = `Jev doesn't learn from Mimic's answers, and the LLM wasn't measured on enough served questions (needs ${rule.minServedInstances} from ${rule.minServedPeople} people) to tell the model from the state as the limit.`;
   } else if (did(llm, SERVED)) {
     outcome = 'model';
     summary =
       "Jev doesn't learn from Mimic's answers, and the LLM does from the same states: the model, not the state, is the limit. Next: E7, an LLM or pooled primary within the latency budget.";
+  } else if (!measured(jev, twin)) {
+    outcome = 'insufficient';
+    summary = `Neither predictor learns from Mimic's answers, and Jev wasn't measured on Twin at k = ${rule.twinK} (needs ${rule.minTwinPeople} people) to tell the questions from the harness as the limit.`;
   } else if (did(jev, twin)) {
     outcome = 'questions';
     summary =
@@ -501,7 +522,8 @@ export function decideEvidence(
     summary =
       'No predictor learns from the answers it is shown. Check the harness first, then the questions.';
   }
-  return { ship, outcome, summary, checks, learns };
+  // Only a `ship` outcome names a view: one that passed its checks while the served data overall fell short does not.
+  return { ship: outcome === 'ship' ? best : null, outcome, summary, checks, learns };
 }
 
 export function analyze(
@@ -573,7 +595,7 @@ export function renderEvidence(r: EvidenceReport): string[] {
     out.push('> Offline run with fake providers: this checks the machinery. None of it is a result.', '');
   out.push(
     "E6 asks whether the mimic learns from a person's answers, and from what form of them (docs/EVIDENCE.md). Every arm predicts the same sealed questions, one per request, from one view of the same state:",
-    '`context` (intake and sourced facts only, as the baseline sees), `full` (as served), `answers` (no derived traits or insights), `derived` (traits and insights, no answers) and `relevant` (the 8 answers most related to the question).',
+    `\`context\` (intake and sourced facts only, as the baseline sees), \`full\` (as served), \`answers\` (no derived traits or insights), \`derived\` (traits and insights, no answers) and \`relevant\` (the ${RELEVANT_K} answers most related to the question).`,
     '',
     `Predictors: \`${r.jev}\`${r.llm ? ` and \`${r.llm}\`` : ''} · spend $${r.costUsd.toFixed(4)}${r.stopReason ? ` · stopped early: ${r.stopReason}` : ''}`,
     '',
@@ -592,7 +614,7 @@ export function renderEvidence(r: EvidenceReport): string[] {
       '| --- | --- | --- | --- |',
       ...r.verdict.learns.map(
         (l) =>
-          `| ${short(l.predictor)} | ${datasetTitle(l.dataset)} | ${l.learns ? 'yes' : 'no'} | ${l.detail} |`,
+          `| ${short(l.predictor)} | ${datasetTitle(l.dataset)} | ${l.enough ? (l.learns ? 'yes' : 'no') : 'too little data'} | ${l.detail} |`,
       ),
       '',
     );
@@ -674,12 +696,19 @@ interface Cell {
   instances: EvalInstance[];
 }
 
+const csv = (v: string) => [
+  ...new Set(
+    v
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean),
+  ),
+];
+
 function views(v: string | undefined, fallback: StateView[]): StateView[] {
   if (!v) return fallback;
-  const out = v
-    .split(',')
-    .map((x) => x.trim())
-    .filter(Boolean);
+  // Deduplicated: a repeated view would add a second arm under the same key, and twice its rows to the report.
+  const out = csv(v);
   for (const x of out)
     if (!(STATE_VIEWS as readonly string[]).includes(x))
       throw new Error(`Unknown view ${x}: use ${STATE_VIEWS.join(', ')}`);
@@ -695,7 +724,7 @@ function firstPeople(instances: EvalInstance[], n: number): EvalInstance[] {
 }
 
 /**
- * Cells in priority order, so a spend cap cuts the least important last: the primary on served questions, the primary
+ * Cells in priority order, so a spend cap cuts the least important first: the primary on served questions, the primary
  * on Twin at the decision's k, the LLM on served questions, the LLM on Twin, then the rest of Twin's curve.
  */
 export function planCells(
@@ -737,7 +766,11 @@ async function runCell(
     // traits or insights) share one cached prediction instead of paying twice.
     return { inst, v: { ...inst, id: `${inst.id}~${state.meta.stateHash.slice(0, 16)}`, state } };
   });
-  const back = (r: EvalRecord, id: string): EvalRecord => ({ ...r, instanceId: id });
+  const key = (id: string) => `${c.hash}|${id}`;
+  // A prediction an earlier arm paid for (the same state) costs this arm nothing, so the arms' $ add up to the spend.
+  const reused = new Set(viewed.filter((x) => opts.cache.has(key(x.v.id))).map((x) => x.v.id));
+  const back = (r: EvalRecord, id: string): EvalRecord =>
+    reused.has(r.instanceId) ? { ...r, instanceId: id, costUsd: 0 } : { ...r, instanceId: id };
   try {
     const recs = await evaluateCandidate(
       c,
@@ -757,7 +790,7 @@ async function runCell(
     if (!(e instanceof BudgetStop)) throw e;
     const records = viewed
       .map((x) => {
-        const hit = opts.cache.get(`${c.hash}|${x.v.id}`);
+        const hit = opts.cache.get(key(x.v.id));
         return hit ? back(hit, x.inst.id) : null;
       })
       .filter((r): r is EvalRecord => !!r);
@@ -791,7 +824,12 @@ export async function evidenceCmd(argv: string[]) {
     },
   });
   if (!values.data) throw new Error('--data is required');
-  const ks = [...new Set(values.k.split(',').map((x) => positive('k', x.trim())))].sort((a, b) => a - b);
+  // Checked before anything is spent, not after the run when the report is published.
+  if (values.publish && !['local', 'preview', 'prod'].includes(values.publish))
+    throw new Error('--publish must be local, preview or prod');
+  const ks = csv(values.k)
+    .map((x) => positive('k', x))
+    .sort((a, b) => a - b);
   const llm = values.llm === 'none' ? null : values.llm;
   if (parsePredictorId(values.jev).kind !== 'jev')
     throw new Error(`--jev must be a Jev predictor: ${values.jev}`);
@@ -803,7 +841,7 @@ export async function evidenceCmd(argv: string[]) {
     jevViews: views(values.views, JEV_VIEWS),
     llmViews: views(values['llm-views'], LLM_VIEWS),
     llmPeople: positive('llm-people', values['llm-people']),
-    llmK: values['llm-k'].split(',').map((x) => positive('llm-k', x.trim())),
+    llmK: csv(values['llm-k']).map((x) => positive('llm-k', x)),
   };
 
   // Served instances don't depend on k; Twin people are loaded once per checkpoint.
@@ -895,12 +933,21 @@ export async function evidenceCmd(argv: string[]) {
       views: o.jevViews,
       llmViews: o.llmViews,
       llmPeople: o.llmPeople,
+      llmK: o.llmK,
+      limit: values.limit ?? null,
+      maxUsd: values['max-usd'],
       seed: values.seed,
       stopReason,
     },
     datasetHash: first.datasetHash,
     status: 'done',
-    metrics: { report },
+    // The provider snapshots behind the verdict (PLAN §12.3), as replay and benchmark record them.
+    metrics: {
+      report,
+      modelSnapshots: [
+        ...new Set(arms.flatMap((a) => a.records.filter((r) => r.ok).map((r) => r.modelSnapshot))),
+      ].sort(),
+    },
     r2ReportKey: null,
     createdAt: Date.now(),
   };

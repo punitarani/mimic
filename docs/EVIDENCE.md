@@ -1,6 +1,6 @@
 # E6: what the mimic learns from
 
-v1 · 2026-10-01 · Status: pre-registered, not yet run. ADR-0052. Run it from Actions → Evidence once merged; the
+v1 · 2026-10-01 · Status: pre-registered, not yet run. ADR-0053. Run it from Actions → Evidence once merged; the
 readout goes to `docs/reports/e6-evidence.md`.
 
 E6 asks whether the mimic's predictions improve with a person's answers, and which form of those answers a predictor
@@ -160,13 +160,15 @@ and of an item-accuracy difference about 30–45 points.
 If several views pass, the one with the lowest served log loss wins.
 
 **A predictor "learns" on a dataset** when `full` − `context` has its log-loss interval below 0 (by question on
-served questions, by person on Twin) and raises mean item accuracy.
+served questions, by person on Twin) and raises mean item accuracy. It is measured only with the data the view checks
+need: at least 200 questions from 5 people on served questions, and 30 people on Twin. A predictor or dataset measured
+with less (cut short by the spend cap, `--llm none`, no Twin data) is unknown, not a predictor that doesn't learn.
 
 **Outcomes and what follows**, checked in this order:
 
 | Outcome | When | Next |
 | --- | --- | --- |
-| `insufficient` | Fewer than 200 served questions from 5 people | Re-run when there are |
+| `insufficient` | Fewer than 200 served questions from 5 people; or no view passes, Jev doesn't learn on served questions, and a measurement the next outcome depends on is missing or too small (the LLM on served questions, then Jev on Twin at k = 30) | Re-run when there are, or with the missing arm |
 | `ship` | A view passes | Make the view a Jev prompt version (`jev-predict.v3`, a `stateView` harness setting applied in the predictors). Backfill it as a shadow (`pnpm backfill`) and read it in /lab on new people, then promote it in `cfg.default.v9` |
 | `learns` | No view passes, but Jev learns on served questions | The primary is fine as is. Start E3b |
 | `model` | Jev doesn't learn on served questions, and the LLM does | E7: an LLM or pooled primary that meets the sync-path latency target (p50 ≤ 800 ms; DeepSeek takes about 3.5 s, GLM about 1.6 s) |

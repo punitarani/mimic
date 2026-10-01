@@ -1,4 +1,4 @@
-# E6: what the mimic learns from (docs/EVIDENCE.md, ADR-0052), from the Actions tab: Actions → Evidence → Run workflow.
+# E6: what the mimic learns from (docs/EVIDENCE.md, ADR-0053), from the Actions tab: Actions → Evidence → Run workflow.
 # Jev (the production primary) and an LLM each predict the same sealed questions from one view of the state: the
 # context alone, the state as served, the answers without derived traits and insights, the derived data without the
 # answers, and the answers most related to the question. The step summary and /lab hold the readout: lift over
@@ -8,7 +8,7 @@
 # Data: the prod export (consented mimics only, scrubbed of names, locations and links; ADR-0018) and Twin-2K-500
 # people (public survey answers from real people). Only aggregates leave the runner: the step summary, /lab and the
 # artifact. Per-question records, traces and the export are discarded with the runner. Models are live, capped at
-# max_usd; cells run in priority order, so a cap cuts the least important last.
+# max_usd; cells run in priority order, so a cap cuts the least important first.
 
 name: Evidence
 

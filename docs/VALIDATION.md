@@ -492,7 +492,7 @@ Nothing below comes from real people.
 - **Not measured:** efficiency on real people (R6). The arm is ready as a draft in `/lab`, and starting it is the
   owner's decision (sample size in ADR-0045).
 
-## E6: what the mimic learns from (ADR-0052)
+## E6: what the mimic learns from (ADR-0053)
 
 Nothing below comes from real people. The run on real people is Actions → Evidence, after merge
 (`docs/EVIDENCE.md` §7).
@@ -507,7 +507,8 @@ Nothing below comes from real people. The run on real people is Actions → Evid
   - Deltas are paired by question, with intervals that resample people.
   - The rule ships a view only with served and (where Twin can test it) Twin support. It refuses a view that costs
     accuracy, helps too few people or has too little data, and otherwise names the bottleneck: `learns`, `model`,
-    `questions`, `none` or `insufficient`.
+    `questions`, `none` or `insufficient`. A predictor that wasn't measured, or was measured on too little data, makes
+    the outcome `insufficient` rather than counting as one that doesn't learn.
   - Cells run in priority order.
 - **End to end, offline** (3 scripted people and the Twin sample, fake providers).
   - Every arm of a dataset scores the same questions.
