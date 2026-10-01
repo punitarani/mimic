@@ -228,6 +228,7 @@ export class FakeLlm implements LlmClient {
     else if (sys.startsWith('You write short, concrete questions')) out = this.generate(user);
     else if (sys.startsWith("You analyze one person's answers")) out = this.reflect(user, sys);
     else if (sys.startsWith('Estimate the probability')) out = this.predict(user);
+    else if (sys.startsWith('You have been given a file')) out = this.predict(user);
     else if (sys.startsWith("Given a person's occupation")) out = this.occFacets();
     else if (sys.startsWith('Write {k}') || /^Write \d+ distinct/.test(sys)) out = this.hypotheses(user);
     else if (sys.startsWith("Turn the person's scenario")) out = this.ask(user);

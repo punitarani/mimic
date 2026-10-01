@@ -10,7 +10,14 @@ import {
 import { makePredictor, promptVersionOf } from '../predictors';
 import type { AnswerRecord, PredictionRecord, QuestionRecord } from '../store';
 import { type Distribution, isSessionKind } from '../types';
-import { contextState, loadMimicDataAt, STATE_SETTLE_MS, sealedState, stateBlobKey } from './data';
+import {
+  contextState,
+  loadMimicDataAt,
+  needsScores,
+  STATE_SETTLE_MS,
+  sealedState,
+  stateBlobKey,
+} from './data';
 import {
   budgetSpent,
   ctxFor,
@@ -86,7 +93,7 @@ export async function predictPlayground(
   const { rationale: _wantsRationale, ...question } = input;
   const v = validateQuestion(question);
   const stateAt = deps.clock() - STATE_SETTLE_MS;
-  const loaded = await loadMimicDataAt(deps, m, stateAt, m.seqMax + 1);
+  const loaded = await loadMimicDataAt(deps, m, stateAt, m.seqMax + 1, { scores: needsScores(cfg) });
   const seq = maxSeq(loaded.questions) + 1;
   const now = deps.clock();
   const q: QuestionRecord = {

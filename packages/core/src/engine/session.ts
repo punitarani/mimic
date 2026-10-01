@@ -44,6 +44,7 @@ import {
   facetCounts,
   type LoadedMimic,
   loadMimicDataAt,
+  needsScores,
   STATE_SETTLE_MS,
   sealedState,
   stateBlobKey,
@@ -211,7 +212,9 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
   const cfg = await loadConfig(deps, m.configHash);
   // Derived data is pinned to `stateAt` so the sealed states can be rebuilt exactly from an export (ADR-0017).
   const stateAt = deps.clock() - STATE_SETTLE_MS;
-  const loaded = await timed(deps, 'load', () => loadMimicDataAt(deps, m, stateAt, m.seqMax + 1));
+  const loaded = await timed(deps, 'load', () =>
+    loadMimicDataAt(deps, m, stateAt, m.seqMax + 1, { scores: needsScores(cfg) }),
+  );
   const { questions } = loaded;
   const progress = progressOf(questions, cfg);
 

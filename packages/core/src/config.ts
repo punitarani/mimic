@@ -99,7 +99,8 @@ export const PipelineConfig = z.object({
     shadows: z.array(z.string().superRefine(checkPredictor)),
   }),
   stateBuilder: z.object({
-    strategy: z.enum(['raw', 'structured', 'summary', 'full']),
+    /** `card` (ADR-0052): identity, traits and at most `maxEvidence` answers chosen by `evidencePolicy`. */
+    strategy: z.enum(['raw', 'structured', 'summary', 'full', 'card']),
     budgetTokens: z.number().int(),
     retrievalK: z.number().int(),
     recentN: z.number().int(),
@@ -108,6 +109,14 @@ export const PipelineConfig = z.object({
      * §8). Optional, not defaulted, so configs written before it keep their hash.
      */
     latencyHints: z.boolean().optional(),
+    /**
+     * Which answers survive the budget and the cap (ADR-0052, `EvidencePolicy`): `mixed` when absent (the incumbent
+     * recent + similar + anchors), `recent`, `similar`, `surprise` (what the context-only baseline got wrong) or
+     * `novelty` (what the sealed primary got wrong at the time). Optional and undefaulted, so older hashes hold.
+     */
+    evidencePolicy: z.enum(['mixed', 'recent', 'similar', 'surprise', 'novelty']).optional(),
+    /** At most this many answers in a state, whatever the budget (ADR-0052). Optional and undefaulted. */
+    maxEvidence: z.number().int().min(1).optional(),
   }),
   traitReader: z.object({ type: z.enum(['jev', 'none']), everyN: z.number().int() }),
   reflector: z.object({

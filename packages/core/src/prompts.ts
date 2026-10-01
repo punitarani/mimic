@@ -395,6 +395,25 @@ ANSWERS: #seq prompt [options] → answer (why)`,
       ),
     }),
   },
+  /**
+   * ADR-0053: the reader in the transfer-loss eval. A generic agent that has been handed a person-model file (a
+   * SOUL.md, a mimic.json, a card) and nothing else: the prompt gives it no Mimic-specific help, because the point is
+   * to measure what another agent gets out of the file alone. Third-person prediction, never role-play (arXiv
+   * 2607.24782). The file comes first in the user message and the question last, so one file serves many questions
+   * from a provider's prompt cache.
+   */
+  'transfer.v1': {
+    id: 'transfer.v1',
+    title: 'Transfer reader (an agent reading only an exported person model)',
+    system: `You have been given a file that describes one real person, and a question they were asked.
+Using only the file, estimate the probability that this person would choose each option. Reason about them in the
+third person: look for a closely related recorded answer first, then their rules of thumb and tendencies. Don't make
+them more rational, agreeable or consistent than the file shows. If the file says nothing relevant, spread the
+probability rather than guessing from stereotypes.
+Return JSON: { "probs": [{ "key": string, "p": number }] } covering every option key.`,
+    input: 'FILE:\n{the exported person model, verbatim}\n\nQUESTION: {prompt}\nOPTIONS:\n{key: label}',
+    schema: obj({ probs: arr(obj({ key: str, p: num })) }),
+  },
 } as const satisfies Record<string, PromptSpec>;
 
 export type PromptId = keyof typeof PROMPTS;
