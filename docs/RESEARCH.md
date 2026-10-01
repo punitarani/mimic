@@ -366,17 +366,20 @@ residual lift of §1.2 and the dispersion alarm of §8 on every person, a per-pe
 needs. It is the first step of §9 now. Expect: near transfer at 10 answers, mid at 30, far not before compaction
 (§10.3) works.
 
-### 10.2 Retrieval by meaning, not words
+### 10.2 Retrieval by meaning, and a full budget
 
-Beyond the budget the state keeps the recent and the lexically similar. Party and ideology carry policy items and
-materialism rows carry product items, and none of them share a word with the question they predict. Sorting Twin's
-items by nearest-prompt word overlap orders them by domain, not by relatedness, so `relevant` (E6) and the `similar`
-card (ADR-0056) are limited by their distance measure. **Build:** a question-conditioned retriever with embeddings
-(the state builder already takes `queryEmbedding`; the export does not carry vectors, so replay needs them computed
-once per export) and an LLM-chosen "which answers bear on this question" pass whose picks are logged as a view.
-**Experiment:** both as `relevant`-style views on E7's probes and on Twin's policy and product items, judged by
-lift per domain against the recency state. Pitfall: an LLM retriever that reads the question can smuggle a guess;
-log its picks and score the view, never its text.
+Beyond the budget the served recipe keeps anchors, the 6 latest answers and the 12 nearest to the candidate batch:
+18 answers in about 1,400 of the 8,000 tokens §9.9 allows. Party and ideology carry policy items and materialism rows
+carry product items, and none of them share a word with the question they predict. **Built:** `replay
+--per-target` builds one state per held-out question, ranked by word overlap or by embeddings (`--embed`, computed
+once per run through the gateway), and a `fill` policy that takes `mixed`'s picks first and then every other answer
+by recency until the budget is spent (ADR-0064). **Found** on 60 Twin people at 100 answers, calibrated primary
+(`docs/reports/twin-benchmark.md`): embeddings bring the policy lift from +1.6 to +4.4 points, word overlap to +2.5;
+filling the budget by recency lifts product items (+9.8 against +8.7); `fill` with embeddings gets both, +2.7
+[+0.8, +4.6] points and −0.053 [−0.082, −0.024] log loss over the served state, the best state measured. **Next:**
+`fill` as a served shadow on E7's probes, with its own calibration (§10.4), and an LLM-chosen "which answers bear on
+this question" pass as a view. Pitfall: an LLM retriever that reads the question can smuggle a guess; log its picks
+and score the view, never its text.
 
 ### 10.3 Compaction that keeps what the window loses
 
@@ -387,8 +390,9 @@ reader +3.7 over the state text on 60 Twin people, both with no log-loss gain or
 writes the primary's state (an LLM-written state for Jev), calibrated on its own stored predictions, as a shadow
 predictor (`decision:typesafe/jev-1.13@jev-predict.v3` with a `stateView: derived+answers` harness). **Experiment:**
 served shadow, then E7's probes, with residual lift and dispersion beside accuracy, since a summary can be a
-stereotype written down. The `surprise` policy is the cheap version: it keeps the answers the stereotype got wrong
-and preserved dispersion (0.197 against 0.127 for recency at k = 30) at the same accuracy.
+stereotype written down. The `surprise` policy, which keeps the answers the stereotype got wrong, is not the cheap
+version it looked like: with the calibrated primary and surprise ranked on the raw scale, its dispersion (0.141 at
+k = 30) is close to a recency card's (0.127) and its log-loss gain at 100 answers is small (−0.010).
 
 ### 10.4 Calibration by state size
 
@@ -418,6 +422,7 @@ holds on test people, a registered variant with a temperature by evidence count,
 The directions in §1–§6 stand, with their order changed: measurement (E7) first, then the state (retrieval and
 compaction), then selection (E3b, the opening block, generate-to-split), since selection pays off only through a
 predictor whose state carries what the answers said. The card (ADR-0056) is ready as the export for agents: level
-with the served state at 30 answers, best dispersion among the compressed states, half the tokens. The footprint,
-the ledger and the population builder are unaffected by any of this.
+with the served state at 30 answers at half the tokens, though every card halves dispersion unless its answers are
+retrieved by meaning for the task. The footprint, the ledger and the population builder are unaffected by any of
+this.
 

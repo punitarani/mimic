@@ -745,7 +745,8 @@ Ablation strategies:
 **Evidence policies** (`stateBuilder.evidencePolicy`, ADR-0056) decide which answers survive the budget and the cap
 `stateBuilder.maxEvidence`: `mixed` (the rule above; the default), `recent`, `similar`, `surprise` (the answers the
 context-only baseline predicted worst: what the profile alone gets wrong) or `novelty` (the answers the sealed primary
-predicted worst at the time: what the earlier answers did not imply). Surprise and novelty are computed from the
+predicted worst at the time: what the earlier answers did not imply) or `fill` (`mixed`'s picks, then every other answer
+by recency until the budget is spent; ADR-0064). Surprise and novelty are computed from the
 stored scores on the predictor's raw scale and are fixed with the answer, so a state rebuilds exactly from an export.
 
 `stateHash = sha256(canonicalJson(state))`. `evidenceHash = sha256(canonicalJson(state.evidence))` is stored beside it

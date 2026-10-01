@@ -192,7 +192,7 @@ with less (cut short by the spend cap, `--llm none`, no Twin data) is unknown, n
   loss. Item accuracy and ECE are reported for that reason.
 - **One LLM.** DeepSeek stands in for the LLMs. The stored shadows already rank the others.
 - **`relevant` uses lexical similarity.** The export holds no embeddings. A null result for `relevant` says nothing
-  about embedding retrieval.
+  about embedding retrieval, which `replay --per-target --embed` measures (ADR-0064).
 
 ## 7. Running it
 
@@ -235,25 +235,29 @@ what the first run's numbers rest on. Each point names what E7 (`docs/PROBE.md`)
    current rate of 55 questions each. The rule's "learns" is unknown, not "no", until then.
 4. **What the state keeps decides what it can learn.** Beyond the §9.9 budget the Twin state held the 18 most recent
    answers (the replay and this run's Twin arm build states with no target to retrieve for, where production
-   retrieves by lexical similarity to the candidate batch). Recency is domain-blind: the oldest answers were the ones
-   that carried the policy items. Lexical similarity would not have found them either: "party" shares no words with
-   "a carbon tax". `relevant` and the `similar` card are limited by their distance measure, not by the idea.
+   retrieves by similarity to the candidate batch). Recency is domain-blind: the oldest answers were the ones that
+   carried the policy items. Word overlap does not find them ("party" shares no words with "a carbon tax"), so
+   `relevant` is limited by its distance measure. Embeddings do: retrieved per target by embeddings, the policy lift
+   at 100 answers rises from +1.6 to +4.4 points, and a state that then fills the budget (`fill`, ADR-0064) is the
+   best measured (`docs/reports/twin-benchmark.md`).
 5. **Some items are state-insensitive.** On Twin's probability tasks (12% of items) Jev's prediction is identical for
    every view. A view comparison counts those as ties and dilutes every effect by their share. Report them apart.
 6. **Calibration is a function of state size.** T = 4 gives ECE 0.036 at 10 and 30 answers and 0.111 at 100 on Twin.
-   A view that changes the state's size changes its calibration, and log loss then mixes the two. The `surprise`
-   card (ADR-0056) drifts least, and the fix is a temperature by evidence count, fitted prequentially.
+   A view that changes the state's size changes its calibration, and log loss then mixes the two. The fix is a
+   temperature by evidence count, fitted prequentially (`evaluate --from stored` fits one per band).
 7. **Jev reads summaries better than answers.** `derived` gave Jev +4.8 points on served questions and no log-loss
    gain; the core SOUL.md (a DeepSeek narrative of 30 answers, no answers) gave the Jev reader +3.7 over the state
-   text on 60 Twin people at a large log-loss cost. One lead, seen twice. It needs its own calibration before it can
-   be read in log loss, and a served shadow before it means anything.
+   text on 60 Twin people at a large log-loss cost. With the calibrated primary the gain holds (+3.1 for the core
+   profile, +3.6 for the full one, which is level with the state on log loss). One lead, seen twice. It needs its
+   own calibration and a served shadow before it means anything.
 8. **The reproduction check needs an evidence hash (built).** State hashes cannot match on a scrubbed export. Every
    prediction now stores `evidenceHash`, the hash of its state's evidence alone, which scrubbing does not touch, and
    the report's reproduction checks compare it for the `full` arm. Rows written before it carry none and are left
    out of that check; `stateHash` stays as it is.
 9. **Individuation was unreadable on served data** (6 shared anchors). E7's shared items give across-person
    correlation and dispersion on every person, and the Twin run shows dispersion is where state policies differ
-   (0.201 for the served state at k = 30, 0.127 for a recency card, 0.197 for a `surprise` card).
+   (0.201 for the served state at k = 30 and 0.127–0.141 for 12-answer cards, but 0.231 for 8 answers retrieved by
+   embeddings for the question).
 
 ## References
 

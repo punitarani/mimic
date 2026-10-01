@@ -2116,9 +2116,11 @@ experiments.
 held-out predictions per cell, two passes: a 12-answer card is level with the served state after 30 answers
 (+0.6 [−0.7, +2.0] points, intervals over people) at 48% of its tokens, and −1.0 [−1.7, −0.3] after 100, where the
 served state is itself the §9.9 subset of 18 answers. `mixed`, `recent` and `similar` sit within the run-to-run noise
-of each other (0.25 points on average between passes); `surprise` costs −1.1 [−2.0, −0.4] points at k = 100 and
-improves raw log loss by −0.088 [−0.120, −0.056]. Every card halves dispersion across people at equal accuracy. Next:
-the same cells with the calibrated primary, then the card against E6's `relevant` on served questions.
+of each other (0.25 points on average between passes), because replay built one state per person with no target to
+retrieve for, so similarity fell back to recency; ADR-0064 measures retrieval per target. `surprise` costs −1.1
+[−2.0, −0.4] points at k = 100 and improves raw log loss by −0.088 [−0.120, −0.056]; with the calibrated primary and
+surprise ranked on the raw scale that gain shrinks to −0.010 [−0.016, −0.004], and it is a loss at k = 30. Every
+12-answer card halves dispersion across people at equal accuracy.
 
 ## ADR-0057 — Transfer loss: an agent reading only the export (2026-10-01)
 
@@ -2297,3 +2299,30 @@ matches the stored primary's. `stateHash` is unchanged, so no config, state or s
 **Consequences.** One more column per prediction row; rows written before it have none and are left out of the check.
 The workflow's reproduction check becomes meaningful on every run without `--keep-identity`.
 
+## ADR-0064 — Retrieval per target, and a `fill` policy that spends the budget (2026-10-01)
+
+**Context.** The Twin benchmark's `similar` arms measured recency: replay built one state per person, with no target
+to rank against. And at 100 answers the served recipe (`mixed`: anchors, the 6 latest answers, the 12 nearest to the
+batch) keeps 18 answers in about 1,400 of the 8,000 tokens §9.9 allows, so the budget is a ceiling it never reaches.
+
+**Decision.**
+
+- `replay --per-target` builds one sealed state per target question with that question as the retrieval target, as
+  production does for a batch. `--embed` ranks by embeddings computed once per run through the gateway (purpose
+  `eval.replay.embed`), since exports carry no vectors; without it, ranking is by word overlap. `--max-targets` caps
+  the targets per person, seeded.
+- A new evidence policy, `fill` (`stateBuilder.evidencePolicy`): `mixed`'s picks first, in its trimming order, then
+  every other answer by recency until the budget is spent. It ranks by similarity, so production loads embeddings for
+  it as it does for `mixed` (`ranksBySimilarity`). No config uses it yet; the enum grew, so no existing hash moves.
+- `transfer` accepts a calibration-only decision variant as reader (`@jev-predict.v2`), so transfer loss can be read
+  on the served scale.
+
+**Result** (60 Twin people, calibrated primary, 20 targets each, `docs/reports/twin-benchmark.md`). At 100 answers,
+embeddings lift policy items from +1.6 to +4.4 points (word overlap +2.5); filling the budget by recency lifts product
+items (+9.8 against +8.7); `fill` with embeddings gets both: 67.8% accuracy and 0.814 log loss, +2.7 [+0.8, +4.6] points
+and −0.053 [−0.082, −0.024] over the served state, 39 of 60 people better. Batching moves accuracy by under half a
+point.
+
+**Consequences.** A filled state costs about five times the primary's input tokens late in a session. Per-target
+retrieval is an upper bound on retrieval for a batch centroid. Next: a config with `evidencePolicy: 'fill'` as a served
+shadow (ADR-0024), read on E7's probes, with its own calibration because a larger state shifts it (RESEARCH §10.4).

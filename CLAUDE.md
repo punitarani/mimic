@@ -95,7 +95,8 @@ If a task seems to require breaking one of these, stop and ask.
 - Research directions and their experiments live in `docs/RESEARCH.md`. The evals behind them: `transfer` (what an
   export loses, ADR-0057), `ensemble` (pools of stored predictions, ADR-0058), `population` (a synthetic cohort,
   ADR-0059), `footprint` (own exports → questions to verify, ADR-0061); `replay --evidence surprise|novelty` and
-  `--state card` test what a state should keep (ADR-0056). Other agents update a mimic only by appending typed
+  `--state card` test what a state should keep (ADR-0056); `replay --per-target [--embed]` retrieves for each question,
+  and `--evidence fill` spends the whole budget (ADR-0064). Other agents update a mimic only by appending typed
   observations (`POST /observations`, ADR-0060); nothing else is writable from outside.
 - Order prompts for caching: stable prefix (system, ontology, rules) first, variable content last.
 - Test with Vitest, using recorded fixtures in `packages/adapters/fixtures/`. CI makes no live calls. Worker code tests use `@cloudflare/vitest-pool-workers`.

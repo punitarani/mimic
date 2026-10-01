@@ -579,8 +579,8 @@ Intervals are paired by question and bootstrapped over people.
   --max-evidence 12|6`), two passes per spec. Lift over the baseline: +0.5, +3.4, +7.3 points at k = 10, 30, 100 for
   the served state. A 12-answer card is level with the served state at k = 30 (+0.6 [−0.7, +2.0]) at 48% of its tokens
   and loses −1.0 [−1.7, −0.3] at k = 100, where the served state is itself the §9.9 subset of 18 answers. `mixed`,
-  `recent` and `similar` are within the noise floor of each other (two passes of one spec differ by 0.25 points on
-  average, 0.43 at most); `surprise` costs −1.1 [−2.0, −0.4] points at k = 100 and improves raw log loss by
+  `recent` and `similar` are the same policy here (one state per person, no target to retrieve for, so similarity
+  falls back to recency; two passes of one spec differ by 0.25 points on average, 0.43 at most); `surprise` costs −1.1 [−2.0, −0.4] points at k = 100 and improves raw log loss by
   −0.088 [−0.120, −0.056]. Every card halves dispersion across people at k = 30 (0.28 against 0.42) at equal accuracy.
 - **Transfer** (`transfer --data … --readers llm:deepseek/deepseek-v4.1-flash --views
   context,state,card,soul-core,soul-full,mimic-json --checkpoints 30 --split all --targets heldout --draft --limit 10
@@ -591,13 +591,20 @@ Intervals are paired by question and bootstrapped over people.
   Jev learns from these answers (+4.0 [+1.3, +6.7] points, log loss −0.049 [−0.074, −0.022] at k = 30); `relevant`
   is level with `full` at k = 30 and 100 at a third of the tokens; the rule returns `insufficient` because the import
   holds no served questions.
-- **Calibrated cells** (`--predictor decision:typesafe/jev-1.13@jev-predict.v2`, one pass): the card is level at
-  k = 30 and −0.9 [−1.5, −0.2] at k = 100; `surprise` keeps −0.017 [−0.027, −0.007] of log loss (42 of 60 people
-  better) and the best dispersion of the compressed states (0.197 against 0.127 for recency at k = 30); ECE drifts
-  from 0.036 at k = 30 to 0.111 at k = 100 for the served state.
+- **Calibrated cells** (`--predictor decision:typesafe/jev-1.13@jev-predict.v2`, one pass, surprise ranked on the
+  raw scale): the card is level at k = 30 and −0.9 [−1.5, −0.2] at k = 100; `surprise` keeps −0.010 [−0.016, −0.004]
+  of log loss at k = 100 and loses +0.023 at k = 30, with dispersion 0.141 against 0.127 for recency at k = 30; ECE
+  drifts from 0.036 at k = 30 to 0.111 at k = 100 for the served state.
+- **Per target** (`replay --data data/twin-pt.sqlite --predictor decision:typesafe/jev-1.13@jev-predict.v2
+  --checkpoints 30,100 --split all --targets heldout --limit 60 --max-targets 20 --seed bench --rows --per-target
+  [--embed] --state full|card --evidence mixed|recent|similar|fill [--max-evidence 8]`): at k = 100 embeddings lift
+  policy items from +1.6 to +4.4 points, word overlap to +2.5; `fill` with embeddings is 67.8% accuracy and 0.814 log
+  loss, +2.7 [+0.8, +4.6] points and −0.053 [−0.082, −0.024] over the shared served state (39 of 60 people better).
 - **Jev transfer** (60 people, 1,200 targets, 55 drafts written and 5 timed out): state 61.9%, card 62.8%, core
   SOUL.md 65.6% (log loss 1.582 against 1.071), full SOUL.md 66.2%, `mimic.json` 62.7%, context 57.0%. Jev reads
-  the narrative better than the answers it came from, and trusts it too much.
+  the narrative better than the answers it came from, and trusts it too much. With `--readers
+  decision:typesafe/jev-1.13@jev-predict.v2` (all 60 drafts written): state 62.0% (log loss 0.828), core SOUL.md
+  65.1% (0.901), full SOUL.md 65.6% (0.832).
 - **Where the lift comes from** (no model calls; `rows.json` joined with the rebuilt states): no held-out domain is
   among the first 100 answers; product choices (61% of items) carry 96% of the lift at k = 100; policy items gain
   +4.4 while the state holds party and ideology and +1.2 once recency has dropped them; probability tasks (12%) get
