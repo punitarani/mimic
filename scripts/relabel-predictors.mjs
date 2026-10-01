@@ -265,8 +265,6 @@ export async function relabel(opts, target, { log = console.log } = {}) {
         ? `  not relabelled, snapshot not pinned in DECISION_MODELS: ${unknown.map((r) => `${r.snapshot} (${r.n})`).join(', ')}`
         : '  not relabelled: no unrecognized snapshots on Jev rows',
     );
-  }
-  if (!opts.reverse) {
     const [jobs] = await target.query(legacyJobsQuery());
     log(
       `  jobs keyed ${LEGACY_DECISION_PREFIX} still queued or retrying: ${Number(jobs?.n ?? 0)} (they store ${DECISION_PREFIX} when they run)`,
