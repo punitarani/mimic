@@ -1,5 +1,5 @@
 /**
- * `pnpm flags:check` (ADR-0051): holds a live Flagship app to the flag registry (`FLAG_SPECS`, packages/core).
+ * `pnpm flags:check` (ADR-0051, ADR-0052): holds a live Flagship app to the flag registry (`FLAG_SPECS`, packages/core).
  *
  * 1. Defined: every flag the code reads exists, and every variation, default and rule serves a value the code
  *    accepts (`checkFlags`). A missing flag can be created at its default with `--create-missing` (needs Flagship
@@ -7,19 +7,12 @@
  * 2. Accessible: each flag evaluates through Flagship's evaluate API, as the Worker binding would, to a value the
  *    code accepts.
  *
- * Problems exit 1; warnings (a flag nothing reads, a flag serving something other than its setting) don't. Run it
- * through `scripts/deploy/flags.mjs`, which finds the app ID and the settings for an environment. Node only.
+ * Problems exit 1; warnings (a flag nothing reads, a disabled flag, active rules) don't. Run it through
+ * `scripts/deploy/flags.mjs`, which finds an environment's app ID. Node only.
  */
 import { appendFileSync } from 'node:fs';
 import { parseArgs } from 'node:util';
-import {
-  ALL_FLAGS,
-  checkFlags,
-  type FlaggedSetting,
-  type FlagSpec,
-  flagCreateBody,
-  type LiveFlag,
-} from '@mimic/core';
+import { ALL_FLAGS, checkFlags, type FlagSpec, flagCreateBody, type LiveFlag } from '@mimic/core';
 import { z } from 'zod';
 
 type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -116,16 +109,14 @@ export interface FlagsReport {
 
 const denied = (e: unknown) => e instanceof FlagshipApiError && (e.status === 401 || e.status === 403);
 
-/** The whole check against one app. `settings` are the environment's resolved vars (scripts/deploy/settings.mjs). */
+/** The whole check against one app. */
 export async function runFlagsCheck(opts: {
   api: ReturnType<typeof flagshipApi>;
   appId: string;
-  settings?: Partial<Record<FlaggedSetting, string>>;
   createMissing?: boolean;
   specs?: readonly FlagSpec[];
 }): Promise<FlagsReport> {
   const specs = opts.specs ?? ALL_FLAGS;
-  const settings = opts.settings ?? {};
   const report: FlagsReport = { problems: [], warnings: [], created: [], evaluated: {} };
   let live: LiveFlag[];
   try {
@@ -142,7 +133,7 @@ export async function runFlagsCheck(opts: {
     const have = new Set(live.map((f) => f.key));
     for (const spec of specs.filter((s) => !have.has(s.key))) {
       try {
-        await opts.api.createFlag(flagCreateBody(spec, spec.setting ? settings[spec.setting] : undefined));
+        await opts.api.createFlag(flagCreateBody(spec));
         report.created.push(spec.key);
       } catch (e) {
         report.warnings.push(
@@ -154,7 +145,7 @@ export async function runFlagsCheck(opts: {
     }
     if (report.created.length) live = await opts.api.listFlags();
   }
-  const check = checkFlags(live, settings, specs);
+  const check = checkFlags(live, specs);
   report.problems.push(...check.problems);
   report.warnings.push(...check.warnings);
 
@@ -206,7 +197,6 @@ export async function flagsCheckCli(argv: string[], env: NodeJS.ProcessEnv = pro
     args: argv,
     options: {
       app: { type: 'string' },
-      settings: { type: 'string', default: '{}' },
       'create-missing': { type: 'boolean', default: false },
       optional: { type: 'boolean', default: false },
     },
@@ -222,14 +212,9 @@ export async function flagsCheckCli(argv: string[], env: NodeJS.ProcessEnv = pro
     }
     throw new Error(msg);
   }
-  // Wrangler vars may be JSON numbers or booleans (BUDGET_USD may be a number): compare them as the var text.
-  const settings = z
-    .record(z.string(), z.union([z.string(), z.number(), z.boolean()]).transform(String))
-    .parse(JSON.parse(values.settings));
   const report = await runFlagsCheck({
     api: flagshipApi({ accountId, token, appId: values.app }),
     appId: values.app,
-    settings,
     createMissing: values['create-missing'],
   });
   const text = renderReport(values.app, report);
