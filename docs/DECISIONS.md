@@ -2051,3 +2051,21 @@ split on `modelSnapshot`; none did.
 - **Supersedes** ADR-0051's "A rerouted prediction keeps its config's predictor ID. Its `modelSnapshot` names the model
   that answered, so reports split on it", and its `jev:respan/span-01-20260925@…` example: to make span-01 permanent,
   ship a config with `decision:respan/span-01-20260925@jev-predict.v2` as primary.
+
+## ADR-0055 — The invite code behind the `use-invite-code` flag (2026-10-01)
+
+Sign-up has needed an invite code since the start (PLAN §11, ADR-0026). Opening it up, or closing it again, meant a
+code change. The gate is now a runtime lever, which is what flags are for (ADR-0052): a kill switch that is safe at
+its default and needs nothing extra deployed.
+
+- **The flag.** `use-invite-code` is a boolean, `on` by default, which is the behaviour from before the flag. The
+  registry gains a `boolean` kind for it. A string flag with on/off values (`on`, `off`, `true`, `false` and the
+  like, as `coerceFlag` reads them) works too; anything else falls back to on.
+- **One value for the environment.** It is read with the fixed targeting key `environment`, like the spend caps,
+  so the form and the server agree for every person. Unbound (preview, local dev) or unreadable, it is on.
+- **Server.** `POST /api/mimics` checks the code against `INVITE_CODES` only while the flag is on. Off, the code is
+  optional and ignored. `INVITE_CODES` stays a required secret, so the gate can be turned back on at any time.
+- **Form.** `/new` stays prerendered (ADR-0023). It asks `GET /api/invite` whether a code is needed and starts by
+  assuming one is, so the field shows as before until the server says otherwise. When the flag is off, the field
+  disappears and the code isn't required. A rejected code brings the field back, so a flag turned on while the form
+  is open still works.

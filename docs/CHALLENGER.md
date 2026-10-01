@@ -82,6 +82,7 @@ changing without a deploy, safe at its default, and needing nothing deployed bey
 | `decisions-model` | `jev` or `span-01` (or the pinned model ID either maps to) | `jev` | The model Jev's served predictions run on |
 | `budget-usd` | A number above 0 | 1 | Spend cap per mimic (ADR-0035) |
 | `budget-session-share` | A number above 0, at most 1 | 0.8 | The session's share of the cap |
+| `use-invite-code` | A boolean, or a string with on/off values (`on`, `off`, `true`, `false` and the like) | on | Whether sign-up needs a code from `INVITE_CODES` (ADR-0055) |
 
 - **Accepted values.** Dashboard labels such as "Span-01" are accepted, and a number flag made as a string reads as
   its number.
@@ -100,7 +101,8 @@ changing without a deploy, safe at its default, and needing nothing deployed bey
 - **Cost of a read.** Cloudflare documents evaluation as local, from configuration Flagship pushes to the edge. The
   dashboard still reported p90 65 ms per evaluation on 2026-09-30, so reads are kept few:
   - each request, queue batch or cron run reads the two caps once, in parallel;
-  - each served decision call reads `decisions-model` once.
+  - each served decision call reads `decisions-model` once;
+  - creating a mimic, and each load of `/new` (`GET /api/invite`), reads `use-invite-code` once.
 - **A failed read.** A cap falls to its code default ($1, share 0.8), the conservative side for spend, and is logged
   once. Flagship keeps evaluating from the last propagated configuration if its control plane is down.
 

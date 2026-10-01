@@ -48,7 +48,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export interface IntakeRequest {
-  inviteCode: string;
+  /** Needed only while sign-up is invite-only (`use-invite-code`, ADR-0055). */
+  inviteCode?: string;
   name: string;
   location: string;
   occupation?: string;
@@ -113,6 +114,7 @@ export interface FeedbackRequest {
 
 export const api = {
   createMimic: (b: IntakeRequest) => call<{ mimicId: string; identity: boolean }>('POST', '/api/mimics', b),
+  inviteRequired: () => call<{ required: boolean }>('GET', '/api/invite'),
   listMimics: () =>
     call<{
       mimics: Array<{
