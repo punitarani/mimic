@@ -373,7 +373,7 @@ describe('generator schema gate (PLAN §9.4)', () => {
   });
 });
 
-describe('evidence policies and the card state (ADR-0054)', () => {
+describe('evidence policies and the card state (ADR-0056)', () => {
   const signalled = (n: number) => {
     const m = mimic(n);
     for (const e of m.evidence) {

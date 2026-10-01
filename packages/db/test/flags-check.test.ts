@@ -22,6 +22,13 @@ const good = (): LiveFlag[] => [
     rules: [],
   },
   { key: 'search-provider', enabled: true, default_variation: 'Exa', variations: { Exa: 'exa' }, rules: [] },
+  {
+    key: 'use-invite-code',
+    enabled: true,
+    default_variation: 'on',
+    variations: { on: true, off: false },
+    rules: [],
+  },
 ];
 
 /**

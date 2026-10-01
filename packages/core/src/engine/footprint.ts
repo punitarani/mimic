@@ -23,7 +23,7 @@ import {
 import { MAX_POOL } from './session';
 
 /**
- * Footprint proposals (ADR-0059): verify, never infer. The person's own documents are read once by an LLM that
+ * Footprint proposals (ADR-0061): verify, never infer. The person's own documents are read once by an LLM that
  * writes questions whose answers the documents imply. Each becomes an ordinary pooled question, and the implied
  * answer is stored beside it (`quality.footprint`). When the session serves one, the implied answer is written as a
  * prediction of its own (`predictorId = footprint:v1`, role `shadow`, no state), so the person's real answer scores

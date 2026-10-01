@@ -379,7 +379,7 @@ export class FakeLlm implements LlmClient {
   }
 
   /**
-   * Footprint proposals (ADR-0059): two items citing the first documents, one on an allowed facet, plus a rogue item
+   * Footprint proposals (ADR-0061): two items citing the first documents, one on an allowed facet, plus a rogue item
    * on a sensitive facet and one citing no document, which the engine must drop.
    */
   private footprint(user: string) {

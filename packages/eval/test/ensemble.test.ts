@@ -16,7 +16,7 @@ const script = (name: string) =>
     seed: name,
   });
 
-describe('pools and weights (ADR-0056)', () => {
+describe('pools and weights (ADR-0058)', () => {
   it('pools distributions and keeps weights normalised', () => {
     const a = { x: 0.9, y: 0.1 };
     const b = { x: 0.1, y: 0.9 };
@@ -60,7 +60,7 @@ describe('pools and weights (ADR-0056)', () => {
   });
 });
 
-describe('ensembles of stored predictions (ADR-0056)', () => {
+describe('ensembles of stored predictions (ADR-0058)', () => {
   it('scores every method on the questions the primary answered, with prequential weights', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'ensemble' });
     await runSession(engine, script('Ens One'), { turns: 16 });
@@ -72,7 +72,7 @@ describe('ensembles of stored predictions (ADR-0056)', () => {
     expect(r.instances).toBe(instances.length);
     // The default config's primary and five shadows.
     expect(r.members.length).toBe(6);
-    expect(r.members).toContain('jev:typesafe/jev-1.13@jev-predict.v2');
+    expect(r.members).toContain('decision:typesafe/jev-1.13@jev-predict.v2');
     expect(r.methods.map((m) => m.method)).toEqual([
       'primary',
       'log-pool',
@@ -126,11 +126,11 @@ describe('ensembles of stored predictions (ADR-0056)', () => {
       'hash',
     );
     const ids = r.checkpoints[0]!.predictors.map((p) => p.predictorId);
-    expect(ids).toContain('jev:typesafe/jev-1.13');
-    expect(ids).toContain('jev:typesafe/jev-1.13@view:raw');
-    expect(ids).toContain('jev:typesafe/jev-1.13@view:summary');
-    expect(ids).toContain('jev:typesafe/jev-1.13@pool:views');
-    const n = r.checkpoints[0]!.predictors.find((p) => p.predictorId === 'jev:typesafe/jev-1.13')!.n;
+    expect(ids).toContain('decision:typesafe/jev-1.13');
+    expect(ids).toContain('decision:typesafe/jev-1.13@view:raw');
+    expect(ids).toContain('decision:typesafe/jev-1.13@view:summary');
+    expect(ids).toContain('decision:typesafe/jev-1.13@pool:views');
+    const n = r.checkpoints[0]!.predictors.find((p) => p.predictorId === 'decision:typesafe/jev-1.13')!.n;
     expect(r.checkpoints[0]!.predictors.find((p) => p.predictorId.endsWith('pool:views'))!.n).toBe(n);
     expect(renderReport(r.run)).toContain('@pool:views');
   }, 60_000);

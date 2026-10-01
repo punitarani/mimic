@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { BEHIND_SHORTFALL, categoryShares, EXPOSURE_MIN_ADAPTIVE } from '../belief';
 import { DEFAULT_PROMPT_VERSION } from '../components';
-import type { PipelineConfig } from '../config';
+import { canonicalPredictorId, type PipelineConfig, servedPredictorId } from '../config';
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
@@ -65,7 +65,7 @@ import {
 } from './deps';
 import { footprintPrediction } from './footprint';
 
-export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.jev;
+export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.decision;
 export const MIN_POOL = 6;
 export const MAX_POOL = 15;
 
@@ -533,7 +533,7 @@ async function serveWithPredictions(
   rng: () => number,
 ): Promise<NextResult> {
   const primarySpec = cfg.predictor.primary;
-  // A primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
+  // A primary may name a prompt variant (`decision:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
   const baselinePredictor = makePredictor(deps.gateway, primarySpec, ctxFor(m, 'predict.baseline'));
   // Selection scores candidates on the primary's raw scale and calibrates only what it stores, so a calibrated primary
   // changes what is stored and shown, not which question is asked (ADR-0048).
@@ -591,12 +591,13 @@ async function serveWithPredictions(
       for (const h of sel.hypothesisPreds) {
         hypothesisStates.push(h.state);
         // Stored as the primary's own output, like every row it makes; the posterior reads it on the raw scale.
+        // Named after the model that answered, should the flag have rerouted the call (ADR-0051, ADR-0054).
         const r = view.calibrate(h.result, chosen);
         hypothesisRows.push({
           id: deps.newId(),
           questionId: chosen.id,
           mimicId: m.id,
-          predictorId: primarySpec,
+          predictorId: servedPredictorId(primarySpec, h.result.servedModel),
           role: 'hypothesis',
           dist: r.dist,
           confidence: r.confidence ?? null,
@@ -619,7 +620,9 @@ async function serveWithPredictions(
   const baselines = await timed(deps, 'baseline', () => baselinePromise);
   const baselineResult = baselines[pool.indexOf(chosen)]!;
 
-  let primaryId = primarySpec;
+  // Rows are named canonically, after the model that answered: span-01 when the `decisions-model` flag rerouted the
+  // call (ADR-0051), so reports never pool it with Jev (ADR-0054). A failed primary keeps the ID of what failed.
+  let primaryId = servedPredictorId(primarySpec, primaryResult.servedModel);
   let fallback = false;
   if (!primaryResult.ok) {
     // Jev errored: LLM fallback on the same sealed state, marked as fallback (PLAN §16).
@@ -661,11 +664,11 @@ async function serveWithPredictions(
     createdAt: now,
   });
   // A question a footprint proposed carries the answer its documents implied; stored as a prediction of its own so
-  // the real answer scores the footprint like any model (ADR-0059). It reads no answers, so it is sealed trivially.
+  // the real answer scores the footprint like any model (ADR-0061). It reads no answers, so it is sealed trivially.
   const footprint = footprintPrediction(deps, m, chosen);
   const predictions = [
     pred('primary', primaryId, state, primaryResult, fallback),
-    pred('baseline', primarySpec, baseState, baselineResult),
+    pred('baseline', servedPredictorId(primarySpec, baselineResult.servedModel), baseState, baselineResult),
     // The chosen question's prediction under each persona hypothesis feeds the hypothesis posterior (§6); not scored.
     ...hypothesisRows,
     ...(footprint ? [footprint] : []),
@@ -701,7 +704,12 @@ async function serveWithPredictions(
     ]);
     await Promise.all(
       cfg.predictor.shadows.map((s) =>
-        deps.jobs.enqueue({ type: 'predict.shadow', mimicId: m.id, questionId: chosen.id, predictorId: s }),
+        deps.jobs.enqueue({
+          type: 'predict.shadow',
+          mimicId: m.id,
+          questionId: chosen.id,
+          predictorId: canonicalPredictorId(s),
+        }),
       ),
     );
   });

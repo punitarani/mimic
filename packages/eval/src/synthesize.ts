@@ -24,7 +24,7 @@ import {
 } from '@mimic/core';
 
 /**
- * `pnpm eval -- population` (ADR-0057): a calibrated population of synthetic agents built from consented real mimics,
+ * `pnpm eval -- population` (ADR-0059): a calibrated population of synthetic agents built from consented real mimics,
  * for simulations. Anchor-and-fill: a Gaussian copula over the cohort's facet means gives new facet vectors with the
  * cohort's marginals and (shrunk) correlation structure; each agent then answers the cohort's stable items by drawing
  * from the answer frequencies of its nearest real exemplars, shrunk toward the population's, so an agent is a
@@ -58,7 +58,7 @@ export interface SyntheticAgent {
   /** Facet id → the reading in words, from the facet's five labels. */
   readings: Record<string, string>;
   answers: Array<{ itemKey: string; prompt: string; options: string[]; answer: string }>;
-  /** Concordia `basic__Entity` params plus a memory bank of plain-text rows (ADR-0057). */
+  /** Concordia `basic__Entity` params plus a memory bank of plain-text rows (ADR-0059). */
   concordia: { prefab: string; params: { name: string; goal: string }; memories: string[] };
   /** Generative-agents style scratch fields. */
   smallville: { innate: string; learned: string; currently: string; lifestyle: string };

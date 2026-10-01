@@ -5,12 +5,14 @@ import {
   componentProblems,
   componentReadBy,
   DEFAULT_PROMPT_VERSION,
+  formatPredictorId,
   type Gateway,
   INCUMBENT_HARNESS,
   PER_MODEL_HARNESS_KEYS,
   type PerModelHarness,
   PREDICT_PROMPTS,
   type PredictHarness,
+  type PredictorKind,
   resolvePredictPrompt,
   seededRng,
   shuffle,
@@ -56,8 +58,8 @@ export interface OptimizeSpec {
   rngSeed: string;
 }
 
-export const DEFAULT_COMPONENTS: Record<'jev' | 'llm', ComponentId[]> = {
-  jev: ['jev.instructions', 'jev.choice'],
+export const DEFAULT_COMPONENTS: Record<PredictorKind, ComponentId[]> = {
+  decision: ['jev.instructions', 'jev.choice'],
   llm: ['predict.system', 'predict.user'],
 };
 
@@ -92,6 +94,25 @@ interface OptimizeState {
   meter: { usd: number; predictions: number; reflections: number; reflectionUsd: number };
   iteration: number;
   stopReason: string | null;
+}
+
+/**
+ * A saved run as this code reads it. Run directories from before ADR-0054 name the decision kind `jev`; their
+ * candidate hashes are unchanged (`promptHash`), so only the kind needs renaming.
+ */
+export function upgradeState(state: OptimizeState): OptimizeState {
+  const kindOf = (k: string): PredictorKind => (k === 'jev' ? 'decision' : (k as PredictorKind));
+  return {
+    ...state,
+    pool: state.pool.map((e) => ({
+      ...e,
+      candidate: {
+        ...e.candidate,
+        kind: kindOf(e.candidate.kind),
+        prompt: { ...e.candidate.prompt, kind: kindOf(e.candidate.prompt.kind) },
+      },
+    })),
+  };
 }
 
 export interface OptimizeResult {
@@ -196,8 +217,9 @@ function entry(
 }
 
 /** The next free version ID for a winner, e.g. `predict.v2` or `jev-predict.v2`. */
-export function nextVersion(kind: 'jev' | 'llm'): string {
-  const stem = kind === 'jev' ? 'jev-predict' : 'predict';
+export function nextVersion(kind: PredictorKind): string {
+  // Decision prompts keep the `jev-predict` family: their templates were written for and tuned on Jev (ADR-0054).
+  const stem = kind === 'decision' ? 'jev-predict' : 'predict';
   let n = 2;
   while (PREDICT_PROMPTS[`${stem}.v${n}`]) n++;
   return `${stem}.v${n}`;
@@ -251,7 +273,7 @@ export async function optimize(
 
   let state: OptimizeState;
   if (existsSync(statePath)) {
-    state = JSON.parse(readFileSync(statePath, 'utf8')) as OptimizeState;
+    state = upgradeState(JSON.parse(readFileSync(statePath, 'utf8')) as OptimizeState);
     // A run that stopped before the seed was scored has an empty pool; its saved spec still names the seed.
     const savedSeed = state.pool[0]?.candidate.hash ?? resolveCandidate(state.spec.seed).hash;
     if (savedSeed !== seedCandidate.hash) throw new Error(`${statePath} belongs to another seed`);
@@ -586,7 +608,11 @@ async function finish(
   const base = best.candidate.baseVersion;
   const bestInput: CandidateInput = {
     label: best.candidate.label,
-    predictor: `${best.candidate.kind}:${best.candidate.model}${base === DEFAULT_PROMPT_VERSION[best.candidate.kind] ? '' : `@${base}`}`,
+    predictor: formatPredictorId({
+      kind: best.candidate.kind,
+      model: best.candidate.model,
+      ...(base === DEFAULT_PROMPT_VERSION[best.candidate.kind] ? {} : { promptVersion: base }),
+    }),
     components: changedComponents(best.candidate),
     harness: changedHarness(best.candidate),
   };

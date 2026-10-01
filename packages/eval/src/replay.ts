@@ -40,14 +40,14 @@ export interface ReplaySpec {
   predictor: string;
   strategy: StateStrategy;
   /**
-   * Overrides of the config's state builder (ADR-0054): which answers survive the budget and the cap, the cap, and
+   * Overrides of the config's state builder (ADR-0056): which answers survive the budget and the cap, the cap, and
    * the token budget, so one export can answer "how small can the state be, and what should it keep?".
    */
   evidencePolicy?: EvidencePolicy;
   maxEvidence?: number;
   budgetTokens?: number;
   /**
-   * The evidence-view ensemble (ADR-0056): also predict every target from each of these views of the same sealed
+   * The evidence-view ensemble (ADR-0058): also predict every target from each of these views of the same sealed
    * evidence and pool the views log-linearly at equal weight. Rows `<predictor>@view:<strategy>` and
    * `<predictor>@pool:views` sit beside the main strategy's.
    */
@@ -444,7 +444,7 @@ export async function reproduceOnline(
       const state = buildState(loaded.data, stateOptions(cfg, q.seq, { forQuestions: [q] }));
       const eligible = loaded.data.evidence.filter((e) => e.seq < q.seq! && learnsFrom(e.kind)).length;
       // A trimmed state is rebuilt exactly unless the trimming ranked evidence by similarity to the candidate pool
-      // (the `mixed` and `similar` policies); the other policies rank by exported signals alone (ADR-0054).
+      // (the `mixed` and `similar` policies); the other policies rank by exported signals alone (ADR-0056).
       const policy = cfg.stateBuilder.evidencePolicy ?? 'mixed';
       const poolRanked = policy === 'mixed' || policy === 'similar';
       const overBudget =

@@ -3,12 +3,13 @@ import {
   DEFAULT_PROMPT_VERSION,
   fill,
   type PredictHarness,
+  type PredictorKind,
   type PredictPrompt,
   promptHash,
   reasoningOf,
   resolvePredictPrompt,
 } from './components';
-import { parsePredictorId, predictorIdProblem } from './config';
+import { formatPredictorId, parsePredictorId, predictorIdProblem } from './config';
 import { argmax, normalizeDist, optionKeys, temperatureScale, uncalibrate } from './distribution';
 import { type CallContext, type Gateway, isTimeoutError, isTransientError } from './gateway';
 import { answerToDistribution, confidenceOf, predictionQuestion } from './jev';
@@ -36,7 +37,7 @@ export function jevKey(q: Pick<Question, 'id'>): string {
  */
 export type PromptRef = string | Omit<PredictPrompt, 'version'> | undefined;
 
-function promptOf(kind: 'jev' | 'llm', ref: PromptRef, model: string): PredictPrompt {
+function promptOf(kind: PredictorKind, ref: PromptRef, model: string): PredictPrompt {
   // A registered version may set its harness per model (ADR-0041), so it resolves against this predictor's model.
   if (ref === undefined) return resolvePredictPrompt(DEFAULT_PROMPT_VERSION[kind], kind, model);
   if (typeof ref === 'string') return resolvePredictPrompt(ref, kind, model);
@@ -44,14 +45,20 @@ function promptOf(kind: 'jev' | 'llm', ref: PromptRef, model: string): PredictPr
   return { ...ref, version: `cand-${promptHash(ref).slice(0, 12)}` };
 }
 
-function predictorIdOf(kind: 'jev' | 'llm', model: string, prompt: PredictPrompt): string {
-  return prompt.version === DEFAULT_PROMPT_VERSION[kind]
-    ? `${kind}:${model}`
-    : `${kind}:${model}@${prompt.version}`;
+function predictorIdOf(kind: PredictorKind, model: string, prompt: PredictPrompt): string {
+  return formatPredictorId(
+    prompt.version === DEFAULT_PROMPT_VERSION[kind]
+      ? { kind, model }
+      : { kind, model, promptVersion: prompt.version },
+  );
 }
 
-/** Primary / baseline predictor: one batched Jev request per shared state (PLAN §5.1). */
-export class JevPredictor implements Predictor {
+/**
+ * Primary / baseline predictor on the Decisions API (Jev, span-01): one batched request per shared state (PLAN §5.1).
+ * When the `decisions-model` flag reroutes the call (ADR-0051), each result names the model that answered
+ * (`servedModel`), so the row is stored under it (ADR-0054).
+ */
+export class DecisionPredictor implements Predictor {
   readonly id: string;
   readonly prompt: PredictPrompt;
   constructor(
@@ -60,8 +67,8 @@ export class JevPredictor implements Predictor {
     private readonly ctx: CallContext,
     prompt?: PromptRef,
   ) {
-    this.prompt = promptOf('jev', prompt, model);
-    this.id = predictorIdOf('jev', model, this.prompt);
+    this.prompt = promptOf('decision', prompt, model);
+    this.id = predictorIdOf('decision', model, this.prompt);
   }
 
   async predict(state: PersonState, qs: Question[]): Promise<PredictionResult[]> {
@@ -79,10 +86,15 @@ export class JevPredictor implements Predictor {
         questions,
       });
       const share = res.usage.costUsd / qs.length;
+      // Set only when another model answered: a rerouted call that fell back to this model reports this model.
+      const served = res.model !== this.model ? { servedModel: res.model } : {};
       return qs.map((q) => {
         const a = res.answers[jevKey(q)];
         if (!a)
-          return failed(`missing answer for ${jevKey(q)}`, res.latencyMs, res.modelSnapshot, share, 'output');
+          return {
+            ...failed(`missing answer for ${jevKey(q)}`, res.latencyMs, res.modelSnapshot, share, 'output'),
+            ...served,
+          };
         try {
           const out: PredictionResult = {
             dist: answerToDistribution(q, a),
@@ -90,15 +102,17 @@ export class JevPredictor implements Predictor {
             latencyMs: res.latencyMs,
             modelSnapshot: res.modelSnapshot,
             ok: true,
+            ...served,
           };
           const c = confidenceOf(a);
           if (c !== undefined) out.confidence = c;
           return calibratedResult(out, q, this.prompt.harness.calibrationTemperature);
         } catch (e) {
-          return failed(String(e), res.latencyMs, res.modelSnapshot, share, 'output');
+          return { ...failed(String(e), res.latencyMs, res.modelSnapshot, share, 'output'), ...served };
         }
       });
     } catch (e) {
+      // The Gateway threw, so no model the router chose answered: the row stays under this predictor's own ID.
       const msg = e instanceof Error ? e.message : String(e);
       return qs.map(() => callFailed(e, msg, this.model));
     }
@@ -303,11 +317,11 @@ export function parseJsonLoose(text: string): unknown {
   }
 }
 
-/** A predictor from its ID: `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` (ADR-0028). */
+/** A predictor from its ID: `decision:<model>` (or `jev:<model>`) or `llm:<model>`, optionally `@<promptVersion>`. */
 export function makePredictor(gateway: Gateway, id: string, ctx: CallContext): Predictor {
   const spec = parsePredictorId(id);
-  return spec.kind === 'jev'
-    ? new JevPredictor(gateway, spec.model, ctx, spec.promptVersion)
+  return spec.kind === 'decision'
+    ? new DecisionPredictor(gateway, spec.model, ctx, spec.promptVersion)
     : new LlmPredictor(gateway, spec.model, ctx, spec.promptVersion);
 }
 
@@ -322,6 +336,7 @@ export function calibratedResult(
   t: number,
 ): PredictionResult {
   if (t === 1 || !r.ok) return r;
+  // Spread from `r`, so fields such as `servedModel` (ADR-0054) survive calibration.
   const dist = temperatureScale(r.dist, t);
   // Only a predictor that reports a confidence (Jev) gets it recomputed; an LLM's stays absent.
   if (r.confidence === undefined) return { ...r, dist };
@@ -377,8 +392,8 @@ export function selectionView(
   const raw = { ...prompt, harness: { ...prompt.harness, calibrationTemperature: 1 } };
   return {
     predictor: (ctx) =>
-      spec.kind === 'jev'
-        ? new JevPredictor(gateway, spec.model, ctx, raw)
+      spec.kind === 'decision'
+        ? new DecisionPredictor(gateway, spec.model, ctx, raw)
         : new LlmPredictor(gateway, spec.model, ctx, raw),
     calibrate: (r, q) => calibratedResult(r, q, t),
   };

@@ -396,7 +396,7 @@ ANSWERS: #seq prompt [options] → answer (why)`,
     }),
   },
   /**
-   * ADR-0055: the reader in the transfer-loss eval. A generic agent that has been handed a person-model file (a
+   * ADR-0057: the reader in the transfer-loss eval. A generic agent that has been handed a person-model file (a
    * SOUL.md, a mimic.json, a card) and nothing else: the prompt gives it no Mimic-specific help, because the point is
    * to measure what another agent gets out of the file alone. Third-person prediction, never role-play (arXiv
    * 2607.24782). The file comes first in the user message and the question last, so one file serves many questions
@@ -415,7 +415,7 @@ Return JSON: { "probs": [{ "key": string, "p": number }] } covering every option
     schema: obj({ probs: arr(obj({ key: str, p: num })) }),
   },
   /**
-   * ADR-0059: turns a person's own documents into questions whose answer the documents imply. Nothing it writes is
+   * ADR-0061: turns a person's own documents into questions whose answer the documents imply. Nothing it writes is
    * evidence: each item is pooled as an ordinary question with the implied answer stored beside it as a prediction,
    * and the person's real answer scores it. Sensitive facets are never offered to it.
    */

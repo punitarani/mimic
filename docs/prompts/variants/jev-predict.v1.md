@@ -2,7 +2,7 @@
 
 > Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0028).
 
-- Predictor kind: `jev` (use as `jev:<model>@jev-predict.v1`)
+- Predictor kind: `decision` (use as `decision:<model>`, the incumbent)
 - Source: PLAN §9.6
 - Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":1,"keyEnum":false,"labelKeys":false}`
 

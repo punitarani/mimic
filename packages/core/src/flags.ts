@@ -80,18 +80,18 @@ export type FlaggedSetting = 'BUDGET_USD' | 'BUDGET_SESSION_SHARE';
 
 export interface FlagSpec {
   key: string;
-  kind: 'string' | 'number';
+  kind: 'string' | 'number' | 'boolean';
   description: string;
   /**
    * What a read returns when the flag is missing or can't be read, which is the behaviour from before the flag. For
    * a flag over a setting, the setting's value takes this place where one is set.
    */
-  fallback: string | number;
+  fallback: FlagValue;
   setting?: FlaggedSetting;
   /** The value the code uses for a raw flag value, or null when it can't use it (the read then falls back). */
-  parse(raw: unknown): string | number | null;
+  parse(raw: unknown): FlagValue | null;
   /** Variations a new flag is created with (`flags:check --create-missing`): name → value. */
-  variations: Record<string, string | number>;
+  variations: Record<string, FlagValue>;
 }
 
 /**
@@ -113,6 +113,15 @@ function spendValue(k: keyof typeof SpendEnv.shape) {
       typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() ? Number(raw) : Number.NaN;
     return Number.isFinite(n) && SpendEnv.shape[k].safeParse(n).success ? n : null;
   };
+}
+
+/**
+ * A switch's value: a boolean, or a string or number `coerceFlag` reads as one ("on"/"off", 1/0 and the like), so a
+ * switch made in the dashboard as a string flag works too.
+ */
+function switchValue(raw: unknown): boolean | null {
+  const on = coerceFlag<boolean>(raw, true);
+  return on === coerceFlag<boolean>(raw, false) ? on : null;
 }
 
 /**
@@ -151,6 +160,15 @@ export const FLAG_SPECS = {
     setting: 'BUDGET_SESSION_SHARE',
     parse: spendValue('BUDGET_SESSION_SHARE'),
     variations: { standard: DEFAULT_SESSION_SHARE },
+  },
+  useInviteCode: {
+    key: 'use-invite-code',
+    kind: 'boolean',
+    description:
+      'Whether creating a mimic needs an invite code from INVITE_CODES: on (the default: invite-only) or off (open sign-up) (ADR-0055).',
+    fallback: true,
+    parse: switchValue,
+    variations: { on: true, off: false },
   },
 } as const satisfies Record<string, FlagSpec>;
 
@@ -224,7 +242,7 @@ export function checkFlags(live: readonly LiveFlag[], specs: readonly FlagSpec[]
 
 /** The Flagship create body for a missing flag, serving its fallback. */
 export function flagCreateBody(spec: FlagSpec): LiveFlag & { description: string } {
-  const variations: Record<string, string | number> = { ...spec.variations };
+  const variations: Record<string, FlagValue> = { ...spec.variations };
   let def = Object.entries(variations).find(([, v]) => v === spec.fallback)?.[0];
   if (!def) {
     def = String(spec.fallback);

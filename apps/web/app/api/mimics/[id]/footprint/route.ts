@@ -9,7 +9,7 @@ const Input = z.object({
 });
 
 /**
- * POST /api/mimics/:id/footprint (ADR-0059): pools questions the person's own documents imply answers to. The
+ * POST /api/mimics/:id/footprint (ADR-0061): pools questions the person's own documents imply answers to. The
  * implied answers are verified by asking, never stored as evidence. One LLM call plus the quality gates.
  */
 export const POST = handle(async (req: Request, ctx: RouteCtx<{ id: string }>) => {

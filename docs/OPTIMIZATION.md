@@ -8,7 +8,7 @@ reported; see ADR-0028 and "What is built" below. M12 (re-derivation) and M13 (g
 | Piece | Where | Notes |
 | --- | --- | --- |
 | Prompt components and registered variants | `packages/core/src/components.ts`, `docs/prompts/variants/` | `predict.system`, `predict.user`, `state.evidence.line`, `jev.instructions`, `jev.choice`, `jev.noul.true`, `jev.noul.false`; harness: reasoning effort or budget, max tokens, `probs`/`reasoned` schema, Jev state as JSON or text, calibration temperature; per-model harness overrides (ADR-0041) |
-| Variant predictor IDs | `parsePredictorId`, `makePredictor`, `pnpm backfill` | `llm:<model>@<version>`, `jev:<model>@<version>`; unsuffixed IDs unchanged |
+| Variant predictor IDs | `parsePredictorId`, `makePredictor`, `pnpm backfill` | `llm:<model>@<version>`, `decision:<model>@<version>` (`jev:` before ADR-0054, still read); unsuffixed IDs unchanged |
 | `mimic-eval evaluate` | `packages/eval/src/optimize/` | `--from stored` (free: per predictor, split, person and type; paired comparisons of each model's versions on shared questions; self-consistency; temperature, shrinkage and pooling fits) or live candidates with paired deltas and `--repeat` for the noise floor |
 | `mimic-eval diagnose` | same | One reflection-model call per person (up to `--people`) over a stored predictor's costliest misses; local only |
 | `mimic-eval optimize` | same | GEPA loop: Pareto sampling, minibatch reflection, noise-margin acceptance, leakage lint, spend and call caps, resume, holdout check, verdict ("Improved" only when the gain replicates on the holdout, ADR-0048), `PREDICT_PROMPTS` snippet |
@@ -28,14 +28,14 @@ pnpm eval -- export --env prod --out data/prod.sqlite          # or Actions → 
 pnpm eval -- evaluate --from stored --data data/prod.sqlite
 
 # Capped optimization of Jev's templates, seeded from the calibrated variant (dominated by ~$0.03 reflection calls)
-pnpm eval -- optimize --data data/prod.sqlite --predictor jev:typesafe/jev-1.13@jev-predict.v2 --max-usd 2
+pnpm eval -- optimize --data data/prod.sqlite --predictor decision:typesafe/jev-1.13@jev-predict.v2 --max-usd 2
 
 # Compare registered variants or candidate files on the same instances
 pnpm eval -- evaluate --data data/prod.sqlite --predictor llm:deepseek/deepseek-v4.1-flash --candidate best.json
 ```
 
 A winner: paste the printed `PREDICT_PROMPTS` entry into `packages/core/src/components.ts`, run
-`pnpm --filter @mimic/core gen:docs`, merge, then `pnpm backfill --predictor jev:typesafe/jev-1.13@jev-predict.v3`.
+`pnpm --filter @mimic/core gen:docs`, merge, then `pnpm backfill --predictor decision:typesafe/jev-1.13@jev-predict.v3`.
 An LLM winner's reasoning settings are written under `modelHarness` for the model it was optimized on, and the seed
 variant's shared harness and other `modelHarness` entries are carried over, so other models keep theirs.
 
@@ -673,9 +673,9 @@ The reflection model dominates: budget it explicitly (`--max-reflection-usd`) an
 | 1 | Language of the optimizer loop | TypeScript in `packages/eval`, running the real engine code |
 | 2 | Reflection model | `anthropic/claude-sonnet-5.5` on OpenRouter, low effort; `--reflection-model` overrides; never in a production config |
 | 3 | Training data for optimization | Every consented dev person in the given files (prod export, plus Twin-2K-500 if added); by person with ≥ 6 dev people, else by question; test people are the holdout only |
-| 4 | First optimization target | Jev's `jev.instructions` and `jev.choice` (default for `jev:` seeds); `predict.system` and `predict.user` for `llm:` seeds |
+| 4 | First optimization target | Jev's `jev.instructions` and `jev.choice` (default for `decision:` seeds); `predict.system` and `predict.user` for `llm:` seeds |
 | 5 | Identity in local validation runs | Scrubbed exports everywhere by default, including Actions; `--keep-identity` stays reserved for the reproduction check |
-| 6 | Predictor ID format for prompt variants | `llm:<model>@<version>` and `jev:<model>@<version>` (built) |
+| 6 | Predictor ID format for prompt variants | `llm:<model>@<version>` and `decision:<model>@<version>` (built; `jev:` until ADR-0054) |
 | 7 | Where calibration lives | Fits are reported (`evaluate --from stored`); applying one online is a later config field |
 
 ---

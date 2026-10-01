@@ -298,7 +298,7 @@ export interface PredictionResult {
   dist: Distribution; confidence?: number; costUsd: number; latencyMs: number; modelSnapshot: string;
 }
 export interface Predictor {
-  id: string;                                               // 'jev:typesafe/jev-1.13', 'llm:openai/gpt-6-luna', …
+  id: string;                                               // 'decision:typesafe/jev-1.13', 'llm:openai/gpt-6-luna', …
   predict(state: PersonState, qs: Question[]): Promise<PredictionResult[]>;
 }
 export interface CandidateGenerator { generate(ctx: GenContext, n: number): Promise<Question[]> }
@@ -359,7 +359,7 @@ export const PipelineConfig = z.object({
 | Anchors | `anchors.v1`, 10 items |
 | Generator | GPT-6 Luna, low reasoning effort, batch of 12, domain mix core 10 / casual 45 / professional 45 |
 | Selector | `entropy` with λ = 0.3, μ = 0.5 (v1–v3); `voi` since v4: K 4, λ 0.3, μ 0.5, β 0.25, γ 0.25, π 0.15, ν 0.2, exposure cap 0.35 (ADR-0027) |
-| Predictors | Primary `jev:typesafe/jev-1.13`; shadows are the three LLMs |
+| Predictors | Primary `jev:typesafe/jev-1.13` (read as `decision:`, ADR-0054); shadows are the three LLMs |
 | State builder | `full`, 8,000 tokens, retrievalK 12, recentN 6 |
 | Trait reader | Jev, after every answer |
 | Reflector | GPT-6 Luna, every 5 answers |
@@ -467,7 +467,7 @@ The snapshot is immutable, versioned and portable. It's written on a debounce af
 
 Using a mimic means running any predictor against its snapshot. Each evidence item says where it came from
 (`source`: `session`, `person` for an answer taught on the mimic page, or `agent` with the agent's name for an
-observation another agent appended; ADR-0058).
+observation another agent appended; ADR-0060).
 
 ### 8.2 Browser persistence
 
@@ -740,9 +740,9 @@ Ablation strategies:
 | `structured` | identity + traits |
 | `summary` | identity + insights |
 | `full` | everything |
-| `card` | identity + traits + at most `maxEvidence` answers chosen by the evidence policy (ADR-0054) |
+| `card` | identity + traits + at most `maxEvidence` answers chosen by the evidence policy (ADR-0056) |
 
-**Evidence policies** (`stateBuilder.evidencePolicy`, ADR-0054) decide which answers survive the budget and the cap
+**Evidence policies** (`stateBuilder.evidencePolicy`, ADR-0056) decide which answers survive the budget and the cap
 `stateBuilder.maxEvidence`: `mixed` (the rule above; the default), `recent`, `similar`, `surprise` (the answers the
 context-only baseline predicted worst: what the profile alone gets wrong) or `novelty` (the answers the sealed primary
 predicted worst at the time: what the earlier answers did not imply). Surprise and novelty are computed from the
@@ -872,12 +872,12 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `POST /api/mimics/:id/soul` | → new `soul.v1` draft, then the view | One LLM call; rate-limited, budget-guarded |
 | `PUT /api/mimics/:id/soul` | `{ rev, curation }` → view | Ignored if an equal or newer `rev` is stored; keys for replaced draft items are pruned |
 | `GET /api/mimics/:id/soul.md` | `?profile=full\|core` → `SOUL.md` (text/markdown) | `/persona.md` redirects here |
-| `POST /api/mimics/:id/observations` | `mimic-observations/1` batch → per-observation outcomes | Another agent's typed observations, stored as taught answers under its name (ADR-0058); `GET` lists them |
-| `POST /api/mimics/:id/footprint` | `{ docs }` (parsed with `@mimic/core/footprint`) → what was pooled | Questions the person's own documents imply answers to, verified by asking (ADR-0059) |
+| `POST /api/mimics/:id/observations` | `mimic-observations/1` batch → per-observation outcomes | Another agent's typed observations, stored as taught answers under its name (ADR-0060); `GET` lists them |
+| `POST /api/mimics/:id/footprint` | `{ docs }` (parsed with `@mimic/core/footprint`) → what was pooled | Questions the person's own documents imply answers to, verified by asking (ADR-0061) |
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
-**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and hides the field, and shows it only if the server rejects the code (ADR-0026, ADR-0047). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
+**Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and hides the field, and shows it only if the server rejects the code (ADR-0026, ADR-0047). The `use-invite-code` flag turns the requirement off and on without a deploy (ADR-0055). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
 **Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: the `budget-usd` flag (default $1) for configs on the standard budget, else the config's own `session.budgetUsd`. Session work (serving, shadows, refills, hypotheses) stops at the `budget-session-share` flag's share of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and SOUL.md (ADR-0035). The flags are Flagship flags in prod; without Flagship (preview, local dev) the caps are their defaults, or `BUDGET_USD` and `BUDGET_SESSION_SHARE` in `.dev.vars` (ADR-0052).
 
@@ -904,14 +904,14 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 
 ```
 mimic-eval export --env prod --out data/2026-10-01.sqlite      # wrangler d1 export → SQLite; consented only; PII scrubbed
-mimic-eval replay --data … --predictor jev:typesafe/jev-1.13 --state full --checkpoints 10,20,30 --split dev
+mimic-eval replay --data … --predictor decision:typesafe/jev-1.13 --state full --checkpoints 10,20,30 --split dev
 mimic-eval select --data … --selector bald --budget 5,10,20                  # pool-restricted simulation
 mimic-eval import twin2k500 --path …                                         # external dataset adapter
 mimic-eval report --run <id>                                                 # markdown + JSON → R2 and /lab
-mimic-eval transfer --data … --readers llm:<model> --views soul-core,card,…   # what an export loses (ADR-0055)
-mimic-eval ensemble --data …                                                 # pools of stored predictions (ADR-0056)
-mimic-eval population --data … --agents 100                                  # a synthetic cohort (ADR-0057)
-mimic-eval footprint --dir <exports> [--propose --db … --mimic <id>]          # own exports → questions (ADR-0059)
+mimic-eval transfer --data … --readers llm:<model> --views soul-core,card,…   # what an export loses (ADR-0057)
+mimic-eval ensemble --data …                                                 # pools of stored predictions (ADR-0058)
+mimic-eval population --data … --agents 100                                  # a synthetic cohort (ADR-0059)
+mimic-eval footprint --dir <exports> [--propose --db … --mimic <id>]          # own exports → questions (ADR-0061)
 ```
 
 **Replay:** for each person and each checkpoint *k*, build the state from the first *k* evidence items, predict every later non-repeat item, and score.
@@ -966,6 +966,9 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   Twin-2K-500 at k = 10, 30 and 100. Primary metric: paired Δ log loss against `context` and against `full`.
   `EVIDENCE_RULE` decides whether a view replaces `full` for the primary. E6 runs before E3b: selection can pay off
   only through a predictor that learns from answers. Run it from Actions → Evidence (`pnpm eval -- evidence`).
+  Result (2026-10-01, `docs/reports/e6-evidence.md`): `questions`. Both predictors learn from Twin's survey answers
+  (Jev +6.2 points by k = 100), and neither from Mimic's served answers, so a held-out probe set (E7) comes before
+  E3b.
 
 ---
 

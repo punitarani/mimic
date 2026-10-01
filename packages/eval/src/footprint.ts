@@ -11,7 +11,7 @@ import {
 } from '@mimic/core';
 
 /**
- * `mimic-eval footprint` (ADR-0059): finds the person's own export files in a folder and runs the core parsers on
+ * `mimic-eval footprint` (ADR-0061): finds the person's own export files in a folder and runs the core parsers on
  * them. The folder is read as the person dropped it: an X archive's `data/tweets.js`, LinkedIn's CSVs, Reddit's
  * `posts.csv` and `comments.csv`, a `github.json` with `{ user, repos }`, and any `.txt` or `.md` notes.
  */

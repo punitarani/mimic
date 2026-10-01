@@ -1989,7 +1989,102 @@ correlation across people improves.
 - **E3b stays a draft** until E6's verdict is `learns`, or a shipped view makes it so.
 
 **Spend so far.** A live smoke on one scripted person: $0.011. The full run is expected to cost about $2.
-## ADR-0054 — Evidence policies and the card state (2026-10-01)
+
+**Result (2026-10-01; `docs/reports/e6-evidence.md`).** Run `01M3TJAEA5H0GB75D8Z11Q4MMA`: 6 served people (330
+questions) and 100 Twin-2K-500 people, $2.07. Verdict: `questions`.
+- On served questions neither model learns. Jev's `full` − `context` log loss was −0.024 [−0.065, +0.019], and
+  DeepSeek's +0.024 [−0.032, +0.081].
+- On Twin both learn. At k = 30, Jev's change was −0.039 [−0.058, −0.021] and DeepSeek's −0.056 [−0.097, −0.013].
+  Jev's accuracy gain grows from −0.2 points at k = 10 to +6.2 at k = 100.
+- No view replaced `full`.
+- DeepSeek's context-only prior already beats every Jev view on served questions, so the LLM shadows' lift in /lab
+  was mostly a better prior (exploratory).
+- The state-hash reproduction check needs a `--keep-identity` export; the workflow's scrubbed export can't match, and
+  top-pick agreement (89% against the baseline, 95% against the primary) stands in for it.
+- **Decision:** E3b stays a draft. Next is a held-out probe set (proposed as E7), so learning is measured apart from
+  what selection asks next, then selection that also exploits.
+
+
+## ADR-0054 — `decision:` predictor IDs, and rerouted predictions stored under the model that answered (2026-10-01)
+
+A predictor ID's prefix names how the predictor is called, not a model: `llm:` is a chat completion that returns JSON
+probabilities, and `jev:` was the OpenRouter Decisions API (a state plus typed questions, answered with
+probabilities). With span-01 on the same API (ADR-0051), `jev:respan/span-01-…` misread, and a third model would have
+read worse. Separately, a served prediction the `decisions-model` flag rerouted to span-01 kept Jev's predictor ID, so
+`/lab`, `evaluate --from stored`, calibration fits and paired comparisons pooled the two models. ADR-0051 said reports
+split on `modelSnapshot`; none did.
+
+- **`decision:` is the kind.** `PredictorKind = 'decision' | 'llm'`; `JevPredictor` is `DecisionPredictor`. New code
+  names and stores decision predictors `decision:<model>[@<version>]` (`formatPredictorId`).
+  - **`jev:` is a permanent alias.** `parsePredictorId` reads it as `decision:`. Configs v3–v8 and `cfg.e3b.control`
+    spell their primary `jev:…`; configs are immutable and their hashes pinned, so they keep it, and a config
+    registered later may use either spelling.
+  - **Not renamed:** the prompt IDs `jev-predict.v*` (their templates were written for and tuned on Jev) and the
+    components `jev.*`, the harness field `jevState` (it is hashed), the trait method `jev` and `traitReader.type`
+    (a DB enum and hashed configs), the flag variant `jev` (it names a model), `JEV_MODEL`, `jevKey` and
+    `jevRequests` (Jev's 32K batching).
+- **One spelling wherever an ID is compared.** The Store reads and writes predictor IDs canonically
+  (`canonicalPredictorId`, a pure prefix swap), so every reader, D1 or an eval export, sees `decision:`, and nothing
+  new is written as `jev:`. IDs that don't come from the Store (configs, job payloads, CLI flags) are canonicalized
+  where they are compared: `runShadow`, `missingPredictions`, `shadowJobs`, backfill runs, `diagnose`, the benchmark,
+  and `pnpm backfill`'s SQL, which matches both spellings (`predictorIdSpellings`).
+  - Jobs keep the key they were enqueued under, so a job from before the deploy still closes its own ledger row; its
+    handler runs it as `decision:`.
+- **Hashes unchanged.** `promptHash` hashes the decision kind as `jev`, so optimizer candidates keep their
+  `cand-<hash>` labels and the eval caches stay valid; a GEPA `state.json` from before is upgraded on resume. Every
+  config hash is unchanged (pinned in `math.test.ts`); prompt hashes and candidate hashes are now pinned too.
+- **Rerouted rows name the model that answered.** `Gateway.decide` returns the model it ran on (`model`, beside the
+  dated `modelSnapshot`), and `DecisionPredictor` sets `servedModel` on a result another model answered. Primary,
+  baseline and hypothesis rows (session and playground) are stored under `servedPredictorId`: the configured ID with
+  that model swapped in, keeping the prompt version, for example `decision:respan/span-01-20260925@jev-predict.v2`.
+  Role, config hash and prompt version are the config's.
+  - A span-01 failure falls back to Jev and keeps Jev's ID; both failing keeps the configured ID; the LLM fallback is
+    unchanged (`llm:…`, `fallback`). Shadows and backfills are never rerouted, so they never set it.
+  - So `/lab`, the stored report, fits and paired comparisons list span-01 apart, under the ID the benchmark uses
+    (`CHALLENGER`); `reproduce` re-predicts a rerouted row on span-01; and a Jev backfill now fills the questions
+    span-01 served (none of their rows is Jev's), which is how the two compare on the same questions.
+- **Stored rows are relabelled after the deploy, not by a migration.** Migrations run before the new code ships
+  (`scripts/deploy/deploy.mjs`) and the old code can't parse `decision:`. `pnpm relabel:predictors`
+  (`scripts/relabel-predictors.mjs`; Actions → Relabel predictors for prod) is a dry run unless `--yes`, and safe to
+  re-run:
+  1. a shadow stored under both spellings for one question (old and new code storing it at once) keeps its better row
+     by migration 0006's rule and loses the other with its score, since the unique shadow index would refuse step 2;
+  2. `jev:` becomes `decision:` on every prediction row, in batches until a recount reaches 0;
+  3. served rows under Jev's ID whose snapshot names a challenger pinned in `DECISION_MODELS` take its ID. Any other
+     snapshot is listed, not changed.
+  - `--reverse` renames `decision:` back to `jev:`, for a code rollback; step 3 stays, since the old code reads
+    `jev:respan/span-01-…@…` as a span-01 prediction, which it was.
+  - Configs, job keys, eval reports (`eval_runs`) and `model_calls` are records of what ran, and are left alone.
+  - Runbook: `docs/DEPLOY.md`. Until it has run, the code reads both spellings, so nothing depends on its timing.
+- **No new config.** Existing mimics keep their config either way; a new config only for the spelling would split the
+  primary's history at an arbitrary point. The next config made for another reason uses `decision:`.
+- **Evidence.** `served-model.test.ts` (sessions with the flag off, on, span-01 failing and both failing; the
+  playground; `/lab` and the stored report), `relabel-predictors.test.ts` (pre-ADR-0054 rows relabelled to exactly
+  what the new code stores, idempotent, reversible), the mixed-spelling cases in `backfill.test.ts`, and the alias,
+  hash and served-ID cases in `components.test.ts`, `math.test.ts` and `challenger.test.ts`. A local run through
+  wrangler relabelled seeded rows as expected.
+- **Supersedes** ADR-0051's "A rerouted prediction keeps its config's predictor ID. Its `modelSnapshot` names the model
+  that answered, so reports split on it", and its `jev:respan/span-01-20260925@…` example: to make span-01 permanent,
+  ship a config with `decision:respan/span-01-20260925@jev-predict.v2` as primary.
+
+## ADR-0055 — The invite code behind the `use-invite-code` flag (2026-10-01)
+
+Sign-up has needed an invite code since the start (PLAN §11, ADR-0026). Opening it up, or closing it again, meant a
+code change. The gate is now a runtime lever, which is what flags are for (ADR-0052): a kill switch that is safe at
+its default and needs nothing extra deployed.
+
+- **The flag.** `use-invite-code` is a boolean, `on` by default, which is the behaviour from before the flag. The
+  registry gains a `boolean` kind for it. A string flag with on/off values (`on`, `off`, `true`, `false` and the
+  like, as `coerceFlag` reads them) works too; anything else falls back to on.
+- **One value for the environment.** It is read with the fixed targeting key `environment`, like the spend caps,
+  so the form and the server agree for every person. Unbound (preview, local dev) or unreadable, it is on.
+- **Server.** `POST /api/mimics` checks the code against `INVITE_CODES` only while the flag is on. Off, the code is
+  optional and ignored. `INVITE_CODES` stays a required secret, so the gate can be turned back on at any time.
+- **Form.** `/new` stays prerendered (ADR-0023). It asks `GET /api/invite` whether a code is needed and starts by
+  assuming one is, so the field shows as before until the server says otherwise. When the flag is off, the field
+  disappears and the code isn't required. A rejected code brings the field back, so a flag turned on while the form
+  is open still works.
+## ADR-0056 — Evidence policies and the card state (2026-10-01)
 
 The state builder kept answers by recency, similarity and anchor status once evidence outgrew the budget (PLAN §9.9),
 which measures nothing about *which* answers carry a person. Two findings say the question matters: twins reproduce
@@ -2008,7 +2103,7 @@ experiments.
 - **Cap** (`stateBuilder.maxEvidence`) bounds the answers in a state whatever the budget; the policy fill also counts
   the evidence key itself, so the budget holds exactly.
 - **`card`** (`stateBuilder.strategy`): identity, traits and the capped answers, no insights. It is the state that
-  fits a few hundred tokens, for the transfer eval (ADR-0055) and for shadows that test how small a state can be.
+  fits a few hundred tokens, for the transfer eval (ADR-0057) and for shadows that test how small a state can be.
 - **Replay** takes `--evidence`, `--max-evidence` and `--budget` overrides, computes a baseline surprise for imported
   answers that have none (sealed by construction), and counts a policy-trimmed state as checkable in
   `replay --mode online`: only `mixed` and `similar` rank against the candidate pool, which an export does not hold.
@@ -2017,7 +2112,7 @@ experiments.
 - **Not done:** marking surprising answers in the state text (a hint like `pace`), and the replay on real people that
   decides whether `surprise` or `novelty` beats `mixed` at equal tokens (docs/RESEARCH.md §6).
 
-## ADR-0055 — Transfer loss: an agent reading only the export (2026-10-01)
+## ADR-0057 — Transfer loss: an agent reading only the export (2026-10-01)
 
 ADR-0039 left "test my SOUL.md" for later. Products that load a person model truncate or re-extract it (OpenClaw caps
 a bootstrap file at 20,000 characters, Hermes keeps USER.md to 1,375, claude.ai re-extracts imports into entries), and
@@ -2025,7 +2120,7 @@ no product or paper reports what a person model loses when it moves. `pnpm eval 
 
 - For every person and checkpoint *k*, each view is rendered from the first *k* answers alone, with derived data as
   of the serve time, exactly as replay builds states: `context` (identity only, the baseline), `state` (the full
-  state the mimic uses, the reference), `card` (ADR-0054), `soul-core`, `soul-full` and `mimic-json`.
+  state the mimic uses, the reference), `card` (ADR-0056), `soul-core`, `soul-full` and `mimic-json`.
 - A **reader** that knows nothing about Mimic predicts the later (or held-out) answers from the view and nothing
   else. An LLM reader uses `transfer.v1`: third-person prediction (arXiv 2607.24782), the file first and the question
   last so one file serves many questions from a prompt cache. A Jev reader gets the file as its whole state.
@@ -2039,7 +2134,7 @@ no product or paper reports what a person model loses when it moves. `pnpm eval 
 - Scripted sessions prove the machinery only; the numbers that matter come from the consented cohort
   (docs/RESEARCH.md §3).
 
-## ADR-0056 — Ensembles of what is already stored (2026-10-01)
+## ADR-0058 — Ensembles of what is already stored (2026-10-01)
 
 Every served question carries the primary and five shadow predictions of the same sealed state (PLAN §9.6), so
 pooling them costs nothing new. `calibrationFits` already fits a fixed pool of the primary with each shadow on dev
@@ -2058,7 +2153,7 @@ people; `pnpm eval -- ensemble` adds what is honest per person without fitting a
 - Not done: a served ensemble predictor. A pool that wins offline ships as a registered variant and a shadow first
   (ADR-0024).
 
-## ADR-0057 — A population from the cohort: copula, exemplars, realism (2026-10-01)
+## ADR-0059 — A population from the cohort: copula, exemplars, realism (2026-10-01)
 
 Simulation engines take personas as text and a handful of fields (Concordia's `basic__Entity` and formative
 memories, Smallville's `scratch.json`, Sotopia's `AgentProfile`), and populations are filled from demographics by a
@@ -2085,7 +2180,7 @@ something those pipelines lack: real people's sealed answers. `pnpm eval -- popu
 - Not done: raking to external marginals, a trained twin per agent, and the in-simulation prequential check
   (docs/RESEARCH.md §5).
 
-## ADR-0058 — The observation ledger: how other agents update a mimic (2026-10-01)
+## ADR-0060 — The observation ledger: how other agents update a mimic (2026-10-01)
 
 A person model other agents cannot update goes stale the day it is exported. The memory systems those agents use
 rewrite in place: repeated consolidation turns useful memories faulty (arXiv 2605.12978, 100% to 52.6% after ten
@@ -2108,7 +2203,7 @@ truth and everything else is re-derived (PLAN §3.3). So the one thing another a
 - **Not done:** API tokens for agents (today the person's session authorises the write), an MCP server exposing
   `append_observation` and `get_view`, and host-sized views (docs/RESEARCH.md §3).
 
-## ADR-0059 — Footprint: verify by asking, never infer (2026-10-01)
+## ADR-0061 — Footprint: verify by asking, never infer (2026-10-01)
 
 Text predicts a person's traits at about *r* = 0.3 to 0.4 whatever the model (Park et al. 2015; Peters & Matz 2024),
 and a model shown someone's posts infers their location, income and worse at 85% top-1 (Staab et al., ICLR 2024).

@@ -50,9 +50,15 @@ function IntakeForm({ invite }: { invite: string | null }) {
     employer: '',
     link: '',
   });
+  // Whether the server said sign-up is open (`use-invite-code` off, ADR-0055). The page is prerendered, so until it
+  // answers, a code is needed (the flag's default); only an explicit `required: false` opens it.
+  const [signupOpen, setSignupOpen] = useState(false);
   // A code from the link stays hidden until the server rejects it; then the field appears so the person can type another.
   const [inviteLocked, setInviteLocked] = useState(invite !== null);
   const [rejections, setRejections] = useState(0);
+  // A rejected code means one is needed after all (the flag was turned on while the form was open), whatever
+  // `/api/invite` answered or answers later.
+  const inviteNeeded = !signupOpen || rejections > 0;
   const inviteRef = useRef<HTMLInputElement>(null);
   const [attest, setAttest] = useState(false);
   const [search, setSearch] = useState(true);
@@ -62,6 +68,19 @@ function IntakeForm({ invite }: { invite: string | null }) {
   const [error, setError] = useState<string | null>(null);
   const setValue = (k: keyof typeof f) => (v: string) => setF((prev) => ({ ...prev, [k]: v }));
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setValue(k)(e.target.value);
+
+  useEffect(() => {
+    let live = true;
+    api
+      .inviteRequired()
+      .then((r) => {
+        if (live) setSignupOpen(r.required === false);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
 
   // After each rejection of a linked code, put the cursor where the fix goes (once the field is shown).
   useEffect(() => {
@@ -78,7 +97,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
     setError(null);
     try {
       const r = await api.createMimic({
-        inviteCode: f.inviteCode,
+        ...(inviteNeeded ? { inviteCode: f.inviteCode } : {}),
         name: f.name,
         location: f.location,
         ...(f.occupation ? { occupation: f.occupation } : {}),
@@ -102,7 +121,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
 
   return (
     <form onSubmit={submit} className="mt-8 space-y-5" noValidate>
-      {inviteLocked ? null : (
+      {!inviteNeeded || inviteLocked ? null : (
         <Field
           label="Invite code"
           htmlFor="invite"
@@ -198,7 +217,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
       <Button
         type="submit"
         size="lg"
-        disabled={busy || !f.name || !f.location || !f.inviteCode}
+        disabled={busy || !f.name || !f.location || (inviteNeeded && !f.inviteCode)}
         className="w-full sm:w-auto"
       >
         {busy ? 'Creating…' : 'Continue'}

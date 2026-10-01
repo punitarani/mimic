@@ -2,6 +2,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   argmax,
+  canonicalPredictorId,
   DEFAULT_CONFIG,
   type EvalRunRecord,
   type Gateway,
@@ -41,7 +42,8 @@ import { renderReport } from './report';
  * predictor is shown. The verdict applies EVIDENCE_RULE, fixed before the first run.
  */
 
-export const DEFAULT_JEV = DEFAULT_CONFIG.predictor.primary;
+/** The production primary as its rows are stored (`decision:`; the config spells it `jev:`, ADR-0054). */
+export const DEFAULT_JEV = canonicalPredictorId(DEFAULT_CONFIG.predictor.primary);
 export const DEFAULT_LLM = 'llm:deepseek/deepseek-v4.1-flash@predict.v2';
 export const JEV_VIEWS: StateView[] = ['context', 'full', 'answers', 'derived', 'relevant'];
 export const LLM_VIEWS: StateView[] = ['context', 'full', 'answers'];
@@ -227,7 +229,7 @@ export interface EvidenceReport {
 
 const short = (predictor: string) => {
   const spec = parsePredictorId(predictor);
-  return spec.kind === 'jev' ? 'Jev' : (spec.model.split('/')[1] ?? spec.model);
+  return spec.kind === 'decision' ? 'Jev' : (spec.model.split('/')[1] ?? spec.model);
 };
 export const armLabel = (predictor: string, view: StateView) => `${short(predictor)} · ${view}`;
 
@@ -633,7 +635,7 @@ export function renderEvidence(r: EvidenceReport): string[] {
     out.push(
       '## Reproduction checks (served questions)',
       '',
-      'Whether the harness shows Jev what production showed it, and gets the same pick. Production asked each question in a batch with other candidates; here it is asked alone, so a pick can differ.',
+      "Whether the harness shows Jev what production showed it, and gets the same pick. States can match only on an internal `--keep-identity` export. A scrubbed export (the workflow's) replaces names and drops locations (ADR-0018), so its states never match, and top-pick agreement is the check. Production asked each question in a batch with other candidates; here it is asked alone, so a pick can differ.",
       '',
       '| Arm | Stored prediction | n | Same state | Same top pick |',
       '| --- | --- | --- | --- | --- |',
@@ -831,12 +833,13 @@ export async function evidenceCmd(argv: string[]) {
     .map((x) => positive('k', x))
     .sort((a, b) => a - b);
   const llm = values.llm === 'none' ? null : values.llm;
-  if (parsePredictorId(values.jev).kind !== 'jev')
-    throw new Error(`--jev must be a Jev predictor: ${values.jev}`);
+  if (parsePredictorId(values.jev).kind !== 'decision')
+    throw new Error(`--jev must be a decision predictor: ${values.jev}`);
   if (llm && parsePredictorId(llm).kind !== 'llm')
     throw new Error(`--llm must be an LLM predictor or none: ${llm}`);
   const o = {
-    jev: values.jev,
+    // Named canonically, so the arms, the verdict and the stored spec agree whichever spelling was given (ADR-0054).
+    jev: canonicalPredictorId(values.jev),
     llm,
     jevViews: views(values.views, JEV_VIEWS),
     llmViews: views(values['llm-views'], LLM_VIEWS),

@@ -3,15 +3,17 @@ import {
   COMPONENT_IDS,
   type ComponentId,
   calibrationTemperatureOf,
+  canonicalPredictorId,
   componentReadBy,
   DEFAULT_PROMPT_VERSION,
+  DecisionPredictor,
   type Distribution,
   expectedCalibrationError,
   expectedIndex,
+  formatPredictorId,
   type Gateway,
   harnessProblems,
   INCUMBENT_HARNESS,
-  JevPredictor,
   LlmPredictor,
   lexicalSimilarity,
   normalizeDist,
@@ -20,6 +22,7 @@ import {
   type PredictHarness,
   type PredictionResult,
   type Predictor,
+  type PredictorKind,
   type PredictPrompt,
   parsePredictorId,
   predictionQuestion,
@@ -44,7 +47,7 @@ import { personLabel } from './instances';
 
 export const CandidateInput = z.object({
   label: z.string().max(200).optional(),
-  /** Base predictor: `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` to start from a variant. */
+  /** Base predictor: `decision:<model>` (or `jev:`) or `llm:<model>`, optionally `@<promptVersion>` for a variant. */
   predictor: z.string(),
   components: z.partialRecord(z.enum(COMPONENT_IDS), z.string()).default({}),
   harness: z
@@ -66,7 +69,7 @@ export type CandidateInput = z.input<typeof CandidateInput>;
 /** A fully resolved candidate: every component and harness setting, identified by a content hash. */
 export interface Candidate {
   label: string;
-  kind: 'jev' | 'llm';
+  kind: PredictorKind;
   model: string;
   /** The registered version the candidate starts from. */
   baseVersion: string;
@@ -91,7 +94,7 @@ export function resolveCandidate(input: CandidateInput): Candidate {
   if (problems.length) throw new Error(`${c.label ?? c.predictor}: ${problems.join('; ')}`);
   const hash = promptHash(prompt).slice(0, 16);
   return {
-    label: c.label ?? `${c.predictor} ${hash.slice(0, 8)}`,
+    label: c.label ?? `${canonicalPredictorId(c.predictor)} ${hash.slice(0, 8)}`,
     kind: spec.kind,
     model: spec.model,
     baseVersion,
@@ -133,8 +136,8 @@ export function predictorFor(gateway: Gateway, c: Candidate, purpose: string): P
   const unchanged = !Object.keys(changedComponents(c)).length && !Object.keys(changedHarness(c)).length;
   const ref = unchanged ? c.baseVersion : c.prompt;
   const ctx = { purpose };
-  return c.kind === 'jev'
-    ? new JevPredictor(gateway, c.model, ctx, ref)
+  return c.kind === 'decision'
+    ? new DecisionPredictor(gateway, c.model, ctx, ref)
     : new LlmPredictor(gateway, c.model, ctx, ref);
 }
 
@@ -417,7 +420,8 @@ export async function evaluateCandidate(
     if (hit) out.set(i.id, hit);
     else todo.push(i);
   }
-  const groups = c.kind === 'jev' ? jevRequests(c, todo, opts.maxQuestionsPerRequest) : todo.map((i) => [i]);
+  const groups =
+    c.kind === 'decision' ? jevRequests(c, todo, opts.maxQuestionsPerRequest) : todo.map((i) => [i]);
 
   await mapLimit(groups, opts.concurrency ?? 8, async (g) => {
     opts.meter.check();
@@ -457,7 +461,10 @@ export function storedRecords(instances: EvalInstance[]): EvalRecord[] {
   const out: EvalRecord[] = [];
   const derived = new Map<string, Array<{ predictorId: string; t: number }>>();
   for (const inst of instances)
-    for (const p of inst.stored) {
+    for (const stored of inst.stored) {
+      // Stores read IDs canonically (ADR-0054); instances built in memory may not, and one predictor under two
+      // spellings would be reported, fitted and paired as two.
+      const p = { ...stored, predictorId: canonicalPredictorId(stored.predictorId) };
       // A primary the LLM fallback served (Jev failed) is reported apart from the configured primary and from any
       // shadow of the same model.
       const role = p.role === 'primary' && p.fallback ? 'fallback' : p.role;
@@ -489,20 +496,20 @@ export function storedRecords(instances: EvalInstance[]): EvalRecord[] {
  */
 export function derivedCalibrations(primaryId: string): Array<{ predictorId: string; t: number }> {
   const spec = parsePredictorId(primaryId);
-  if (spec.kind !== 'jev') return [];
-  const baseVersion = spec.promptVersion ?? DEFAULT_PROMPT_VERSION.jev;
-  const base = resolvePredictPrompt(baseVersion, 'jev', spec.model);
+  if (spec.kind !== 'decision') return [];
+  const baseVersion = spec.promptVersion ?? DEFAULT_PROMPT_VERSION.decision;
+  const base = resolvePredictPrompt(baseVersion, 'decision', spec.model);
   if (base.harness.calibrationTemperature !== 1) return [];
   const same = (a: PredictPrompt, b: PredictPrompt) =>
     a.harness.jevState === b.harness.jevState &&
     COMPONENT_IDS.every((id) => !componentReadBy(id, a) || a.components[id] === b.components[id]);
+  const idOf = (version: string) =>
+    formatPredictorId({ kind: 'decision', model: spec.model, promptVersion: version });
   return Object.values(PREDICT_PROMPTS)
-    .filter(
-      (v) => v.kind === 'jev' && v.id !== baseVersion && !predictorIdProblem(`jev:${spec.model}@${v.id}`),
-    )
-    .map((v) => ({ v, r: resolvePredictPrompt(v.id, 'jev', spec.model) }))
+    .filter((v) => v.kind === 'decision' && v.id !== baseVersion && !predictorIdProblem(idOf(v.id)))
+    .map((v) => ({ v, r: resolvePredictPrompt(v.id, 'decision', spec.model) }))
     .filter(({ r }) => r.harness.calibrationTemperature !== 1 && same(r, base))
-    .map(({ v, r }) => ({ predictorId: `jev:${spec.model}@${v.id}`, t: r.harness.calibrationTemperature }));
+    .map(({ v, r }) => ({ predictorId: idOf(v.id), t: r.harness.calibrationTemperature }));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -739,14 +746,16 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
     for (const p of inst.stored) {
       if (!p.ok || (p.role !== 'primary' && p.role !== 'shadow') || (p.role === 'primary' && p.fallback))
         continue;
-      const k = p.role === 'primary' ? `${p.predictorId} (primary)` : p.predictorId;
+      // One key per predictor, whichever spelling an in-memory instance carries (ADR-0054).
+      const id = canonicalPredictorId(p.predictorId);
+      const k = p.role === 'primary' ? `${id} (primary)` : id;
       const list = byPredictor.get(k);
       if (list) list.push({ inst, dist: p.dist });
       else byPredictor.set(k, [{ inst, dist: p.dist }]);
       if (p.role === 'primary') {
-        const m = primaries.get(p.predictorId) ?? new Map<string, Distribution>();
+        const m = primaries.get(id) ?? new Map<string, Distribution>();
         m.set(inst.id, p.dist);
-        primaries.set(p.predictorId, m);
+        primaries.set(id, m);
       }
     }
   const split = (ps: Pair[]) =>
@@ -766,7 +775,7 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
           fitParam(k, 'shrink to baseline', unit, d2, t2, (p, a) => shrink(p.dist, p.inst.baseline!, a), 0),
         );
     } else if (k.startsWith('llm:')) {
-      // Pools with LLM shadows only (a Jev shadow pooled with the Jev primary is a temperature fit by another name),
+      // Pools with LLM shadows only (a decision shadow pooled with a decision primary is a temperature fit by another name),
       // one fit per primary so a fit never mixes scales.
       for (const [pid, primary] of [...primaries.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const paired = ps

@@ -18,7 +18,7 @@ const script = (name: string) =>
     whys: { 'free afternoon': 'I always go for the long walk, no matter the weather' },
   });
 
-describe('transfer loss (ADR-0055)', () => {
+describe('transfer loss (ADR-0057)', () => {
   it('scores every view with every reader on the later answers, sealed, at its size', async () => {
     let t = Date.now();
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', clock: () => (t += 1_000) });
@@ -73,7 +73,7 @@ describe('transfer loss (ADR-0055)', () => {
     // The reason given on a later answer never leaks into an earlier view.
     const md = renderReport(r.run);
     expect(md).toContain('## After 8 answers (2 people)');
-    expect(md).toContain('| `jev:typesafe/jev-1.13` | soul-core |');
+    expect(md).toContain('| `decision:typesafe/jev-1.13` | soul-core |');
     const runs = await engine.deps.store.listEvalRuns();
     expect(runs.at(-1)!.id).toBe(r.run.id);
   }, 120_000);

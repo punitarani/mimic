@@ -104,7 +104,7 @@ export const SPEND_SCOPES: Readonly<Record<string, SpendScope>> = {
   'playground.baseline': 'page',
   'playground.rationale': 'page',
   'soul.draft': 'page',
-  // The footprint is proposed from the mimic page, like asking, teaching and SOUL.md (ADR-0059).
+  // The footprint is proposed from the mimic page, like asking, teaching and SOUL.md (ADR-0061).
   'footprint.propose': 'page',
   'footprint.gate': 'page',
 };
@@ -286,6 +286,13 @@ export interface GatewayDeps extends CallDeps {
   enricher?: Enricher;
 }
 
+/**
+ * A decision response and the model it ran on: the challenger's when the router rerouted the call and the challenger
+ * answered, else the model asked for (ADR-0054). `modelSnapshot` is the provider's dated name for it, so it can't stand
+ * in for the model ID.
+ */
+export type RoutedDecision = DecisionResponse & { model: string };
+
 /** The only way engine code reaches a provider: every call is logged and budget-guarded. */
 export class Gateway {
   constructor(readonly deps: GatewayDeps) {}
@@ -293,9 +300,9 @@ export class Gateway {
   /**
    * A decision call. When the router picks a challenger (ADR-0051), the challenger answers instead, and any failure of
    * it (an error after the adapter's own timeout and retries, or an incomplete answer) falls back to the request as
-   * asked. Each attempt is its own logged call, and `modelSnapshot` names the model that answered.
+   * asked. Each attempt is its own logged call; `model` and `modelSnapshot` name the model that answered.
    */
-  async decide(ctx: CallContext, req: DecisionRequest): Promise<DecisionResponse> {
+  async decide(ctx: CallContext, req: DecisionRequest): Promise<RoutedDecision> {
     const challenger = await this.challengerFor(ctx, req);
     if (!challenger) return this.decideOnce(ctx, req);
     try {
@@ -322,9 +329,13 @@ export class Gateway {
    * One logged call. A model with request limits (`planDecision`: span-01 takes a string state and yes/no questions)
    * gets the request it can take, which is what the trace records; its answers come back keyed and typed as asked.
    */
-  private decideOnce(ctx: CallContext, req: DecisionRequest, complete = false): Promise<DecisionResponse> {
+  private async decideOnce(
+    ctx: CallContext,
+    req: DecisionRequest,
+    complete = false,
+  ): Promise<RoutedDecision> {
     const plan = planDecision(req);
-    return withModelCall(
+    const res = await withModelCall(
       this.deps,
       { ...ctx, provider: this.deps.decisions.provider, model: req.model },
       plan.request,
@@ -340,6 +351,8 @@ export class Gateway {
         return res;
       },
     );
+    // Added after logging, so the model_calls row and trace are exactly what the provider returned.
+    return { ...res, model: req.model };
   }
 
   chat(ctx: CallContext, req: ChatRequest): Promise<ChatResponse> {

@@ -76,9 +76,10 @@ since it can then be deleted. The key each choice needs:
 Only the chosen providers' keys are required and pushed. A deploy adds secrets and never deletes one, so a key pushed
 earlier for a provider no longer chosen stays on the worker until `wrangler secret delete <NAME> --env prod` removes
 it (ADR-0052). Runtime levers are Flagship flags in the app `mimic` instead,
-and change without a redeploy (ADR-0052, docs/CHALLENGER.md): `decisions-model`, and the spend caps `budget-usd` (USD
+and change without a redeploy (ADR-0052, docs/CHALLENGER.md): `decisions-model`, the spend caps `budget-usd` (USD
 per mimic on the standard budget, default 1; ADR-0035) and `budget-session-share` (the session's share of it, default
-0.8). Where Flagship is unbound (preview, local dev) the caps are their code defaults, or `BUDGET_USD` and
+0.8), and `use-invite-code` (whether sign-up needs a code from `INVITE_CODES`, default on; ADR-0055). Where Flagship
+is unbound (preview, local dev) every flag reads its code default; the caps can still be set with `BUDGET_USD` and
 `BUDGET_SESSION_SHARE` in `.dev.vars`. A deploy no longer reads those two names; preflight warns if they are set.
 
 Fixtures and the hash embedder are for tests only, so preflight refuses them. Doppler's own metadata
@@ -100,12 +101,34 @@ doppler run -- pnpm deploy:preflight             # the preflight checks only
 doppler run -- pnpm deploy:config --env prod     # write wrangler.deploy.jsonc without deploying
 doppler run --config stg -- pnpm deploy:preview  # preview, from a Doppler config of your choice
 doppler run -- pnpm backfill --predictor llm:<vendor>/<model> --env prod [--yes]  # new predictor (ADR-0024, ADR-0037)
+doppler run -- pnpm relabel:predictors --env prod [--yes] [--reverse]  # stored jev: IDs → decision: (ADR-0054)
 doppler run -- pnpm flags:check                  # the Flagship app against the flag registry (also CI's Flags workflow)
 ```
 
 To backfill a new predictor on prod without local credentials, open Actions → Backfill → Run workflow. It runs the
 same script with the repository secrets and is a dry run unless "enqueue" is checked. Predictions run at "rate" a
 minute (default 30), and "retry failed" also redoes failed calls, such as rate limits and provider errors (ADR-0037).
+
+### Relabel predictor IDs (ADR-0054)
+
+The deploy that ships ADR-0054 renames the decision predictor kind from `jev:` to `decision:` in code. Rows stored
+before it still say `jev:` (the code reads them as `decision:`), and span-01 answers served behind the
+`decisions-model` flag carry Jev's ID. Relabel them once that deploy is done:
+
+1. Wait for CD to finish green: the old web app keeps writing `jev:` until its deploy completes. Don't run Backfill
+   or Relabel while CD is running.
+2. Actions → **Relabel predictors** → Run workflow (a dry run). It counts the `jev:` rows by role (and the newest, so
+   a row written after the deploy stands out), shadows stored under both spellings, span-01 answers under Jev's ID,
+   and any snapshot it won't touch.
+3. Run it again with **apply**, then a dry run once more: every count should be 0. It is safe to re-run.
+4. Check in the D1 console that `SELECT COUNT(*) FROM predictions WHERE substr(predictor_id, 1, 4) = 'jev:'` is 0,
+   and that `/lab` lists no `jev:` predictor.
+
+Configs keep `jev:` (they are hashed; the code reads it as `decision:`), and job keys, eval reports and `model_calls`
+are left as they are. To roll the code back, revert, let CD finish, then run the workflow with **reverse** and
+**apply**: the old code can't read `decision:`. Job keys stay as they are, so a reverse run also counts the jobs keyed
+`decision:` still queued (a decision backfill in progress): the old code fails them, and a backfill re-run with `jev:`
+redoes them. Locally the same script runs as `pnpm relabel:predictors` against the `pnpm dev` database.
 
 `deploy:config` is needed before the eval CLI's remote commands, `pnpm eval -- export --env prod` and
 `report --to prod`, because the checked-in configs hold `REPLACE_ME_*` placeholders instead of resource IDs.

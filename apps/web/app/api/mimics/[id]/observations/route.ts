@@ -2,7 +2,7 @@ import { importObservations, listObservations, ObservationBatch } from '@mimic/c
 import { body, deps, fail, handle, ok, ownMimic, type RouteCtx, rateLimited } from '@/lib/server';
 
 /**
- * POST /api/mimics/:id/observations (ADR-0058): an agent's observation ledger (`mimic-observations/1`). Each
+ * POST /api/mimics/:id/observations (ADR-0060): an agent's observation ledger (`mimic-observations/1`). Each
  * observation is stored as a taught answer with the agent named in its provenance, and the mimic re-derives itself
  * from the evidence. No model call on this path; learning runs in the background like any taught answer.
  */

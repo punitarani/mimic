@@ -108,7 +108,7 @@ describe('calibrated primary (cfg.default.v7, ADR-0048)', () => {
       for (const [seq, p7] of b) {
         const p6 = a.get(seq)!;
         expect(p6.promptVersion).toBe('jev-predict.v1');
-        expect(p7.predictorId).toBe('jev:typesafe/jev-1.13@jev-predict.v2');
+        expect(p7.predictorId).toBe('decision:typesafe/jev-1.13@jev-predict.v2');
         expect(p7.promptVersion).toBe('jev-predict.v2');
         const want = temperatureScale(p6.dist, 4);
         for (const k of Object.keys(want)) expect(p7.dist[k]).toBeCloseTo(want[k]!, 12);
@@ -121,7 +121,7 @@ describe('calibrated primary (cfg.default.v7, ADR-0048)', () => {
     expect(h7.length).toBeGreaterThan(0);
     expect(h7.length).toBe(h6.length);
     h7.forEach((p7, i) => {
-      expect(p7.predictorId).toBe('jev:typesafe/jev-1.13@jev-predict.v2');
+      expect(p7.predictorId).toBe('decision:typesafe/jev-1.13@jev-predict.v2');
       expect(p7.promptVersion).toBe('jev-predict.v2');
       const want = temperatureScale(h6[i]!.dist, 4);
       for (const k of Object.keys(want)) expect(p7.dist[k]).toBeCloseTo(want[k]!, 12);

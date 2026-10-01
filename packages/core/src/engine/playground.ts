@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { servedPredictorId } from '../config';
 import { argmax } from '../distribution';
 import {
   type DraftQuestion,
@@ -113,7 +114,7 @@ export async function predictPlayground(
     servedAt: null,
     stateAt: null,
   };
-  // The primary may name a prompt variant (`jev:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
+  // The primary may name a prompt variant (`decision:<model>@<version>`, ADR-0028); the baseline uses the same prompt.
   const primarySpec = cfg.predictor.primary;
   const state = await sealedState(deps, loaded, cfg, seq, [q]);
   const base = contextState(loaded, cfg);
@@ -130,7 +131,8 @@ export async function predictPlayground(
     id: deps.newId(),
     questionId: q.id,
     mimicId: m.id,
-    predictorId: primarySpec,
+    // Named after the model that answered, should the flag have rerouted the call (ADR-0051, ADR-0054).
+    predictorId: servedPredictorId(primarySpec, r.servedModel),
     role,
     dist: r.dist,
     confidence: r.confidence ?? null,
@@ -213,7 +215,7 @@ const FEEDBACK_ATTEMPTS = 3;
  * race for a seq is retried.
  */
 /**
- * Where a feedback answer came from (ADR-0058): the person on the mimic page by default, or an agent's observation
+ * Where a feedback answer came from (ADR-0060): the person on the mimic page by default, or an agent's observation
  * ledger, which names the agent and keeps the observation's own metadata on the question.
  */
 export interface FeedbackOrigin {

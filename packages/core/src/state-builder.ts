@@ -14,14 +14,14 @@ import {
 } from './types';
 
 /**
- * What a state holds (PLAN §9.9). `card` (ADR-0054) is the compact one: identity, traits and a capped number of
+ * What a state holds (PLAN §9.9). `card` (ADR-0056) is the compact one: identity, traits and a capped number of
  * answers chosen by the evidence policy, for transfer to other agents and for measuring how small a state can be.
  */
 export type StateStrategy = 'raw' | 'structured' | 'summary' | 'full' | 'card';
 export const STATE_STRATEGIES = ['raw', 'structured', 'summary', 'full', 'card'] as const;
 
 /**
- * Which answers are kept once evidence outgrows the budget or the cap (ADR-0054):
+ * Which answers are kept once evidence outgrows the budget or the cap (ADR-0056):
  * - `mixed` (the incumbent): the last `recentN`, the `retrievalK` most similar to the targets, and every anchor;
  * - `recent`: the latest answers only;
  * - `similar`: the answers most similar to the target questions only;
@@ -48,14 +48,14 @@ export interface EvidenceItem {
   latencyMs?: number;
   /**
    * How badly the context-only baseline predicted this answer: its log loss divided by log|options|, in [0, 1]
-   * (ADR-0054). Absent without a sealed baseline (repeats, feedback, imported answers).
+   * (ADR-0056). Absent without a sealed baseline (repeats, feedback, imported answers).
    */
   surprise?: number;
   /** The same for the sealed primary at the time, on its raw scale: how much the earlier answers failed to imply it. */
   novelty?: number;
 }
 
-/** Surprise of an answer from a prediction's log loss on it, normalised by the number of options (ADR-0054). */
+/** Surprise of an answer from a prediction's log loss on it, normalised by the number of options (ADR-0056). */
 export function surpriseOf(logLoss: number, nOptions: number): number {
   return Math.min(1, Math.max(0, logLoss / Math.log(Math.max(2, nOptions))));
 }
@@ -83,9 +83,9 @@ export interface BuildOptions {
   queryEmbedding?: number[];
   /** Annotate evidence with `pace` against the person's median latency over the sealed evidence (builder `.v2`). */
   latencyHints?: boolean;
-  /** Which answers survive the budget and the cap (ADR-0054); `mixed` when absent. */
+  /** Which answers survive the budget and the cap (ADR-0056); `mixed` when absent. */
   evidencePolicy?: EvidencePolicy;
-  /** At most this many answers in the state, whatever the budget (ADR-0054); unlimited when absent. */
+  /** At most this many answers in the state, whatever the budget (ADR-0056); unlimited when absent. */
   maxEvidence?: number;
 }
 
@@ -151,7 +151,7 @@ export function buildState(m: MimicData, opts: BuildOptions): PersonState {
       .filter((e) => e.seq < opts.beforeSeq && learnsFrom(e.kind))
       .sort((a, b) => a.seq - b.seq);
     // The incumbent accounts for the sections alone; a policy fill runs closer to the line, so it also counts the
-    // evidence key itself, and the budget then holds exactly (ADR-0054).
+    // evidence key itself, and the budget then holds exactly (ADR-0056).
     const used =
       policy === 'mixed'
         ? estimateTokens({ identity, traits, insights })
@@ -223,7 +223,7 @@ function selectEvidence(
 
   const policy = opts.evidencePolicy ?? 'mixed';
   if (policy !== 'mixed') {
-    // One ranking, then a greedy fill under the cap and the budget, rendered in seq order (ADR-0054).
+    // One ranking, then a greedy fill under the cap and the budget, rendered in seq order (ADR-0056).
     const kept: EvidenceItem[] = [];
     for (const e of rankByPolicy(items, policy, m, opts)) {
       if (kept.length >= cap) break;
@@ -264,7 +264,7 @@ function selectEvidence(
 }
 
 /**
- * The answers in the order a policy keeps them (ADR-0054). Ties, and answers without the policy's signal, fall back
+ * The answers in the order a policy keeps them (ADR-0056). Ties, and answers without the policy's signal, fall back
  * to recency, so the ranking is total and deterministic from exported data.
  */
 export function rankByPolicy(

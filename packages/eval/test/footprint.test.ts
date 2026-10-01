@@ -19,7 +19,7 @@ When a side project stalls I come back to it on a quiet weekend rather than star
 
 I rewrote our build tool in Rust last spring mostly because I wanted to learn it.`;
 
-describe('footprint proposals: verify by asking (ADR-0059)', () => {
+describe('footprint proposals: verify by asking (ADR-0061)', () => {
   it('pools implied questions, scores the footprint when they are served, and never stores a document as evidence', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'footprint' });
     const m = await createMimic(
@@ -61,8 +61,9 @@ describe('footprint proposals: verify by asking (ADR-0059)', () => {
     expect(await engine.deps.blobs.get(call.r2TraceKey)).not.toContain('Sam');
 
     // Answer the anchors, then the session reaches the pool; a served footprint question carries its own prediction.
+    // Both footprint questions are usually served within 32 questions; the cap only bounds a run where ties fall late.
     let footprintScored = 0;
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < 40 && footprintScored < 2; i++) {
       const next = await serveNext(engine.deps, m.id);
       if (next.status !== 'question') break;
       await engine.drain((j) => j.type !== 'snapshot.write');

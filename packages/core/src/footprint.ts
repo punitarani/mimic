@@ -4,7 +4,7 @@ import { specialAreasOfText } from './scope';
 import type { SpecialArea } from './types';
 
 /**
- * Footprint (ADR-0059): a person's own digital record, from exports they request themselves (an X archive, a
+ * Footprint (ADR-0061): a person's own digital record, from exports they request themselves (an X archive, a
  * LinkedIn data export, a Reddit data request, GitHub, or notes they paste), turned into plain documents. Pure
  * functions on strings, so the browser can parse an archive without uploading it and the server only ever sees
  * what the person chose to send. Nothing here infers anything: documents become evidence only by way of questions
