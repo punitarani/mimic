@@ -74,3 +74,6 @@ jobs:
           EMBEDDINGS_PROVIDER: ${{ secrets.EMBEDDINGS_PROVIDER }}
           SEARCH_PROVIDER: ${{ secrets.SEARCH_PROVIDER }}
           ENRICH_PROVIDER: ${{ secrets.ENRICH_PROVIDER }}
+          # Retired (ADR-0052): never deployed, passed only so preflight can name them for deletion from Doppler.
+          BUDGET_USD: ${{ secrets.BUDGET_USD }}
+          BUDGET_SESSION_SHARE: ${{ secrets.BUDGET_SESSION_SHARE }}

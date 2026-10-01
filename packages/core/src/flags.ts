@@ -75,7 +75,7 @@ export class StaticFlags implements FlagReader {
 // The registry: every flag the code reads, defined once
 // ---------------------------------------------------------------------------------------------------------------
 
-/** The Worker vars a flag overrides (`flaggedEnv`); the var, where one is set (local dev), stays the fallback. */
+/** The Worker vars a flag overrides (`flaggedEnv`); a var, where one is set, stays the fallback under the flag. */
 export type FlaggedSetting = 'BUDGET_USD' | 'BUDGET_SESSION_SHARE';
 
 export interface FlagSpec {

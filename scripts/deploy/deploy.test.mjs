@@ -223,9 +223,9 @@ describe('config', () => {
   });
 
   it('names Doppler values worth deleting: overrides equal to wrangler.jsonc, and retired names', () => {
-    assert.deepEqual(redundantSettings(worker, 'prod', {}), []);
+    assert.deepEqual(redundantSettings([worker, web], 'prod', {}), []);
     assert.deepEqual(
-      redundantSettings(worker, 'prod', {
+      redundantSettings([worker, web], 'prod', {
         VECTOR_BACKEND: 'vectorize',
         EMBEDDINGS_PROVIDER: ' openrouter ',
         SEARCH_PROVIDER: 'perplexity', // a real override: kept
@@ -236,6 +236,13 @@ describe('config', () => {
         'EMBEDDINGS_PROVIDER equals its value in wrangler.jsonc; delete it from Doppler',
         'BUDGET_USD is no longer read (it lives in the budget-usd flag (ADR-0052)); delete it from Doppler',
       ],
+    );
+    // An override reaches both Workers: if the web app sets another value, deleting it would change the web app.
+    const webElsewhere = structuredClone(web);
+    webElsewhere.env.prod.vars.EMBEDDINGS_PROVIDER = 'workers-ai';
+    assert.deepEqual(
+      redundantSettings([worker, webElsewhere], 'prod', { EMBEDDINGS_PROVIDER: 'openrouter' }),
+      [],
     );
   });
 

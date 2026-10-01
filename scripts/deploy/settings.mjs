@@ -58,14 +58,16 @@ export function providerSecrets(vars) {
 
 /**
  * Deploy-environment values worth deleting (names only, never values): overrides equal to the checked-in setting, and
- * retired names. `config` is the worker's, whose vars are the superset.
+ * retired names. An override goes to every Worker (`resolveSettings`), so it is redundant only when each config that
+ * sets the name sets it to the same value: deleting it must change neither Worker.
  */
-export function redundantSettings(config, env, source) {
-  const defaults = envBlock(config, env).vars ?? {};
+export function redundantSettings(configs, env, source) {
+  const blocks = configs.map((c) => envBlock(c, env).vars ?? {});
   const out = [];
   for (const name of Object.keys(SETTINGS)) {
     const value = source[name]?.trim();
-    if (value && defaults[name] !== undefined && String(defaults[name]) === value)
+    const set = blocks.filter((v) => v[name] !== undefined);
+    if (value && set.length && set.every((v) => String(v[name]) === value))
       out.push(`${name} equals its value in wrangler.jsonc; delete it from Doppler`);
   }
   for (const [name, home] of Object.entries(RETIRED))

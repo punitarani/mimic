@@ -86,9 +86,12 @@ changing without a deploy, safe at its default, and needing nothing deployed bey
   - The app's `search-provider`, `enrich-provider`, `embeddings-provider` and `vector-backend` flags are no longer
     read; the check lists them as unused, and they can be deleted.
 - **Secrets** and the local-only `DEV_MODE` and `EGRESS_RELAY` stay env vars.
-- **Cost of a read.** Workers evaluate flags from configuration Flagship pushes to the edge, with no round trip per
-  read. Each request, queue batch or cron run reads the two caps once, and each served decision call reads
-  `decisions-model` once.
+- **Cost of a read.** Cloudflare documents evaluation as local, from configuration Flagship pushes to the edge. The
+  dashboard still reported p90 65 ms per evaluation on 2026-09-30, so reads are kept few:
+  - each request, queue batch or cron run reads the two caps once, in parallel;
+  - each served decision call reads `decisions-model` once.
+- **A failed read.** A cap falls to its code default ($1, share 0.8), the conservative side for spend, and is logged
+  once. Flagship keeps evaluating from the last propagated configuration if its control plane is down.
 
 ### Checks that the flags are defined and readable
 

@@ -1917,6 +1917,14 @@ changed those values in that time. This ADR gives every value one home, chosen b
 - **Spend caps.** In prod the flag is the only source. The deploy no longer reads `BUDGET_USD` or
   `BUDGET_SESSION_SHARE`, and preflight warns if they are set. Without Flagship (preview, local dev) the caps are
   the code defaults, or those vars in `.dev.vars`.
+  - In prod a failed read now falls to the code default ($1) rather than a deployed var.
+  - That is the conservative side for a cap: a mimic past $1 is refused until the read works again. It never
+    overspends.
+  - The deployed var it replaces wasn't the flag's $2 either (preflight reported the flag serving 2 over it), so
+    this is no looser than before.
+  - Flagship evaluates from the last propagated configuration when its control plane is down, so only a failing
+    binding reaches the default.
+  - Moving the default itself is a code change to `DEFAULT_BUDGET_USD`, reviewed like any other.
 - **Worker vars in `wrangler.jsonc`: deploy-time choices.** `SEARCH_PROVIDER`, `ENRICH_PROVIDER`,
   `EMBEDDINGS_PROVIDER` and `VECTOR_BACKEND` are checked-in settings. Doppler may override one; preflight warns
   when an override equals the checked-in value, so a redundant one can be deleted. They are not flags because:
@@ -1933,3 +1941,6 @@ changed those values in that time. This ADR gives every value one home, chosen b
   - The `budget-usd` flag's $2 still applies.
 - **Retiring the dashboard flags.** `search-provider`, `enrich-provider`, `embeddings-provider` and `vector-backend`
   are warnings in `flags:check` (no code reads them), never failures. They can be deleted once this deploy is live.
+- **Leftover provider keys.** `wrangler deploy --secrets-file` adds secrets and never deletes them, so a key that
+  ADR-0051 pushed for a provider not chosen (`PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`) stays on the worker, and is
+  no longer rotated with Doppler. Delete each with `wrangler secret delete <NAME> --env prod` from `apps/worker`.

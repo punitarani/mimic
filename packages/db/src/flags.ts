@@ -65,10 +65,10 @@ export type FlaggedVars = Partial<Record<FlaggedSetting, string | number>> & { F
 const SETTING_SPECS: FlagSpec[] = ALL_FLAGS.filter((s) => s.setting);
 
 /**
- * The environment with each flag's value over its var (ADR-0051): in deployed environments the flag is the source of
- * truth (ADR-0052), and the var, where one is set (local dev), is only the fallback. A flag overrides when its value
- * parses and differs; otherwise the var stands and the reason is logged once. Without FLAGS the environment is
- * returned as is.
+ * The environment with each flag's value over its var (ADR-0051). Where FLAGS is bound (prod) the flag is the source
+ * of truth (ADR-0052): deploys set no such var, so a failed read falls back to the code default. A flag overrides when
+ * its value parses and differs; otherwise the var stands and the reason is logged once. Without FLAGS (preview, local
+ * dev) the environment, `.dev.vars` included, is returned as is.
  */
 export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
   if (!env.FLAGS) return env;

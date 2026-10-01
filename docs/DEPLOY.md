@@ -73,7 +73,9 @@ since it can then be deleted. The key each choice needs:
 | `EMBEDDINGS_PROVIDER` | `workers-ai`, `openrouter` | `openrouter` | — (the same 768-d bge-base model either way) |
 | `VECTOR_BACKEND` | `vectorize`, `sql` | `vectorize` | — |
 
-Only the chosen providers' keys are required and pushed. Runtime levers are Flagship flags in the app `mimic` instead,
+Only the chosen providers' keys are required and pushed. A deploy adds secrets and never deletes one, so a key pushed
+earlier for a provider no longer chosen stays on the worker until `wrangler secret delete <NAME> --env prod` removes
+it (ADR-0052). Runtime levers are Flagship flags in the app `mimic` instead,
 and change without a redeploy (ADR-0052, docs/CHALLENGER.md): `decisions-model`, and the spend caps `budget-usd` (USD
 per mimic on the standard budget, default 1; ADR-0035) and `budget-session-share` (the session's share of it, default
 0.8). Where Flagship is unbound (preview, local dev) the caps are their code defaults, or `BUDGET_USD` and

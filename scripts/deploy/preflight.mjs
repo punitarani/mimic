@@ -70,7 +70,7 @@ export function checkNames(source, webConfig, workerConfig, env) {
   ];
   const warnings = [
     ...DEV_ONLY.filter((k) => source[k]).map((k) => `${k} is set; it is for local dev only and is ignored`),
-    ...redundantSettings(workerConfig, env, source),
+    ...redundantSettings([workerConfig, webConfig], env, source),
   ];
   const domain = customDomain(webConfig, env);
   if (domain && source.APP_URL) {
