@@ -38,6 +38,16 @@ import {
 } from './optimize/evaluate';
 import type { EvalInstance } from './optimize/instances';
 import { renderReport } from './report';
+import {
+  configLabel,
+  E8_SETTINGS,
+  REQUEST_VARIANTS,
+  type RequestKey,
+  type Setting,
+  TUNE_SETTINGS,
+  type TuneConfig,
+  tune,
+} from './tuning';
 
 /**
  * E8 (docs/MODELS.md, ADR-0068): which decision model predicts a person best? Every model answers the same sealed
@@ -54,7 +64,7 @@ export const DEFAULT_PREDICTORS = [
   PPLX_DECIDER_MODEL,
 ].map((model) => `decision:${model}`);
 /** `full` first, so `context` reuses its prediction where a state holds no answers yet. */
-export const MODELS_VIEWS: StateView[] = ['full', 'context'];
+export const MODELS_VIEWS: StateView[] = E8_SETTINGS.map((s) => s.view);
 export const SERVED = 'served';
 export const TWIN = 'twin';
 const DATASETS = [SERVED, TWIN] as const;
@@ -220,6 +230,8 @@ export interface Arm {
   dataset: string;
   predictor: string;
   view: StateView;
+  /** The setting (`E8_SETTINGS`, `TUNE_SETTINGS`): its view, asked with its request variant. */
+  setting: string;
   records: EvalRecord[];
   /** Instance IDs per Decisions request the arm sent (reused predictions sent none). */
   requests: string[][];
@@ -248,15 +260,28 @@ export function planChunks(served: EvalInstance[], twin: EvalInstance[], size: n
   return out;
 }
 
+/** Each predictor's candidate per request variant its settings use. */
+export type ArmCandidates = Map<string, Map<RequestKey, Candidate>>;
+
+export function armCandidates(predictors: string[], settings: Setting[]): ArmCandidates {
+  const keys = [...new Set(settings.map((s) => s.request))];
+  return new Map(
+    predictors.map((p) => [
+      p,
+      new Map(keys.map((k) => [k, resolveCandidate({ predictor: p, label: p, ...REQUEST_VARIANTS[k] })])),
+    ]),
+  );
+}
+
 /**
- * Every candidate and view on one chunk: models side by side, views in order, one batch limit for all, so each request
- * carries the same questions whichever model answers it. A budget stop anywhere drops the chunk for every arm, so no
- * model keeps a subset the others lack.
+ * Every model and setting on one chunk: models side by side, settings in order, one batch limit for all, so each
+ * request carries the same questions whichever model answers it. A budget stop anywhere drops the chunk for every
+ * arm, so no model keeps a subset the others lack.
  */
 export async function runChunk(
   chunk: Chunk,
-  cands: Candidate[],
-  views: StateView[],
+  cands: ArmCandidates,
+  settings: Setting[],
   opts: {
     gateway: Gateway;
     meter: Meter;
@@ -265,14 +290,18 @@ export async function runChunk(
     maxQuestions: number;
   },
 ): Promise<{ arms: Arm[] } | { stop: BudgetStop }> {
-  const viewed = new Map(views.map((v) => [v, viewInstances(chunk.instances, v)]));
+  const viewed = new Map(
+    [...new Set(settings.map((s) => s.view))].map((v) => [v, viewInstances(chunk.instances, v)]),
+  );
   const settled = await Promise.allSettled(
-    cands.map(async (c) => {
+    [...cands].map(async ([predictor, byRequest]) => {
       const arms: Arm[] = [];
-      for (const view of views) {
-        const vs = viewed.get(view)!;
+      for (const setting of settings) {
+        const c = byRequest.get(setting.request)!;
+        const vs = viewed.get(setting.view)!;
         const key = (id: string) => `${c.hash}|${id}`;
-        // A state another view already showed this model (no answers yet: `context` is `full`) costs nothing again.
+        // A state another setting already showed this model with the same request (no answers yet: `context` is
+        // `full`; on Twin, with no traits, `answers` is `full`) costs nothing again.
         const reused = new Set(vs.filter((x) => opts.cache.has(key(x.v.id))).map((x) => x.v.id));
         const records = await evaluateCandidate(
           c,
@@ -294,8 +323,9 @@ export async function runChunk(
         ).map((g) => g.map((id) => orig.get(id)!));
         arms.push({
           dataset: chunk.dataset,
-          predictor: c.label,
-          view,
+          predictor,
+          view: setting.view,
+          setting: setting.key,
           records: records.map((r) => ({
             ...r,
             instanceId: orig.get(r.instanceId)!,
@@ -433,6 +463,43 @@ export interface ModelsReport {
   ops: Record<string, OpStats>;
   rates: Record<string, ListRate>;
   verdict: ModelsVerdict;
+  /** E8b, on a tuning run (`--tune`). */
+  tuning?: TuningReport;
+}
+
+export interface TunedModel {
+  dataset: string;
+  predictor: string;
+  /** Chosen on everyone: the configuration to deploy. */
+  chosen: TuneConfig;
+  /** People whose own fold chose `chosen`, of `people`. */
+  agree: number;
+  people: number;
+  /** E8 as run (`full`, one leave-one-person-out temperature), and the model tuned (nested). */
+  incumbent: { logLoss: number; itemAcc: number };
+  tuned: { logLoss: number; itemAcc: number };
+  /** `chosen` scored on everyone, as E8 scores a setting: optimistic, since everyone also chose it. */
+  inSample: number;
+  /** Tuned − incumbent, paired. */
+  gain: Delta;
+  scores: Array<{ config: TuneConfig; logLoss: number }>;
+}
+
+export interface TuningReport {
+  settings: Setting[];
+  models: TunedModel[];
+  /** Each tuned challenger − the tuned reference. */
+  deltas: Array<{ dataset: string; predictor: string; delta: Delta }>;
+  /** The tuned reference − the reference as served (its production temperature, `full`), when the reference is Jev. */
+  production: Array<{ dataset: string; t: number; delta: Delta }>;
+  /**
+   * MODELS_RULE's quality checks, tuned reference against the reference as served: true leads to a shadow for its
+   * chosen setting (its own ADR). Null without both datasets.
+   */
+  productionBetter: boolean | null;
+  /** Over the requests of each model's chosen settings, both datasets. */
+  ops: Record<string, OpStats>;
+  verdict: ModelsVerdict;
 }
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
@@ -564,6 +631,26 @@ export function decideModels(input: RuleInput, rule = MODELS_RULE): ModelsVerdic
   return { reference: ref, challengers, recommendation: recommended[0]?.predictor ?? null };
 }
 
+/** Errors, latency and cost over the arms' requests together; null without a prediction. */
+export function opsOf(arms: Arm[]): OpStats | null {
+  const records = arms.flatMap((a) => a.records);
+  if (!records.length) return null;
+  const stats = requestStats(
+    records,
+    arms.flatMap((a) => a.requests),
+  );
+  const errors = records.filter((r) => !r.ok).length;
+  return {
+    predictions: records.length,
+    errors,
+    errorRate: errors / records.length,
+    answeredRequests: stats.answeredRequests,
+    p50LatencyMs: stats.p50LatencyMs,
+    p95LatencyMs: stats.p95LatencyMs,
+    costPerRequestUsd: stats.costPerRequestUsd,
+  };
+}
+
 export function analyzeModels(
   arms: Arm[],
   o: {
@@ -580,11 +667,13 @@ export function analyzeModels(
     canary: CanaryResult[];
   },
 ): ModelsReport {
-  const arm = (dataset: string, predictor: string, view: StateView) =>
-    arms.find((a) => a.dataset === dataset && a.predictor === predictor && a.view === view);
+  // E8 as pre-registered reads only its own settings; a tuning run's other settings are E8b's (`analyzeTuning`).
+  const e8 = arms.filter((a) => E8_SETTINGS.some((s) => s.key === a.setting));
+  const arm = (dataset: string, predictor: string, setting: string) =>
+    e8.find((a) => a.dataset === dataset && a.predictor === predictor && a.setting === setting);
   const cal = new Map<Arm, EvalRecord[]>();
   const rows: ModelRow[] = [];
-  for (const a of arms) {
+  for (const a of e8) {
     const { records, t } = calibrated(a.records);
     cal.set(a, records);
     const m = metricsOf(a.records);
@@ -617,7 +706,7 @@ export function analyzeModels(
       ),
     });
   }
-  const datasets = DATASETS.filter((d) => arms.some((a) => a.dataset === d));
+  const datasets = DATASETS.filter((d) => e8.some((a) => a.dataset === d));
   const calFull = (dataset: string, p: string) => {
     const a = arm(dataset, p, 'full');
     return a ? cal.get(a)! : [];
@@ -691,23 +780,8 @@ export function analyzeModels(
   // Operations over every request of the `full` view, both datasets together.
   const ops: Record<string, OpStats> = {};
   for (const p of o.predictors) {
-    const full = arms.filter((a) => a.predictor === p && a.view === 'full');
-    const records = full.flatMap((a) => a.records);
-    if (!records.length) continue;
-    const stats = requestStats(
-      records,
-      full.flatMap((a) => a.requests),
-    );
-    const errors = records.filter((r) => !r.ok).length;
-    ops[p] = {
-      predictions: records.length,
-      errors,
-      errorRate: errors / records.length,
-      answeredRequests: stats.answeredRequests,
-      p50LatencyMs: stats.p50LatencyMs,
-      p95LatencyMs: stats.p95LatencyMs,
-      costPerRequestUsd: stats.costPerRequestUsd,
-    };
+    const x = opsOf(e8.filter((a) => a.predictor === p && a.setting === 'full'));
+    if (x) ops[p] = x;
   }
 
   const verdict = decideModels({
@@ -738,7 +812,7 @@ export function analyzeModels(
     stopReason: o.stopReason,
     canary: o.canary,
     datasets: datasets.map((d) => {
-      const a = arm(d, o.reference, 'full') ?? arms.find((x) => x.dataset === d)!;
+      const a = arm(d, o.reference, 'full') ?? e8.find((x) => x.dataset === d)!;
       return { key: d, people: new Set(a.records.map((r) => r.mimicId)).size, instances: a.records.length };
     }),
     rows,
@@ -752,6 +826,108 @@ export function analyzeModels(
   };
 }
 
+/**
+ * E8b (docs/MODELS.md §9, ADR-0069): every model, Jev included, at the configuration nested leave-one-person-out
+ * cross-validation chooses per dataset; MODELS_RULE then compares the tuned challengers with the tuned reference.
+ */
+export function analyzeTuning(
+  arms: Arm[],
+  o: { reference: string; predictors: string[]; settings: Setting[]; k: number },
+): TuningReport {
+  const order = o.settings.map((s) => s.key);
+  const datasets = DATASETS.filter((d) => arms.some((a) => a.dataset === d));
+  const tuned = new Map<string, EvalRecord[]>();
+  const models: TunedModel[] = [];
+  const chosenArms = new Map<string, Arm[]>();
+  for (const d of datasets)
+    for (const p of o.predictors) {
+      const mine = arms.filter((a) => a.dataset === d && a.predictor === p);
+      if (!mine.length) continue;
+      const res = tune(new Map(mine.map((a) => [a.setting, a.records])), order);
+      tuned.set(`${d}|${p}`, res.records);
+      const incumbent = calibrated(mine.find((a) => a.setting === order[0])!.records).records;
+      const mi = metricsOf(incumbent);
+      const mt = metricsOf(res.records);
+      models.push({
+        dataset: d,
+        predictor: p,
+        chosen: res.chosen,
+        agree: res.agree,
+        people: res.people,
+        incumbent: { logLoss: mi.logLoss, itemAcc: mi.itemAcc },
+        tuned: { logLoss: mt.logLoss, itemAcc: mt.itemAcc },
+        inSample: res.scores.find((x) => x.config === res.chosen)!.logLoss,
+        gain: clusteredDelta(incumbent, res.records, `${pairSeed(d, p, p)}:tuned`),
+        scores: res.scores,
+      });
+      chosenArms.set(p, [...(chosenArms.get(p) ?? []), mine.find((a) => a.setting === res.chosen.setting)!]);
+    }
+
+  const recs = (d: string, p: string) => tuned.get(`${d}|${p}`) ?? [];
+  const memo = new Map<string, Delta>();
+  const pair = (d: string, a: string, b: string): Delta => {
+    const seed = `${pairSeed(d, a, b)}:tuned`;
+    const hit = memo.get(seed);
+    if (hit) return hit;
+    const delta = clusteredDelta(recs(d, a), recs(d, b), seed);
+    memo.set(seed, delta);
+    return delta;
+  };
+  const challengers = o.predictors.filter((p) => p !== o.reference);
+  const deltas = datasets.flatMap((d) =>
+    challengers
+      .filter((p) => recs(d, p).length && recs(d, o.reference).length)
+      .map((p) => ({ dataset: d, predictor: p, delta: pair(d, o.reference, p) })),
+  );
+
+  const production: TuningReport['production'] = [];
+  const refSpec = parsePredictorId(o.reference);
+  if (refSpec.model === JEV_MODEL && refSpec.promptVersion === undefined) {
+    const t = calibrationTemperatureOf(canonicalPredictorId(DEFAULT_CONFIG.predictor.primary));
+    for (const d of datasets) {
+      const full = arms.find((a) => a.dataset === d && a.predictor === o.reference && a.setting === 'full');
+      if (!full || !recs(d, o.reference).length) continue;
+      const served = full.records.map((r) => rescaled(r, t));
+      production.push({
+        dataset: d,
+        t,
+        delta: clusteredDelta(
+          served,
+          recs(d, o.reference),
+          `${pairSeed(d, o.reference, o.reference)}:production`,
+        ),
+      });
+    }
+  }
+
+  const ps = production.find((x) => x.dataset === SERVED)?.delta;
+  const pt = production.find((x) => x.dataset === TWIN)?.delta;
+  const drop = MODELS_RULE.maxAccuracyDrop;
+  const productionBetter =
+    ps && pt
+      ? ps.logLoss.byQuestion[1] < 0 &&
+        pt.logLoss.mean <= 0 &&
+        ps.itemAcc.mean >= -drop &&
+        pt.itemAcc.mean >= -drop
+      : null;
+
+  const ops: Record<string, OpStats> = {};
+  for (const [p, as] of chosenArms) {
+    const x = opsOf(as);
+    if (x) ops[p] = x;
+  }
+  const verdict = decideModels({
+    reference: o.reference,
+    challengers,
+    k: o.k,
+    served: new Map(o.predictors.map((p) => [p, recs(SERVED, p)])),
+    twin: new Map(o.predictors.map((p) => [p, recs(TWIN, p)])),
+    ops,
+    delta: pair,
+  });
+  return { settings: o.settings, models, deltas, production, productionBetter, ops, verdict };
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Report
 // ---------------------------------------------------------------------------------------------------------------
@@ -760,6 +936,120 @@ export function datasetTitle(key: string, r: Pick<ModelsReport, 'k' | 'populatio
   return key === SERVED
     ? `Mimic: served questions (${r.population === 'real' ? 'real people' : 'all people, not results'})`
     : `Twin-2K-500: wave 4 held out, k = ${r.k}`;
+}
+
+/** The verdict heading, the outcome per challenger and every check behind it. */
+function verdictLines(v: ModelsVerdict, heading: string): string[] {
+  const label = modelLabel;
+  const rec = v.recommendation;
+  const undecided = v.challengers.every((c) => c.outcome === 'insufficient');
+  return [
+    `${heading}: ${rec ? `${label(rec)} is better than ${label(v.reference)}; ship it as a shadow next` : undecided ? `insufficient data; keep ${label(v.reference)}` : `keep ${label(v.reference)}`}`,
+    '',
+    '| Challenger | Outcome | Operational checks | Recommended |',
+    '| --- | --- | --- | --- |',
+    ...v.challengers.map(
+      (c) =>
+        `| ${label(c.predictor)} | ${c.outcome} | ${
+          c.operational.every((x) => x.pass !== false)
+            ? 'pass'
+            : `fail (${c.operational
+                .filter((x) => x.pass === false)
+                .map((x) => x.name)
+                .join(', ')})`
+        } | ${c.recommend ? 'yes' : 'no'} |`,
+    ),
+    '',
+    '| Challenger | Check | Pass | Detail |',
+    '| --- | --- | --- | --- |',
+    ...v.challengers.flatMap((c) =>
+      [...c.checks, ...c.operational].map(
+        (x) =>
+          `| ${label(c.predictor)} | ${x.name} | ${x.pass === null ? '—' : x.pass ? 'yes' : 'no'} | ${x.detail} |`,
+      ),
+    ),
+    '',
+  ];
+}
+
+const ci = (d: Delta, dataset: string) => {
+  const [low, high] = dataset === SERVED ? d.logLoss.byQuestion : [d.logLoss.ciLow, d.logLoss.ciHigh];
+  return `${sgn(d.logLoss.mean)} [${sgn(low)}, ${sgn(high)}]`;
+};
+
+export function renderTuning(t: TuningReport): string[] {
+  const label = modelLabel;
+  const dsName = (d: string) => (d === SERVED ? 'served' : 'Twin');
+  const out = [
+    '## E8b: each model at its best',
+    '',
+    `Every model was also asked in ${t.settings.length} settings (the table at the end), each with one temperature or one per question type. A person is scored at the configuration chosen on everyone else (nested leave-one-person-out), so tuned numbers carry no selection optimism; "in sample" is the chosen configuration scored on everyone, which does. The rule is MODELS_RULE again, tuned challenger against tuned ${label(t.verdict.reference)} (docs/MODELS.md §9).`,
+    '',
+    ...verdictLines(t.verdict, '### E8b verdict'),
+    '### What tuning chose',
+    '',
+    '| Model | Data | Chosen | Folds agreeing | Log loss: E8 → tuned (in sample) | Tuning gain | Δ item accuracy, points |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    ...t.models.map(
+      (m) =>
+        `| ${label(m.predictor)} | ${dsName(m.dataset)} | ${configLabel(m.chosen)} | ${m.agree} of ${m.people} | ${f4(m.incumbent.logLoss)} → ${f4(m.tuned.logLoss)} (${f4(m.inSample)}) | ${ci(m.gain, m.dataset)} | ${pts(m.tuned.itemAcc - m.incumbent.itemAcc)} |`,
+    ),
+    '',
+    `Tuning gain is tuned − E8 on log loss, paired (served by question, Twin by person); below 0 is better.`,
+    '',
+  ];
+  if (t.deltas.length)
+    out.push(
+      `### Tuned against tuned ${label(t.verdict.reference)} (challenger − ${label(t.verdict.reference)})`,
+      '',
+      '| Model | Data | Δ log loss | Δ item accuracy, points | People better / worse |',
+      '| --- | --- | --- | --- | --- |',
+      ...t.deltas.map(
+        (x) =>
+          `| ${label(x.predictor)} | ${dsName(x.dataset)} | ${ci(x.delta, x.dataset)} | ${pts(x.delta.itemAcc.mean)} | ${x.delta.better} / ${x.delta.worse} |`,
+      ),
+      '',
+    );
+  if (t.production.length)
+    out.push(
+      `### Tuned ${label(t.verdict.reference)} against ${label(t.verdict.reference)} as served`,
+      '',
+      '| Data | Served at | Δ log loss | Δ item accuracy, points |',
+      '| --- | --- | --- | --- |',
+      ...t.production.map(
+        (x) =>
+          `| ${dsName(x.dataset)} | full, T = ${x.t} | ${ci(x.delta, x.dataset)} | ${pts(x.delta.itemAcc.mean)} |`,
+      ),
+      '',
+      ...(t.productionBetter === null
+        ? []
+        : [
+            `By MODELS_RULE's quality checks, tuned ${label(t.verdict.reference)} is ${t.productionBetter ? 'better than' : 'not better than'} ${label(t.verdict.reference)} as served${t.productionBetter ? ': its chosen served setting goes to a shadow next, in its own ADR' : ''}.`,
+            '',
+          ]),
+    );
+  const ps = [...new Set(t.models.map((m) => m.predictor))];
+  for (const d of DATASETS) {
+    const ms = t.models.filter((m) => m.dataset === d);
+    if (!ms.length) continue;
+    out.push(
+      `### Every setting, ${dsName(d)} (log loss at one leave-one-person-out temperature; * chosen)`,
+      '',
+      `| Setting | View | Request | ${ps.map(label).join(' | ')} |`,
+      `| --- | --- | --- | ${ps.map(() => '---').join(' | ')} |`,
+      ...t.settings.map((s) => {
+        const cell = (p: string) => {
+          const m = ms.find((x) => x.predictor === p);
+          const x = m?.scores.find((y) => y.config.setting === s.key && y.config.calibration === 'one');
+          if (!m || !x) return '—';
+          return `${f4(x.logLoss)}${m.chosen.setting === s.key ? '*' : ''}`;
+        };
+        return `| ${s.key} | ${s.view} | ${s.request} | ${ps.map(cell).join(' | ')} |`;
+      }),
+      '',
+    );
+  }
+  return out;
 }
 
 export function renderModels(r: ModelsReport): string[] {
@@ -777,36 +1067,13 @@ export function renderModels(r: ModelsReport): string[] {
     out.push(`**Left out after a failed canary:** ${r.dropped.map(label).join(', ')} (see Canary).`, '');
   if (r.stopReason) out.push(`**Stopped early:** ${r.stopReason}`, '');
 
-  const rec = r.verdict.recommendation;
-  const undecided = r.verdict.challengers.every((c) => c.outcome === 'insufficient');
   out.push(
-    `## Verdict: ${rec ? `${label(rec)} is better than ${label(r.reference)}; ship it as a shadow next` : undecided ? `insufficient data; keep ${label(r.reference)}` : `keep ${label(r.reference)}`}`,
-    '',
-    '| Challenger | Outcome | Operational checks | Recommended |',
-    '| --- | --- | --- | --- |',
-    ...r.verdict.challengers.map(
-      (c) =>
-        `| ${label(c.predictor)} | ${c.outcome} | ${
-          c.operational.every((x) => x.pass !== false)
-            ? 'pass'
-            : `fail (${c.operational
-                .filter((x) => x.pass === false)
-                .map((x) => x.name)
-                .join(', ')})`
-        } | ${c.recommend ? 'yes' : 'no'} |`,
-    ),
-    '',
-    '| Challenger | Check | Pass | Detail |',
-    '| --- | --- | --- | --- |',
-    ...r.verdict.challengers.flatMap((c) =>
-      [...c.checks, ...c.operational].map(
-        (x) =>
-          `| ${label(c.predictor)} | ${x.name} | ${x.pass === null ? '—' : x.pass ? 'yes' : 'no'} | ${x.detail} |`,
-      ),
-    ),
-    '',
+    ...verdictLines(r.verdict, r.tuning ? '## E8 verdict, every model asked as E8 asked it' : '## Verdict'),
     'The rule is MODELS_RULE in packages/eval/src/models.ts, fixed before the first run (docs/MODELS.md §5). Served intervals resample questions and Twin intervals resample people (2,000 seeded resamples, 5th–95th percentile).',
     '',
+  );
+  if (r.tuning) out.push(...renderTuning(r.tuning));
+  out.push(
     '## Canary',
     '',
     'One synthetic request per model (a yes/no, a choice and a score question) before anything else ran.',
@@ -963,13 +1230,14 @@ export async function modelsCmd(argv: string[]): Promise<void> {
       k: { type: 'string', default: String(MODELS_RULE.twinK) },
       limit: { type: 'string' },
       'max-targets': { type: 'string', default: '20' },
-      'max-usd': { type: 'string', default: '5' },
+      'max-usd': { type: 'string' },
       concurrency: { type: 'string', default: '4' },
       'max-questions': { type: 'string', default: '20' },
       'chunk-people': { type: 'string', default: '10' },
       seed: { type: 'string', default: 'models' },
       'skip-canary': { type: 'boolean', default: false },
       'drop-failed-canary': { type: 'boolean', default: false },
+      tune: { type: 'boolean', default: false },
       name: { type: 'string' },
       out: { type: 'string' },
       summary: { type: 'string' },
@@ -984,10 +1252,12 @@ export async function modelsCmd(argv: string[]): Promise<void> {
   const predictors = modelArms(values.predictors);
   const reference = predictors[0]!;
   const k = positive('k', values.k);
-  const maxUsd = positive('max-usd', values['max-usd'], false);
+  // E8 spends about $2 and E8b about $9 at 200 Twin people (docs/MODELS.md §8, §9).
+  const maxUsd = positive('max-usd', values['max-usd'] ?? (values.tune ? '15' : '5'), false);
   const concurrency = positive('concurrency', values.concurrency);
   const chunkPeople = positive('chunk-people', values['chunk-people']);
-  const cands = predictors.map((p) => resolveCandidate({ predictor: p, label: p }));
+  const settings = values.tune ? TUNE_SETTINGS : E8_SETTINGS;
+  const cands = armCandidates(predictors, settings);
   // Twin's targets share a state and go in batches of `--max-questions`, never above any model's own limit. Served
   // states are built per question, so served questions go one per request in both views, keeping lift (full −
   // context) free of batch effects.
@@ -1004,7 +1274,7 @@ export async function modelsCmd(argv: string[]): Promise<void> {
   const twin = loaded.instances.filter((i) => i.mode === 'heldout');
   const left = online.length - served.length;
   console.log(
-    `E8: ${predictors.map(modelLabel).join(', ')}; ${served.length} served questions${left ? ` (${left} from scripted or imported people left out)` : ''}, ${twin.length} Twin items at k = ${k}`,
+    `E8${values.tune ? 'b' : ''}: ${predictors.map(modelLabel).join(', ')}; ${served.length} served questions${left ? ` (${left} from scripted or imported people left out)` : ''}, ${twin.length} Twin items at k = ${k}; ${settings.length} settings`,
   );
   if (!served.length && !twin.length) throw new Error(`no instances in ${values.data}`);
 
@@ -1047,25 +1317,20 @@ export async function modelsCmd(argv: string[]): Promise<void> {
         break;
       }
       const before = meter.usd;
-      const res = await runChunk(
-        chunk,
-        cands.filter((c) => measured.includes(c.label)),
-        MODELS_VIEWS,
-        {
-          gateway: engine.deps.gateway,
-          meter,
-          cache,
-          concurrency,
-          maxQuestions: chunk.dataset === SERVED ? 1 : maxQuestions,
-        },
-      );
+      const res = await runChunk(chunk, new Map([...cands].filter(([p]) => measured.includes(p))), settings, {
+        gateway: engine.deps.gateway,
+        meter,
+        cache,
+        concurrency,
+        maxQuestions: chunk.dataset === SERVED ? 1 : maxQuestions,
+      });
       if ('stop' in res) {
         stopReason = `${res.stop.message}; chunk ${i + 1} of ${chunks.length} (${chunk.people.length} ${chunk.dataset} people) was dropped for every model, later chunks not run`;
         break;
       }
       costliest.set(chunk.dataset, Math.max(costliest.get(chunk.dataset) ?? 0, meter.usd - before));
       for (const a of res.arms) {
-        const key = `${a.dataset}|${a.predictor}|${a.view}`;
+        const key = `${a.dataset}|${a.predictor}|${a.setting}`;
         const prev = arms.get(key);
         if (prev) {
           prev.records.push(...a.records);
@@ -1095,11 +1360,16 @@ export async function modelsCmd(argv: string[]): Promise<void> {
     offline: values.offline,
     canary: canaryResults,
   });
+  if (values.tune)
+    report.tuning = analyzeTuning([...arms.values()], { reference, predictors: measured, settings, k });
   const run: EvalRunRecord = {
     id: ulid(),
-    name: values.name ?? 'E8: decision models compared',
+    name:
+      values.name ??
+      (values.tune ? 'E8b: decision models, each at its best' : 'E8: decision models compared'),
     spec: {
       kind: 'models',
+      tune: values.tune,
       predictors: measured,
       dropped,
       reference,
@@ -1109,7 +1379,7 @@ export async function modelsCmd(argv: string[]): Promise<void> {
       maxTargets: values['max-targets'],
       maxQuestions,
       limit: values.limit ?? null,
-      maxUsd: values['max-usd'],
+      maxUsd,
       seed: values.seed,
       stopReason,
     },

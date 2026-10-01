@@ -2514,3 +2514,42 @@ unmetered infrastructure, not a model under comparison.
   suggest it counts the state once per question.
 - The canary's recorded requests and responses replaced the fixtures. Clef echoes the bare model name; both vendors
   report input tokens and no cost, as the adapters assumed.
+
+## ADR-0069 — E8b: each decision model at its best, chosen by nested cross-validation (2026-10-01)
+
+**Context.** E8 (ADR-0068) asked every decision model the same way and kept Jev. That compares models, not what each can
+do:
+- every request used Jev's templates, the state as served and scales as levels;
+- clef predicted real users better from identity alone than from the whole state;
+- asking scales as choices already helped Jev on Twin (ADR-0066).
+
+Tuning each model on the people it is scored on would flatter whichever model has the most room to fit. With nine
+served people that risk is large.
+
+**Decision.**
+- **A fixed grid, on Mimic's side** (`TUNE_SETTINGS`, `packages/eval/src/tuning.ts`). The Decisions APIs take no
+  sampling parameters, so the grid covers what Mimic controls:
+  - four views of the sealed state (`full`, `context`, `answers`, `derived`);
+  - scales asked as levels or as choices;
+  - the state as text;
+  - plain wording.
+  That makes ten settings, each with one temperature or one per question type: twenty configurations per model,
+  searched exhaustively.
+- **Nested leave-one-person-out selection** (`tune`).
+  - A person is scored at the configuration chosen on everyone else.
+  - The temperatures used to choose it leave out both the person and the one being scored.
+  - Ties go to the earlier setting, so the incumbent keeps one.
+  - The in-sample score of the chosen configuration is reported beside the nested one, to show the selection's
+    optimism, along with how many folds agreed.
+- **The same rule.** `MODELS_RULE`, unchanged: tuned challengers against tuned Jev.
+  - Tuned Jev is also judged against Jev as served by the rule's quality checks. A pass sends its chosen setting to a
+    shadow, in its own ADR.
+- **One run.** `pnpm eval -- models --tune` (Actions → Decision models, `tune`) runs E8 and E8b together. E8's tables
+  read only E8's settings, so the run also replicates E8. The cap is $15 by default with `--tune`; the run should
+  cost about $9.
+
+**Consequences.**
+- About 4.5× E8's requests and about an hour of runner time. The workflow's timeout rises to 180 minutes.
+- Free-text prompt optimization per model stays out until there are more served people (`docs/MODELS.md` §9).
+- A tuned setting never reaches the primary directly: a recommendation goes to a shadow on new people first
+  (ADR-0024).

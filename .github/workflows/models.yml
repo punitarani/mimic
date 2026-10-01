@@ -4,7 +4,8 @@
 # summary and /lab hold the readout: quality after a temperature per model fitted leaving each person out, each model
 # against Jev, what the answers add, a pairwise table, by question type, latency, cost and errors, and MODELS_RULE's
 # verdict. A canary request per model runs first; a model whose canary fails (a missing key or permission) is left out
-# and named in the report, and the run goes on with the others.
+# and named in the report, and the run goes on with the others. With `tune`, every model is also asked in E8b's ten
+# settings and compared at the one nested leave-one-person-out cross-validation chooses (docs/MODELS.md §9, ADR-0069).
 #
 # Data: the prod export (consented mimics only, scrubbed of names, locations and links; ADR-0018; real people's served
 # questions only) and Twin-2K-500 people (public survey answers from real people; wave 4 held out, k = 30). Only
@@ -33,10 +34,14 @@ on:
         description: Decision predictors, comma-separated, the reference first (empty is all five, Jev first)
         type: string
         default: ''
+      tune:
+        description: Also run E8b, each model at its best (about $9 and an hour with 200 Twin people)
+        type: boolean
+        default: false
       max_usd:
-        description: Spend cap in USD for every model together
+        description: Spend cap in USD for every model together (empty is $5, or $15 with tune)
         type: string
-        default: '5'
+        default: ''
       publish:
         description: Publish the readout to /lab
         type: boolean
@@ -51,10 +56,10 @@ concurrency:
 
 jobs:
   models:
-    name: E8 decision models (${{ inputs.data }})
+    name: E8 decision models (${{ inputs.data }}${{ inputs.tune && ', tuned' || '' }})
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     environment: production
     steps:
       - uses: actions/checkout@v4
@@ -101,13 +106,15 @@ jobs:
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
           PREDICTORS: ${{ inputs.predictors }}
           MAX_USD: ${{ inputs.max_usd }}
+          TUNE: ${{ inputs.tune }}
           PUBLISH: ${{ inputs.publish }}
         # Inputs reach the script as environment variables, never interpolated into the shell.
         run: |
           data=""
           for f in data/prod.sqlite data/twin.sqlite; do [ -f "$f" ] && data="${data:+$data,}$f"; done
-          args=(--data "$data" --max-usd "$MAX_USD" --drop-failed-canary --out data/models/run
-            --summary "$GITHUB_STEP_SUMMARY")
+          args=(--data "$data" --drop-failed-canary --out data/models/run --summary "$GITHUB_STEP_SUMMARY")
+          [ -n "$MAX_USD" ] && args+=(--max-usd "$MAX_USD")
+          [ "$TUNE" = true ] && args+=(--tune)
           [ -n "$PREDICTORS" ] && args+=(--predictors "$PREDICTORS")
           [ "$PUBLISH" = true ] && args+=(--publish prod)
           pnpm eval -- models "${args[@]}"

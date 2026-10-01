@@ -997,7 +997,9 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   `docs/reports/e8-models.md`. Result (2026-10-01): keep Jev. On 9 real people (462 served questions) no challenger
   is better: span-01 is `worse`, and clef, clef-flash and the decider are `level`, each about 4 points less accurate.
   On Twin, clef, the decider and clef-flash beat Jev, so the survey ranking does not carry over. Every challenger
-  fails the latency check.
+  fails the latency check. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9) re-asks it with every model at its best: a fixed
+  grid of views, scale formats, state formats and wordings, each model's configuration chosen by nested
+  leave-one-person-out cross-validation, judged by the same rule.
 
 ---
 

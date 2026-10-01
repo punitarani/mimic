@@ -2,6 +2,7 @@
 
 v1 · 2026-10-01 · Status: run on 2026-10-01 (Actions run `36926382050`, eval run `01M3WP08Q7MSSY0772PRNCQE27`, $2.00).
 Verdict: keep Jev. Readout: `docs/reports/e8-models.md`. ADR-0068. The rule in §5 was fixed before the first run.
+E8b (§9, ADR-0069) re-asks the question with every model at its best: designed, not run.
 
 E8 asks which decision model predicts a person best. Jev is Mimic's primary. span-01 is the challenger behind the
 `decisions-model` flag (ADR-0051). Cloudflare's clef and clef-flash, and Perplexity's decider, were released this week
@@ -169,7 +170,8 @@ Each is reported per dataset × model × view:
   and the people count is a floor rather than power. The verdict needs Twin to agree in direction.
 - **No snapshots.** Clef and Perplexity's decider can change under the same name, so the report records the run date.
 - **One prompt.** Every model is asked in Jev's words, and the harness's components were tuned on Jev. A challenger's
-  best prompt could do better, and that would be its own optimization run (`docs/OPTIMIZATION.md`).
+  best prompt could do better. E8b (§9) gives every model a fixed grid of request settings; free-text prompt
+  optimization would be its own run (`docs/OPTIMIZATION.md`).
 - **Latency is measured from the runner.** OpenRouter, Cloudflare and Perplexity sit at different network distances
   from a GitHub runner, so production latency could differ.
 - **Same state for all.** Clef reads 64K tokens and the decider 262K. Neither is given a bigger state here, by choice:
@@ -179,7 +181,7 @@ Each is reported per dataset × model × view:
 
 **In CI (the usual way, after merge):** Actions → **Decision models** → Run workflow.
 - **Inputs:** `data` (prod, twin or both; the verdict needs both), `twin_people` (200), `predictors` (empty means all
-  five), `max_usd` (5), `publish` (to `/lab`).
+  five), `tune` (also run E8b, §9), `max_usd` (empty means $5, or $15 with `tune`), `publish` (to `/lab`).
 - **Outputs:** the readout lands in the step summary and in `/lab`. The artifact holds `report.md` and `canary.json`,
   and the log prints the canary. Per-question records stay on the runner.
 - **A failed canary.** The workflow passes `--drop-failed-canary`, so a model whose canary fails is left out and named
@@ -192,6 +194,7 @@ doppler run -- pnpm deploy:config --env prod
 pnpm eval -- export --env prod --out data/prod.sqlite                  # consented people only (ADR-0018)
 pnpm eval -- import twin2k500 --path data/twin.jsonl --out data/twin.sqlite
 pnpm eval -- models --data data/prod.sqlite,data/twin.sqlite           # live, capped at --max-usd (default $5)
+pnpm eval -- models --data data/prod.sqlite,data/twin.sqlite --tune    # E8 and E8b (§9), default cap $15
 pnpm eval -- models --data data/twin.sqlite --offline --population all --k 8   # the harness, free, meaningless numbers
 ```
 
@@ -201,3 +204,73 @@ pnpm eval -- models --data data/twin.sqlite --offline --population all --k 8   #
 **After a live run:** re-record the adapter fixtures from `canary.json` if a vendor's response shape changed
 (`packages/adapters/fixtures/README.md`), and update `docs/reports/e8-models.md`. The first run's canary is the current
 fixture set.
+
+## 9. E8b: each model at its best
+
+Pre-registered on 2026-10-01, before any tuned run (ADR-0069). Run with `pnpm eval -- models --tune`, or Actions →
+Decision models with `tune`.
+
+**Why.** E8 asked every model the same way: Jev's templates, the state as served, scales as levels, one temperature.
+That is fair as a comparison of models, but not of what each model can do, and the first run hinted at the gap:
+- clef predicted real users better from identity alone than from the whole state (§3 of the readout);
+- asking scales as choices lowered Jev's log loss on Twin's policy items by 0.059 (ADR-0066).
+
+E8b asks whether the verdict holds when every model, Jev included, is asked the way that suits it best.
+
+**What can be tuned.** None of the three APIs takes a sampling parameter: each request is `{model, state, questions}`,
+and Perplexity refuses unknown fields. Everything worth tuning is on Mimic's side, so the grid is fixed here and
+searched exhaustively, never adaptively.
+
+| Setting | The model reads | Asked |
+| --- | --- | --- |
+| `full` | the state as served | Jev's templates, the state as JSON, scales as levels (E8) |
+| `context` | identity only | as `full` |
+| `answers` | identity and answers | as `full` |
+| `derived` | identity, traits and insights | as `full` |
+| `full+choice`, `context+choice`, `answers+choice`, `derived+choice` | as the view | scales as unordered choices (ADR-0066) |
+| `full+text` | the state as served | the state as the text the LLMs see |
+| `full+plain` | the state as served | plain wording: `How would this person answer "…"?`, options as bare labels, Yes / No |
+
+- **Calibration.** Each setting gets either one temperature or one per question type (yes/no, choice, scale). That
+  makes 20 configurations per model.
+- **Twin has no traits or insights.** There, `answers` is `full` and `derived` is `context`. Identical states are
+  asked once, and a tie goes to the earlier setting.
+
+**Choosing without overfitting.** Configurations are chosen per model and dataset by nested leave-one-person-out
+cross-validation, on mean log loss per prediction, with failures counted as uniform (`tune`,
+`packages/eval/src/tuning.ts`).
+- For each person, every configuration is scored on everyone else. Each of those people is scored at temperatures
+  fitted without both of them. The person is then scored at the winning configuration, with temperatures fitted
+  without them.
+- So no person's answers choose their own setting or their own temperature.
+- An exact tie goes to the earlier setting, then to one temperature. The incumbent therefore keeps a tie.
+- The configuration to deploy is the one chosen on everyone.
+
+**What is reported** for each model and dataset:
+- the chosen configuration, and how many people's folds chose it (an unstable choice is no choice);
+- log loss for E8 as run, for the model tuned, and for the chosen configuration scored on everyone. The gap between the
+  last two is the selection's optimism;
+- the tuning gain (tuned − E8, paired) with its interval;
+- every setting's log loss.
+
+**Rule.**
+- **Challengers.** `MODELS_RULE` (§5), unchanged: each tuned challenger against tuned Jev, served by question and
+  Twin by person.
+- **Operational checks.** These read the requests of each model's chosen settings.
+- **A recommendation** leads to a shadow config for that model and setting, then a backfill, in its own ADR.
+- **Jev against itself.** Tuned Jev is also compared with Jev as served (`full`, T = 4). If it passes `MODELS_RULE`'s
+  quality checks (the served interval below 0, the Twin mean at most 0, accuracy held on both), its chosen served
+  setting goes to a shadow next, in its own ADR. Two of the grid's ideas already run as shadows (`@jev-derived.v1`,
+  `@jev-scales.v1`); E8b reads them on the same people, not new ones.
+
+**Cost and time.** About $9 and an hour at 200 Twin people: ten settings on served questions, six distinct ones on
+Twin. The cap is $15 by default with `--tune`. Each model runs its settings one after another at E8's concurrency, so
+latency stays comparable.
+
+**What it can't show.**
+- **Nine served people make noisy folds.** The fold agreement says how stable a choice is. Twin's 200 people steady
+  the direction, not the served verdict.
+- **The grid is small and hand-written, on purpose.** Twenty configurations is deliberately few for nine people.
+  Free-text prompt search per model (GEPA) would fit the served people, so it waits for more of them.
+- **One run date.** Clef and the decider have no snapshots, as in §7.
+

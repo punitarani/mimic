@@ -702,4 +702,18 @@ Everything but the last item is offline. The run is Actions → Decision models 
   `01M3WP08Q7MSSY0772PRNCQE27`, $2.00 of $5. All five canaries passed. 9 real people (462 served questions) and 200
   Twin-2K-500 people (4,000 items at k = 30); 44,620 predictions, 3 failed (the decider's, on served questions).
   Verdict: keep Jev (`docs/reports/e8-models.md`).
+- **E8b, tuning (offline; ADR-0069).**
+  - `packages/eval/test/tuning.test.ts`:
+    - a person whose own answers would pick another setting is scored at the one everyone else picked;
+    - an exact tie goes to the earlier setting and to one temperature;
+    - one setting at one temperature equals E8's leave-one-person-out calibration exactly;
+    - a temperature per type is chosen only when the types need different ones;
+    - settings that scored different instances are refused.
+  - `packages/eval/test/models.test.ts`:
+    - every setting scores the chunk's instances;
+    - on Twin, `answers` and `derived` reuse `full` and `context` at no cost and send no request;
+    - scales-as-choices sends no score question, text sends a string state, and plain wording drops Jev's templates;
+    - an offline `--tune` run reports E8's tables as before, a tuned row per model and dataset, the verdict, Jev
+      against Jev as served, and the per-setting table.
+  - The nested selection takes about 5 s per model at 200 Twin people and 10 settings.
   - By default the scripted people's served questions are left out.
