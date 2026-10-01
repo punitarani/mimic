@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   CLEF_MODEL,
   type DecisionProvider,
+  type DecisionRequest,
   Gateway,
   JEV_MODEL,
   PPLX_DECIDER_MODEL,
@@ -16,6 +17,7 @@ import { openLocalEngine } from '../src/local';
 import {
   afterCanary,
   analyzeModels,
+  armCandidates,
   canary,
   canaryHint,
   DEFAULT_PREDICTORS,
@@ -43,6 +45,7 @@ import {
 import type { EvalInstance } from '../src/optimize/instances';
 import { renderReport } from '../src/report';
 import { runSession, SessionScript } from '../src/session';
+import { E8_SETTINGS, TUNE_SETTINGS } from '../src/tuning';
 import { importTwin } from '../src/twin';
 
 const JEV = `decision:${JEV_MODEL}`;
@@ -384,6 +387,7 @@ describe('canary and report consistency', () => {
       dataset: SERVED,
       predictor,
       view: 'full' as const,
+      setting: 'full',
       records,
       requests: records.map((x) => [x.instanceId]),
     });
@@ -458,9 +462,9 @@ describe('runs on the Twin sample, offline', () => {
   };
 
   it('asks every model the same requests, and drops a chunk the cap cuts for every model', async () => {
-    const cands = [JEV, CLEF].map((p) => resolveCandidate({ predictor: p, label: p }));
+    const cands = armCandidates([JEV, CLEF], E8_SETTINGS);
     const chunk = planChunks([], instances, 100)[0]!;
-    const res = await runChunk(chunk, cands, MODELS_VIEWS, {
+    const res = await runChunk(chunk, cands, E8_SETTINGS, {
       gateway: paidGateway(),
       meter: new Meter(1000),
       cache: new Map(),
@@ -482,7 +486,7 @@ describe('runs on the Twin sample, offline', () => {
     const reqs = (p: string) => res.arms.find((a) => a.predictor === p && a.view === 'full')!.requests;
     expect(reqs(CLEF)).toEqual(reqs(JEV));
 
-    const stopped = await runChunk(chunk, cands, MODELS_VIEWS, {
+    const stopped = await runChunk(chunk, cands, E8_SETTINGS, {
       gateway: paidGateway(),
       meter: new Meter(0.5),
       cache: new Map(),
@@ -490,6 +494,72 @@ describe('runs on the Twin sample, offline', () => {
       maxQuestions: 64,
     });
     expect('stop' in stopped).toBe(true);
+  });
+
+  it('asks each E8b setting its own way, and asks an identical state once', async () => {
+    const chunk = planChunks([], instances, 100)[0]!;
+    const run = async (keys: string[]) => {
+      const sent: DecisionRequest[] = [];
+      const fake = new FakeDecisions();
+      const gateway = new Gateway({
+        decisions: {
+          provider: 'fake',
+          decide: async (req) => {
+            sent.push(req);
+            const res = await fake.decide(req);
+            return { ...res, usage: { ...res.usage, costUsd: 0.001 } };
+          },
+        },
+        llm: new FakeLlm(),
+        log: { write: async () => {} },
+        clock: () => 1,
+        newId: () => 'id',
+      });
+      const settings = TUNE_SETTINGS.filter((s) => keys.includes(s.key));
+      const res = await runChunk(chunk, armCandidates([JEV], settings), settings, {
+        gateway,
+        meter: new Meter(1000),
+        cache: new Map(),
+        concurrency: 1,
+        maxQuestions: 64,
+      });
+      if (!('arms' in res)) throw new Error('stopped');
+      return { arms: res.arms, sent };
+    };
+
+    const all = await run(TUNE_SETTINGS.map((s) => s.key));
+    expect(all.arms.map((a) => a.setting)).toEqual(TUNE_SETTINGS.map((s) => s.key));
+    for (const a of all.arms)
+      expect(a.records.map((r) => r.instanceId)).toEqual(chunk.instances.map((i) => i.id));
+    // Twin people have no traits or insights: `answers` is `full` and `derived` is `context`, asked once.
+    const arm = (k: string) => all.arms.find((a) => a.setting === k)!;
+    for (const [dup, of] of [
+      ['answers', 'full'],
+      ['derived', 'context'],
+      ['answers+choice', 'full+choice'],
+    ] as const) {
+      expect(arm(dup).requests).toEqual([]);
+      expect(arm(dup).records.every((r) => r.costUsd === 0)).toBe(true);
+      expect(arm(dup).records.map((r) => r.dist)).toEqual(arm(of).records.map((r) => r.dist));
+    }
+
+    const questions = (rs: DecisionRequest[]) => rs.flatMap((r) => Object.values(r.questions));
+    const full = (await run(['full'])).sent;
+    const choice = (await run(['full+choice'])).sent;
+    const text = (await run(['full+text'])).sent;
+    const plain = (await run(['full+plain'])).sent;
+    expect(questions(full).some((q) => q.type === 'score')).toBe(true);
+    expect(questions(choice).some((q) => q.type === 'score')).toBe(false);
+    expect(questions(choice)).toHaveLength(questions(full).length);
+    expect(full.every((r) => typeof r.state === 'object')).toBe(true);
+    expect(text.every((r) => typeof r.state === 'string')).toBe(true);
+    const choices = (rs: DecisionRequest[]) =>
+      questions(rs).flatMap((q) => (q.type === 'choice' ? Object.values(q.criteria) : []));
+    expect(choices(full).every((c) => String(c).startsWith('The person would choose'))).toBe(true);
+    expect(choices(plain).some((c) => String(c).startsWith('The person would choose'))).toBe(false);
+    expect(questions(plain).every((q) => q.instructions.startsWith('How would this person answer'))).toBe(
+      true,
+    );
   });
 
   it("splits requests at clef's 64 questions, and at the common limit for every model", () => {
@@ -566,5 +636,38 @@ describe('runs on the Twin sample, offline', () => {
     // By default only real people's served answers count: this cohort is scripted.
     const real = await runOnce([]);
     expect(real.report.datasets.map((d) => d.key)).toEqual([TWIN]);
+  }, 240_000);
+
+  it('tunes every model on its own, and keeps E8 as run beside it (E8b)', async () => {
+    const { report: r, md } = await runOnce([
+      '--population',
+      'all',
+      '--tune',
+      '--predictors',
+      `${JEV},${CLEF}`,
+    ]);
+    // E8's own tables read only E8's settings.
+    expect(r.rows).toHaveLength(2 * MODELS_VIEWS.length * 2);
+    const t = r.tuning!;
+    expect(t.settings).toEqual(TUNE_SETTINGS);
+    expect(t.models.map((m) => `${m.dataset}|${m.predictor}`)).toEqual([
+      `${SERVED}|${JEV}`,
+      `${SERVED}|${CLEF}`,
+      `${TWIN}|${JEV}`,
+      `${TWIN}|${CLEF}`,
+    ]);
+    for (const m of t.models) {
+      expect(TUNE_SETTINGS.map((s) => s.key)).toContain(m.chosen.setting);
+      expect(m.scores).toHaveLength(TUNE_SETTINGS.length * 2);
+      expect(m.agree).toBeLessThanOrEqual(m.people);
+    }
+    expect(t.deltas.map((d) => d.predictor)).toEqual([CLEF, CLEF]);
+    expect(t.production.map((p) => p.t)).toEqual([4, 4]);
+    expect(typeof t.productionBetter).toBe('boolean');
+    expect(t.verdict.challengers.map((c) => c.outcome)).toEqual(['insufficient']);
+    expect(md).toContain('## E8 verdict, every model asked as E8 asked it');
+    expect(md).toContain('## E8b: each model at its best');
+    expect(md).toContain('### E8b verdict: insufficient data; keep Jev');
+    expect(md).toContain('### Every setting, served');
   }, 240_000);
 });
