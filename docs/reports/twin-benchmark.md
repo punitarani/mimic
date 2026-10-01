@@ -395,7 +395,8 @@ p ∝ model^w · item mean^(1−w), with w fitted on the 97 dev people and score
 - **Pooled with the item mean, every model beats both its parts, and the answers add to that.** The weight fitted on
   dev people holds on test people. Pooling the context-only prior gains −0.010; pooling the 30-answer state gains
   −0.024 for Jev and −0.042 for DeepSeek. So the answers carry person-specific information the population lacks, and
-  the population carries item knowledge the models lack.
+  the population carries item knowledge the models lack. Fitting a pool of all three on dev people puts no weight on Jev: on the 23
+  test people DeepSeek with the item mean scores 0.778, Jev with the item mean 0.793, and Jev with DeepSeek 0.810.
 - **Jev's deficit is on policy items.** By domain at k = 30, Jev beats the item mean on product choices even from the
   context alone (0.675 and 0.665 against 0.699) and loses on policy support (1.453 against 1.368, and 1.700 from the
   context alone); pooling brings policy to 1.298. At k = 100, with the demographics out of the state, policy falls to
