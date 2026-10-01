@@ -34,25 +34,29 @@ The commands are in `docs/VALIDATION.md` under this report's heading; report fil
    it is 981 against 1,461 and loses −1.0 [−1.7, −0.3]. The served state at k = 100 is itself a subset: the §9.9 budget
    keeps 18 of the 100 answers. So the question is not "all answers or twelve" but "eighteen chosen by anchors,
    retrieval and recency, or twelve by a policy", and twelve costs about one point.
-3. **At the same cap, which answers the card keeps barely matters for accuracy.** `mixed`, `recent` and `similar`
-   are within 0.4 points of each other at every k, inside the run-to-run noise (the two passes of one spec differ by
-   0.25 points on average, at most 0.43). `similar` (the answers nearest the targets by lexical similarity) is the
-   best of the three at k = 100 (−0.5 [−1.2, +0.2] against `full`). E6's `relevant` view (the 8 answers most related
-   to the question, 774 tokens) is the same idea with a target-aware pick and is level with `full` at k = 30
-   (+1.1 [−0.8, +3.0]) and at k = 100 (−0.0 [−1.1, +1.2]).
+3. **In this matrix, `mixed`, `recent` and `similar` are the same policy.** They sit within 0.4 points of each other at
+   every k, inside the run-to-run noise (0.25 points on average between passes, at most 0.43), and for a reason found
+   later: replay built one state for all of a person's targets, with no target to rank against, so `similar` and the
+   retrieval half of `mixed` fell back to recency. The "card 12 · similar" rows below measure a recency card. What
+   retrieval does is measured per target in "Retrieval per target", below.
 4. **`surprise` trades accuracy for calibration.** Keeping the answers the baseline got most wrong costs −1.1 [−2.0,
    −0.4] points at k = 100 but improves raw log loss by −0.088 [−0.120, −0.056] (46 of 60 people better) and Brier
    (0.570 against 0.580). With a cap of 6 the same policy is −0.7 [−1.6, +0.1] points and −0.035 [−0.072, +0.001].
    Every other state gets worse on log loss as k grows (full: 1.128 → 1.281) while accuracy rises: on its raw scale
    Jev grows overconfident with evidence, and a state built from what the stereotype got wrong tempers that. The
-   calibrated primary (`@jev-predict.v2`) does the same job online with a temperature; rerun with it (below),
-   `surprise` keeps a fifth of the log-loss gain (−0.017 [−0.027, −0.007]) and most of its dispersion advantage.
+   calibrated primary (`@jev-predict.v2`) does most of that job with a temperature: rerun with it and with surprise
+   ranked on the raw scale as production ranks it, `surprise` keeps −0.010 [−0.016, −0.004] of log loss at k = 100
+   and is worse at k = 30 (+0.023). A first calibrated run ranked surprise on the calibrated scale and showed a large
+   dispersion advantage (0.197 against 0.127 at k = 30); with the production ranking it is 0.141. That advantage
+   belonged to the ranking, not to the policy.
 5. **Six answers are enough early, and the cheapest state is not the worst.** A 6-answer `recent` card is +1.3
    [+0.4, +2.2] points over the full 10-answer state at k = 10 (335 against 534 tokens) and +0.9 [−0.5, +2.3] at k = 30
    (626 against 2,568), then −0.8 [−1.6, +0.0] at k = 100. Its log loss is worse throughout (+0.172 at k = 10). Fewer
    answers make Jev more decisive, which pays on accuracy early and costs on calibration.
-6. **Smaller states individuate less.** Dispersion (SD of predictions over SD of answers, across people) is 0.42 for
-   the served state at k = 30 and 0.28 for every card; across-person correlation stays at 0.20–0.24 everywhere.
+6. **Smaller states individuate less, unless they are chosen for the question.** Dispersion (SD of predictions over
+   SD of answers, across people) is 0.42 for the served state at k = 30 and 0.28 for every card; across-person
+   correlation stays at 0.20–0.24 everywhere. The exception is a card retrieved per question by embeddings (below):
+   eight answers, and the highest dispersion of any state at k = 100.
    Accuracy did not move, so the card loses spread, not rank order. The mega-study of digital twins found that
    personal data shows up in dispersion before accuracy, which makes this the metric to watch when a compressed
    state looks "level".
@@ -194,8 +198,8 @@ was done by the LLM and Jev read its conclusion. This is the same shape as E6's 
 
 ## With the calibrated primary (`@jev-predict.v2`, the served config's)
 
-The same cells with the calibration temperature on, one pass, intervals over people. Log loss, Brier and ECE are now
-on the served scale.
+The same cells with the calibration temperature on, one pass, intervals over people. Log loss, Brier and ECE are on
+the served scale. Surprise is ranked on the raw scale, as production ranks it.
 
 | State | k | Accuracy | Log loss | ECE | Dispersion | Δ accuracy vs served [90% CI] | Δ log loss vs served [90% CI] | People better / worse |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -203,24 +207,21 @@ on the served scale.
 | full (served) | 10 | 59.4% | 0.832 | 0.036 | 0.176 | — | — | — |
 | full (served) | 30 | 62.2% | 0.823 | 0.036 | 0.201 | — | — | — |
 | full (served) | 100 | 66.5% | 0.851 | 0.111 | 0.124 | — | — | — |
-| card 12 · mixed | 10 | 59.7% | 0.835 | 0.041 | 0.174 | +0.3 [−0.1, +0.8] | +0.003 [+0.001, +0.006] | 22 / 38 |
-| card 12 · mixed | 30 | 63.0% | 0.847 | 0.066 | 0.127 | +0.7 [−0.5, +2.0] | +0.024 [+0.002, +0.047] | 26 / 34 |
-| card 12 · mixed | 100 | 65.6% | 0.850 | 0.106 | 0.101 | −0.9 [−1.5, −0.2] | −0.001 [−0.007, +0.004] | 29 / 31 |
-| card 12 · surprise | 10 | 59.6% | 0.833 | 0.036 | 0.175 | +0.2 [−0.2, +0.6] | +0.001 [−0.002, +0.003] | 28 / 32 |
-| card 12 · surprise | 30 | 62.9% | 0.827 | 0.054 | 0.197 | +0.7 [−0.3, +1.7] | +0.004 [−0.008, +0.018] | 30 / 30 |
-| card 12 · surprise | 100 | 65.5% | 0.834 | 0.092 | 0.162 | −0.9 [−2.3, +0.3] | −0.017 [−0.027, −0.007] | 42 / 18 |
-| card 6 · surprise | 10 | 60.2% | 0.827 | 0.034 | 0.190 | +0.8 [−0.1, +1.8] | −0.005 [−0.010, +0.001] | 34 / 26 |
-| card 6 · surprise | 30 | 62.4% | 0.838 | 0.054 | 0.166 | +0.1 [−1.4, +1.8] | +0.015 [−0.005, +0.034] | 26 / 34 |
-| card 6 · surprise | 100 | 64.9% | 0.836 | 0.092 | 0.138 | −1.5 [−2.4, −0.6] | −0.016 [−0.022, −0.009] | 39 / 21 |
+| card 12 · mixed (recency) | 10 | 59.7% | 0.835 | 0.041 | 0.174 | +0.3 [−0.1, +0.8] | +0.003 [+0.001, +0.006] | 22 / 38 |
+| card 12 · mixed (recency) | 30 | 63.0% | 0.847 | 0.066 | 0.127 | +0.7 [−0.5, +2.0] | +0.024 [+0.002, +0.047] | 26 / 34 |
+| card 12 · mixed (recency) | 100 | 65.6% | 0.850 | 0.106 | 0.101 | −0.9 [−1.5, −0.2] | −0.001 [−0.007, +0.004] | 29 / 31 |
+| card 12 · surprise | 10 | 59.5% | 0.831 | 0.037 | 0.172 | +0.1 [−0.3, +0.6] | −0.000 [−0.003, +0.002] | 34 / 26 |
+| card 12 · surprise | 30 | 62.2% | 0.846 | 0.051 | 0.141 | −0.1 [−1.3, +1.2] | +0.023 [+0.002, +0.043] | 23 / 37 |
+| card 12 · surprise | 100 | 65.8% | 0.842 | 0.107 | 0.128 | −0.7 [−1.4, +0.1] | −0.010 [−0.016, −0.004] | 33 / 27 |
+| card 6 · surprise | 10 | 60.5% | 0.828 | 0.036 | 0.202 | +1.1 [+0.3, +1.9] | −0.004 [−0.010, +0.002] | 36 / 24 |
+| card 6 · surprise | 30 | 63.1% | 0.844 | 0.056 | 0.127 | +0.9 [−0.6, +2.3] | +0.021 [−0.001, +0.044] | 28 / 32 |
+| card 6 · surprise | 100 | 65.7% | 0.846 | 0.110 | 0.121 | −0.8 [−1.5, +0.0] | −0.005 [−0.013, +0.002] | 34 / 26 |
 
-- The accuracy picture is unchanged: the 12-answer card is level at k = 30 and about a point behind at k = 100.
-- `surprise` keeps a log-loss advantage after calibration, now −0.017 [−0.027, −0.007] with 42 of 60 people better,
-  a fifth of its raw-scale size. Most of the raw effect was the temperature's job.
-- Calibration drifts with the state as E6 saw: ECE 0.036 at k = 10 and 30, 0.111 at k = 100 for the served state.
-  The `surprise` card drifts least (0.092).
-- Dispersion is where the policies differ. At k = 30 the served state is at 0.201, the `mixed` card at 0.127 and the
-  `surprise` card at 0.197; at k = 100, 0.124, 0.101 and 0.162. Keeping the answers the stereotype got wrong keeps
-  the person's deviations from it, which is what dispersion measures.
+- The accuracy picture is unchanged: a 12-answer card is level at k = 30 and about a point behind at k = 100.
+- After calibration, `surprise` is a small log-loss gain at k = 100 and a loss at k = 30; it is not a lever worth a
+  policy of its own.
+- Calibration drifts with the state: ECE 0.036 at k = 10 and 30, 0.111 at k = 100 for the served state.
+- Every 12- or 6-answer card halves dispersion at k = 30 and k = 100.
 
 ## Where the lift comes from
 

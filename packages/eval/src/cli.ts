@@ -59,7 +59,7 @@ Commands
   replay    Offline replay (PLAN §12.3)
             --data <file.sqlite> --predictor decision:typesafe/jev-1.13 --state full|raw|structured|summary|card
             --checkpoints 10,20,30 --split dev|test|all [--targets later|heldout] [--limit N] [--offline]
-            [--evidence mixed|recent|similar|surprise|novelty] [--max-evidence N] [--budget <tokens>]
+            [--evidence mixed|recent|similar|surprise|novelty|fill] [--max-evidence N] [--budget <tokens>]
                             which answers a state keeps once over budget or cap (ADR-0056)
             [--views full,raw,structured,summary]   also predict from each of these views of the same evidence and
                             pool them log-linearly at equal weight: the evidence-view ensemble (ADR-0058)
