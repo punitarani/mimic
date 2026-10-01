@@ -644,3 +644,49 @@ Scripted sessions on offline fakes: a check of the machinery, not a result. Noth
   evidence hash; on the same export after `scrubExport`, state hashes no longer match and the evidence check still
   reads 100%.
 
+
+## E8: decision models compared (ADR-0068)
+
+Nothing below comes from real people or a live call. The run is Actions → Decision models, after merge
+(`docs/MODELS.md` §8).
+
+- **Adapters (offline, `packages/adapters/test/contract.test.ts`).**
+  - Clef calls `/accounts/{id}/ai/run/@cf/cloudflare/clef` with the bare model name and exactly the request asked.
+    The Workers AI envelope is unwrapped, the snapshot is `@cf/cloudflare/clef`, and the cost is input tokens × the list
+    rate. Clef-flash gets its own model and rate.
+  - A refused token is an HTTP 401 and isn't retried. An unsuccessful envelope is an error.
+  - A call without an account ID, or for a model without a list rate, is refused before any request.
+  - Perplexity's decider gets exactly `model`, `state` and `questions` at `/v1/decisions`. A 429 is retried and a 400
+    isn't.
+  - Responses that would be misread are rejected with their cost kept: another model, score levels keyed from 1, a
+    choice outside the options, an answer to no question.
+  - Through `makeProviders` and a Gateway:
+    - each model goes to its vendor, and each row names the vendor;
+    - clef bypasses the egress relay;
+    - no token, key or account ID appears in a row or trace.
+  - The fixtures: Perplexity's is the response its docs publish as returned by a real call; clef's are built from
+    Cloudflare's published schemas (`packages/adapters/fixtures/README.md`).
+- **Core (offline).**
+  - `packages/core/test/flags.test.ts`: the limits are 64 questions for clef and 128 for the decider. A clef request
+    passes through untouched, and one over 64 questions is refused.
+  - `packages/core/test/gateway.test.ts`: each row names the vendor that served the model.
+- **Harness and rule (offline, `packages/eval/test/models.test.ts`).**
+  - `MODELS_RULE` calls a challenger:
+    - `better` on a served interval below 0 with Twin no worse on average;
+    - `worse` when either interval is above 0;
+    - `level` on a straddling interval, on a Twin mean above 0, or on an accuracy loss above a point;
+    - `insufficient` with fewer than 5 served people or Twin away from k = 30.
+  - Latency and errors gate the recommendation; cost never does. Of two `better` challengers, the one with the lower
+    served log loss is recommended.
+  - The leave-one-person-out temperature fits each person on everyone else, and one person alone keeps 1. Rescaling
+    leaves failures and T = 1 untouched.
+  - The arms must be decision predictors on one prompt version.
+  - Chunks keep the loaded order, served people first.
+  - Every model answers the same requests, split at clef's 64 questions. A chunk the cap cuts is dropped for every
+    model.
+- **End to end, offline** (3 scripted people and the Twin sample, fake providers).
+  - All five canaries pass, and every arm of a dataset scores the same instances.
+  - Jev at T = 4 is shown, and the list rates of the three priced models are reported.
+  - The verdict is `insufficient`, and the report renders as offline.
+  - A second run gives the same numbers.
+  - By default the scripted people's served questions are left out.

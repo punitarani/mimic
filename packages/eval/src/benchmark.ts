@@ -100,6 +100,35 @@ export function requestsOf(c: Candidate, instances: EvalInstance[]): string[][] 
   );
 }
 
+export interface RequestStats {
+  requests: number;
+  /** Requests that got an answer: latency is measured over these, and cost per request divides by them. */
+  answeredRequests: number;
+  p50LatencyMs: number;
+  p95LatencyMs: number;
+  costUsd: number;
+  costPerRequestUsd: number;
+}
+
+/** Latency and cost per Decisions request, from the records of the instances each request carried. */
+export function requestStats(recs: EvalRecord[], requests: string[][]): RequestStats {
+  const byId = new Map(recs.map((r) => [r.instanceId, r]));
+  const reqs = requests.map((ids) => ids.map((id) => byId.get(id)).filter((r): r is EvalRecord => !!r));
+  // A request that never answered (transport failure or timeout) has no latency; it counts as an error instead.
+  const answered = reqs.filter((g) => g.length && g[0]!.latencyMs > 0);
+  const latencies = answered.map((g) => g[0]!.latencyMs);
+  const costUsd = recs.reduce((a, r) => a + r.costUsd, 0);
+  const paid = answered.length;
+  return {
+    requests: reqs.filter((g) => g.length).length,
+    answeredRequests: paid,
+    p50LatencyMs: latencies.length ? quantile(latencies, 0.5) : 0,
+    p95LatencyMs: latencies.length ? quantile(latencies, 0.95) : 0,
+    costUsd,
+    costPerRequestUsd: paid ? costUsd / paid : 0,
+  };
+}
+
 export function summarize(
   role: BenchmarkRow['role'],
   predictorId: string,
@@ -107,21 +136,14 @@ export function summarize(
   requests: string[][],
 ): BenchmarkRow {
   const m = metricsOf(recs);
-  const byId = new Map(recs.map((r) => [r.instanceId, r]));
-  const reqs = requests.map((ids) => ids.map((id) => byId.get(id)).filter((r): r is EvalRecord => !!r));
-  // A request that never answered (transport failure or timeout) has no latency; it counts as an error instead.
-  const answered = reqs.filter((g) => g.length && g[0]!.latencyMs > 0);
-  const latencies = answered.map((g) => g[0]!.latencyMs);
-  const costUsd = recs.reduce((a, r) => a + r.costUsd, 0);
-  const n = reqs.filter((g) => g.length).length;
-  const paid = answered.length;
+  const stats = requestStats(recs, requests);
   return {
     role,
     predictorId,
     modelSnapshots: [...new Set(recs.filter((r) => r.ok).map((r) => r.modelSnapshot))].sort(),
     predictions: recs.length,
-    requests: n,
-    answeredRequests: paid,
+    requests: stats.requests,
+    answeredRequests: stats.answeredRequests,
     errors: m.failures,
     errorRate: recs.length ? m.failures / recs.length : 0,
     logLoss: m.logLoss,
@@ -129,10 +151,10 @@ export function summarize(
     top1: m.top1,
     brier: m.brier,
     ece: m.ece,
-    p50LatencyMs: latencies.length ? quantile(latencies, 0.5) : 0,
-    p95LatencyMs: latencies.length ? quantile(latencies, 0.95) : 0,
-    costUsd,
-    costPerRequestUsd: paid ? costUsd / paid : 0,
+    p50LatencyMs: stats.p50LatencyMs,
+    p95LatencyMs: stats.p95LatencyMs,
+    costUsd: stats.costUsd,
+    costPerRequestUsd: stats.costPerRequestUsd,
     byType: Object.fromEntries(
       [...groupBy(recs, (r) => r.type).entries()]
         .sort(([a], [b]) => a.localeCompare(b))

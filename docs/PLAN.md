@@ -110,6 +110,9 @@ Intake ─► Identity (search → "Is one of these you?" → facts) ─► Anch
 | LLM | `deepseek/deepseek-v4.1-flash` | About $0.15–0.30 in / $0.60–1.20 out per M, depending on the provider OpenRouter routes to; 1M context; structured outputs. |
 | LLM | `z-ai/glm-5.3-flash` | About $0.075–0.09 in / $0.25–0.30 out per M; 1M context; structured outputs. |
 | Decision | `typesafe/jev-1.13` (pinned) | `POST https://openrouter.ai/api/alpha/decisions`. $0.042/M input, output free; 32K context; answers in 70–500 ms. |
+| Decision | `respan/span-01-20260925` (pinned) | Same OpenRouter Decisions API; string state and yes/no questions only; the challenger behind the `decisions-model` flag (ADR-0051, `docs/CHALLENGER.md`). |
+| Decision | `cloudflare/clef`, `cloudflare/clef-flash` | Cloudflare Workers AI only: `POST https://api.cloudflare.com/client/v4/accounts/{id}/ai/run/@cf/cloudflare/clef[-flash]`, the Jev request and answers inside Workers AI's envelope. $0.24/M and $0.09/M input; 64K context; 64 questions a request; no dated snapshot. Compared offline by E8 (ADR-0068). |
+| Decision | `perplexity/pplx-decider-v1-27b` | Perplexity only: `POST https://api.perplexity.ai/v1/decisions`, the Jev request and answers. $0.04/M input, output free; 128 questions a request; no dated snapshot. Compared offline by E8 (ADR-0068). |
 | Decision | OpenAI Decisions API | Out of scope; `DecisionProvider` stub only. |
 | Search | Exa, `category: "people"` | Candidate discovery for identity resolution. |
 | Search | Exa `/contents` (person entity; schema summary for other pages), Parallel Task API optional | Structured enrichment of the confirmed identity (ADR-0034). |
@@ -118,7 +121,7 @@ Intake ─► Identity (search → "Is one of these you?" → facts) ─► Anch
 
 Rules:
 
-- **Read cost from responses.** Use `usage.cost` from both chat and decisions responses. Never compute cost from hardcoded prices.
+- **Read cost from responses.** Use `usage.cost` from both chat and decisions responses. Never compute cost from hardcoded prices. The one exception (ADR-0068): a decisions provider whose responses carry token counts but no cost (Workers AI, Perplexity) is priced at the model's published list rate, registered with its source and date in `DECISION_LIST_RATES` (`packages/adapters/src/decisions.ts`), so its calls still count against every cap.
 - **Pin Jev.** Use `typesafe/jev-1.13` in experiments, not `~typesafe/jev-latest`, because probabilities can shift between versions. Store the dated snapshot the response returns, such as `typesafe/jev-1.13-20260917`.
 - **Require structured-output support.** For JSON-schema chat calls, use OpenRouter provider routing that requires it (`provider: { require_parameters: true }`).
 - **Order prompts for caching.** Put stable content first (system, ontology, instructions) and variable content last.
@@ -985,6 +988,13 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   consistency as the per-person ceiling. `PROBE_RULE` decides when answers help at each distance and when E3b may
   start. Set up from the `e7` preset in `/lab` (`cfg.e7.probes`, draft) and read with `pnpm eval -- probes`; readout
   `docs/reports/e7-probes.md`.
+- **E8 Decision models** (paired, offline on sealed states; ADR-0068, `docs/MODELS.md`). Which decision model predicts
+  a person best? Jev, span-01, Cloudflare's clef and clef-flash, and Perplexity's decider answer the same sealed
+  instances from the same state, in the same requests, on served questions (real people) and Twin-2K-500 at k = 30,
+  each also from the context alone. Primary metric: paired Δ log loss against Jev after a temperature per model fitted
+  leaving each person out; then item accuracy, lift over context, latency, errors and cost. `MODELS_RULE` decides
+  whether a challenger earns a shadow. Run it from Actions → Decision models (`pnpm eval -- models`); readout
+  `docs/reports/e8-models.md`.
 
 ---
 

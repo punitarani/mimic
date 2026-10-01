@@ -6,6 +6,7 @@ import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
 import { type ArmsReport, renderArms } from './arms';
 import { renderEnsemble } from './ensemble';
 import { type EvidenceReport, renderEvidence } from './evidence';
+import { type ModelsReport, renderModels } from './models';
 import { MIN_INTERVAL_PEOPLE, VIEW_RULE } from './optimize/evaluate';
 import { type ProbeReport, renderProbes } from './probes';
 import { type RubricGroup, renderRubric } from './rubric';
@@ -103,6 +104,8 @@ export function renderReport(run: EvalRunRecord): string {
     if (m.report) lines.push(...renderEvidence(m.report as EvidenceReport));
   } else if (spec.kind === 'probes') {
     if (m.report) lines.push(...renderProbes(m.report as ProbeReport));
+  } else if (spec.kind === 'models') {
+    if (m.report) lines.push(...renderModels(m.report as ModelsReport));
   } else if (spec.kind === 'select') {
     lines.push(
       '## Pool-restricted selection (biased; iteration only)',

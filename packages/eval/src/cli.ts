@@ -27,6 +27,7 @@ import { datasetHash, exportData } from './export';
 import { parseFootprintDir } from './footprint';
 import { calibrateGates, sampleDrafts } from './gates';
 import { openLocalEngine } from './local';
+import { modelsCmd } from './models';
 import { diagnoseCmd, evaluateCmd, loadData, loadOptsOf, optimizeCmd, recordRun } from './optimize/commands';
 import { probeReadout } from './probes';
 import { replay, reproduceOnline } from './replay';
@@ -131,6 +132,13 @@ Commands
             [--jev <id>] [--llm <id>|none] [--views a,b] [--llm-views a,b] [--llm-people 40] [--llm-k 30]
             [--max-usd 4] [--concurrency 8] [--probes-only] [--publish local|preview|prod] [--summary <file>]
             [--offline]
+  models    E8 (docs/MODELS.md): Jev, span-01, clef, clef-flash and Perplexity's decider on the same sealed states
+            and requests; a canary per model first, then quality after a temperature per model fitted leaving each
+            person out, lift over context, latency, cost and errors, and MODELS_RULE's verdict
+            --data <prod.sqlite>[,<twin.sqlite>] [--predictors a,b,…] [--population real|all] [--split all] [--k 30]
+            [--max-targets 20] [--limit N] [--max-usd 5] [--concurrency 4] [--max-questions 20]
+            [--chunk-people 10] [--skip-canary]
+            [--publish local|preview|prod] [--summary <file>] [--offline]
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
             --data … --predictor decision:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
             [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]
@@ -820,6 +828,8 @@ async function main() {
       return benchmarkCmd(rest);
     case 'evidence':
       return evidenceCmd(rest);
+    case 'models':
+      return modelsCmd(rest);
     case 'optimize':
       return optimizeCmd(rest);
     default:

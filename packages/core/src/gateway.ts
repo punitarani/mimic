@@ -336,9 +336,10 @@ export class Gateway {
     complete = false,
   ): Promise<RoutedDecision> {
     const plan = planDecision(req);
+    const decisions = this.deps.decisions;
     const res = await withModelCall(
       this.deps,
-      { ...ctx, provider: this.deps.decisions.provider, model: req.model },
+      { ...ctx, provider: decisions.providerFor?.(req.model) ?? decisions.provider, model: req.model },
       plan.request,
       async () => {
         const res = plan.answer(await this.deps.decisions.decide(plan.request));

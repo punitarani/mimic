@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CLEF_FLASH_MODEL,
+  CLEF_MODEL,
   checkFlags,
   DECISION_MODELS,
   type DecisionRequest,
@@ -8,6 +10,7 @@ import {
   FLAG_SPECS,
   flagCreateBody,
   type LiveFlag,
+  PPLX_DECIDER_MODEL,
   parseSpendLimits,
   planDecision,
 } from '../src';
@@ -188,9 +191,29 @@ describe('span-01 request plan (ADR-0051)', () => {
     raw: {},
   });
 
-  it('only Respan models have limits', () => {
+  it('limits Respan models to strings and yes/no, and clef and the decider to a question count (ADR-0068)', () => {
     expect(decisionModelLimits('typesafe/jev-1.13')).toEqual({ stringState: false, noulOnly: false });
     expect(decisionModelLimits('respan/span-01-20260925')).toEqual({ stringState: true, noulOnly: true });
+    expect(decisionModelLimits(CLEF_MODEL)).toEqual({
+      stringState: false,
+      noulOnly: false,
+      maxQuestions: 64,
+    });
+    expect(decisionModelLimits(CLEF_FLASH_MODEL).maxQuestions).toBe(64);
+    expect(decisionModelLimits(PPLX_DECIDER_MODEL).maxQuestions).toBe(128);
+  });
+
+  it('passes a clef request through untouched, and refuses one over its question limit', () => {
+    const ok = req(CLEF_MODEL);
+    expect(planDecision(ok).request).toBe(ok);
+    const questions = Object.fromEntries(
+      Array.from({ length: 65 }, (_, i) => [
+        `q_${i}`,
+        { type: 'noul' as const, instructions: 'Yes?', criteria: { true: 'y', false: 'n' } },
+      ]),
+    );
+    expect(() => planDecision({ ...ok, questions })).toThrow(/at most 64 questions a request \(asked 65\)/);
+    expect(() => planDecision({ ...ok, model: 'typesafe/jev-1.13', questions })).not.toThrow();
   });
 
   it('sends a string state and one yes/no per option, and recomposes normalized distributions', () => {

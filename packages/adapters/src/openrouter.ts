@@ -163,7 +163,8 @@ const JevAnswer = z.union([
       score: z.number(),
       confidence: z.number().optional(),
       probabilities: Probs,
-      legend: z.record(z.string(), z.string()).optional(),
+      // Never read: the level is the probability's key. Clef and Perplexity's decider allow any JSON per level.
+      legend: z.unknown().optional(),
     })
     .passthrough(),
 ]);
