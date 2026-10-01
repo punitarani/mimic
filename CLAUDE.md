@@ -86,7 +86,7 @@ If a task seems to require breaking one of these, stop and ask.
   questions and Twin-2K-500. Run it from Actions → Evidence (`pnpm eval -- evidence`). `EVIDENCE_RULE` decides, and
   was fixed before the first run. The first run's verdict is `questions` (`docs/reports/e6-evidence.md`): predictors learn
   from Twin's survey answers but not from Mimic's served ones. E3b therefore waits for a held-out probe set (E7,
-  ADR-0062, `docs/PROBE.md`; the `e7` preset in `/lab`, read with `pnpm eval -- probes`): fourteen probes per person at
+  ADR-0062, `docs/PROBE.md`; the `e7` preset in `/lab`, read with Actions → Readout or `pnpm eval -- probes`): fourteen probes per person at
   fixed points, three shared, two repeats and the rest at a measured distance (answers on their facets), since the Twin
   benchmark (`docs/reports/twin-benchmark.md`) showed that Twin's lift is transfer from demographics and scales to
   product choices and that what the state keeps beyond the budget decides which domains transfer (`docs/EVIDENCE.md`

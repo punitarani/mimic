@@ -1,0 +1,87 @@
+# Free readouts on prod data, from the Actions tab: Actions → Readout → Run workflow. No model calls.
+# - E7's probe readout (docs/PROBE.md, ADR-0062): what the stored predictions on served probes say the mimic learned,
+#   per distance tier and slot, and PROBE_RULE's verdict.
+# - The stored-prediction report on people who joined since a date: every shadow against the primary with intervals
+#   over people, the view and scale shadows' verdicts (ADR-0065, ADR-0066), residual skill against the item mean,
+#   per-person temperature and the probability audit.
+#
+# Data: the prod export (consented mimics only, scrubbed; ADR-0018). Only aggregates leave the runner: the step
+# summary, /lab and the artifact.
+
+name: Readout
+
+on:
+  workflow_dispatch:
+    inputs:
+      since:
+        description: Stored-prediction report on people who joined on or after this date (ADR-0065 reads people after E6)
+        type: string
+        default: '2026-10-01'
+      publish:
+        description: Publish the readouts to /lab
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readout-production
+  cancel-in-progress: false
+
+jobs:
+  readout:
+    name: Readout (prod)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - name: Export prod (consented, scrubbed)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          pnpm deploy:config --env prod
+          pnpm eval -- export --env prod --out data/prod.sqlite
+
+      - name: E7 probes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PUBLISH: ${{ inputs.publish }}
+        # Inputs reach the scripts as environment variables, never interpolated into the shell.
+        run: |
+          args=(--data data/prod.sqlite --name "E7 probes (prod)" --summary "$GITHUB_STEP_SUMMARY")
+          [ "$PUBLISH" = true ] && args+=(--publish prod)
+          pnpm eval -- probes "${args[@]}"
+
+      # Runs even if the probe readout failed: the two don't depend on each other.
+      - name: Stored predictions since a date
+        if: ${{ !cancelled() }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SINCE: ${{ inputs.since }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          args=(--from stored --data data/prod.sqlite --since "$SINCE" --name "Stored predictions since $SINCE (prod)"
+            --summary "$GITHUB_STEP_SUMMARY")
+          [ "$PUBLISH" = true ] && args+=(--publish prod)
+          pnpm eval -- evaluate "${args[@]}"
+
+      # The readouts only: aggregates, no question text or answers.
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: readout-result
+          if-no-files-found: ignore
+          retention-days: 30
+          path: data/reports/*/report.md

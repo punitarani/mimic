@@ -27,7 +27,7 @@ import { datasetHash, exportData } from './export';
 import { parseFootprintDir } from './footprint';
 import { calibrateGates, sampleDrafts } from './gates';
 import { openLocalEngine } from './local';
-import { diagnoseCmd, evaluateCmd, loadData, loadOptsOf, optimizeCmd } from './optimize/commands';
+import { diagnoseCmd, evaluateCmd, loadData, loadOptsOf, optimizeCmd, recordRun } from './optimize/commands';
 import { probeReadout } from './probes';
 import { replay, reproduceOnline } from './replay';
 import { publishReport, renderReport, writeReport } from './report';
@@ -82,7 +82,8 @@ Commands
   probes    E7's readout (ADR-0062, docs/PROBE.md; no model calls): what the stored predictions on served probes
             say the mimic learned, per distance tier and slot against the context-only baseline, shared-item
             residual and individuation, repeat consistency, and PROBE_RULE's verdict
-            --data <file.sqlite> [--population real|all] [--seed probes]
+            --data <file.sqlite> [--population real|all] [--seed probes] [--summary <file>]
+            [--publish local|preview|prod]
   ensemble  Prequential ensembles of the stored primary and shadows (ADR-0058; no model calls): equal-weight pools,
             Hedge/BMA weights learned from each person's earlier questions, and a hindsight oracle, paired against
             the primary with bootstrap intervals
@@ -438,23 +439,31 @@ async function probesCmd(argv: string[]) {
       population: { type: 'string', default: 'real' },
       seed: { type: 'string', default: 'probes' },
       name: { type: 'string' },
+      summary: { type: 'string' },
+      publish: { type: 'string' },
     },
   });
   if (!values.data) throw new Error('--data is required');
   if (values.population !== 'real' && values.population !== 'all')
     throw new Error('--population must be real or all');
-  const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
-  const { run } = await probeReadout(
-    engine.deps,
-    { name: values.name ?? 'E7 probes', population: values.population, seed: values.seed },
-    await datasetHash(engine.client),
-  );
+  const data = resolve(values.data);
+  const engine = await openLocalEngine({ db: data, providers: 'offline' });
+  const hash = await datasetHash(engine.client);
+  let run: Awaited<ReturnType<typeof probeReadout>>['run'];
+  try {
+    ({ run } = await probeReadout(
+      engine.deps,
+      { name: values.name ?? 'E7 probes', population: values.population, seed: values.seed },
+      hash,
+    ));
+  } finally {
+    engine.close();
+  }
   if (values.population === 'all')
     console.warn('⚠ Includes scripted or imported people: a check of the machinery, not a result.');
-  const files = writeReport(run);
+  const md = await recordRun(run, { instances: [], datasetHash: hash, files: [data] }, values);
   console.log(renderReport(run));
-  console.log(`\nrun ${run.id} → ${files.md}`);
-  engine.close();
+  console.log(`\nrun ${run.id} → ${md}`);
 }
 
 async function ensembleCmd(argv: string[]) {
