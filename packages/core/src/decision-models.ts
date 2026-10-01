@@ -11,15 +11,12 @@ export interface DecisionModelLimits {
   stringState: boolean;
   /** Only `noul` questions: `choice` and `score` are asked one option at a time and recomposed. */
   noulOnly: boolean;
-  /** Most questions one request may carry (after any split); none when the model documents no limit. */
+  /** Most questions a request may ask, counted as asked (before any yes/no split); none when undocumented. */
   maxQuestions?: number;
 }
 
 const NONE: DecisionModelLimits = { stringState: false, noulOnly: false };
-/**
- * Clef on Workers AI takes 1–64 questions a request and Perplexity's decider 1–128 (their published schemas,
- * 2026-10-01; ADR-0068). Both take any JSON state and all three question types.
- */
+/** From the published schemas (2026-10-01, ADR-0068): clef takes 64 questions a request, Perplexity's decider 128. */
 const LIMITS: ReadonlyArray<[prefix: string, limits: DecisionModelLimits]> = [
   ['respan/', { stringState: true, noulOnly: true }],
   ['cloudflare/', { stringState: false, noulOnly: false, maxQuestions: 64 }],
@@ -115,8 +112,7 @@ function combined(q: Exclude<DecisionQuestion, { type: 'noul' }>, probs: number[
 export function planDecision(req: DecisionRequest): DecisionPlan {
   const limits = decisionModelLimits(req.model);
   const asked = Object.keys(req.questions).length;
-  // A request over the model's limit would only come back as a 400: say why before sending it. Served pools stay far
-  // below it; the eval harness splits its batches by the same limit (`jevRequests`).
+  // Refused here rather than as the vendor's 400; the eval splits its batches by the same limit (`jevRequests`).
   if (limits.maxQuestions !== undefined && asked > limits.maxQuestions)
     throw new Error(`${req.model} takes at most ${limits.maxQuestions} questions a request (asked ${asked})`);
   if (!limits.stringState && !limits.noulOnly) return { request: req, answer: (res) => res };

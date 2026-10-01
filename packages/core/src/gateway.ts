@@ -342,7 +342,7 @@ export class Gateway {
       { ...ctx, provider: decisions.providerFor?.(req.model) ?? decisions.provider, model: req.model },
       plan.request,
       async () => {
-        const res = plan.answer(await this.deps.decisions.decide(plan.request));
+        const res = plan.answer(await decisions.decide(plan.request));
         const missing = complete ? unansweredQuestions(req, res) : [];
         // Thrown with the response, so the failed row keeps the cost the provider charged for it.
         if (missing.length)

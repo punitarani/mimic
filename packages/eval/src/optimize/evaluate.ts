@@ -672,10 +672,7 @@ export const TEMPERATURE_GRID: readonly number[] = Array.from(
   (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000,
 );
 
-/**
- * A record rescored at temperature `t` (`temperatureScale`; 1 leaves it untouched). A failed prediction is uniform at
- * every temperature, so it stays as it was.
- */
+/** A record rescored at temperature `t`. T = 1 and failed predictions (uniform at any T) come back unchanged. */
 export function rescaled(rec: EvalRecord, t: number): EvalRecord {
   if (t === 1 || !rec.ok) return rec;
   const dist = temperatureScale(rec.dist, t);
@@ -684,23 +681,24 @@ export function rescaled(rec: EvalRecord, t: number): EvalRecord {
 }
 
 /**
- * A temperature for each person, fitted on everyone else's answered predictions (leave one person out), from the grid
- * plus 1, by mean log loss. It compares models on calibrated probabilities without a split or a seed: every person is
- * scored by a temperature their own answers didn't choose. One person alone keeps 1. Also returns the fit on everyone,
- * to report.
+ * A temperature per person, fitted on everyone else's answered predictions (leave one person out) by mean log loss
+ * over the grid plus 1: each person is scored by a temperature their own answers didn't choose, with no split or seed.
+ * One person alone keeps 1. `all` is the fit on everyone, to report.
  */
 export function looTemperatures(
   recs: EvalRecord[],
   grid: readonly number[] = TEMPERATURE_GRID,
 ): { byPerson: Map<string, number>; all: number } {
   const temps = [1, ...grid.filter((t) => t !== 1)];
+  const logLossAt = (r: EvalRecord, t: number) =>
+    t === 1 ? r.logLoss : -Math.log(Math.max(temperatureScale(r.dist, t)[r.answer] ?? 0, P_FLOOR));
   const sums = new Map<string, { n: number; ll: number[] }>();
   for (const r of recs) {
     if (!r.ok) continue;
     const s = sums.get(r.mimicId) ?? { n: 0, ll: temps.map(() => 0) };
     s.n++;
     temps.forEach((t, i) => {
-      s.ll[i]! += t === 1 ? r.logLoss : rescaled(r, t).logLoss;
+      s.ll[i]! += logLossAt(r, t);
     });
     sums.set(r.mimicId, s);
   }

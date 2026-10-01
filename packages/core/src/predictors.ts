@@ -11,7 +11,13 @@ import {
 } from './components';
 import { formatPredictorId, parsePredictorId, predictorIdProblem } from './config';
 import { argmax, normalizeDist, optionKeys, temperatureScale, uncalibrate } from './distribution';
-import { type CallContext, type Gateway, isTimeoutError, isTransientError } from './gateway';
+import {
+  type CallContext,
+  type Gateway,
+  isTimeoutError,
+  isTransientError,
+  RejectedResponseError,
+} from './gateway';
 import { answerToDistribution, confidenceOf, predictionQuestion } from './jev';
 import { PROMPTS } from './prompts';
 import { renderStateText, stateForProvider, viewState } from './state-builder';
@@ -118,6 +124,13 @@ export class DecisionPredictor implements Predictor {
         }
       });
     } catch (e) {
+      // An answered (and billed) response the adapter rejected is the model's failure, not the network's: keep its
+      // cost, and don't retry it (ADR-0068).
+      if (e instanceof RejectedResponseError) {
+        const o = e.outcome;
+        const share = o.usage.costUsd / qs.length;
+        return qs.map(() => failed(e.message, o.latencyMs, o.modelSnapshot ?? this.model, share, 'output'));
+      }
       // The Gateway threw, so no model the router chose answered: the row stays under this predictor's own ID.
       const msg = e instanceof Error ? e.message : String(e);
       return qs.map(() => callFailed(e, msg, this.model));

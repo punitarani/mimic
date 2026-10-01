@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   type BudgetLedger,
   type ChatResponse,
+  DecisionPredictor,
   Gateway,
   INCUMBENT_HARNESS,
   isTransientError,
   LlmPredictor,
   type PersonState,
   type Question,
+  RejectedResponseError,
 } from '../src';
 
 const state: PersonState = {
@@ -118,5 +120,44 @@ describe('LLM predictor failures (ADR-0037)', () => {
     expect(r).toMatchObject({ ok: false, errorKind: 'transport', retryable: false });
     expect(r!.error).toMatch(/^Budget exceeded/);
     expect(isTransientError(new Error('socket hang up'))).toBe(true);
+  });
+});
+
+describe('decision predictor failures (ADR-0068)', () => {
+  it('fails a rejected response as the model, keeping its cost, latency and snapshot, and never retries it', async () => {
+    const usage = { inputTokens: 400, outputTokens: 3, costUsd: 0.0004 };
+    const g = new Gateway({
+      decisions: {
+        provider: 'fake',
+        decide: () =>
+          Promise.reject(
+            new RejectedResponseError('cloudflare/clef: answered as other', {
+              usage,
+              modelSnapshot: '@cf/cloudflare/clef',
+              latencyMs: 250,
+              raw: {},
+            }),
+          ),
+      },
+      llm: { provider: 'none', chat: () => Promise.reject(new Error('unused')) },
+      log: { write: async () => {} },
+      clock: () => 0,
+      newId: () => 'id',
+    });
+    const two = [q, { ...q, id: 'q2' }];
+    const rs = await new DecisionPredictor(g, 'cloudflare/clef', { purpose: 'eval.models' }).predict(
+      state,
+      two,
+    );
+    for (const r of rs)
+      expect(r).toMatchObject({
+        ok: false,
+        errorKind: 'output',
+        costUsd: 0.0002,
+        latencyMs: 250,
+        modelSnapshot: '@cf/cloudflare/clef',
+        error: 'cloudflare/clef: answered as other',
+      });
+    expect(rs[0]!.retryable).toBeUndefined();
   });
 });

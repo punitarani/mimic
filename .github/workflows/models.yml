@@ -111,7 +111,11 @@ jobs:
           [ "$PUBLISH" = true ] && args+=(--publish prod)
           pnpm eval -- models "${args[@]}"
 
-      # The readout, and the canary's synthetic requests and responses (to re-record the adapter fixtures from).
+      # Synthetic requests and raw responses only, to re-record the adapter fixtures from (ADR-0068).
+      - name: Show canary
+        if: always()
+        run: '[ -f data/models/run/canary.json ] && cat data/models/run/canary.json || true'
+
       - name: Upload the result
         if: always()
         uses: actions/upload-artifact@v4

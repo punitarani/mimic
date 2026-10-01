@@ -92,14 +92,18 @@ spent and names the fix.
   view), using `viewState` (ADR-0053). Where a state holds no answers yet, the two views are the same state, and the
   `context` arm reuses the `full` prediction.
 
-**Requests.**
-- Questions that share a state go in one request, as production sends them.
-- Every model gets one batch limit, `--max-questions` (20), so every model answers exactly the same requests.
-  - 20 is about the size of production's candidate pools and of Twin's targets per person.
-  - The limit is never above what any model takes (clef 64, the decider 128).
-  - Without it, the `context` view would put all of a person's served questions in one request, and span-01 would
-    then ask each option of each question as its own yes/no.
-- Latency and cost are per request.
+**Requests.** Every model answers exactly the same requests; latency and cost are per request.
+- **Served questions go one per request, in both views.** Each served state is built for its question, so `full` can't
+  batch, and asking `context` the same way keeps lift free of batch effects (as E6 does).
+- **Twin's targets share a person's state** and go in batches of `--max-questions` (20), never above what any model
+  takes (clef 64, the decider 128).
+
+**Answers.**
+- A response from another model, or one that can't be read, fails its whole request, and its cost is kept.
+- A single malformed answer fails only its own question. Malformed means the wrong type, a choice outside the options,
+  or score levels not keyed `0..n-1`; read anyway, it would score as near-uniform yet count as answered.
+- Either way the failure counts as the model's (errors, log loss), it is not retried, and the trace keeps the raw
+  response.
 
 **Order and spend.**
 - **Canary.** One synthetic request per model (a yes/no, a choice and a score question) runs first. It checks that

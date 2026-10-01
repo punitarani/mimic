@@ -18,6 +18,7 @@ import {
 } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
+  answerProblems,
   DECISION_LIST_RATES,
   ENRICH_EXCLUSIONS,
   ENRICH_OUTPUT_SCHEMA,
@@ -33,6 +34,7 @@ import {
   OpenRouterEmbedder,
   ParallelEnricher,
   PerplexityDecisions,
+  RoutedDecisions,
   relayUrl,
   requestJson,
   schemaFacts,
@@ -278,17 +280,26 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
       new WorkersAiDecisions({ fetch: refused.fetch, accountId: 'acct', apiToken: 'bad' }).decide(clefAsked),
     ).rejects.toMatchObject({ name: 'HttpError', status: 401 });
     expect(refused.calls).toHaveLength(1);
+    // The same refusal in a 200 envelope is still a 401, so nothing retries it.
     const unsuccessful = replay({ json: fixture('clef-decisions-auth-error.json') });
     await expect(
-      new WorkersAiDecisions({ fetch: unsuccessful.fetch, accountId: 'acct', retries: 0 }).decide(clefAsked),
-    ).rejects.toThrow(/Authentication error/);
+      new WorkersAiDecisions({ fetch: unsuccessful.fetch, accountId: 'acct' }).decide(clefAsked),
+    ).rejects.toMatchObject({ status: 401, message: expect.stringMatching(/Authentication error/) });
+    expect(unsuccessful.calls).toHaveLength(1);
   });
 
   it('refuses before any call without an account ID, or for a model with no list rate', async () => {
     const { fetch, calls } = replay({ json: fixture('clef-decisions.json') });
-    await expect(new WorkersAiDecisions({ fetch }).decide(clefAsked)).rejects.toThrow(
-      /CLOUDFLARE_ACCOUNT_ID/,
+    const missing = await new WorkersAiDecisions({ fetch }).decide(clefAsked).then(
+      () => null,
+      (e: Error) => e,
     );
+    expect(missing).toMatchObject({
+      name: 'DecisionSetupError',
+      status: 400,
+      message: 'cloudflare/clef needs CLOUDFLARE_ACCOUNT_ID (and CLOUDFLARE_API_TOKEN)',
+    });
+    expect(isTransientError(missing)).toBe(false);
     await expect(
       new WorkersAiDecisions({ fetch, accountId: 'acct' }).decide({
         ...clefAsked,
@@ -325,47 +336,53 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     expect(bad.calls).toHaveLength(1);
   });
 
-  it('rejects answers that would be misread, keeping what the call cost', async () => {
-    const good = fixture('pplx-decisions.json') as {
-      model: string;
-      answers: Record<string, Record<string, unknown>>;
-    };
-    const variants: Array<[string, unknown, RegExp]> = [
-      ['another model', { ...good, model: 'pplx-decider-v2' }, /answered as pplx-decider-v2/],
-      [
-        'score levels keyed from 1',
-        {
-          ...good,
-          answers: {
-            ...good.answers,
-            severity: { ...good.answers.severity, probabilities: { 1: 0.1, 2: 0.2, 3: 0.7 } },
-          },
-        },
-        /severity: probabilities for 3 not in the question/,
-      ],
-      [
-        'an option not asked',
-        {
-          ...good,
-          answers: { ...good.answers, sentiment: { ...good.answers.sentiment, choice: 'neutral' } },
-        },
-        /sentiment: chose neutral/,
-      ],
-      [
-        'an answer to no question',
-        { ...good, answers: { ...good.answers, extra: { type: 'noul', noul: 0.5 } } },
-        /extra/,
-      ],
+  it('rejects a response from another model or one it cannot read, keeping what the call cost', async () => {
+    const good = fixture('pplx-decisions.json') as { model: string; answers: Record<string, unknown> };
+    const variants: Array<[unknown, RegExp]> = [
+      [{ ...good, model: 'pplx-decider-v2' }, /answered as pplx-decider-v2/],
+      [{ ...good, answers: { defect: { type: 'multi' } } }, /unreadable response/],
     ];
-    for (const [, json, message] of variants) {
-      const { fetch } = replay({ json });
+    for (const [json, message] of variants) {
+      const { fetch, calls } = replay({ json });
       const err = await new PerplexityDecisions({ fetch })
         .decide(pplxAsked)
         .catch((e: unknown) => e as RejectedResponseError);
       expect(err).toBeInstanceOf(RejectedResponseError);
       expect((err as RejectedResponseError).message).toMatch(message);
-      expect((err as RejectedResponseError).outcome.usage.costUsd).toBeGreaterThan(0);
+      expect((err as RejectedResponseError).outcome.usage.costUsd).toBe((367 * 0.04) / 1e6);
+      expect(calls).toHaveLength(1);
     }
+  });
+
+  it('drops only the answers that would be misread, so only their questions fail', async () => {
+    const good = fixture('pplx-decisions.json') as {
+      answers: Record<string, Record<string, unknown>>;
+    };
+    const json = {
+      ...good,
+      answers: {
+        defect: good.answers.defect,
+        // Score levels keyed from 1, a choice outside the options, an answer to no question.
+        severity: { ...good.answers.severity, probabilities: { 1: 0.1, 2: 0.2, 3: 0.7 } },
+        sentiment: { ...good.answers.sentiment, choice: 'neutral' },
+        extra: { type: 'noul', noul: 0.5 },
+      },
+    };
+    const { fetch } = replay({ json });
+    const res = await new PerplexityDecisions({ fetch }).decide(pplxAsked);
+    expect(Object.keys(res.answers)).toEqual(['defect']);
+    expect(res.usage.costUsd).toBeGreaterThan(0);
+    expect(
+      answerProblems(pplxAsked, {
+        severity: { type: 'score', score: 2, probabilities: { 1: 0.1, 2: 0.2, 3: 0.7 } },
+      }),
+    ).toEqual(['severity: probabilities for 3 not in the question']);
+  });
+
+  it("prices from the vendor's usage.cost when it sends one", async () => {
+    const good = fixture('pplx-decisions.json') as { usage: Record<string, number> };
+    const { fetch } = replay({ json: { ...good, usage: { ...good.usage, cost: 0.5 } } });
+    expect((await new PerplexityDecisions({ fetch }).decide(pplxAsked)).usage.costUsd).toBe(0.5);
   });
 
   it('has a list rate for every model it routes outside OpenRouter, from a named source', () => {
@@ -434,6 +451,9 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
       ['perplexity-decisions', PPLX_DECIDER_MODEL, true],
     ]);
     expect(rows[0]!.costUsd).toBeGreaterThan(0);
+    // A router inside a router still names the vendor.
+    const nested = new RoutedDecisions(new JevDecisions({ fetch }), [['cloudflare/', decisions]]);
+    expect(nested.providerFor(CLEF_MODEL)).toBe('workers-ai-decisions');
     const logged = JSON.stringify({ rows, traces });
     for (const secret of ['acct-1234', 'cf-token-secret', 'pplx-key-secret', 'sk-or-v1-secret'])
       expect(logged).not.toContain(secret);

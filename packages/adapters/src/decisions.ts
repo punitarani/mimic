@@ -12,17 +12,12 @@ import { z } from 'zod';
 import { authHeader, HttpError, type HttpOptions, requestJson } from './http';
 import { JevResponse, toDecisionAnswer } from './openrouter';
 
-// ---------------------------------------------------------------------------------------------------------------
-// Decision models served outside OpenRouter (ADR-0068). Cloudflare's clef and clef-flash (Workers AI) and Perplexity's
-// decider take the Jev request (`{model, state, questions}`) and return Jev's answers, so the request is sent as asked
-// and the response is read with `JevResponse`. Neither vendor returns a cost.
-// ---------------------------------------------------------------------------------------------------------------
+// Decision models served outside OpenRouter (ADR-0068): clef and clef-flash on Workers AI, Perplexity's decider on
+// Perplexity. Both take Jev's request and return Jev's answers, but neither returns a cost.
 
 /**
- * A model's published list rate, for a provider whose responses carry token counts but no cost. This is the one
- * exception to "money is the provider's `usage.cost`" (ADR-0068): without it these calls would log $0, and neither
- * the budget guard nor an eval's `--max-usd` would see them. Each rate names its source and the day it was read; a
- * price change means editing it here, and the model's next run reports the new cost.
+ * A published list rate, the one exception to "money is the provider's `usage.cost`" (ADR-0068): these calls would
+ * otherwise log $0 and escape every cap. A price change is an edit here.
  */
 export interface ListRate {
   inputUsdPerMTok: number;
@@ -52,7 +47,6 @@ export const DECISION_LIST_RATES: Readonly<Record<string, ListRate>> = {
   },
 };
 
-/** USD for one response's usage at the model's list rate. */
 export function listRateCost(rate: ListRate, usage: { input_tokens: number; output_tokens: number }): number {
   return (usage.input_tokens * rate.inputUsdPerMTok + usage.output_tokens * rate.outputUsdPerMTok) / 1e6;
 }
@@ -60,18 +54,25 @@ export function listRateCost(rate: ListRate, usage: { input_tokens: number; outp
 export const WORKERS_AI_DECISION_PREFIX = 'cloudflare/';
 export const PERPLEXITY_DECISION_PREFIX = 'perplexity/';
 
-/** The rate for `model`, refused before any call when it has none: an unpriced model would run outside every cap. */
-function rateOf(model: string, url: string): ListRate {
+/** Missing local setup (a credential, a list rate): refused before any request, and not worth retrying. */
+export class DecisionSetupError extends Error {
+  readonly status = 400;
+  constructor(message: string) {
+    super(message);
+    this.name = 'DecisionSetupError';
+  }
+}
+
+function rateOf(model: string): ListRate {
   const rate = DECISION_LIST_RATES[model];
-  if (!rate) throw new HttpError(400, `${model} has no list rate in DECISION_LIST_RATES (ADR-0068)`, url);
+  if (!rate) throw new DecisionSetupError(`${model} has no list rate in DECISION_LIST_RATES (ADR-0068)`);
   return rate;
 }
 
 /**
- * Checks each answer against the question it answers: the same type, a choice among the question's own options, and
- * score levels keyed `0..n-1`, as Jev keys them. Read any other way they would be scored as a uniform distribution and
- * still count as answered, so a mismatch fails the call instead. Answers to questions not asked are an error too;
- * questions left unanswered are the predictor's to report.
+ * What is wrong with each answer, if anything: the wrong type, a choice outside the question's options, or score levels
+ * not keyed `0..n-1` as Jev keys them. Read anyway, such an answer would be scored as a near-uniform distribution and
+ * still count as answered.
  */
 export function answerProblems(req: DecisionRequest, answers: Record<string, DecisionAnswer>): string[] {
   const problems: string[] = [];
@@ -101,9 +102,19 @@ export function answerProblems(req: DecisionRequest, answers: Record<string, Dec
   return problems;
 }
 
+/** Read before the answers, so a response that fails to parse still logs what it cost. */
+const Billed = z
+  .object({
+    usage: z
+      .object({ input_tokens: z.number(), output_tokens: z.number(), cost: z.number().optional() })
+      .passthrough(),
+  })
+  .passthrough();
+
 /**
- * The response as a `DecisionResponse`, priced at the list rate. A response that answers in the wrong shape, or from
- * a model not asked for, is thrown as rejected with its usage, so the failed row still carries what it cost.
+ * The response as a `DecisionResponse`, priced from `usage.cost` if the vendor sends one, else at the list rate. A
+ * response that can't be read, or comes from another model, is rejected whole (with its cost); a malformed answer is
+ * dropped, so only its question fails, and the trace keeps the raw response.
  */
 function readResponse(
   req: DecisionRequest,
@@ -111,23 +122,32 @@ function readResponse(
   raw: unknown,
   opts: { rate: ListRate; snapshot: string; accepts: string[]; latencyMs: number; attempts: number },
 ): DecisionResponse {
-  const r = JevResponse.parse(body);
+  const billed = Billed.safeParse(body);
+  const u = billed.success ? billed.data.usage : null;
   const res: DecisionResponse = {
     modelSnapshot: opts.snapshot,
-    answers: Object.fromEntries(Object.entries(r.answers).map(([k, a]) => [k, toDecisionAnswer(a)])),
+    answers: {},
     usage: {
-      inputTokens: r.usage.input_tokens,
-      outputTokens: r.usage.output_tokens,
-      costUsd: listRateCost(opts.rate, r.usage),
+      inputTokens: u?.input_tokens ?? 0,
+      outputTokens: u?.output_tokens ?? 0,
+      costUsd: u ? (u.cost ?? listRateCost(opts.rate, u)) : 0,
     },
     latencyMs: opts.latencyMs,
     attempts: opts.attempts,
     raw,
   };
-  const problems = opts.accepts.includes(r.model) ? [] : [`answered as ${r.model}, not ${req.model}`];
-  problems.push(...answerProblems(req, res.answers));
-  if (problems.length)
-    throw new RejectedResponseError(`${req.model}: ${problems.slice(0, 5).join('; ')}`, res);
+  const parsed = JevResponse.safeParse(body);
+  if (!parsed.success)
+    throw new RejectedResponseError(
+      `${req.model}: unreadable response (${parsed.error.issues[0]?.message})`,
+      res,
+    );
+  if (!opts.accepts.includes(parsed.data.model))
+    throw new RejectedResponseError(`${req.model}: answered as ${parsed.data.model}`, res);
+  for (const [key, a] of Object.entries(parsed.data.answers)) {
+    const answer = toDecisionAnswer(a);
+    if (!answerProblems(req, { [key]: answer }).length) res.answers[key] = answer;
+  }
   return res;
 }
 
@@ -146,15 +166,14 @@ const CloudflareEnvelope = z
   .passthrough();
 
 /**
- * Clef and clef-flash on Workers AI, over the REST API (`/accounts/{id}/ai/run/@cf/cloudflare/<name>`): the eval CLI
- * runs in Node, where there is no `AI` binding. The token needs Account · Workers AI · Read. Mimic's model IDs are
- * provider-neutral (`cloudflare/clef`); the body's `model` is the bare name the API asks for.
+ * Clef and clef-flash over Workers AI's REST API, since the eval CLI runs in Node without the `AI` binding. The token
+ * needs Account · Workers AI · Read.
  */
 export class WorkersAiDecisions implements DecisionProvider {
   readonly provider = 'workers-ai-decisions';
   constructor(private readonly opts: WorkersAiDecisionOptions = {}) {}
 
-  /** `cloudflare/clef` runs as `@cf/cloudflare/clef`, with `clef` as the body's model. */
+  /** `cloudflare/clef` runs as `@cf/cloudflare/clef`, with the bare `clef` as the body's model. */
   static modelOf(model: string): { name: string; workersId: string } {
     const name = model.slice(model.lastIndexOf('/') + 1);
     return { name, workersId: `@cf/cloudflare/${name}` };
@@ -163,17 +182,20 @@ export class WorkersAiDecisions implements DecisionProvider {
   async decide(req: DecisionRequest): Promise<DecisionResponse> {
     const base = this.opts.baseUrl ?? 'https://api.cloudflare.com/client/v4';
     const { name, workersId } = WorkersAiDecisions.modelOf(req.model);
-    const url = `${base}/accounts/${this.opts.accountId ?? ''}/ai/run/${workersId}`;
     if (!this.opts.accountId)
-      throw new HttpError(400, `${req.model} needs CLOUDFLARE_ACCOUNT_ID (and CLOUDFLARE_API_TOKEN)`, base);
-    const rate = rateOf(req.model, url);
+      throw new DecisionSetupError(`${req.model} needs CLOUDFLARE_ACCOUNT_ID (and CLOUDFLARE_API_TOKEN)`);
+    const url = `${base}/accounts/${this.opts.accountId}/ai/run/${workersId}`;
+    const rate = rateOf(req.model);
     const { json, latencyMs, attempts } = await requestJson({ timeoutMs: 15_000, ...this.opts }, url, {
       headers: authHeader('authorization', this.opts.apiToken, 'Bearer '),
       body: { model: name, state: req.state, questions: req.questions },
     });
     const env = CloudflareEnvelope.parse(json);
-    if (!env.success || env.result === undefined)
-      throw new HttpError(502, JSON.stringify(env.errors ?? []), url);
+    if (!env.success || env.result === undefined) {
+      // Cloudflare's 10000 is "Authentication error": a refused token, which no retry fixes.
+      const refused = env.errors?.some((e) => e.code === 10000);
+      throw new HttpError(refused ? 401 : 502, JSON.stringify(env.errors ?? []), url);
+    }
     return readResponse(req, env.result, json, {
       rate,
       snapshot: workersId,
@@ -189,17 +211,14 @@ export interface PerplexityDecisionOptions extends HttpOptions {
   baseUrl?: string;
 }
 
-/**
- * Perplexity's decider on its Decisions API (`POST /v1/decisions`). Unknown top-level fields are a 400 there, so the
- * body is exactly `{model, state, questions}`. The response's `model` echoes the name sent, and there is no snapshot.
- */
+/** Perplexity's decider. Unknown top-level fields are a 400 there, so the body is exactly the three it takes. */
 export class PerplexityDecisions implements DecisionProvider {
   readonly provider = 'perplexity-decisions';
   constructor(private readonly opts: PerplexityDecisionOptions = {}) {}
 
   async decide(req: DecisionRequest): Promise<DecisionResponse> {
     const url = `${this.opts.baseUrl ?? 'https://api.perplexity.ai'}/v1/decisions`;
-    const rate = rateOf(req.model, url);
+    const rate = rateOf(req.model);
     const name = req.model.slice(PERPLEXITY_DECISION_PREFIX.length);
     const { json, latencyMs, attempts } = await requestJson({ timeoutMs: 15_000, ...this.opts }, url, {
       headers: authHeader('authorization', this.opts.apiKey, 'Bearer '),
@@ -215,11 +234,7 @@ export class PerplexityDecisions implements DecisionProvider {
   }
 }
 
-/**
- * One decision provider for the Gateway that sends each model to the vendor serving it: `cloudflare/` to Workers AI,
- * `perplexity/` to Perplexity, anything else to OpenRouter's Decisions API (Jev, span-01). `providerFor` names the
- * vendor in each `model_calls` row.
- */
+/** Sends each model to the vendor that serves it by prefix, else to the fallback (OpenRouter: Jev, span-01). */
 export class RoutedDecisions implements DecisionProvider {
   readonly provider: string;
   constructor(
@@ -234,7 +249,8 @@ export class RoutedDecisions implements DecisionProvider {
   }
 
   providerFor(model: string): string {
-    return this.route(model).provider;
+    const p = this.route(model);
+    return p.providerFor?.(model) ?? p.provider;
   }
 
   decide(req: DecisionRequest): Promise<DecisionResponse> {

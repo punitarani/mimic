@@ -94,9 +94,9 @@ export interface BenchmarkRow {
 }
 
 /** One Decisions request: the instances that shared a state (as production batches them). */
-export function requestsOf(c: Candidate, instances: EvalInstance[]): string[][] {
-  return (c.kind === 'decision' ? jevRequests(c, instances) : instances.map((i) => [i])).map((g) =>
-    g.map((i) => i.id),
+export function requestsOf(c: Candidate, instances: EvalInstance[], maxQuestions?: number): string[][] {
+  return (c.kind === 'decision' ? jevRequests(c, instances, maxQuestions) : instances.map((i) => [i])).map(
+    (g) => g.map((i) => i.id),
   );
 }
 

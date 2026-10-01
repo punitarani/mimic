@@ -7,12 +7,15 @@ import {
   Gateway,
   JEV_MODEL,
   PPLX_DECIDER_MODEL,
+  RejectedResponseError,
   scorePrediction,
 } from '@mimic/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FakeDecisions, FakeLlm } from '../src/fakes';
 import { openLocalEngine } from '../src/local';
 import {
+  analyzeModels,
+  canary,
   canaryHint,
   DEFAULT_PREDICTORS,
   decideModels,
@@ -315,6 +318,68 @@ describe('arms and chunks', () => {
   });
 });
 
+describe('canary and report consistency', () => {
+  it('keeps what a rejected canary response cost and said', async () => {
+    const usage = { inputTokens: 300, outputTokens: 3, costUsd: 0.00007 };
+    const decisions: DecisionProvider = {
+      provider: 'fake',
+      decide: () =>
+        Promise.reject(
+          new RejectedResponseError('cloudflare/clef: answered as other', {
+            usage,
+            modelSnapshot: '@cf/cloudflare/clef',
+            latencyMs: 210,
+            raw: { result: 'raw body' },
+          }),
+        ),
+    };
+    const g = new Gateway({
+      decisions,
+      llm: new FakeLlm(),
+      log: { write: async () => {} },
+      clock: () => 1,
+      newId: () => 'id',
+    });
+    const { results, recorded } = await canary(g, [CLEF]);
+    expect(results[0]).toMatchObject({
+      ok: false,
+      costUsd: 0.00007,
+      latencyMs: 210,
+      modelSnapshot: '@cf/cloudflare/clef',
+    });
+    expect(recorded[0]).toMatchObject({ response: { result: 'raw body' } });
+  });
+
+  it('shows one interval per comparison in the verdict, the table and the matrix', () => {
+    const served = { ref: cohort('s', 8, 400), c: cohort('s', 8, 400, (i) => (i % 2 ? 0.06 : -0.02)) };
+    const arm = (predictor: string, records: EvalRecord[]) => ({
+      dataset: SERVED,
+      predictor,
+      view: 'full' as const,
+      records,
+      requests: records.map((x) => [x.instanceId]),
+    });
+    const r = analyzeModels([arm(JEV, served.ref), arm(CLEF, served.c)], {
+      reference: JEV,
+      predictors: [JEV, CLEF],
+      views: ['full'],
+      k: 30,
+      population: 'real',
+      maxQuestionsPerRequest: 20,
+      costUsd: 0,
+      stopReason: null,
+      offline: true,
+      canary: [],
+    });
+    const [low, high] = r.deltas[0]!.calibrated.logLoss.byQuestion;
+    const cell = r.pairwise.find((x) => x.row === CLEF && x.col === JEV)!;
+    expect([cell.low, cell.high]).toEqual([low, high]);
+    const check = r.verdict.challengers[0]!.checks.find((x) => x.name === 'served log loss')!;
+    const sgn = (x: number) => `${x >= 0 ? '+' : ''}${x.toFixed(4)}`;
+    expect(check.detail).toContain(`[${sgn(low)}, ${sgn(high)}]`);
+  });
+});
+
 describe('runs on the Twin sample, offline', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mimic-e8-'));
   const twin = join(dir, 'twin.sqlite');
@@ -442,6 +507,9 @@ describe('runs on the Twin sample, offline', () => {
     expect(r.canary.every((c) => c.ok)).toBe(true);
     expect(r.datasets.map((d) => d.key)).toEqual([SERVED, TWIN]);
     expect(r.maxQuestionsPerRequest).toBe(20);
+    // Served states are per question, so served requests carry one question each, in both views.
+    for (const x of r.rows.filter((x) => x.dataset === SERVED && x.view === 'full'))
+      expect(x.requests?.requests).toBe(x.n);
     // Every arm of a dataset scored the same instances.
     for (const d of r.datasets)
       expect(new Set(r.rows.filter((x) => x.dataset === d.key).map((x) => x.n))).toEqual(

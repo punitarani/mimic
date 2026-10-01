@@ -15,11 +15,12 @@ import {
   JEV_MODEL,
   PPLX_DECIDER_MODEL,
   parsePredictorId,
+  RejectedResponseError,
   SPAN_MODEL,
   type StateView,
   ulid,
 } from '@mimic/core';
-import { type RequestStats, requestStats } from './benchmark';
+import { type RequestStats, requestStats, requestsOf } from './benchmark';
 import { clusteredDelta, type Delta, viewInstances } from './evidence';
 import { openLocalEngine } from './local';
 import { type Loaded, loadData, loadOptsOf, positive, recordRun } from './optimize/commands';
@@ -29,7 +30,6 @@ import {
   type EvalRecord,
   evaluateCandidate,
   groupBy,
-  jevRequests,
   looTemperatures,
   Meter,
   metricsOf,
@@ -40,14 +40,9 @@ import type { EvalInstance } from './optimize/instances';
 import { renderReport } from './report';
 
 /**
- * E8 (docs/MODELS.md, ADR-0068): which decision model predicts a person best? Jev, span-01, Cloudflare's clef and
- * clef-flash, and Perplexity's decider answer the same sealed instances, from the same state, in the same batches, with
- * the same prompt, so the arms differ only by the model. Two datasets, each for what it can show: served questions
- * from real people (the product's target, where the verdict is read) and Twin-2K-500 held-out items at k = 30 (survey
- * answers with a large evidence base, where predictors are known to learn). Each model also predicts from the context
- * alone, so "learns from the person" is measured per model. Probabilities are compared after a temperature per model,
- * fitted leaving each person out, since every served predictor gets one and Jev's production temperature was fitted
- * on Jev. The verdict applies MODELS_RULE, fixed before the first run.
+ * E8 (docs/MODELS.md, ADR-0068): which decision model predicts a person best? Every model answers the same sealed
+ * instances from the same states in the same requests, so the arms differ only by model. Served questions (real people)
+ * carry the verdict; Twin-2K-500 at k = 30 replicates it. The verdict applies MODELS_RULE, fixed before the first run.
  */
 
 /** The arms in order; the first is the reference the others are judged against. Raw scale: no prompt version. */
@@ -105,7 +100,7 @@ export function modelLabel(predictor: string): string {
 // Canary: one synthetic request per model before anything else is spent
 // ---------------------------------------------------------------------------------------------------------------
 
-/** Synthetic: no person's data. Its responses are what the schema-built fixtures are re-recorded from. */
+/** Synthetic, no person's data: its responses re-record the adapter fixtures. */
 export function canaryRequest(model: string): DecisionRequest {
   return {
     model,
@@ -156,7 +151,7 @@ export function canaryHint(model: string, message: string): string {
   return '';
 }
 
-async function canary(
+export async function canary(
   gateway: Gateway,
   predictors: string[],
 ): Promise<{ results: CanaryResult[]; recorded: unknown[] }> {
@@ -185,14 +180,16 @@ async function canary(
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         const hint = canaryHint(model, message);
-        recorded.push({ predictor, request: req, error: message });
+        // A rejected response was answered and billed: keep what it cost and what it said.
+        const o = e instanceof RejectedResponseError ? e.outcome : null;
+        recorded.push({ predictor, request: req, error: message, ...(o ? { response: o.raw } : {}) });
         return {
           ...base,
           ok: false,
           error: hint ? `${message} (${hint})` : message,
-          modelSnapshot: null,
-          latencyMs: null,
-          costUsd: null,
+          modelSnapshot: o?.modelSnapshot ?? null,
+          latencyMs: o?.latencyMs ?? null,
+          costUsd: o?.usage.costUsd ?? null,
         };
       }
     }),
@@ -237,10 +234,9 @@ export function planChunks(served: EvalInstance[], twin: EvalInstance[], size: n
 }
 
 /**
- * Every candidate and view on one chunk. Models run side by side, views in order. Requests are batched with one
- * question limit for every model (never above what any of them takes), so a request carries the same questions
- * whichever model answers it. A budget stop anywhere drops the whole chunk for every arm: a model that hit errors or ran last
- * must not keep a different subset of instances.
+ * Every candidate and view on one chunk: models side by side, views in order, one batch limit for all, so each request
+ * carries the same questions whichever model answers it. A budget stop anywhere drops the chunk for every arm, so no
+ * model keeps a subset the others lack.
  */
 export async function runChunk(
   chunk: Chunk,
@@ -276,11 +272,11 @@ export async function runChunk(
           },
         );
         const orig = new Map(vs.map((x) => [x.v.id, x.inst.id]));
-        const requests = jevRequests(
+        const requests = requestsOf(
           c,
           vs.map((x) => x.v).filter((v) => !reused.has(v.id)),
           opts.maxQuestions,
-        ).map((g) => g.map((i) => orig.get(i.id)!));
+        ).map((g) => g.map((id) => orig.get(id)!));
         arms.push({
           dataset: chunk.dataset,
           predictor: c.label,
@@ -322,7 +318,7 @@ export interface ModelRow {
   ece: number;
   /** After the leave-one-person-out temperature; `t` is the fit on every person, for reference. */
   cal: { t: number; logLoss: number; itemAcc: number; brier: number; ece: number };
-  /** Per Decisions request, `full` view only (the other view's requests are smaller and partly reused). */
+  /** Per Decisions request, `full` view only. */
   requests: RequestStats | null;
   costUsd: number;
   usdPer1k: number;
@@ -424,6 +420,13 @@ export interface ModelsReport {
 
 const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 const ratio = (a: number, b: number) => (b > 0 ? a / b : a > 0 ? Number.POSITIVE_INFINITY : 1);
+const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+const f4 = (x: number) => x.toFixed(4);
+const sgn = (x: number, d = 4) => `${x >= 0 ? '+' : ''}${x.toFixed(d)}`;
+const pts = (x: number) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}`;
+
+/** One seed per comparison, so the verdict, the table against the reference and the pairwise matrix agree. */
+const pairSeed = (dataset: string, a: string, b: string) => `models:${dataset}:${a}:${b}`;
 
 /** Each record at the temperature fitted on everyone but its person, and the fit on everyone. */
 export function calibrated(recs: EvalRecord[]): { records: EvalRecord[]; t: number } {
@@ -443,15 +446,21 @@ export interface RuleInput {
   served: Map<string, EvalRecord[]>;
   twin: Map<string, EvalRecord[]>;
   ops: Record<string, OpStats>;
+  /** b − a on a dataset; the report passes its memoized deltas so the numbers match. */
+  delta?: (dataset: string, a: string, b: string) => Delta;
 }
 
 export function decideModels(input: RuleInput, rule = MODELS_RULE): ModelsVerdict {
-  const f = (x: number) => (x >= 0 ? `+${x.toFixed(4)}` : x.toFixed(4));
-  const pts = (x: number) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}`;
   const ref = input.reference;
+  const recs = (dataset: string, p: string) => (dataset === SERVED ? input.served : input.twin).get(p) ?? [];
+  const delta =
+    input.delta ??
+    ((dataset: string, a: string, b: string) =>
+      clusteredDelta(recs(dataset, a), recs(dataset, b), pairSeed(dataset, a, b)));
+  const f = (x: number) => sgn(x);
   const challengers = input.challengers.map((c): ChallengerVerdict => {
-    const ds = clusteredDelta(input.served.get(ref) ?? [], input.served.get(c) ?? [], `models:served:${c}`);
-    const dt = clusteredDelta(input.twin.get(ref) ?? [], input.twin.get(c) ?? [], `models:twin:${c}`);
+    const ds = delta(SERVED, ref, c);
+    const dt = delta(TWIN, ref, c);
     const [sLow, sHigh] = interval(SERVED, ds);
     const [tLow, tHigh] = interval(TWIN, dt);
     const enoughServed = ds.n >= rule.minServedInstances && ds.people >= rule.minServedPeople;
@@ -495,7 +504,6 @@ export function decideModels(input: RuleInput, rule = MODELS_RULE): ModelsVerdic
     const o = input.ops[c];
     const r = input.ops[ref];
     const both = !!o && !!r && o.answeredRequests > 0 && r.answeredRequests > 0;
-    const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
     const operational: RuleCheck[] = [
       {
         name: 'error rate',
@@ -616,6 +624,15 @@ export function analyzeModels(
       });
     }
 
+  const memo = new Map<string, Delta>();
+  const pair = (d: string, x: string, y: string): Delta => {
+    const seed = pairSeed(d, x, y);
+    const hit = memo.get(seed);
+    if (hit) return hit;
+    const delta = clusteredDelta(calFull(d, x), calFull(d, y), seed);
+    memo.set(seed, delta);
+    return delta;
+  };
   const deltas: ModelDelta[] = [];
   const lift: LiftRow[] = [];
   const pairwise: PairCell[] = [];
@@ -627,8 +644,8 @@ export function analyzeModels(
         deltas.push({
           dataset: d,
           predictor: p,
-          calibrated: clusteredDelta(cal.get(ref)!, cal.get(a)!, `models:${d}:${p}:cal`),
-          raw: clusteredDelta(ref.records, a.records, `models:${d}:${p}:raw`),
+          calibrated: pair(d, o.reference, p),
+          raw: clusteredDelta(ref.records, a.records, `${pairSeed(d, o.reference, p)}:raw`),
         });
       const ctx = arm(d, p, 'context');
       if (a && ctx) {
@@ -636,7 +653,7 @@ export function analyzeModels(
         lift.push({
           dataset: d,
           predictor: p,
-          delta: clusteredDelta(cal.get(ctx)!, cal.get(a)!, `models:${d}:${p}:lift`),
+          delta: clusteredDelta(cal.get(ctx)!, cal.get(a)!, `${pairSeed(d, p, p)}:lift`),
           identical: ctx.records.every((r) => states.get(r.instanceId) === r.stateHash),
         });
       }
@@ -644,11 +661,9 @@ export function analyzeModels(
     for (let i = 0; i < o.predictors.length; i++)
       for (let j = i + 1; j < o.predictors.length; j++) {
         const [x, y] = [o.predictors[i]!, o.predictors[j]!];
-        const ax = calFull(d, x);
-        const ay = calFull(d, y);
-        if (!ax.length || !ay.length) continue;
+        if (!calFull(d, x).length || !calFull(d, y).length) continue;
         // y − x, read both ways.
-        const delta = clusteredDelta(ax, ay, `models:${d}:pair:${x}:${y}`);
+        const delta = pair(d, x, y);
         const [low, high] = interval(d, delta);
         pairwise.push({ dataset: d, row: y, col: x, mean: delta.logLoss.mean, low, high });
         pairwise.push({ dataset: d, row: x, col: y, mean: -delta.logLoss.mean, low: -high, high: -low });
@@ -684,6 +699,7 @@ export function analyzeModels(
     served: new Map(o.predictors.map((p) => [p, calFull(SERVED, p)])),
     twin: new Map(o.predictors.map((p) => [p, calFull(TWIN, p)])),
     ops,
+    delta: pair,
   });
   const rates: Record<string, ListRate> = {};
   for (const p of o.predictors) {
@@ -721,11 +737,6 @@ export function analyzeModels(
 // Report
 // ---------------------------------------------------------------------------------------------------------------
 
-const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
-const f4 = (x: number) => x.toFixed(4);
-const sgn = (x: number, d = 4) => `${x >= 0 ? '+' : ''}${x.toFixed(d)}`;
-const pts = (x: number) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}`;
-
 export function datasetTitle(key: string, r: Pick<ModelsReport, 'k' | 'population'>): string {
   return key === SERVED
     ? `Mimic: served questions (${r.population === 'real' ? 'real people' : 'all people, not results'})`
@@ -738,7 +749,7 @@ export function renderModels(r: ModelsReport): string[] {
   if (r.offline)
     out.push('> Offline run with fake providers: checks the harness only. These numbers mean nothing.', '');
   out.push(
-    `E8 compares ${r.predictors.map((p) => `\`${p}\``).join(', ')} on the same sealed instances, from the same states, in the same requests (at most ${r.maxQuestionsPerRequest} questions each). Every model also predicts from the context alone. Probabilities are compared after a temperature per model, fitted with each person left out; the reference is ${label(r.reference)}.`,
+    `E8 compares ${r.predictors.map((p) => `\`${p}\``).join(', ')} on the same sealed instances, from the same states, in the same requests (served questions one per request, Twin's at most ${r.maxQuestionsPerRequest} per request). Every model also predicts from the context alone. Probabilities are compared after a temperature per model, fitted with each person left out; the reference is ${label(r.reference)}.`,
     '',
     `Data: ${r.datasets.map((d) => `${datasetTitle(d.key, r)}, ${d.instances} predictions from ${d.people} people`).join('; ') || 'none'}. Spend $${r.costUsd.toFixed(4)}.`,
     '',
@@ -951,10 +962,13 @@ export async function modelsCmd(argv: string[]): Promise<void> {
   const predictors = modelArms(values.predictors);
   const reference = predictors[0]!;
   const k = positive('k', values.k);
+  const maxUsd = positive('max-usd', values['max-usd'], false);
+  const concurrency = positive('concurrency', values.concurrency);
+  const chunkPeople = positive('chunk-people', values['chunk-people']);
   const cands = predictors.map((p) => resolveCandidate({ predictor: p, label: p }));
-  // One limit for every model, so every model answers the same requests: `--max-questions` (20, about production's
-  // pool and Twin's targets per person), never above what any of them takes. Without it the `context` view would put
-  // all of a person's served questions in one request, which span-01 then asks as one yes/no per option.
+  // Twin's targets share a state and go in batches of `--max-questions`, never above any model's own limit. Served
+  // states are built per question, so served questions go one per request in both views, keeping lift (full −
+  // context) free of batch effects.
   const maxQuestions = Math.min(
     positive('max-questions', values['max-questions']),
     ...predictors.map(
@@ -979,30 +993,33 @@ export async function modelsCmd(argv: string[]): Promise<void> {
     blobsDir: join(runDir, 'traces'),
     providers: values.offline ? 'offline' : 'live',
   });
-  const meter = new Meter(positive('max-usd', values['max-usd'], false));
+  const meter = new Meter(maxUsd);
   const arms = new Map<string, Arm>();
   let stopReason: string | null = null;
   let canaryResults: CanaryResult[] = [];
   try {
-    const c = await canary(engine.deps.gateway, predictors);
-    canaryResults = c.results;
-    // Synthetic requests and the raw responses: what the schema-built fixtures are re-recorded from (ADR-0068).
-    writeFileSync(join(runDir, 'canary.json'), `${JSON.stringify(c.recorded, null, 2)}\n`);
-    meter.usd += sum(c.results.map((x) => x.costUsd ?? 0));
-    for (const x of c.results)
-      console.log(`canary ${x.label}: ${x.ok ? `ok (${x.modelSnapshot}, ${x.latencyMs} ms)` : x.error}`);
-    const failed = c.results.filter((x) => !x.ok);
-    if (failed.length && !values['skip-canary'])
-      throw new Error(
-        `canary failed for ${failed.map((x) => `${x.label}: ${x.error}`).join('; ')}. Nothing else was spent; fix it or leave the model out of --predictors`,
-      );
+    if (!values['skip-canary']) {
+      const c = await canary(engine.deps.gateway, predictors);
+      canaryResults = c.results;
+      writeFileSync(join(runDir, 'canary.json'), `${JSON.stringify(c.recorded, null, 2)}\n`);
+      meter.usd += sum(c.results.map((x) => x.costUsd ?? 0));
+      for (const x of c.results)
+        console.log(`canary ${x.label}: ${x.ok ? `ok (${x.modelSnapshot}, ${x.latencyMs} ms)` : x.error}`);
+      const failed = c.results.filter((x) => !x.ok);
+      if (failed.length)
+        throw new Error(
+          `canary failed for ${failed.map((x) => `${x.label}: ${x.error}`).join('; ')}. Nothing else was spent; fix it or leave the model out of --predictors`,
+        );
+    }
 
-    const chunks = planChunks(served, twin, positive('chunk-people', values['chunk-people']));
+    const chunks = planChunks(served, twin, chunkPeople);
     const cache = new Map<string, EvalRecord>();
-    let costliest = 0;
+    const costliest = new Map<string, number>();
     for (const [i, chunk] of chunks.entries()) {
-      // Don't start a chunk the cap would cut: it would be paid for and then dropped.
-      if (meter.usd + 1.2 * costliest > meter.maxUsd) {
+      // Don't start a chunk the cap would likely cut: it would be paid for, then dropped. A dataset's first chunk is
+      // judged by the costliest chunk of any dataset.
+      const estimate = costliest.get(chunk.dataset) ?? Math.max(0, ...costliest.values());
+      if (meter.usd + 1.2 * estimate > meter.maxUsd) {
         stopReason = `the next chunk would pass the $${meter.maxUsd} cap ($${meter.usd.toFixed(4)} spent); ${chunks.length - i} of ${chunks.length} chunks not run`;
         break;
       }
@@ -1011,14 +1028,14 @@ export async function modelsCmd(argv: string[]): Promise<void> {
         gateway: engine.deps.gateway,
         meter,
         cache,
-        concurrency: positive('concurrency', values.concurrency),
-        maxQuestions,
+        concurrency,
+        maxQuestions: chunk.dataset === SERVED ? 1 : maxQuestions,
       });
       if ('stop' in res) {
         stopReason = `${res.stop.message}; chunk ${i + 1} of ${chunks.length} (${chunk.people.length} ${chunk.dataset} people) was dropped for every model, later chunks not run`;
         break;
       }
-      costliest = Math.max(costliest, meter.usd - before);
+      costliest.set(chunk.dataset, Math.max(costliest.get(chunk.dataset) ?? 0, meter.usd - before));
       for (const a of res.arms) {
         const key = `${a.dataset}|${a.predictor}|${a.view}`;
         const prev = arms.get(key);

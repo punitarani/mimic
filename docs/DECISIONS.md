@@ -2457,19 +2457,27 @@ unmetered infrastructure, not a model under comparison.
     decider echoes.
 - **Limits.** `decisionModelLimits` gains `maxQuestions`: 64 a request for clef, 128 for the decider. `planDecision`
   refuses a larger request before sending it, and the eval's batching splits at the limit.
-- **Answers checked, not trusted.** The new adapters reject a response from a model not asked for, an answer of the
-  wrong type, a choice outside the options, or score levels not keyed `0..n-1`. Read silently, those would score as
-  uniform and still count as answered.
-  - The rejection keeps the response's usage, so the failed row still carries the cost.
+- **Answers checked, not trusted.** Read silently, a malformed answer would score as near-uniform and still count as
+  answered.
+  - The new adapters reject a whole response from a model not asked for, or one that can't be read. Usage is read
+    first, so the rejection keeps the cost.
+  - `DecisionPredictor` records a rejection as the model's failure (`output`): it keeps its cost share and is not
+    retried.
+  - A single malformed answer (wrong type, a choice outside the options, score levels not keyed `0..n-1`) is dropped,
+    so only its question fails.
   - Jev's schema now accepts any `legend` (never read), since clef's allows any JSON per level.
+  - Missing setup (no account ID, no list rate) is a `DecisionSetupError`, refused before any request and never
+    retried. A Workers AI envelope carrying Cloudflare's authentication error (10000) is a 401.
 - **List rate, the one exception to `usage.cost`.**
   - `DECISION_LIST_RATES` registers each model's published rate with its source and the day it was read: clef $0.24/M
     input, clef-flash $0.09/M, the decider $0.04/M, output free.
-  - Cost = tokens × rate. A model routed to these vendors without a rate is refused before any call.
+  - Cost is the response's `usage.cost` if a vendor ever sends one, else tokens × rate. A model routed to these vendors
+    without a rate is refused before any call.
   - A price change is an edit there, reviewed like any other. Everywhere else, cost still comes from responses.
 - **E8 (`pnpm eval -- models`, Actions → Decision models, `docs/MODELS.md`).**
-  - Five raw-scale arms on the same sealed instances, states and requests, each from `full` and from `context`. One
-    batch limit holds for every model: 20 questions, never above any model's own.
+  - Five raw-scale arms on the same sealed instances, states and requests, each from `full` and from `context`.
+    Served questions go one per request (their states are per question); Twin's go in batches of 20, never above any
+    model's own limit.
   - Served questions from real people (`EvalInstance.population`), plus Twin-2K-500 at k = 30.
   - A canary request per model first; people in chunks, all models per chunk, a chunk cut by the cap dropped for every
     model.
