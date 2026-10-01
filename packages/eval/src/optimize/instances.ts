@@ -70,6 +70,8 @@ export interface LoadOptions {
   limitPeople?: number;
   /** Cap on heldout targets per person, so a Twin person doesn't dominate. */
   maxTargetsPerPerson?: number;
+  /** Only people who joined at or after this time (ms): a rule read on new people leaves earlier ones out. */
+  since?: number;
   seed: string;
 }
 
@@ -93,7 +95,9 @@ function identityTerms(m: MimicRecord, facts: Array<{ object: string; userState:
  */
 export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promise<EvalInstance[]> {
   const all = await deps.store.listMimics({ consentResearch: true });
-  let mimics = all.filter((m) => opts.split === 'all' || m.split === opts.split);
+  let mimics = all.filter(
+    (m) => (opts.split === 'all' || m.split === opts.split) && m.createdAt >= (opts.since ?? 0),
+  );
   mimics = shuffle(mimics, seededRng(`people:${opts.seed}`)).slice(0, opts.limitPeople ?? mimics.length);
   const out: EvalInstance[] = [];
   for (const m of mimics) {

@@ -1,6 +1,6 @@
 import {
   createMimic,
-  DEFAULT_CONFIG_LABEL,
+  DEFAULT_CONFIG_V8_LABEL,
   E3B_CONTROL_LABEL,
   EngineError,
   EXPERIMENT_PRESETS,
@@ -51,7 +51,7 @@ describe('the E3b preset', () => {
       const labels = new Map((await fresh.deps.store.listConfigs()).map((c) => [c.hash, c.label]));
       expect(a.experiment.arms.map((x) => labels.get(x.configHash))).toEqual([
         E3B_CONTROL_LABEL,
-        DEFAULT_CONFIG_LABEL,
+        DEFAULT_CONFIG_V8_LABEL,
       ]);
       const b = await setupPreset(fresh.deps, 'e3b');
       expect(b.created).toBe(false);
@@ -135,7 +135,7 @@ describe('real people only (ADR-0045)', () => {
     expect(report.control).toBe('control');
     expect(report.arms.map((a) => [a.arm, a.config, a.people])).toEqual([
       ['control', E3B_CONTROL_LABEL, PEOPLE],
-      ['v8', DEFAULT_CONFIG_LABEL, PEOPLE],
+      ['v8', DEFAULT_CONFIG_V8_LABEL, PEOPLE],
     ]);
     for (const a of report.arms) {
       expect(a.fidelityAt20.n).toBe(PEOPLE);

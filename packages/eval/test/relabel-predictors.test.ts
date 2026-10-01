@@ -2,11 +2,14 @@ import {
   canonicalPredictorId,
   DECISION_MODELS,
   DECISION_PREFIX,
+  DEFAULT_CONFIG_V8,
+  DEFAULT_CONFIG_V8_LABEL,
   decisionChallenger,
   FLAG_KEYS,
   JEV_MODEL,
   LEGACY_DECISION_PREFIX,
   predictorIdSpellings,
+  registerConfig,
   SPAN_MODEL,
   StaticFlags,
 } from '@mimic/core';
@@ -61,6 +64,8 @@ beforeAll(async () => {
     new StaticFlags({ [FLAG_KEYS.decisionsModel]: () => mode }),
   );
   await runSession(engine, script, { turns: 10 });
+  // A config hashed before ADR-0054, which spells its primary `jev:`.
+  await registerConfig(engine.deps, DEFAULT_CONFIG_V8, DEFAULT_CONFIG_V8_LABEL);
   mode = 'span-01';
   spanMimic = (await runSession(engine, script, { turns: 10 })).mimicId;
 

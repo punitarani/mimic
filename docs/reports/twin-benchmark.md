@@ -398,12 +398,13 @@ What this changes in the agenda is written up in `docs/RESEARCH.md` §10 and in 
 
 1. A probe set with items at known transfer distances (E7), so that "learns from answers" is measured per distance
    on served people, with shared items for item means and dispersion.
-2. `fill` on served questions: a config whose state retrieves by embeddings and fills the §9.9 budget, as a shadow
-   on E7's probes, with its own calibration (a filled state is a larger state; item 5).
+2. `fill` where the budget binds. Served sessions never reach it (up to about 90 answers fit), so a served shadow
+   would equal the incumbent; the policy matters for long-lived mimics and agents' cards. First, retrieval for a
+   batch centroid, as production retrieves, against the per-target upper bound measured here.
 3. Compaction by meaning for when the budget does run out: derived traits that keep party, income and materialism
    after the answers have left the window.
-4. The LLM-written state for Jev: a reflector draft as the primary's state, calibrated on its own, shadowed on
-   served questions.
+4. The LLM-written state for Jev: on served people the reflector's insights already are one, so `cfg.default.v9`
+   shadows Jev on derived data (ADR-0065), to be read on people who joined after E6.
 5. Calibration as a function of state size, since one temperature holds at 30 answers and not at 100.
 6. A card for agents chosen by meaning for the task at hand, not by surprise: eight answers retrieved by embeddings
    keep twice the dispersion of eight recent ones. Lead SOUL.md with the evidence block for LLM readers and with the

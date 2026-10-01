@@ -52,7 +52,14 @@ export interface Loaded {
 /** Loads instances from one or more data files (a prod export, a Twin-2K-500 import, …). */
 export async function loadData(
   data: string,
-  opts: { split: 'dev' | 'test' | 'all'; k: number; limitPeople?: number; maxTargets?: number; seed: string },
+  opts: {
+    split: 'dev' | 'test' | 'all';
+    k: number;
+    limitPeople?: number;
+    maxTargets?: number;
+    since?: number;
+    seed: string;
+  },
 ): Promise<Loaded> {
   const files = data
     .split(',')
@@ -69,6 +76,7 @@ export async function loadData(
       const loadOpts: Parameters<typeof loadInstances>[1] = { k: opts.k, split: opts.split, seed: opts.seed };
       if (opts.limitPeople) loadOpts.limitPeople = opts.limitPeople;
       if (opts.maxTargets) loadOpts.maxTargetsPerPerson = opts.maxTargets;
+      if (opts.since) loadOpts.since = opts.since;
       instances.push(...(await loadInstances(engine.deps, loadOpts)));
     } finally {
       engine.close();
@@ -141,6 +149,7 @@ const COMMON = {
   k: { type: 'string', default: '30' },
   limit: { type: 'string' },
   'max-targets': { type: 'string', default: '40' },
+  since: { type: 'string' },
   seed: { type: 'string', default: 'optimize' },
   name: { type: 'string' },
   offline: { type: 'boolean', default: false },
@@ -154,6 +163,7 @@ export function loadOptsOf(v: {
   k?: string;
   limit?: string;
   'max-targets'?: string;
+  since?: string;
   seed?: string;
 }) {
   if (!['dev', 'test', 'all'].includes(v.split ?? 'dev')) throw new Error('--split must be dev, test or all');
@@ -164,6 +174,11 @@ export function loadOptsOf(v: {
     maxTargets: positive('max-targets', v['max-targets'] ?? '40'),
   };
   if (v.limit) o.limitPeople = positive('limit', v.limit);
+  if (v.since) {
+    const t = Date.parse(v.since);
+    if (Number.isNaN(t)) throw new Error(`--since must be a date, e.g. 2026-10-01 (got ${v.since})`);
+    o.since = t;
+  }
   return o;
 }
 

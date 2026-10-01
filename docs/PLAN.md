@@ -690,7 +690,9 @@ When a question is served:
 
 1. **Primary.** Jev on `state(answers < t)`. This comes from the selector call.
 2. **Baseline.** Jev on `state(contextOnly)`.
-3. **Shadows.** Enqueue `predict.shadow` for each shadow LLM, using the same sealed state (identical `stateHash`).
+3. **Shadows.** Enqueue `predict.shadow` for each shadow, using the same sealed state (identical `stateHash`). A
+   registered variant may read a view of it (`harness.stateView`: context, answers or derived data; ADR-0065), so a
+   shadow can test what a predictor should read without a second sealed state.
 
 **Jev templates:**
 

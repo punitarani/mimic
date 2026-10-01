@@ -109,10 +109,11 @@ describe('rows are named canonically, after the model that answered (ADR-0054)',
       expect(p.modelSnapshot).toBe(`${SPAN_MODEL}-fake`);
       expect(p.fallback).toBe(false);
     }
-    // Shadows name their own model and are never rerouted.
+    // Shadows name their own model and are never rerouted, a decision shadow included (ADR-0065).
     const shadows = await rows(sessions.on, ['shadow']);
     expect(shadows.length).toBeGreaterThan(0);
-    for (const p of shadows) expect(p.predictorId.startsWith('llm:')).toBe(true);
+    for (const p of shadows) expect(DEFAULT_CONFIG.predictor.shadows).toContain(p.predictorId);
+    expect(shadows.some((p) => p.predictorId.startsWith('decision:typesafe/jev-1.13@'))).toBe(true);
   });
 
   it('span-01 failing: Jev answers and the row keeps Jev’s ID', async () => {

@@ -12,6 +12,7 @@ import {
   expectedIndex,
   formatPredictorId,
   type Gateway,
+  HARNESS_STATE_VIEWS,
   harnessProblems,
   INCUMBENT_HARNESS,
   LlmPredictor,
@@ -60,6 +61,7 @@ export const CandidateInput = z.object({
       calibrationTemperature: z.number().min(0.1).max(20),
       keyEnum: z.boolean(),
       labelKeys: z.boolean(),
+      stateView: z.enum(HARNESS_STATE_VIEWS),
     })
     .partial()
     .default({}),
@@ -502,6 +504,7 @@ export function derivedCalibrations(primaryId: string): Array<{ predictorId: str
   if (base.harness.calibrationTemperature !== 1) return [];
   const same = (a: PredictPrompt, b: PredictPrompt) =>
     a.harness.jevState === b.harness.jevState &&
+    a.harness.stateView === b.harness.stateView &&
     COMPONENT_IDS.every((id) => !componentReadBy(id, a) || a.components[id] === b.components[id]);
   const idOf = (version: string) =>
     formatPredictorId({ kind: 'decision', model: spec.model, promptVersion: version });
