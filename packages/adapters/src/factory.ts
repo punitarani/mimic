@@ -1,5 +1,7 @@
 import type { DecisionProvider, Embedder, Enricher, LlmClient, PeopleSearch } from '@mimic/core';
 import {
+  FASTINO_DECISION_PREFIX,
+  FastinoDecisions,
   PERPLEXITY_DECISION_PREFIX,
   PerplexityDecisions,
   RoutedDecisions,
@@ -17,6 +19,8 @@ export interface ProviderEnv {
   EXA_API_KEY?: string;
   PARALLEL_API_KEY?: string;
   PERPLEXITY_API_KEY?: string;
+  /** GLiDE on Fastino's API (ADR-0070): the eval CLI and live tests only. */
+  FASTINO_API_KEY?: string;
   /**
    * Clef and clef-flash on Workers AI over REST (ADR-0068): the eval CLI and live tests only. The token needs
    * Account · Workers AI · Read. Deployed Workers set neither, and no served config names a `cloudflare/` model.
@@ -61,8 +65,9 @@ export function makeProviders(
   else if (embProvider === 'hash') embedder = new HashEmbedder();
   else embedder = new OpenRouterEmbedder(opts.embeddingModel, or);
 
-  // Jev and span-01 on OpenRouter; clef on Workers AI; Perplexity's decider on Perplexity (ADR-0068). The router is
-  // always built, so a model whose credentials are missing fails naming them rather than as an OpenRouter 400.
+  // Jev and span-01 on OpenRouter; clef on Workers AI; Perplexity's decider on Perplexity (ADR-0068); GLiDE on Fastino
+  // (ADR-0070). The router is always built, so a model whose credentials are missing fails naming them rather than as
+  // an OpenRouter 400.
   const decisions = new RoutedDecisions(new JevDecisions(or), [
     [
       WORKERS_AI_DECISION_PREFIX,
@@ -79,6 +84,10 @@ export function makeProviders(
         ...http,
         ...(env.PERPLEXITY_API_KEY ? { apiKey: env.PERPLEXITY_API_KEY } : {}),
       }),
+    ],
+    [
+      FASTINO_DECISION_PREFIX,
+      new FastinoDecisions({ ...http, ...(env.FASTINO_API_KEY ? { apiKey: env.FASTINO_API_KEY } : {}) }),
     ],
   ]);
   const p: Providers = { decisions, llm: new OpenRouterChat(or), embedder };

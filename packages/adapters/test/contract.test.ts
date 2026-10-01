@@ -6,6 +6,7 @@ import {
   CLEF_MODEL,
   type DecisionRequest,
   Gateway,
+  GLIDE_MODEL,
   isTimeoutError,
   isTransientError,
   type ModelCallRecord,
@@ -25,6 +26,7 @@ import {
   ExaEnricher,
   ExaPeopleSearch,
   exaCandidate,
+  FastinoDecisions,
   type FetchLike,
   HttpError,
   JevDecisions,
@@ -236,6 +238,7 @@ describe('Jev decisions (PLAN §5.1)', () => {
 describe('decisions outside OpenRouter (ADR-0068)', () => {
   const clefAsked = fixture('clef-decisions.request.json') as DecisionRequest;
   const pplxAsked = fixture('pplx-decisions.request.json') as DecisionRequest;
+  const glideAsked = fixture('glide-decisions.request.json') as DecisionRequest;
 
   it('runs clef on Workers AI: the @cf model, the bare name in the body, the envelope unwrapped, priced at list rate', async () => {
     const { fetch, calls } = replay({ json: fixture('clef-decisions.json') });
@@ -383,6 +386,51 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     ).toEqual(['q_canary_score: probabilities for 5 not in the question']);
   });
 
+  it('runs GLiDE on Fastino as fastino/GLiDE, with exactly three fields, priced at list rate (ADR-0070)', async () => {
+    const { fetch, calls } = replay({ json: fixture('glide-decisions.json') });
+    const res = await new FastinoDecisions({ fetch, apiKey: 'f' }).decide(glideAsked);
+    expect(calls[0]!.url).toBe('https://api.fastino.ai/v1/systemone');
+    expect(calls[0]!.headers['x-api-key']).toBe('f');
+    // Unknown top-level fields are a 422 there.
+    expect(calls[0]!.body).toEqual({
+      model: 'fastino/GLiDE',
+      state: glideAsked.state,
+      questions: glideAsked.questions,
+    });
+    // It answers as `glide`.
+    expect(res.modelSnapshot).toBe('fastino/GLiDE');
+    expect(res.usage).toEqual({ inputTokens: 1170, outputTokens: 3, costUsd: (1170 * 0.3) / 1e6 });
+    expect(res.answers.q_canary_noul).toEqual({ type: 'noul', p: 0.93 });
+    expect(res.answers.q_canary_choice).toMatchObject({ type: 'choice', choice: 'a' });
+    // GLiDE's `score` is the winning level, not an expectation; the levels come from `probabilities` either way.
+    const score = res.answers.q_canary_score;
+    expect(score?.type === 'score' && score.probabilities).toEqual({
+      0: 0.02,
+      1: 0.1,
+      2: 0.46,
+      3: 0.35,
+      4: 0.07,
+    });
+    const other = replay({ json: { ...(fixture('glide-decisions.json') as object), model: 'glide-2' } });
+    await expect(new FastinoDecisions({ fetch: other.fetch }).decide(glideAsked)).rejects.toThrow(
+      /answered as glide-2/,
+    );
+  });
+
+  it('waits out a warming GLiDE (HTTP 425), then gives up', async () => {
+    const warming = { status: 425, json: { detail: 'model_warming' } };
+    // The HTTP layer retries a 425 twice at once; the adapter then waits and asks again.
+    const warm = replay(warming, warming, warming, { json: fixture('glide-decisions.json') });
+    const res = await new FastinoDecisions({ fetch: warm.fetch, warmMs: 0 }).decide(glideAsked);
+    expect(warm.calls).toHaveLength(4);
+    expect(res.answers.q_canary_noul).toBeDefined();
+    const cold = replay(warming);
+    await expect(
+      new FastinoDecisions({ fetch: cold.fetch, warmMs: 0, warmRetries: 1 }).decide(glideAsked),
+    ).rejects.toThrow(/HTTP 425/);
+    expect(cold.calls).toHaveLength(6);
+  });
+
   it("prices from the vendor's usage.cost when it sends one", async () => {
     const good = fixture('pplx-decisions.json') as { usage: Record<string, number> };
     const { fetch } = replay({ json: { ...good, usage: { ...good.usage, cost: 0.5 } } });
@@ -390,7 +438,7 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
   });
 
   it('has a list rate for every model it routes outside OpenRouter, from a named source', () => {
-    for (const model of [CLEF_MODEL, CLEF_FLASH_MODEL, PPLX_DECIDER_MODEL]) {
+    for (const model of [CLEF_MODEL, CLEF_FLASH_MODEL, PPLX_DECIDER_MODEL, GLIDE_MODEL]) {
       const rate = DECISION_LIST_RATES[model];
       expect(rate, model).toBeDefined();
       expect(rate!.inputUsdPerMTok).toBeGreaterThan(0);
@@ -406,7 +454,9 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
         ? 'clef-decisions.json'
         : url.includes('perplexity')
           ? 'pplx-decisions.json'
-          : 'jev-decisions.json';
+          : url.includes('fastino')
+            ? 'glide-decisions.json'
+            : 'jev-decisions.json';
       return new Response(JSON.stringify(fixture(name)), { status: 200 });
     };
     const { decisions } = makeProviders(
@@ -414,6 +464,7 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
         CLOUDFLARE_ACCOUNT_ID: 'acct-1234',
         CLOUDFLARE_API_TOKEN: 'cf-token-secret',
         PERPLEXITY_API_KEY: 'pplx-key-secret',
+        FASTINO_API_KEY: 'fast_sk_secret',
         OPENROUTER_API_KEY: 'sk-or-v1-secret',
         // Clef never goes through the local relay, which doesn't forward the Cloudflare API.
         EGRESS_RELAY: 'http://127.0.0.1:8790',
@@ -423,6 +474,7 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     );
     expect(decisions.providerFor?.(CLEF_MODEL)).toBe('workers-ai-decisions');
     expect(decisions.providerFor?.(PPLX_DECIDER_MODEL)).toBe('perplexity-decisions');
+    expect(decisions.providerFor?.(GLIDE_MODEL)).toBe('fastino-decisions');
     expect(decisions.providerFor?.('typesafe/jev-1.13')).toBe('openrouter-decisions');
     expect(decisions.provider).toBe('openrouter-decisions');
 
@@ -445,11 +497,14 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     await g
       .decide({ purpose: 'eval.models' }, { ...pplxAsked, model: 'typesafe/jev-1.13' })
       .catch(() => null);
+    await g.decide({ purpose: 'eval.models' }, glideAsked);
     expect(urls[0]).toBe(
       'https://api.cloudflare.com/client/v4/accounts/acct-1234/ai/run/@cf/cloudflare/clef',
     );
     expect(urls[1]).toBe('http://127.0.0.1:8790/api.perplexity.ai/v1/decisions');
     expect(urls[2]).toBe('http://127.0.0.1:8790/openrouter.ai/api/alpha/decisions');
+    expect(urls[3]).toBe('http://127.0.0.1:8790/api.fastino.ai/v1/systemone');
+    expect(rows.at(-1)!.provider).toBe('fastino-decisions');
     expect(rows.slice(0, 2).map((r) => [r.provider, r.model, r.ok])).toEqual([
       ['workers-ai-decisions', CLEF_MODEL, true],
       ['perplexity-decisions', PPLX_DECIDER_MODEL, true],
@@ -459,7 +514,13 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     const nested = new RoutedDecisions(new JevDecisions({ fetch }), [['cloudflare/', decisions]]);
     expect(nested.providerFor(CLEF_MODEL)).toBe('workers-ai-decisions');
     const logged = JSON.stringify({ rows, traces });
-    for (const secret of ['acct-1234', 'cf-token-secret', 'pplx-key-secret', 'sk-or-v1-secret'])
+    for (const secret of [
+      'acct-1234',
+      'cf-token-secret',
+      'pplx-key-secret',
+      'fast_sk_secret',
+      'sk-or-v1-secret',
+    ])
       expect(logged).not.toContain(secret);
   });
 });

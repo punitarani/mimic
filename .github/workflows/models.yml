@@ -1,7 +1,7 @@
 # E8: decision models compared (docs/MODELS.md, ADR-0068), from the Actions tab: Actions → Decision models → Run
 # workflow. Jev, span-01 (OpenRouter), Cloudflare's clef and clef-flash (Workers AI) and Perplexity's decider each
-# predict the same sealed instances from the same state, in the same requests, and from the context alone. The step
-# summary and /lab hold the readout: quality after a temperature per model fitted leaving each person out, each model
+# predict the same sealed instances from the same state, in the same requests, and from the context alone; Fastino's
+# GLiDE (ADR-0070) joins when named in `predictors`. The step summary and /lab hold the readout: quality after a temperature per model fitted leaving each person out, each model
 # against Jev, what the answers add, a pairwise table, by question type, latency, cost and errors, and MODELS_RULE's
 # verdict. A canary request per model runs first; a model whose canary fails (a missing key or permission) is left out
 # and named in the report, and the run goes on with the others. With `tune`, every model is also asked in E8b's ten
@@ -14,7 +14,7 @@
 # live, capped at max_usd; people run in chunks with every model, so a cap never leaves models on different questions.
 #
 # Keys: OPENROUTER_API_KEY; CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN, with Account · Workers AI · Read on the
-# token; PERPLEXITY_API_KEY (docs/DEPLOY.md).
+# token; PERPLEXITY_API_KEY; FASTINO_API_KEY (docs/DEPLOY.md).
 
 name: Decision models
 
@@ -31,15 +31,15 @@ on:
         type: string
         default: '200'
       predictors:
-        description: Decision predictors, comma-separated, the reference first (empty is all five, Jev first)
+        description: Decision predictors, comma-separated, the reference first (empty is the five defaults; add decision:fastino/glide for GLiDE)
         type: string
         default: ''
       tune:
-        description: Also run E8b, each model at its best (about $9 and an hour with 200 Twin people)
+        description: Also run E8b, each model at its best (about $9 and an hour with 200 Twin people; GLiDE adds about $19)
         type: boolean
         default: false
       max_usd:
-        description: Spend cap in USD for every model together (empty is $5, or $15 with tune)
+        description: Spend cap in USD for every model together (empty is $5, or $15 with tune; raise it to name GLiDE)
         type: string
         default: ''
       publish:
@@ -104,6 +104,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          FASTINO_API_KEY: ${{ secrets.FASTINO_API_KEY }}
           PREDICTORS: ${{ inputs.predictors }}
           MAX_USD: ${{ inputs.max_usd }}
           TUNE: ${{ inputs.tune }}

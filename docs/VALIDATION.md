@@ -702,6 +702,14 @@ Everything but the last item is offline. The run is Actions → Decision models 
   `01M3WP08Q7MSSY0772PRNCQE27`, $2.00 of $5. All five canaries passed. 9 real people (462 served questions) and 200
   Twin-2K-500 people (4,000 items at k = 30); 44,620 predictions, 3 failed (the decider's, on served questions).
   Verdict: keep Jev (`docs/reports/e8-models.md`).
+- **GLiDE (offline; ADR-0070).** `packages/adapters/test/contract.test.ts`, on fixtures built from Fastino's documented
+  shapes:
+  - GLiDE is asked for as `fastino/GLiDE` at `/v1/systemone` with `X-API-Key` and exactly `model`, `state` and
+    `questions`;
+  - it is priced at $0.30/M input, and its integer `score` leaves the levels read from `probabilities` unchanged;
+  - an echo other than `glide` is rejected;
+  - a 425 is waited out, then given up after the retries;
+  - it is routed and logged as `fastino-decisions`, with the key never in a row or trace.
 - **E8b, tuning (offline; ADR-0069).**
   - `packages/eval/test/tuning.test.ts`:
     - a person whose own answers would pick another setting is scored at the one everyone else picked;

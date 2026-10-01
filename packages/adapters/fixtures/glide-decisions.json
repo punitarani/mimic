@@ -1,0 +1,44 @@
+{
+  "model": "glide",
+  "answers": {
+    "q_canary_noul": {
+      "type": "noul",
+      "noul": 0.93,
+      "confidence": 0.86
+    },
+    "q_canary_choice": {
+      "type": "choice",
+      "choice": "a",
+      "confidence": 0.81,
+      "probabilities": {
+        "a": 0.88,
+        "b": 0.05,
+        "c": 0.07
+      }
+    },
+    "q_canary_score": {
+      "type": "score",
+      "score": 2,
+      "expected_level": 2.35,
+      "confidence": 0.11,
+      "probabilities": {
+        "0": 0.02,
+        "1": 0.1,
+        "2": 0.46,
+        "3": 0.35,
+        "4": 0.07
+      },
+      "legend": {
+        "0": "Not at all",
+        "1": "A little",
+        "2": "Somewhat",
+        "3": "Very",
+        "4": "Extremely"
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 1170,
+    "output_tokens": 3
+  }
+}

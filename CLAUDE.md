@@ -49,7 +49,7 @@ trait rows.
 apps/web           Next.js on Workers (@opennextjs/cloudflare): UI + synchronous route handlers
 apps/worker        Queue consumer (async jobs) + cron
 packages/core      Pure TS engine. Must not import Cloudflare, Next or Node-only modules; receives deps by injection.
-packages/adapters  OpenRouter chat, decisions (Jev, span-01; clef on Workers AI; Perplexity's decider), OpenAI-decisions stub, Exa, Parallel, Perplexity, embeddings
+packages/adapters  OpenRouter chat, decisions (Jev, span-01; clef on Workers AI; Perplexity's decider; Fastino's GLiDE), OpenAI-decisions stub, Exa, Parallel, Perplexity, embeddings
 packages/db        Drizzle schema + migrations + Store; R2/KV/Vectorize helpers; runtime wiring (db/runtime)
 packages/eval      Node CLI for offline evaluation and the scripted session loop
 docs/              PLAN.md, DECISIONS.md, ontology/*.json, prompts/*.md (generated from packages/core)
@@ -83,8 +83,8 @@ If a task seems to require breaking one of these, stop and ask.
 - Default LLM is `deepseek/deepseek-v4.1-flash`, routed to Wafer first (ADR-0004); GPT-6 Luna and GLM 5.3 Flash are alternatives and shadows, as are MiMo V2.6 Flash and Qwen3.8 Flash (ADR-0025). Since `cfg.default.v6` every LLM shadow runs `@predict.v2`, which is registered only for the models it has measured settings for (ADR-0041). Since `cfg.default.v7` the primary is calibrated Jev (`decision:typesafe/jev-1.13@jev-predict.v2`; configs v3–v8 spell it `jev:`, a permanent alias, ADR-0054): selection scores candidates on Jev's raw scale and only the stored prediction is rescaled (`selectionView`); anything selection reads back from storage goes through `rawScale`, and the reasoning-off Qwen control is retired (ADR-0048). `cfg.default.v9` (ADR-0065) adds two view shadows, Jev on derived data (`@jev-derived.v1`) and DeepSeek on the context alone (`@predict.v2-context`): a variant's `harness.stateView` reads a view of the sealed state and keeps its hash; `cfg.default.v10` (ADR-0066) adds Jev asked scale questions as choices (`@jev-scales.v1`, `harness.scoreAs`). E3b stays on v8, E7 runs on the default. Adding a predictor means a new config plus `pnpm backfill` for questions already served (ADR-0024).
 - Predictor IDs are `decision:<model>[@<version>]` (the OpenRouter Decisions API: Jev, span-01) or `llm:<model>[@<version>]`. `jev:` is the decision kind's old name, read as `decision:` for ever because hashed configs spell it; never write it. The Store returns IDs canonical; compare any other ID (a config's, a job's, a CLI flag's) through `canonicalPredictorId` (ADR-0054). Decision models
   outside OpenRouter have provider-neutral IDs with the vendor as prefix (`cloudflare/clef`, `cloudflare/clef-flash`,
-  `perplexity/pplx-decider-v1-27b`; `@` would read as a prompt version); `RoutedDecisions` sends each to its vendor
-  and no served config names them yet (ADR-0068).
+  `perplexity/pplx-decider-v1-27b`, `fastino/glide`; `@` would read as a prompt version); `RoutedDecisions` sends each
+  to its vendor and no served config names them yet (ADR-0068, ADR-0070).
 - Question selection is `voi` (value of information) since `cfg.default.v4`: a belief state per person (uncertainty, conflict, weakness, coverage, exposure) scores pooled candidates; `gen.v2` targets the facets with the highest need; cross-person `item_stats` rank candidates and never enter a prompt or a state. Spec: `docs/SELECTION.md`, ADR-0027. `cfg.default.v8` (ADR-0044) runs it on ontology v2 with `gen.v3`, balances categories and facet groups, holds sensitive questions back for the first six answers, sweeps consented sensitive facets, and keeps two coverage deadlines (every facet group by question 20, every consented sensitive facet by 30). `entropy`, `bald`, `coverage` and `random` stay as controls. E3b (ADR-0045) tests v8 against `cfg.e3b.control` (v8 without M12's balance); set it up from the preset in `/lab` (`setupPreset`, draft only) and read it with `pnpm eval -- arms`. `/lab`, `arms` and `rubric` keep real people apart from scripted and imported ones (`populationOf`); never report the latter as results.
 - E6 (ADR-0053, `docs/EVIDENCE.md`) runs before E3b: it measures whether predictors learn from a person's answers,
   and from what form of them (`viewState`: `context`, `full`, `answers`, `derived`, `relevant`), on sealed served
@@ -96,14 +96,15 @@ If a task seems to require breaking one of these, stop and ask.
   benchmark (`docs/reports/twin-benchmark.md`) showed that Twin's lift is transfer from demographics and scales to
   product choices and that what the state keeps beyond the budget decides which domains transfer (`docs/EVIDENCE.md`
   §8, `docs/RESEARCH.md` §10).
-- E8 (ADR-0068, `docs/MODELS.md`) compares decision models: Jev, span-01, clef, clef-flash and Perplexity's decider on
-  the same sealed states and requests, served questions (real people) and Twin-2K-500 at k = 30, after a temperature
-  per model fitted leaving each person out; `MODELS_RULE` decides whether a challenger earns a shadow. Run it from
-  Actions → Decision models (`pnpm eval -- models`); a canary request per model runs first, and in the workflow a
-  model that fails it is left out and named. The first run's verdict is keep Jev (`docs/reports/e8-models.md`): the
-  challengers win on Twin and lose on served questions, and each is slower; Perplexity's decider came closest. E8b
-  (`--tune`, ADR-0069, `docs/MODELS.md` §9) re-runs it with every model at its best: a fixed grid of request settings,
-  each chosen by nested leave-one-person-out cross-validation, so no person's answers choose their own setting.
+- E8 (ADR-0068, `docs/MODELS.md`) compares decision models: Jev, span-01, clef, clef-flash and Perplexity's decider
+  (Fastino's GLiDE is supported and runs when named in `--predictors`, ADR-0070) on the same sealed states and requests,
+  served questions (real people) and Twin-2K-500 at k = 30, after a temperature per model fitted leaving each person
+  out; `MODELS_RULE` decides whether a challenger earns a shadow. Run it from Actions → Decision models
+  (`pnpm eval -- models`); a canary request per model runs first, and in the workflow a model that fails it is left out
+  and named. The first run's verdict is keep Jev (`docs/reports/e8-models.md`): the challengers win on Twin and lose on
+  served questions, and each is slower; Perplexity's decider came closest. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9)
+  re-runs it with every model at its best: a fixed grid of request settings, each chosen by nested leave-one-person-out
+  cross-validation, so no person's answers choose their own setting.
 - Scope and consent (ADR-0040, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and sensitive facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`), each behind its own consent (ticked by default at intake, ADR-0049); special-category areas also need a confirmation, and declined facets ("Prefer not to say") are blocked (ADR-0050, both enforced in `facetAllowed`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
 - Research directions and their experiments live in `docs/RESEARCH.md`. The evals behind them: `transfer` (what an
   export loses, ADR-0057), `ensemble` (pools of stored predictions, ADR-0058), `population` (a synthetic cohort,
@@ -124,11 +125,12 @@ Check the provider's current docs, since these APIs are new and change: OpenRout
 ## Environment
 
 - Bindings (both apps): `DB` (D1), `BLOBS` (R2), `CACHE` (KV), `VEC` (Vectorize, metadata indexes on `mimicId` and `kind`; deployed envs only), `JOBS` (Queue), `IDENTITY_JOBS` (Queue for `identity.*`, so sign-up never waits behind other jobs; ADR-0034), `AI` (Workers AI; deployed envs only), `RL` (rate limiter), `FLAGS` (Cloudflare Flagship app `mimic`; prod only: unbound means every flag reads its default; ADR-0051).
-- Secrets: `OPENROUTER_API_KEY`, `EXA_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY` (optional), `SESSION_SECRET`, `ADMIN_EMAILS`, `INVITE_CODES`. Keep local copies in `.dev.vars`, which is gitignored. Settings (Worker vars in `wrangler.jsonc`, which Doppler may override): `SEARCH_PROVIDER`, `ENRICH_PROVIDER`, `EMBEDDINGS_PROVIDER`, `VECTOR_BACKEND` (`scripts/deploy/settings.mjs`). Spend caps are the flags `budget-usd` and `budget-session-share` (ADR-0035, ADR-0052); `BUDGET_USD` and `BUDGET_SESSION_SHARE` remain only for `.dev.vars`.
+- Secrets: `OPENROUTER_API_KEY`, `EXA_API_KEY`, `PARALLEL_API_KEY`, `PERPLEXITY_API_KEY` (optional), `FASTINO_API_KEY` (optional, E8 only), `SESSION_SECRET`, `ADMIN_EMAILS`, `INVITE_CODES`. Keep local copies in `.dev.vars`, which is gitignored. Settings (Worker vars in `wrangler.jsonc`, which Doppler may override): `SEARCH_PROVIDER`, `ENRICH_PROVIDER`, `EMBEDDINGS_PROVIDER`, `VECTOR_BACKEND` (`scripts/deploy/settings.mjs`). Spend caps are the flags `budget-usd` and `budget-session-share` (ADR-0035, ADR-0052); `BUDGET_USD` and `BUDGET_SESSION_SHARE` remain only for `.dev.vars`.
 - Flags (ADR-0051, docs/CHALLENGER.md): every flag is defined once in `FLAG_SPECS` (`packages/core/src/flags.ts`); read them through `FlagReader` in core and `flaggedEnv` in `packages/db`, never the binding directly. `decisions-model` (`jev` | `span-01`) picks the model for Jev's served predictions and defaults to `jev`, and a rerouted row is stored under the model that answered (`servedPredictorId`, ADR-0054); `budget-usd` and `budget-session-share` are the spend caps (in prod the flags are their only source); `use-invite-code` (on by default) gates sign-up on `INVITE_CODES` (ADR-0055). Every read has a code default that equals the behaviour before the flag. Only runtime levers are flags (ADR-0052): provider choices (`SEARCH_PROVIDER`, `ENRICH_PROVIDER`, `EMBEDDINGS_PROVIDER`) and `VECTOR_BACKEND` are Worker vars in `wrangler.jsonc`, and secrets stay secrets. Adding a flag means a registry entry plus the flag in the `mimic` app; `pnpm flags:check` (CI's Flags workflow and deploy preflight) fails until both agree.
-- Local dev in the Claude Code remote env: provider keys are injected by the outbound proxy and can't be read. `EGRESS_RELAY=http://127.0.0.1:8790` routes provider calls from workerd and Next through `scripts/egress-relay.mjs`, which uses Node's proxy-aware fetch (ADR-0002). Parallel's API host is blocked by this env's egress policy, and so is `api.perplexity.ai`. The eval CLI and
+- Local dev in the Claude Code remote env: provider keys are injected by the outbound proxy and can't be read. `EGRESS_RELAY=http://127.0.0.1:8790` routes provider calls from workerd and Next through `scripts/egress-relay.mjs`, which uses Node's proxy-aware fetch (ADR-0002). Parallel's API host is blocked by this env's egress policy, and so are `api.perplexity.ai` and `api.fastino.ai`. The eval CLI and
   `pnpm test:live` reach clef over Workers AI's REST API with `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`
-  (Workers AI: Read), never through the relay; Perplexity's decider reads `PERPLEXITY_API_KEY` (ADR-0068).
+  (Workers AI: Read), never through the relay; Perplexity's decider reads `PERPLEXITY_API_KEY` (ADR-0068), and GLiDE
+  `FASTINO_API_KEY` (ADR-0070).
 - Environments: dev (local), preview and prod, each with separate resources. Prod deploys from `.github/workflows/cd.yml`
   after green CI on `main`. Every secret lives in Doppler (`mimic/prd`), synced to GitHub repository
   secrets. `scripts/deploy` finds or creates the resources and pushes secrets and settings on each deploy

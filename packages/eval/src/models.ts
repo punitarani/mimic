@@ -12,6 +12,7 @@ import {
   decisionModelLimits,
   type EvalRunRecord,
   type Gateway,
+  GLIDE_MODEL,
   JEV_MODEL,
   PPLX_DECIDER_MODEL,
   parsePredictorId,
@@ -63,6 +64,8 @@ export const DEFAULT_PREDICTORS = [
   CLEF_FLASH_MODEL,
   PPLX_DECIDER_MODEL,
 ].map((model) => `decision:${model}`);
+/** Supported, run only when named in `--predictors` (ADR-0070): it costs more than the five defaults together. */
+export const OPT_IN_PREDICTORS = [`decision:${GLIDE_MODEL}`];
 /** `full` first, so `context` reuses its prediction where a state holds no answers yet. */
 export const MODELS_VIEWS: StateView[] = E8_SETTINGS.map((s) => s.view);
 export const SERVED = 'served';
@@ -98,6 +101,7 @@ const NAMES: Record<string, string> = {
   [CLEF_MODEL]: 'clef',
   [CLEF_FLASH_MODEL]: 'clef-flash',
   [PPLX_DECIDER_MODEL]: 'pplx-decider',
+  [GLIDE_MODEL]: 'GLiDE',
 };
 
 export function modelLabel(predictor: string): string {
@@ -155,6 +159,10 @@ export function canaryHint(model: string, message: string): string {
     return 'the Cloudflare API token needs Account · Workers AI · Read';
   if (model.startsWith('perplexity/') && /HTTP 401/.test(message))
     return 'set PERPLEXITY_API_KEY to an active Perplexity API key';
+  if (model.startsWith('fastino/') && /HTTP 401/.test(message))
+    return 'set FASTINO_API_KEY to an active Fastino API key';
+  if (model.startsWith('fastino/') && /HTTP 40[23]/.test(message))
+    return 'the Fastino account needs credits, a payment method or a higher spend limit';
   if (/No allowed providers/.test(message))
     return "allow the model's provider in OpenRouter's settings (docs/CHALLENGER.md)";
   if (/HTTP 401/.test(message)) return 'check OPENROUTER_API_KEY';
@@ -1252,7 +1260,8 @@ export async function modelsCmd(argv: string[]): Promise<void> {
   const predictors = modelArms(values.predictors);
   const reference = predictors[0]!;
   const k = positive('k', values.k);
-  // E8 spends about $2 and E8b about $9 at 200 Twin people (docs/MODELS.md §8, §9).
+  // At 200 Twin people, the five defaults spend about $2 on E8 and $9 on E8b; naming GLiDE adds about $5 and $19
+  // (docs/MODELS.md §8, §9).
   const maxUsd = positive('max-usd', values['max-usd'] ?? (values.tune ? '15' : '5'), false);
   const concurrency = positive('concurrency', values.concurrency);
   const chunkPeople = positive('chunk-people', values['chunk-people']);

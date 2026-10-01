@@ -16,7 +16,10 @@ export interface DecisionModelLimits {
 }
 
 const NONE: DecisionModelLimits = { stringState: false, noulOnly: false };
-/** From the published schemas (2026-10-01, ADR-0068): clef takes 64 questions a request, Perplexity's decider 128. */
+/**
+ * From the published schemas (2026-10-01, ADR-0068): clef takes 64 questions a request, Perplexity's decider 128.
+ * GLiDE documents no count, only 40,000 tokens per question with the state (ADR-0070).
+ */
 const LIMITS: ReadonlyArray<[prefix: string, limits: DecisionModelLimits]> = [
   ['respan/', { stringState: true, noulOnly: true }],
   ['cloudflare/', { stringState: false, noulOnly: false, maxQuestions: 64 }],

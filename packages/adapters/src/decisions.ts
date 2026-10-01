@@ -5,6 +5,7 @@ import {
   type DecisionProvider,
   type DecisionRequest,
   type DecisionResponse,
+  GLIDE_MODEL,
   PPLX_DECIDER_MODEL,
   RejectedResponseError,
 } from '@mimic/core';
@@ -12,8 +13,8 @@ import { z } from 'zod';
 import { authHeader, HttpError, type HttpOptions, requestJson } from './http';
 import { JevResponse, toDecisionAnswer } from './openrouter';
 
-// Decision models served outside OpenRouter (ADR-0068): clef and clef-flash on Workers AI, Perplexity's decider on
-// Perplexity. Both take Jev's request and return Jev's answers, but neither returns a cost.
+// Decision models served outside OpenRouter (ADR-0068, ADR-0070): clef and clef-flash on Workers AI, Perplexity's
+// decider on Perplexity, GLiDE on Fastino. All take Jev's request and return Jev's answers, but none returns a cost.
 
 /**
  * A published list rate, the one exception to "money is the provider's `usage.cost`" (ADR-0068): these calls would
@@ -45,6 +46,12 @@ export const DECISION_LIST_RATES: Readonly<Record<string, ListRate>> = {
     source: 'https://docs.perplexity.ai/docs/decisions/quickstart',
     checkedAt: '2026-10-01',
   },
+  [GLIDE_MODEL]: {
+    inputUsdPerMTok: 0.3,
+    outputUsdPerMTok: 0,
+    source: 'https://docs.fastino.ai/pricing.md',
+    checkedAt: '2026-10-01',
+  },
 };
 
 export function listRateCost(rate: ListRate, usage: { input_tokens: number; output_tokens: number }): number {
@@ -53,6 +60,7 @@ export function listRateCost(rate: ListRate, usage: { input_tokens: number; outp
 
 export const WORKERS_AI_DECISION_PREFIX = 'cloudflare/';
 export const PERPLEXITY_DECISION_PREFIX = 'perplexity/';
+export const FASTINO_DECISION_PREFIX = 'fastino/';
 
 /** Missing local setup (a credential, a list rate): refused before any request, and not worth retrying. */
 export class DecisionSetupError extends Error {
@@ -231,6 +239,56 @@ export class PerplexityDecisions implements DecisionProvider {
       latencyMs,
       attempts,
     });
+  }
+}
+
+export interface FastinoDecisionOptions extends HttpOptions {
+  apiKey?: string;
+  baseUrl?: string;
+  /** How long to wait when the model is warming (HTTP 425), and how often; Fastino suggests about a minute. */
+  warmMs?: number;
+  warmRetries?: number;
+}
+
+/**
+ * Fastino's GLiDE (ADR-0070). Unknown top-level fields are a 422, so the body is exactly the three it takes. A cold
+ * model answers 425 for about a minute, longer than any transient backoff, so the adapter waits it out. GLiDE thinks
+ * further on hard questions, so the timeout is the 300 s Fastino recommends.
+ */
+export class FastinoDecisions implements DecisionProvider {
+  readonly provider = 'fastino-decisions';
+  constructor(private readonly opts: FastinoDecisionOptions = {}) {}
+
+  /** `fastino/glide` is asked for as `fastino/GLiDE`, as Fastino spells it. */
+  static modelOf(model: string): string {
+    return model === GLIDE_MODEL ? 'fastino/GLiDE' : model;
+  }
+
+  async decide(req: DecisionRequest): Promise<DecisionResponse> {
+    const url = `${this.opts.baseUrl ?? 'https://api.fastino.ai'}/v1/systemone`;
+    const rate = rateOf(req.model);
+    const name = FastinoDecisions.modelOf(req.model);
+    const call = () =>
+      requestJson({ timeoutMs: 300_000, ...this.opts }, url, {
+        headers: authHeader('x-api-key', this.opts.apiKey),
+        body: { model: name, state: req.state, questions: req.questions },
+      });
+    for (let warm = 0; ; warm++) {
+      try {
+        const { json, latencyMs, attempts } = await call();
+        return readResponse(req, json, json, {
+          rate,
+          snapshot: name,
+          // The response names the engine with the vendor prefix stripped (`glide`).
+          accepts: [name, req.model, name.slice(FASTINO_DECISION_PREFIX.length).toLowerCase()],
+          latencyMs,
+          attempts,
+        });
+      } catch (e) {
+        if (!(e instanceof HttpError && e.status === 425) || warm >= (this.opts.warmRetries ?? 3)) throw e;
+        await new Promise((r) => setTimeout(r, this.opts.warmMs ?? 60_000));
+      }
+    }
   }
 }
 

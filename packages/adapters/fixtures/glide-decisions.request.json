@@ -1,0 +1,45 @@
+{
+  "model": "fastino/glide",
+  "state": {
+    "identity": {
+      "occupation": "Teacher",
+      "location": "Porto, PT"
+    },
+    "evidence": [
+      {
+        "q": "How often do you read for pleasure?",
+        "a": "Most evenings"
+      }
+    ]
+  },
+  "questions": {
+    "q_canary_noul": {
+      "type": "noul",
+      "instructions": "Would the person enjoy a book club?",
+      "criteria": {
+        "true": "Yes",
+        "false": "No"
+      }
+    },
+    "q_canary_choice": {
+      "type": "choice",
+      "instructions": "Which weekend plan would the person pick?",
+      "criteria": {
+        "a": "A quiet day reading",
+        "b": "A loud concert",
+        "c": "A long run"
+      }
+    },
+    "q_canary_score": {
+      "type": "score",
+      "instructions": "How much does the person value routine?",
+      "criteria": [
+        "Not at all",
+        "A little",
+        "Somewhat",
+        "Very",
+        "Extremely"
+      ]
+    }
+  }
+}

@@ -9,6 +9,7 @@ import {
   FLAG_KEYS,
   FLAG_SPECS,
   flagCreateBody,
+  GLIDE_MODEL,
   type LiveFlag,
   PPLX_DECIDER_MODEL,
   parseSpendLimits,
@@ -201,6 +202,8 @@ describe('span-01 request plan (ADR-0051)', () => {
     });
     expect(decisionModelLimits(CLEF_FLASH_MODEL).maxQuestions).toBe(64);
     expect(decisionModelLimits(PPLX_DECIDER_MODEL).maxQuestions).toBe(128);
+    // GLiDE documents a token limit per question, not a question count (ADR-0070).
+    expect(decisionModelLimits(GLIDE_MODEL).maxQuestions).toBeUndefined();
   });
 
   it('passes a clef request through untouched, and refuses one over its question limit', () => {
