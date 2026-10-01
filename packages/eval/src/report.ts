@@ -6,6 +6,7 @@ import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
 import { type ArmsReport, renderArms } from './arms';
 import { renderEnsemble } from './ensemble';
 import { type EvidenceReport, renderEvidence } from './evidence';
+import { VIEW_RULE } from './optimize/evaluate';
 import { type ProbeReport, renderProbes } from './probes';
 import { type RubricGroup, renderRubric } from './rubric';
 import { renderPopulation } from './synthesize';
@@ -351,6 +352,43 @@ function renderEvaluate(m: M): string[] {
         (x) =>
           `| \`${String(x.model)}\` | \`${String(x.from)}\` → \`${String(x.to)}\` | ${String(x.n)} | ${ci(x.logLoss as M, 1, 4)} | ${ci(x.itemAcc as M, 100, 1)} | ${String(x.failedFrom)} → ${String(x.failedTo)} |`,
       ),
+      '',
+    );
+  }
+  const byPerson = (d: M, scale: number, digits: number) =>
+    `${signed(d.mean, digits, scale)} [${signed(d.ciLow, digits, scale)}, ${signed(d.ciHigh, digits, scale)}]`;
+  const vs = m.againstPrimary as Array<M> | undefined;
+  if (vs?.length) {
+    out.push(
+      '## Against the primary (any model, intervals over people)',
+      '',
+      "Each predictor minus the primary that served the same questions. A view shadow gets ADR-0065's verdict: it",
+      `passes with higher accuracy and log loss no worse than +${VIEW_RULE.maxLogLossWorse} on at least ${VIEW_RULE.minPeople} people;`,
+      'read it on people who joined after E6 (`--since`).',
+      '',
+      '| Primary | Predictor (role) | View | People | n | Δ log loss [90% CI] | Δ item accuracy, points [90% CI] | Better / worse (log loss) | Verdict |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+      ...vs.map((x) => {
+        const ll = x.logLoss as M;
+        return `| \`${String(x.primary)}\` | \`${String(x.predictor)}\` (${String(x.role)}) | ${x.view ? String(x.view) : '—'} | ${String(ll.people)} | ${String(ll.n)} | ${byPerson(ll, 1, 3)} | ${byPerson(x.itemAcc as M, 100, 1)} | ${String(ll.better)} / ${String(ll.worse)} | ${x.verdict ? String(x.verdict) : '—'} |`;
+      }),
+      '',
+    );
+  }
+  const res = m.residual as M | undefined;
+  if (res && Number(res.instances) > 0) {
+    const im = res.itemMean as M;
+    out.push(
+      '## Residual: against the item mean (RESEARCH §1.2)',
+      '',
+      `On ${String(res.items)} items asked of at least ${String(Number(res.minOthers) + 1)} people (${String(res.instances)} questions, ${String(res.people)} people), the population's answers, leaving the person's own out, score log loss ${f4(im.logLoss)} and item accuracy ${pct(im.itemAcc)}. A negative Δ log loss is skill beyond the population.`,
+      '',
+      '| Predictor (role) | n | Δ log loss [90% CI] | Δ item accuracy, points [90% CI] | Better / worse (log loss) |',
+      '| --- | --- | --- | --- | --- |',
+      ...(res.rows as Array<M>).map((x) => {
+        const ll = x.logLoss as M;
+        return `| \`${String(x.predictor)}\` (${String(x.role)}) | ${String(ll.n)} | ${byPerson(ll, 1, 3)} | ${byPerson(x.itemAcc as M, 100, 1)} | ${String(ll.better)} / ${String(ll.worse)} |`;
+      }),
       '',
     );
   }

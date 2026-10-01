@@ -17,6 +17,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FAKE_REFLECTION_HINT, FakeLlm } from '../src/fakes';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 import {
+  againstPrimary,
   breakdown,
   calibrationFits,
   changedComponents,
@@ -25,9 +26,12 @@ import {
   feedbackFor,
   jevRequests,
   Meter,
+  pairedByPerson,
   pairedComparisons,
   pairedDelta,
   predictorFor,
+  RESIDUAL_MIN_OTHERS,
+  residualReport,
   resolveCandidate,
   storedRecords,
   temperatureScale,
@@ -178,6 +182,47 @@ describe('evaluate', () => {
     const t = temperatureScale({ a: 0.9, b: 0.1 }, 2);
     expect(t.a).toBeLessThan(0.9);
     expect(t.a! + t.b!).toBeCloseTo(1);
+  });
+
+  it('compares every shadow with the primary over people, and gives view shadows ADR-0065 verdicts', () => {
+    const recs = storedRecords(instances);
+    const rows = againstPrimary(recs);
+    const derived = rows.find((r) => r.predictor === 'decision:typesafe/jev-1.13@jev-derived.v1')!;
+    expect(derived.primary).toBe(PRIMARY);
+    expect(derived.view).toBe('derived');
+    // Five scripted people are far from the 25 the rule needs.
+    expect(derived.logLoss.people).toBe(5);
+    expect(derived.verdict).toBe('insufficient');
+    expect(rows.find((r) => r.predictor.endsWith('@predict.v2-context'))!.view).toBe('context');
+    // An LLM shadow is compared across models but reads the whole state, so it gets no verdict.
+    const luna = rows.find((r) => r.predictor === 'llm:openai/gpt-6-luna@predict.v2')!;
+    expect(luna.view).toBeNull();
+    expect(luna.verdict).toBeNull();
+    // A person-level interval is no narrower than a question-level one on the same pairs.
+    const p = recs.filter((r) => r.candidate === `${PRIMARY}|primary`);
+    const x = recs.filter((r) => r.candidate === 'llm:openai/gpt-6-luna@predict.v2|shadow');
+    const q = pairedDelta(p, x, 'logLoss', 'q', 2000);
+    const byP = pairedByPerson(p, x, 'logLoss', 'q', 2000);
+    expect(byP.mean).toBeCloseTo(q.mean, 9);
+    expect(byP.better + byP.worse).toBeLessThanOrEqual(byP.people);
+    expect(byP.ciHigh - byP.ciLow).toBeGreaterThan((q.ciHigh - q.ciLow) * 0.5);
+  });
+
+  it('scores residual skill against a leave-one-out item mean on shared items only (RESEARCH §1.2)', () => {
+    const recs = storedRecords(instances);
+    // Five people share the anchors: each has four others, under the default minimum.
+    expect(RESIDUAL_MIN_OTHERS).toBe(5);
+    expect(residualReport(instances, recs).instances).toBe(0);
+    const r = residualReport(instances, recs, 4);
+    expect(r.people).toBe(5);
+    expect(r.items).toBeGreaterThan(3);
+    // Every scripted person picks the first option, so the population predicts them well: the item mean is the
+    // first option at (4 + 0.5) / (4 + 0.5·options).
+    expect(r.itemMean.itemAcc).toBeGreaterThan(0.6);
+    const primary = r.rows.find((x) => x.role === 'primary')!;
+    expect(primary.logLoss.n).toBe(r.instances);
+    expect(r.rows.some((x) => x.role === 'baseline')).toBe(true);
+    expect(r.rows.some((x) => x.predictor === 'item-mean')).toBe(false);
   });
 
   it('derives calibrated Jev from the stored primary for free, and reports what calibration does to accuracy', () => {

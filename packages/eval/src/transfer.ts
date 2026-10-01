@@ -15,6 +15,7 @@ import {
   formatPredictorId,
   type Gateway,
   INCUMBENT_COMPONENTS,
+  isCalibrationOnly,
   isPredictedKind,
   isScoredKind,
   keyedByLabel,
@@ -259,12 +260,10 @@ class JevViewReader implements ViewReader {
 
 export function makeViewReader(gateway: Gateway, id: string, purpose: string): ViewReader {
   const spec = parsePredictorId(id);
-  // A decision reader may carry a calibration (`@jev-predict.v2`); a variant that changes templates would not be
-  // reading the file the same way, so only calibration-only variants are taken.
+  // A decision reader may carry a calibration (`@jev-predict.v2`); a variant that changes templates or the view would
+  // not be reading the file the same way.
   const calibrationOnly =
-    spec.kind === 'decision' &&
-    spec.promptVersion !== undefined &&
-    !Object.keys(PREDICT_PROMPTS[spec.promptVersion]?.components ?? { x: 1 }).length;
+    spec.kind === 'decision' && spec.promptVersion !== undefined && isCalibrationOnly(spec.promptVersion);
   if (spec.promptVersion && !calibrationOnly)
     throw new Error(`A reader takes no prompt version but a calibration (${id}): it reads only the file`);
   return spec.kind === 'llm'

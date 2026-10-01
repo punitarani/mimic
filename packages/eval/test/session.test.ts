@@ -78,10 +78,12 @@ describe('scripted 30-turn session (offline fakes)', () => {
       const shadows = preds.filter((p) => p.role === 'shadow');
       expect(primary).toHaveLength(1);
       expect(baseline).toHaveLength(1);
-      // cfg.default.v7 (ADR-0048): the five LLMs on predict.v2, each recording its version (the reasoning-off Qwen
-      // control of v6 is retired).
+      // The five LLMs on predict.v2 (cfg.default.v7, ADR-0048) and the two view shadows of v9 (ADR-0065), each
+      // recording its version.
       expect(shadows.map((s) => s.predictorId).sort()).toEqual([
+        'decision:typesafe/jev-1.13@jev-derived.v1',
         'llm:deepseek/deepseek-v4.1-flash@predict.v2',
+        'llm:deepseek/deepseek-v4.1-flash@predict.v2-context',
         'llm:openai/gpt-6-luna@predict.v2',
         'llm:qwen/qwen3.8-flash@predict.v2',
         'llm:xiaomi/mimo-v2.6-flash@predict.v2',
