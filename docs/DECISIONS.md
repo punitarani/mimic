@@ -1901,3 +1901,66 @@ $0.042/M. It is added as a challenger behind the Flagship string flag `decisions
   - It applies `DECISION_RULE`: switch only if the paired log-loss interval is below 0, with accuracy no more than
     1 point lower, errors no more than 1 point higher, and latency and cost within 1.5×, on at least 200 predictions
     from at least 5 people.
+
+
+## ADR-0052 — `decision:` predictor IDs, and rerouted predictions stored under the model that answered (2026-10-01)
+
+A predictor ID's prefix names how the predictor is called, not a model: `llm:` is a chat completion that returns JSON
+probabilities, and `jev:` was the OpenRouter Decisions API (a state plus typed questions, answered with
+probabilities). With span-01 on the same API (ADR-0051), `jev:respan/span-01-…` misread, and a third model would have
+read worse. Separately, a served prediction the `decisions-model` flag rerouted to span-01 kept Jev's predictor ID, so
+`/lab`, `evaluate --from stored`, calibration fits and paired comparisons pooled the two models. ADR-0051 said reports
+split on `modelSnapshot`; none did.
+
+- **`decision:` is the kind.** `PredictorKind = 'decision' | 'llm'`; `JevPredictor` is `DecisionPredictor`. New code
+  names and stores decision predictors `decision:<model>[@<version>]` (`formatPredictorId`).
+  - **`jev:` is a permanent alias.** `parsePredictorId` reads it as `decision:`. Configs v3–v8 and `cfg.e3b.control`
+    spell their primary `jev:…`; configs are immutable and their hashes pinned, so they keep it, and a config
+    registered later may use either spelling.
+  - **Not renamed:** the prompt IDs `jev-predict.v*` (their templates were written for and tuned on Jev) and the
+    components `jev.*`, the harness field `jevState` (it is hashed), the trait method `jev` and `traitReader.type`
+    (a DB enum and hashed configs), the flag variant `jev` (it names a model), `JEV_MODEL`, `jevKey` and
+    `jevRequests` (Jev's 32K batching).
+- **One spelling wherever an ID is compared.** The Store reads and writes predictor IDs canonically
+  (`canonicalPredictorId`, a pure prefix swap), so every reader, D1 or an eval export, sees `decision:`, and nothing
+  new is written as `jev:`. IDs that don't come from the Store (configs, job payloads, CLI flags) are canonicalized
+  where they are compared: `runShadow`, `missingPredictions`, `shadowJobs`, backfill runs, `diagnose`, the benchmark,
+  and `pnpm backfill`'s SQL, which matches both spellings (`predictorIdSpellings`).
+  - Jobs keep the key they were enqueued under, so a job from before the deploy still closes its own ledger row; its
+    handler runs it as `decision:`.
+- **Hashes unchanged.** `promptHash` hashes the decision kind as `jev`, so optimizer candidates keep their
+  `cand-<hash>` labels and the eval caches stay valid; a GEPA `state.json` from before is upgraded on resume. Every
+  config hash is unchanged (pinned in `math.test.ts`); prompt hashes and candidate hashes are now pinned too.
+- **Rerouted rows name the model that answered.** `Gateway.decide` returns the model it ran on (`model`, beside the
+  dated `modelSnapshot`), and `DecisionPredictor` sets `servedModel` on a result another model answered. Primary,
+  baseline and hypothesis rows (session and playground) are stored under `servedPredictorId`: the configured ID with
+  that model swapped in, keeping the prompt version, for example `decision:respan/span-01-20260925@jev-predict.v2`.
+  Role, config hash and prompt version are the config's.
+  - A span-01 failure falls back to Jev and keeps Jev's ID; both failing keeps the configured ID; the LLM fallback is
+    unchanged (`llm:…`, `fallback`). Shadows and backfills are never rerouted, so they never set it.
+  - So `/lab`, the stored report, fits and paired comparisons list span-01 apart, under the ID the benchmark uses
+    (`CHALLENGER`); `reproduce` re-predicts a rerouted row on span-01; and a Jev backfill now fills the questions
+    span-01 served (none of their rows is Jev's), which is how the two compare on the same questions.
+- **Stored rows are relabelled after the deploy, not by a migration.** Migrations run before the new code ships
+  (`scripts/deploy/deploy.mjs`) and the old code can't parse `decision:`. `pnpm relabel:predictors`
+  (`scripts/relabel-predictors.mjs`; Actions → Relabel predictors for prod) is a dry run unless `--yes`, and safe to
+  re-run:
+  1. a shadow stored under both spellings for one question (old and new code storing it at once) keeps its better row
+     by migration 0006's rule and loses the other with its score, since the unique shadow index would refuse step 2;
+  2. `jev:` becomes `decision:` on every prediction row, in batches until a recount reaches 0;
+  3. served rows under Jev's ID whose snapshot names a challenger pinned in `DECISION_MODELS` take its ID. Any other
+     snapshot is listed, not changed.
+  - `--reverse` renames `decision:` back to `jev:`, for a code rollback; step 3 stays, since the old code reads
+    `jev:respan/span-01-…@…` as a span-01 prediction, which it was.
+  - Configs, job keys, eval reports (`eval_runs`) and `model_calls` are records of what ran, and are left alone.
+  - Runbook: `docs/DEPLOY.md`. Until it has run, the code reads both spellings, so nothing depends on its timing.
+- **No new config.** Existing mimics keep their config either way; a new config only for the spelling would split the
+  primary's history at an arbitrary point. The next config made for another reason uses `decision:`.
+- **Evidence.** `served-model.test.ts` (sessions with the flag off, on, span-01 failing and both failing; the
+  playground; `/lab` and the stored report), `relabel-predictors.test.ts` (pre-ADR-0052 rows relabelled to exactly
+  what the new code stores, idempotent, reversible), the mixed-spelling cases in `backfill.test.ts`, and the alias,
+  hash and served-ID cases in `components.test.ts`, `math.test.ts` and `challenger.test.ts`. A local run through
+  wrangler relabelled seeded rows as expected.
+- **Supersedes** ADR-0051's "A rerouted prediction keeps its config's predictor ID. Its `modelSnapshot` names the model
+  that answered, so reports split on it", and its `jev:respan/span-01-20260925@…` example: to make span-01 permanent,
+  ship a config with `decision:respan/span-01-20260925@jev-predict.v2` as primary.

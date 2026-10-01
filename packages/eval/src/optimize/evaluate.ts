@@ -735,14 +735,16 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
     for (const p of inst.stored) {
       if (!p.ok || (p.role !== 'primary' && p.role !== 'shadow') || (p.role === 'primary' && p.fallback))
         continue;
-      const k = p.role === 'primary' ? `${p.predictorId} (primary)` : p.predictorId;
+      // One key per predictor, whichever spelling an in-memory instance carries (ADR-0052).
+      const id = canonicalPredictorId(p.predictorId);
+      const k = p.role === 'primary' ? `${id} (primary)` : id;
       const list = byPredictor.get(k);
       if (list) list.push({ inst, dist: p.dist });
       else byPredictor.set(k, [{ inst, dist: p.dist }]);
       if (p.role === 'primary') {
-        const m = primaries.get(p.predictorId) ?? new Map<string, Distribution>();
+        const m = primaries.get(id) ?? new Map<string, Distribution>();
         m.set(inst.id, p.dist);
-        primaries.set(p.predictorId, m);
+        primaries.set(id, m);
       }
     }
   const split = (ps: Pair[]) =>
