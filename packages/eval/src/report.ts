@@ -6,6 +6,7 @@ import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
 import { type ArmsReport, renderArms } from './arms';
 import { renderEnsemble } from './ensemble';
 import { type RubricGroup, renderRubric } from './rubric';
+import { renderPopulation } from './synthesize';
 import { renderTransfer } from './transfer';
 import { remoteFlags, WORKER_DIR } from './wrangler';
 
@@ -93,6 +94,8 @@ export function renderReport(run: EvalRunRecord): string {
     lines.push(...renderTransfer(m));
   } else if (spec.kind === 'ensemble') {
     lines.push(...renderEnsemble(m));
+  } else if (spec.kind === 'population') {
+    lines.push(...renderPopulation(m));
   } else if (spec.kind === 'select') {
     lines.push(
       '## Pool-restricted selection (biased; iteration only)',

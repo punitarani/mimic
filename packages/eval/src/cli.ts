@@ -19,7 +19,7 @@ import { armsRun } from './arms';
 import { benchmarkCmd } from './benchmark';
 import { runCohort } from './cohort';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
-import { ensembleRun, renderEnsemble } from './ensemble';
+import { ensembleRun } from './ensemble';
 import { datasetHash, exportData } from './export';
 import { calibrateGates, sampleDrafts } from './gates';
 import { openLocalEngine } from './local';
@@ -29,6 +29,7 @@ import { publishReport, renderReport, writeReport } from './report';
 import { POPULATIONS, type Population, rubricRun } from './rubric';
 import { simulateSelection } from './select';
 import { runSession, SessionScript } from './session';
+import { buildPopulation } from './synthesize';
 import { TRANSFER_VIEWS, type TransferView, transfer } from './transfer';
 import { importTwin } from './twin';
 
@@ -58,6 +59,12 @@ Commands
             [--views full,raw,structured,summary]   also predict from each of these views of the same evidence and
                             pool them log-linearly at equal weight: the evidence-view ensemble (ADR-0054)
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
+  population  A calibrated synthetic population from the consented cohort (ADR-0055; no model calls): a Gaussian copula
+            over facet means, answers to the cohort's stable items drawn from each agent's nearest real exemplars, realism
+            metrics (dispersion, caricature, structure, coverage, re-identification, sensitive leakage), and Concordia and
+            Smallville renderings; writes population.json next to the report
+            --data <file.sqlite> [--agents 100] [--k 5] [--kappa 10] [--min-people 5] [--split dev]
+            [--population real|all] [--seed population]
   ensemble  Prequential ensembles of the stored primary and shadows (ADR-0054; no model calls): equal-weight pools,
             Hedge/BMA weights learned from each person's earlier questions, and a hindsight oracle, paired against
             the primary with bootstrap intervals
@@ -299,6 +306,47 @@ async function replayCmd(argv: string[]) {
   const files = writeReport(run);
   console.log(renderReport(run));
   console.log(`\nrun ${run.id} → ${files.md}`);
+  engine.close();
+}
+
+async function populationCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      agents: { type: 'string', default: '100' },
+      k: { type: 'string', default: '5' },
+      kappa: { type: 'string', default: '10' },
+      'min-people': { type: 'string', default: '5' },
+      split: { type: 'string', default: 'dev' },
+      population: { type: 'string', default: 'real' },
+      seed: { type: 'string', default: 'population' },
+      name: { type: 'string' },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  if (values.population !== 'real' && values.population !== 'all')
+    throw new Error('--population must be real or all');
+  const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
+  const { run, doc } = await buildPopulation(
+    engine.deps,
+    {
+      name: values.name ?? `population ${values.agents} agents`,
+      split: values.split as 'dev' | 'test' | 'all',
+      population: values.population,
+      agents: Number(values.agents),
+      k: Number(values.k),
+      kappa: Number(values.kappa),
+      minPeople: Number(values['min-people']),
+      seed: values.seed,
+    },
+    await datasetHash(engine.client),
+  );
+  const files = writeReport(run);
+  const out = resolve(files.md, '..', 'population.json');
+  writeFileSync(out, `${JSON.stringify(doc, null, 2)}\n`);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}\npopulation → ${out}`);
   engine.close();
 }
 
@@ -636,6 +684,8 @@ async function main() {
       return transferCmd(rest);
     case 'ensemble':
       return ensembleCmd(rest);
+    case 'population':
+      return populationCmd(rest);
     case 'import':
       return importCmd(rest);
     case 'report':

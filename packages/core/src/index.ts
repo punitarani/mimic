@@ -28,4 +28,5 @@ export * from './selectors';
 export * from './soul';
 export * from './state-builder';
 export * from './store';
+export * from './synth';
 export * from './types';
