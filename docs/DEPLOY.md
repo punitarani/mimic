@@ -109,6 +109,10 @@ To backfill a new predictor on prod without local credentials, open Actions → 
 same script with the repository secrets and is a dry run unless "enqueue" is checked. Predictions run at "rate" a
 minute (default 30), and "retry failed" also redoes failed calls, such as rate limits and provider errors (ADR-0037).
 
+Actions → Readout runs the free readouts on a prod export (no model calls): E7's probe readout (`pnpm eval -- probes`)
+and the stored-prediction report on people who joined since a date (`evaluate --from stored --since`), which reads
+the view and scale shadows' rules (ADR-0065, ADR-0066). Both go to the step summary and, by default, to `/lab`.
+
 ### Relabel predictor IDs (ADR-0054)
 
 The deploy that ships ADR-0054 renames the decision predictor kind from `jev:` to `decision:` in code. Rows stored
