@@ -1,9 +1,10 @@
-import type { StateStrategy } from '@mimic/core';
+import type { EvidencePolicy, StateStrategy } from '@mimic/core';
 import {
   argmax,
   buildState,
   type EngineDeps,
   type EvalRunRecord,
+  type EvidenceItem,
   expectedIndex,
   fidelityInput,
   isPredictedKind,
@@ -14,26 +15,45 @@ import {
   loadMimicData,
   loadMimicDataAt,
   makePredictor,
+  needsScores,
   type PersonState,
   type PredictionResult,
+  type Predictor,
   type PredictorMetrics,
   predictorMetrics,
   type Question,
   type QuestionRecord,
   quantile,
+  ranksBySimilarity,
+  rawScale,
   type ScoredRow,
   scorePrediction,
   seededRng,
   selfConsistency,
   shuffle,
   stateOptions,
+  surpriseOf,
   ulid,
 } from '@mimic/core';
+import { logPool } from './pool';
 
 export interface ReplaySpec {
   name: string;
   predictor: string;
   strategy: StateStrategy;
+  /**
+   * Overrides of the config's state builder (ADR-0056): which answers survive the budget and the cap, the cap, and
+   * the token budget, so one export can answer "how small can the state be, and what should it keep?".
+   */
+  evidencePolicy?: EvidencePolicy;
+  maxEvidence?: number;
+  budgetTokens?: number;
+  /**
+   * The evidence-view ensemble (ADR-0058): also predict every target from each of these views of the same sealed
+   * evidence and pool the views log-linearly at equal weight. Rows `<predictor>@view:<strategy>` and
+   * `<predictor>@pool:views` sit beside the main strategy's.
+   */
+  views?: StateStrategy[];
   checkpoints: number[];
   split: 'dev' | 'test' | 'all';
   /** `later`: every later non-repeat item (PLAN §12.3). `heldout`: only held-out items (e.g. Twin-2K-500 wave 4). */
@@ -55,18 +75,83 @@ export interface ReplayResult {
   checkpoints: CheckpointMetrics[];
   costPerPersonUsd: number;
   modelSnapshots: string[];
+  /** Every scored prediction (question ids carry `@k`), so two runs can be compared pairwise by question. */
+  rows: ScoredRow[];
 }
 
 export const HELDOUT_PREFIX = 'twin2k/w4/';
 const JEV_CHUNK = 40;
 
 /** Predicts in chunks so a Jev request stays well inside its 32K context. */
-async function predictAll(predictor: ReturnType<typeof makePredictor>, state: PersonState, qs: Question[]) {
+export async function predictAll(predictor: Predictor, state: PersonState, qs: Question[]) {
   const out: PredictionResult[] = [];
   for (let i = 0; i < qs.length; i += JEV_CHUNK)
     out.push(...(await predictor.predict(state, qs.slice(i, i + JEV_CHUNK))));
   return out;
 }
+
+/** A scored row for one prediction of one question (role primary). */
+function scoredRow(
+  mimicId: string,
+  questionId: string,
+  predictorId: string,
+  q: QuestionRecord,
+  answer: string,
+  p: PredictionResult,
+): ScoredRow {
+  const s = scorePrediction(q.type, p.dist, answer);
+  return {
+    mimicId,
+    questionId,
+    predictorId,
+    role: 'primary',
+    itemAcc: s.itemAcc,
+    top1: s.top1,
+    logLoss: s.logLoss,
+    brier: s.brier,
+    confidence: p.dist[argmax(p.dist)] ?? 0,
+    costUsd: p.costUsd,
+    latencyMs: p.latencyMs,
+  };
+}
+
+/**
+ * Baseline surprise for training answers that have none stored (an import), so `surprise` can rank them (ADR-0056).
+ * The context-only baseline reads no answers, so the signal is sealed by construction; it is taken on the predictor's
+ * raw scale, as stored signals are. Questions already predicted in `known` are not asked again.
+ */
+export async function annotateSurprise(
+  baseline: Predictor,
+  baseState: PersonState,
+  items: EvidenceItem[],
+  qById: ReadonlyMap<string, QuestionRecord>,
+  answerByQ: ReadonlyMap<string, { value: string }>,
+  known: ReadonlyMap<string, PredictionResult> = new Map(),
+): Promise<{ bySeq: Map<number, number>; costUsd: number }> {
+  const missing = items.filter((e) => e.surprise === undefined);
+  const fresh = missing.filter((e) => !known.has(e.questionId));
+  const preds = await predictAll(
+    baseline,
+    baseState,
+    fresh.map((e) => qById.get(e.questionId)!),
+  );
+  const freshByQ = new Map(fresh.map((e, i) => [e.questionId, preds[i]!]));
+  const bySeq = new Map<number, number>();
+  for (const e of missing) {
+    const p = known.get(e.questionId) ?? freshByQ.get(e.questionId)!;
+    if (!p.ok) continue;
+    const q = qById.get(e.questionId)!;
+    const { logLoss } = scorePrediction(q.type, rawScale(baseline.id, p.dist), answerByQ.get(q.id)!.value);
+    bySeq.set(e.seq, surpriseOf(logLoss, q.options.length));
+  }
+  return { bySeq, costUsd: preds.reduce((a, p) => a + p.costUsd, 0) };
+}
+
+/** An evidence item with its annotated surprise, when it has none of its own. */
+export const withSurprise =
+  (bySeq: ReadonlyMap<number, number>) =>
+  (e: EvidenceItem): EvidenceItem =>
+    e.surprise === undefined && bySeq.has(e.seq) ? { ...e, surprise: bySeq.get(e.seq)! } : e;
 
 /** Numeric value of an answer for across-person metrics: score index, yes = 1, or 2-option choice index. */
 export function itemValue(q: Pick<QuestionRecord, 'type' | 'options'>, key: string): number | null {
@@ -104,10 +189,23 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
   const fidelityByK = new Map<number, number[]>();
   const snapshots = new Set<string>();
   let cost = 0;
+  const overrides = {
+    strategy: spec.strategy,
+    ...(spec.evidencePolicy ? { evidencePolicy: spec.evidencePolicy } : {}),
+    ...(spec.maxEvidence !== undefined ? { maxEvidence: spec.maxEvidence } : {}),
+    ...(spec.budgetTokens !== undefined ? { budgetTokens: spec.budgetTokens } : {}),
+  };
+  /** Training answers with no stored baseline (an import), given one here so `surprise` can rank them. */
+  let annotated = 0;
+  let firstError: string | undefined;
+  let surpriseRanked = false;
 
   for (const m of mimics) {
     const cfg = await loadConfig(deps, m.configHash);
-    const loaded = await loadMimicData(deps, m);
+    // The spec's policy, else the config's: either way surprise and novelty need the stored scores.
+    const policy = spec.evidencePolicy ?? cfg.stateBuilder.evidencePolicy ?? 'mixed';
+    const scores = policy === 'surprise' || policy === 'novelty';
+    const loaded = await loadMimicData(deps, m, { scores });
     const qById = new Map(loaded.questions.map((q) => [q.id, q]));
     const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
     const items = loaded.data.evidence.filter((e) => isScoredKind(e.kind)).sort((a, b) => a.seq - b.seq);
@@ -122,6 +220,14 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
     const baseQs = allTargets.map((e) => qById.get(e.questionId)!);
     const basePreds = await predictAll(baselinePredictor, baseState, baseQs);
     const baseByQ = new Map(baseQs.map((q, i) => [q.id, basePreds[i]!]));
+    let surprise = new Map<number, number>();
+    if (policy === 'surprise') {
+      surpriseRanked = true;
+      const r = await annotateSurprise(baselinePredictor, baseState, train, qById, answerByQ, baseByQ);
+      surprise = r.bySeq;
+      cost += r.costUsd;
+      annotated += r.bySeq.size;
+    }
 
     for (const k of spec.checkpoints) {
       if (k > train.length) continue;
@@ -135,22 +241,58 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
         .filter((q) => q.seq !== null && q.seq >= beforeSeq && isPredictedKind(q.kind))
         .sort((a, b) => a.seq! - b.seq!)[0];
       const at = next?.stateAt ?? next?.servedAt ?? Number.MAX_SAFE_INTEGER;
-      const asOf = await loadMimicDataAt(deps, m, at, beforeSeq);
+      const asOf = await loadMimicDataAt(deps, m, at, beforeSeq, { scores });
       // The first k training items are the checkpoint's evidence; held-out items never enter a state. Feedback the
       // person gave before it stays in, as it did online: the traits and insights as of `at` already learned from it.
       const data = {
         ...asOf.data,
-        evidence: asOf.data.evidence.filter(
-          (e) => trainSeqs.has(e.seq) || (e.kind === 'feedback' && e.seq < beforeSeq),
-        ),
+        evidence: asOf.data.evidence
+          .filter((e) => trainSeqs.has(e.seq) || (e.kind === 'feedback' && e.seq < beforeSeq))
+          .map(withSurprise(surprise)),
       };
-      const state = buildState(data, stateOptions(cfg, beforeSeq, { strategy: spec.strategy }));
+      const state = buildState(data, stateOptions(cfg, beforeSeq, overrides));
       const qs = targets.map((e) => qById.get(e.questionId)!);
       const preds = await predictAll(predictor, state, qs);
       const rows = rowsByK.get(k) ?? [];
       const failures = failuresByK.get(k) ?? [];
       const across = acrossByK.get(k) ?? [];
       const accs: number[] = [];
+      if (spec.views?.length) {
+        const byView = new Map<StateStrategy, PredictionResult[]>();
+        for (const v of spec.views) {
+          const vs = buildState(data, stateOptions(cfg, beforeSeq, { ...overrides, strategy: v }));
+          byView.set(v, await predictAll(predictor, vs, qs));
+        }
+        qs.forEach((q, i) => {
+          const answer = answerByQ.get(q.id)!;
+          const okViews: Array<{ v: StateStrategy; p: PredictionResult }> = [];
+          for (const v of spec.views!) {
+            const p = byView.get(v)![i]!;
+            const predictorId = `${predictor.id}@view:${v}`;
+            if (!p.ok) {
+              failures.push({ predictorId, role: 'primary' });
+              continue;
+            }
+            okViews.push({ v, p });
+            cost += p.costUsd;
+            rows.push(scoredRow(m.id, `${q.id}@${k}`, predictorId, q, answer.value, p));
+          }
+          if (okViews.length) {
+            const dist = logPool(
+              okViews.map((x) => ({ dist: x.p.dist, w: 1 })),
+              q.options.map((o) => o.key),
+            );
+            rows.push(
+              scoredRow(m.id, `${q.id}@${k}`, `${predictor.id}@pool:views`, q, answer.value, {
+                ...okViews[0]!.p,
+                dist,
+                costUsd: 0,
+                latencyMs: Math.max(...okViews.map((x) => x.p.latencyMs)),
+              }),
+            );
+          }
+        });
+      }
       qs.forEach((q, i) => {
         const answer = answerByQ.get(q.id)!;
         for (const [role, p] of [
@@ -160,26 +302,15 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
           const predictorId = role === 'replay' ? predictor.id : `${baselinePredictor.id}`;
           if (!p.ok) {
             failures.push({ predictorId, role: role === 'replay' ? 'primary' : 'baseline' });
+            firstError ??= p.error ?? 'unknown error';
             continue;
           }
           if (role === 'replay') cost += p.costUsd;
           snapshots.add(p.modelSnapshot);
-          const s = scorePrediction(q.type, p.dist, answer.value);
-          rows.push({
-            mimicId: m.id,
-            questionId: `${q.id}@${k}`,
-            predictorId,
-            role: role === 'replay' ? 'primary' : 'baseline',
-            itemAcc: s.itemAcc,
-            top1: s.top1,
-            logLoss: s.logLoss,
-            brier: s.brier,
-            confidence: p.dist[argmax(p.dist)] ?? 0,
-            costUsd: p.costUsd,
-            latencyMs: p.latencyMs,
-          });
+          const row = scoredRow(m.id, `${q.id}@${k}`, predictorId, q, answer.value, p);
+          rows.push(role === 'replay' ? row : { ...row, role: 'baseline' });
           if (role === 'replay') {
-            accs.push(s.itemAcc);
+            accs.push(row.itemAcc);
             const pv = predictedValue(q, p.dist);
             const av = itemValue(q, answer.value);
             if (q.itemKey && pv !== null && av !== null)
@@ -211,23 +342,33 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
       };
     });
   const people = mimics.length || 1;
+  // A run in which no prediction succeeded (no credit, a dead endpoint) is a failed run, not an empty one.
+  const allFailed = firstError !== undefined && !checkpoints.some((c) => c.predictors.some((p) => p.n > 0));
   const run: EvalRunRecord = {
     id: ulid(),
     name: spec.name,
     spec: { ...spec, kind: 'replay' },
     datasetHash,
-    status: 'done',
+    status: allFailed ? 'failed' : 'done',
     metrics: {
       checkpoints,
       costPerPersonUsd: cost / people,
       people: mimics.length,
       modelSnapshots: [...snapshots].sort(),
+      ...(surpriseRanked ? { surpriseAnnotated: annotated } : {}),
+      ...(firstError !== undefined ? { firstError } : {}),
     },
     r2ReportKey: null,
     createdAt: deps.clock(),
   };
   await deps.store.putEvalRun(run);
-  return { run, checkpoints, costPerPersonUsd: cost / people, modelSnapshots: [...snapshots].sort() };
+  return {
+    run,
+    checkpoints,
+    costPerPersonUsd: cost / people,
+    modelSnapshots: [...snapshots].sort(),
+    rows: [...rowsByK.values()].flat(),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -304,7 +445,9 @@ export async function reproduceOnline(
       const a = answers.get(p.questionId);
       if (!q || q.seq === null || q.servedAt === null || !a) continue;
       // Questions served before stateAt existed fall back to servedAt (approximate, ADR-0017).
-      const loaded = await loadMimicDataAt(deps, m, q.stateAt ?? q.servedAt, q.seq);
+      const loaded = await loadMimicDataAt(deps, m, q.stateAt ?? q.servedAt, q.seq, {
+        scores: needsScores(cfg),
+      });
       if ((m.scopeAt !== null && q.servedAt < m.scopeAt) || loaded.scope.hiddenQuestionIds.has(q.id)) {
         n++;
         rescoped++;
@@ -312,7 +455,11 @@ export async function reproduceOnline(
       }
       const state = buildState(loaded.data, stateOptions(cfg, q.seq, { forQuestions: [q] }));
       const eligible = loaded.data.evidence.filter((e) => e.seq < q.seq! && learnsFrom(e.kind)).length;
-      const overBudget = cfg.stateBuilder.strategy !== 'structured' && state.evidence.length < eligible;
+      // A trimmed state is rebuilt exactly unless the trimming ranked evidence against the candidate pool (ADR-0056).
+      const overBudget =
+        cfg.stateBuilder.strategy !== 'structured' &&
+        ranksBySimilarity(cfg) &&
+        state.evidence.length < eligible;
       n++;
       if (q.stateAt === null) legacy++;
       else if (overBudget) truncated++;

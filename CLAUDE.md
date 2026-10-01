@@ -21,7 +21,7 @@ pnpm db:migrate:local       # remote migrations run as part of each deploy
 pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Workers (CI's build job)
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
-pnpm eval -- <export|replay|select|import|report|session|rubric|arms|cohort|evaluate|diagnose|optimize|benchmark|evidence|drafts|gates> ...
+pnpm eval -- <export|replay|select|import|report|session|rubric|arms|cohort|evaluate|diagnose|optimize|benchmark|evidence|drafts|gates|transfer|ensemble|population|footprint> ...
 pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--rate n] [--retry-failed] [--yes]   # new predictors on served questions (ADR-0024, ADR-0037)
 pnpm relabel:predictors [--env local|preview|prod] [--reverse] [--yes]   # stored jev: IDs → decision:, rerouted rows → the model that answered (ADR-0054)
 pnpm flags:check [--create-missing]   # Flagship app `mimic` vs the flag registry; needs CLOUDFLARE_API_TOKEN/ACCOUNT_ID (ADR-0051)
@@ -85,8 +85,17 @@ If a task seems to require breaking one of these, stop and ask.
   and from what form of them (`viewState`: `context`, `full`, `answers`, `derived`, `relevant`), on sealed served
   questions and Twin-2K-500. Run it from Actions → Evidence (`pnpm eval -- evidence`). `EVIDENCE_RULE` decides, and
   was fixed before the first run. The first run's verdict is `questions` (`docs/reports/e6-evidence.md`): predictors learn
-  from Twin's survey answers but not from Mimic's served ones. E3b therefore waits for a held-out probe set (E7).
+  from Twin's survey answers but not from Mimic's served ones. E3b therefore waits for a held-out probe set (E7,
+  ADR-0062, designed in `docs/PROBE.md`): fourteen fixed probes per person at four transfer distances, since the Twin
+  benchmark (`docs/reports/twin-benchmark.md`) showed that Twin's lift is transfer from demographics and scales to
+  product choices and that what the state keeps beyond the budget decides which domains transfer (`docs/EVIDENCE.md`
+  §8, `docs/RESEARCH.md` §10).
 - Scope and consent (ADR-0040, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and sensitive facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`), each behind its own consent (ticked by default at intake, ADR-0049); special-category areas also need a confirmation, and declined facets ("Prefer not to say") are blocked (ADR-0050, both enforced in `facetAllowed`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
+- Research directions and their experiments live in `docs/RESEARCH.md`. The evals behind them: `transfer` (what an
+  export loses, ADR-0057), `ensemble` (pools of stored predictions, ADR-0058), `population` (a synthetic cohort,
+  ADR-0059), `footprint` (own exports → questions to verify, ADR-0061); `replay --evidence surprise|novelty` and
+  `--state card` test what a state should keep (ADR-0056). Other agents update a mimic only by appending typed
+  observations (`POST /observations`, ADR-0060); nothing else is writable from outside.
 - Order prompts for caching: stable prefix (system, ontology, rules) first, variable content last.
 - Test with Vitest, using recorded fixtures in `packages/adapters/fixtures/`. CI makes no live calls. Worker code tests use `@cloudflare/vitest-pool-workers`.
 - Use simulated users for smoke tests only. Never report metrics from LLM-simulated users.

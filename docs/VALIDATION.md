@@ -526,3 +526,83 @@ Nothing below comes from real people. The run on real people is Actions → Evid
   matched 0%, as they must on the workflow's scrubbed export (ADR-0018). Only a `--keep-identity` export can match
   them, and the report now says so.
 
+## Research agenda: evidence policies, transfer, ensembles, populations, observations, footprints (ADR-0056–0061)
+
+Nothing below comes from real people, and nothing is a measure of prediction accuracy. Every number here is a check
+of the machinery on scripted sessions with offline fakes; the experiments that decide the directions are listed in
+`docs/RESEARCH.md` §9 and wait for the consented cohort.
+
+- **Evidence policies and the card (ADR-0056).** `packages/core/test/state.test.ts`: each policy ranks as specified
+  (recency, similarity, surprise, novelty), answers without a signal rank last by recency, the cap and the budget hold
+  together, sealing holds for every policy, the card carries identity, traits and the capped answers and is
+  deterministic. `packages/eval/test/card.test.ts`: a scripted session under a card config serves states capped at
+  six answers that are not simply the latest ones; `replay --mode online` rebuilds every one of them byte for byte
+  from the export (the stored baseline scores that ranked them travel with it); replay gives imported answers a
+  baseline surprise when they have none.
+- **Transfer loss (ADR-0057).** `packages/eval/test/transfer.test.ts`: six views × two readers on the same later
+  answers; the core profile is never larger than the full one; the card is smaller than the state; sealed drafts are
+  written per checkpoint when asked and cite only answers below it; the eval refuses a view that mentions a later
+  question or reason (checked on every run); an import works with a baseline the eval computes itself.
+- **Ensembles (ADR-0058).** `packages/eval/test/ensemble.test.ts`: pools and Hedge weights are normalised; every method
+  scores exactly the questions the primary answered; the hindsight oracle never loses to the primary in log loss;
+  final weights sum to one over the six stored members; `replay --views` reports each view and the pool beside the
+  main strategy.
+- **Population (ADR-0059).** `packages/core/test/synth.test.ts`: the copula keeps marginals and correlation structure
+  on a 400-person synthetic cohort (dispersion ratio within 0.85–1.15, structure distance under 0.1), shrinks a
+  10-person cohort's correlations by half at κ = 10, tolerates missing values and constant dims; a copied population
+  re-identifies everyone and a distant one no one. `packages/eval/test/population.test.ts`: six scripted people give
+  a seeded population of twelve agents with realism metrics, Concordia and Smallville renderings and a questionnaire;
+  no name, reason, location or mimic id reaches the artifact; fewer people than the minimum give no agents; scripted
+  people stay out unless asked.
+- **Observation ledger (ADR-0060).** `packages/eval/test/observations.test.ts`: a batch is stored as taught answers
+  with the agent named, enters the data the state builder reads with its context, is idempotent per writer and id,
+  lists newest first with authority, and appears in `mimic.json` as `source: agent` and in SOUL.md as observed; an
+  observation touching politics, one answering outside its options and a repeated id are each rejected on their own.
+- **Footprint (ADR-0061).** `packages/core/test/footprint.test.ts`: an X archive keeps own posts only, scrubs handles,
+  links, emails and numbers, drops a sensitive post and a duplicate, and keeps replies without the handle when asked;
+  LinkedIn, Reddit and GitHub parsers keep the person's words and never a name. `packages/eval/test/footprint.test.ts`:
+  three notes give two pooled questions (a sensitive-facet item and an uncited one are dropped), re-proposing pools
+  nothing, the writer never sees the name, a served footprint question carries a `footprint:v1` shadow with no state
+  that is scored on the real answer, and no document text reaches any sealed state.
+- **Live:** none. The OpenRouter key in this environment was used for nothing; `pnpm eval -- footprint` ran offline on
+  a two-file folder as a smoke test of the CLI.
+
+### Benchmark on Twin-2K-500 (imported people; `docs/reports/twin-benchmark.md`)
+
+Imported survey takers, not Mimic users, and not scripted: 120 people from Twin-2K-500 (CC BY 4.0) imported with
+`pnpm eval -- import twin2k500`, the same 60 in every run (`--seed bench --limit 60`), every wave 4 item held out
+(3,932 sealed predictions per run and checkpoint), Jev `typesafe/jev-1.13-20260917` on its raw scale, baseline on.
+Intervals are paired by question and bootstrapped over people.
+
+- **Replay matrix** (`replay --data data/twin.sqlite --predictor decision:typesafe/jev-1.13 --checkpoints 10,30,100
+  --split all --targets heldout --limit 60 --seed bench --rows --state full|raw|card --evidence <policy>
+  --max-evidence 12|6`), two passes per spec. Lift over the baseline: +0.5, +3.4, +7.3 points at k = 10, 30, 100 for
+  the served state. A 12-answer card is level with the served state at k = 30 (+0.6 [−0.7, +2.0]) at 48% of its tokens
+  and loses −1.0 [−1.7, −0.3] at k = 100, where the served state is itself the §9.9 subset of 18 answers. `mixed`,
+  `recent` and `similar` are within the noise floor of each other (two passes of one spec differ by 0.25 points on
+  average, 0.43 at most); `surprise` costs −1.1 [−2.0, −0.4] points at k = 100 and improves raw log loss by
+  −0.088 [−0.120, −0.056]. Every card halves dispersion across people at k = 30 (0.28 against 0.42) at equal accuracy.
+- **Transfer** (`transfer --data … --readers llm:deepseek/deepseek-v4.1-flash --views
+  context,state,card,soul-core,soul-full,mimic-json --checkpoints 30 --split all --targets heldout --draft --limit 10
+  --max-targets 20 --seed bench`): DeepSeek reads 59.4% from the state text, 54.2% from the card, 53.7% from
+  `mimic.json`, 53.4% from the full SOUL.md, 49.2% from the core SOUL.md, 48.3% from identity alone (200 targets, so
+  roughly ±6 points). The Jev reader on 60 people is in the report.
+- **E6** (`evidence --data data/twin.sqlite --split all --k 10,30,100 --max-targets 20 --limit 60 --seed bench`):
+  Jev learns from these answers (+4.0 [+1.3, +6.7] points, log loss −0.049 [−0.074, −0.022] at k = 30); `relevant`
+  is level with `full` at k = 30 and 100 at a third of the tokens; the rule returns `insufficient` because the import
+  holds no served questions.
+- **Calibrated cells** (`--predictor decision:typesafe/jev-1.13@jev-predict.v2`, one pass): the card is level at
+  k = 30 and −0.9 [−1.5, −0.2] at k = 100; `surprise` keeps −0.017 [−0.027, −0.007] of log loss (42 of 60 people
+  better) and the best dispersion of the compressed states (0.197 against 0.127 for recency at k = 30); ECE drifts
+  from 0.036 at k = 30 to 0.111 at k = 100 for the served state.
+- **Jev transfer** (60 people, 1,200 targets, 55 drafts written and 5 timed out): state 61.9%, card 62.8%, core
+  SOUL.md 65.6% (log loss 1.582 against 1.071), full SOUL.md 66.2%, `mimic.json` 62.7%, context 57.0%. Jev reads
+  the narrative better than the answers it came from, and trusts it too much.
+- **Where the lift comes from** (no model calls; `rows.json` joined with the rebuilt states): no held-out domain is
+  among the first 100 answers; product choices (61% of items) carry 96% of the lift at k = 100; policy items gain
+  +4.4 while the state holds party and ideology and +1.2 once recency has dropped them; probability tasks (12%) get
+  the same prediction from every state. Beyond the budget the replayed state is the 18 most recent answers, since
+  replay builds states with no target to retrieve for.
+- **Not run:** `ensemble` and `population` need stored shadows and trait estimates, which an import has neither of.
+- **Fixed on the way:** a soul-draft timeout aborted the first Jev transfer run; the eval now counts a failed draft
+  (`draftsFailed`) and continues without that person's narrative.

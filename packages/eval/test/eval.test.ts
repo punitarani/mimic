@@ -101,6 +101,30 @@ describe('replay (M7)', () => {
     expect(renderReport(r.run)).toContain('After 2 answers');
   }, 60_000);
 
+  it('marks a replay failed, not empty, when every prediction fails', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'replay-fail' });
+    await cohort(2);
+    // What an exhausted account returns on every call.
+    engine.deps.gateway.decide = async () => {
+      throw new Error('HTTP 402 from openrouter.ai: Insufficient credits');
+    };
+    const r = await replay(
+      engine.deps,
+      {
+        name: 'f',
+        predictor: 'decision:typesafe/jev-1.13',
+        strategy: 'full',
+        checkpoints: [2],
+        split: 'all',
+        targets: 'later',
+        seed: 's',
+      },
+      'hash',
+    );
+    expect(r.run.status).toBe('failed');
+    expect(String(r.run.metrics?.firstError)).toContain('402');
+  }, 60_000);
+
   it('simulates pool-restricted selection per budget', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'select-cohort' });
     await cohort(2);

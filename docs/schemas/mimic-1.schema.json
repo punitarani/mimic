@@ -139,6 +139,17 @@
               "string",
               "null"
             ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "session",
+              "person",
+              "agent"
+            ]
+          },
+          "agent": {
+            "type": "string"
           }
         },
         "required": [

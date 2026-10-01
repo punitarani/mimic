@@ -4,8 +4,14 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
   Category,
+  EVIDENCE_POLICIES,
   type EvalRunRecord,
+  type EvidencePolicy,
+  footprintTokens,
   type PipelineConfig,
+  proposeFromFootprint,
+  STATE_STRATEGIES,
+  type StateStrategy,
   VOI_SELECTOR,
   VOI_SELECTOR_V8,
 } from '@mimic/core';
@@ -15,16 +21,20 @@ import { armsRun } from './arms';
 import { benchmarkCmd } from './benchmark';
 import { runCohort } from './cohort';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
+import { ensembleRun } from './ensemble';
 import { evidenceCmd } from './evidence';
 import { datasetHash, exportData } from './export';
+import { parseFootprintDir } from './footprint';
 import { calibrateGates, sampleDrafts } from './gates';
 import { openLocalEngine } from './local';
-import { diagnoseCmd, evaluateCmd, optimizeCmd } from './optimize/commands';
+import { diagnoseCmd, evaluateCmd, loadData, loadOptsOf, optimizeCmd } from './optimize/commands';
 import { replay, reproduceOnline } from './replay';
 import { publishReport, renderReport, writeReport } from './report';
 import { POPULATIONS, type Population, rubricRun } from './rubric';
 import { simulateSelection } from './select';
 import { runSession, SessionScript } from './session';
+import { buildPopulation } from './synthesize';
+import { TRANSFER_VIEWS, type TransferView, transfer } from './transfer';
 import { importTwin } from './twin';
 
 const USAGE = `mimic-eval <command> [options]
@@ -46,9 +56,36 @@ Commands
   export    D1 → SQLite (same schema); consented mimics only; names, locations, links, URLs dropped, IDs replaced
             --env local|preview|prod   --out <file.sqlite>   [--keep-identity]  (internal reproduction check only)
   replay    Offline replay (PLAN §12.3)
-            --data <file.sqlite> --predictor decision:typesafe/jev-1.13 --state full|raw|structured|summary
+            --data <file.sqlite> --predictor decision:typesafe/jev-1.13 --state full|raw|structured|summary|card
             --checkpoints 10,20,30 --split dev|test|all [--targets later|heldout] [--limit N] [--offline]
+            [--evidence mixed|recent|similar|surprise|novelty] [--max-evidence N] [--budget <tokens>]
+                            which answers a state keeps once over budget or cap (ADR-0056)
+            [--views full,raw,structured,summary]   also predict from each of these views of the same evidence and
+                            pool them log-linearly at equal weight: the evidence-view ensemble (ADR-0058)
+            [--rows]   also write every scored prediction to rows.json beside the report, for paired comparisons
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
+  footprint   Parse the person's own exports into clean documents (ADR-0061; no model calls): tweets.js (X archive),
+            Profile/Positions/Education/Skills/Shares.csv (LinkedIn), posts.csv and comments.csv (Reddit),
+            github.json ({ user, repos }), and *.txt or *.md notes; reports what the hygiene rules dropped
+            --dir <folder> [--out docs.json]
+            [--propose --db data/session.sqlite --mimic <id> [--live]]   pool the questions the documents imply
+  population  A calibrated synthetic population from the consented cohort (ADR-0059; no model calls): a Gaussian copula
+            over facet means, answers to the cohort's stable items drawn from each agent's nearest real exemplars, realism
+            metrics (dispersion, caricature, structure, coverage, re-identification, sensitive leakage), and Concordia and
+            Smallville renderings; writes population.json next to the report
+            --data <file.sqlite> [--agents 100] [--k 5] [--kappa 10] [--min-people 5] [--split dev]
+            [--population real|all] [--seed population]
+  ensemble  Prequential ensembles of the stored primary and shadows (ADR-0058; no model calls): equal-weight pools,
+            Hedge/BMA weights learned from each person's earlier questions, and a hindsight oracle, paired against
+            the primary with bootstrap intervals
+            --data <a.sqlite>[,<b.sqlite>] [--etas 0.5,1,2] [--with-baseline] [--split all] [--limit N]
+  transfer  Transfer loss (ADR-0057): a reader that knows nothing about Mimic predicts later answers from one exported
+            view alone (SOUL.md core or full, mimic.json, the card, or the identity-only context), against the full
+            in-context state; per view: accuracy, log loss, lift, tokens, cost
+            --data <file.sqlite> [--readers llm:deepseek/deepseek-v4.1-flash[,decision:typesafe/jev-1.13]]
+            [--views context,state,card,soul-core,soul-full,mimic-json] [--checkpoints 10,20] [--split dev]
+            [--targets later|heldout] [--draft] [--card-max 12] [--card-policy surprise] [--limit N]
+            [--max-targets N] [--offline]
   select    Pool-restricted selection simulation (biased; iteration only)
             --data <file.sqlite> --selector random|coverage|entropy|bald|voi|voi-v8[,…] --budget 5,10,20
             [--split dev] [--limit N] [--no-population]   several selectors run on the same people, side by side
@@ -212,6 +249,18 @@ const list = (v: string) =>
     .map((x) => Number(x.trim()))
     .filter((x) => Number.isFinite(x) && x > 0);
 
+function parseStrategy(v: string): StateStrategy {
+  if (!(STATE_STRATEGIES as readonly string[]).includes(v))
+    throw new Error(`unknown state strategy ${v}; one of ${STATE_STRATEGIES.join(', ')}`);
+  return v as StateStrategy;
+}
+
+function parsePolicy(v: string): EvidencePolicy {
+  if (!(EVIDENCE_POLICIES as readonly string[]).includes(v))
+    throw new Error(`unknown evidence policy ${v}; one of ${EVIDENCE_POLICIES.join(', ')}`);
+  return v as EvidencePolicy;
+}
+
 async function replayCmd(argv: string[]) {
   const { values } = parseArgs({
     args: argv,
@@ -219,6 +268,11 @@ async function replayCmd(argv: string[]) {
       data: { type: 'string' },
       predictor: { type: 'string', default: 'decision:typesafe/jev-1.13' },
       state: { type: 'string', default: 'full' },
+      evidence: { type: 'string' },
+      'max-evidence': { type: 'string' },
+      budget: { type: 'string' },
+      views: { type: 'string' },
+      rows: { type: 'boolean', default: false },
       checkpoints: { type: 'string', default: '10,20,30' },
       split: { type: 'string', default: 'dev' },
       targets: { type: 'string', default: 'later' },
@@ -235,6 +289,7 @@ async function replayCmd(argv: string[]) {
   const hash = await datasetHash(engine.client);
   const limit = values.limit ? Number(values.limit) : undefined;
   let run: EvalRunRecord;
+  let rows: unknown[] | undefined;
   if (values.mode === 'online') {
     const r = await reproduceOnline(
       engine.deps,
@@ -252,7 +307,11 @@ async function replayCmd(argv: string[]) {
       {
         name: values.name ?? `replay ${values.predictor} ${values.state}`,
         predictor: values.predictor,
-        strategy: values.state as 'full' | 'raw' | 'structured' | 'summary',
+        strategy: parseStrategy(values.state),
+        ...(values.evidence ? { evidencePolicy: parsePolicy(values.evidence) } : {}),
+        ...(values['max-evidence'] ? { maxEvidence: Number(values['max-evidence']) } : {}),
+        ...(values.budget ? { budgetTokens: Number(values.budget) } : {}),
+        ...(values.views ? { views: values.views.split(',').map((v) => parseStrategy(v.trim())) } : {}),
         checkpoints: list(values.checkpoints),
         split: values.split as 'dev' | 'test' | 'all',
         targets: values.targets as 'later' | 'heldout',
@@ -262,7 +321,180 @@ async function replayCmd(argv: string[]) {
       hash,
     );
     run = r.run;
+    rows = r.rows;
   }
+  const files = writeReport(run);
+  // Every scored row beside the report, so two runs can be compared pairwise by question.
+  if (values.rows && rows) writeFileSync(resolve(files.md, '..', 'rows.json'), `${JSON.stringify(rows)}\n`);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}`);
+  engine.close();
+  if (run.status === 'failed') {
+    console.error(`Every prediction failed; first error: ${String(run.metrics?.firstError)}`);
+    process.exitCode = 1;
+  }
+}
+
+async function footprintCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      dir: { type: 'string' },
+      out: { type: 'string' },
+      propose: { type: 'boolean', default: false },
+      db: { type: 'string', default: 'data/session.sqlite' },
+      mimic: { type: 'string' },
+      live: { type: 'boolean', default: false },
+    },
+  });
+  if (!values.dir) throw new Error('--dir is required');
+  const { docs, reports } = parseFootprintDir(resolve(values.dir));
+  for (const r of reports)
+    console.log(
+      `${r.file.padEnd(28)} ${String(r.docs).padStart(4)} docs · dropped: empty ${r.dropped.empty}, not own ${r.dropped.notOwn}, sensitive ${r.dropped.sensitive}, duplicate ${r.dropped.duplicate}`,
+    );
+  console.log(`${docs.length} documents, about ${footprintTokens(docs)} tokens`);
+  if (values.out) {
+    writeFileSync(resolve(values.out), `${JSON.stringify(docs, null, 2)}\n`);
+    console.log(`wrote ${values.out}`);
+  }
+  if (values.propose) {
+    if (!values.mimic) throw new Error('--mimic is required with --propose');
+    const engine = await openLocalEngine({
+      db: resolve(values.db),
+      providers: values.live ? 'live' : 'offline',
+    });
+    const r = await proposeFromFootprint(engine.deps, values.mimic, { docs });
+    console.log(
+      `read ${r.docs} documents (${r.tokens} tokens): ${r.proposed} proposed, ${r.pooled} pooled; dropped ${JSON.stringify(r.dropped)}`,
+    );
+    engine.close();
+  }
+}
+
+async function populationCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      agents: { type: 'string', default: '100' },
+      k: { type: 'string', default: '5' },
+      kappa: { type: 'string', default: '10' },
+      'min-people': { type: 'string', default: '5' },
+      split: { type: 'string', default: 'dev' },
+      population: { type: 'string', default: 'real' },
+      seed: { type: 'string', default: 'population' },
+      name: { type: 'string' },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  if (values.population !== 'real' && values.population !== 'all')
+    throw new Error('--population must be real or all');
+  const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
+  const { run, doc } = await buildPopulation(
+    engine.deps,
+    {
+      name: values.name ?? `population ${values.agents} agents`,
+      split: values.split as 'dev' | 'test' | 'all',
+      population: values.population,
+      agents: Number(values.agents),
+      k: Number(values.k),
+      kappa: Number(values.kappa),
+      minPeople: Number(values['min-people']),
+      seed: values.seed,
+    },
+    await datasetHash(engine.client),
+  );
+  const files = writeReport(run);
+  const out = resolve(files.md, '..', 'population.json');
+  writeFileSync(out, `${JSON.stringify(doc, null, 2)}\n`);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}\npopulation → ${out}`);
+  engine.close();
+}
+
+async function ensembleCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      etas: { type: 'string', default: '0.5,1,2' },
+      'with-baseline': { type: 'boolean', default: false },
+      split: { type: 'string', default: 'all' },
+      limit: { type: 'string' },
+      seed: { type: 'string', default: 'ensemble' },
+      name: { type: 'string' },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  const loaded = await loadData(values.data, loadOptsOf({ ...values, k: '30' }));
+  const etas = values.etas
+    .split(',')
+    .map((x) => Number(x.trim()))
+    .filter((x) => Number.isFinite(x) && x > 0);
+  const { run } = ensembleRun(
+    loaded.instances,
+    {
+      name: values.name ?? 'ensemble of stored predictions',
+      etas,
+      withBaseline: values['with-baseline'],
+      seed: values.seed,
+    },
+    loaded.datasetHash,
+    Date.now(),
+  );
+  const files = writeReport(run);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}`);
+}
+
+async function transferCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      readers: { type: 'string', default: 'llm:deepseek/deepseek-v4.1-flash' },
+      views: { type: 'string', default: TRANSFER_VIEWS.join(',') },
+      checkpoints: { type: 'string', default: '10,20' },
+      split: { type: 'string', default: 'dev' },
+      targets: { type: 'string', default: 'later' },
+      draft: { type: 'boolean', default: false },
+      'card-max': { type: 'string', default: '12' },
+      'card-policy': { type: 'string', default: 'surprise' },
+      limit: { type: 'string' },
+      'max-targets': { type: 'string' },
+      seed: { type: 'string', default: 'transfer' },
+      name: { type: 'string' },
+      offline: { type: 'boolean', default: false },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  const engine = await openLocalEngine({
+    db: resolve(values.data),
+    providers: values.offline ? 'offline' : 'live',
+  });
+  const views = values.views.split(',').map((v) => v.trim());
+  for (const v of views)
+    if (!(TRANSFER_VIEWS as readonly string[]).includes(v))
+      throw new Error(`unknown view ${v}; one of ${TRANSFER_VIEWS.join(', ')}`);
+  const { run } = await transfer(
+    engine.deps,
+    {
+      name: values.name ?? `transfer ${views.join(',')}`,
+      readers: values.readers.split(',').map((r) => r.trim()),
+      views: views as TransferView[],
+      checkpoints: list(values.checkpoints),
+      split: values.split as 'dev' | 'test' | 'all',
+      targets: values.targets as 'later' | 'heldout',
+      draft: values.draft,
+      cardMaxEvidence: Number(values['card-max']),
+      cardPolicy: parsePolicy(values['card-policy']),
+      seed: values.seed,
+      ...(values.limit ? { limitPeople: Number(values.limit) } : {}),
+      ...(values['max-targets'] ? { maxTargets: Number(values['max-targets']) } : {}),
+    },
+    await datasetHash(engine.client),
+  );
   const files = writeReport(run);
   console.log(renderReport(run));
   console.log(`\nrun ${run.id} → ${files.md}`);
@@ -513,6 +745,14 @@ async function main() {
       return replayCmd(rest);
     case 'select':
       return selectCmd(rest);
+    case 'transfer':
+      return transferCmd(rest);
+    case 'ensemble':
+      return ensembleCmd(rest);
+    case 'population':
+      return populationCmd(rest);
+    case 'footprint':
+      return footprintCmd(rest);
     case 'import':
       return importCmd(rest);
     case 'report':

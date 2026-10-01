@@ -8,6 +8,7 @@ import {
   loadMimicData,
   loadMimicDataAt,
   type MimicRecord,
+  needsScores,
   type PersonState,
   type PredictionRole,
   type QuestionRecord,
@@ -125,6 +126,7 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
         m,
         next?.stateAt ?? next?.servedAt ?? Number.MAX_SAFE_INTEGER,
         beforeSeq,
+        { scores: needsScores(cfg) },
       );
       const state = buildState(
         {
@@ -190,7 +192,7 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
       const a = answers.get(q.id)!;
       // The state as it was served (ADR-0017): evidence below seq, derived data as of the question's stateAt.
       const at = q.stateAt ?? q.servedAt ?? a.createdAt;
-      const asOf = await loadMimicDataAt(deps, m, at, q.seq!);
+      const asOf = await loadMimicDataAt(deps, m, at, q.seq!, { scores: needsScores(cfg) });
       const state = buildState(asOf.data, stateOptions(cfg, q.seq!, { forQuestions: [q] }));
       if (state.meta.evidenceSeqMax >= q.seq!) throw new Error(`Sealing violated for ${q.id}`);
       const stored = byQ.get(q.id) ?? [];

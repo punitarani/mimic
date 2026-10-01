@@ -456,7 +456,7 @@ The snapshot is immutable, versioned and portable. It's written on a debounce af
   "mimicId": "01J…", "version": 7, "createdAt": 0, "seqUpTo": 34,
   "subject": { "displayName": "…", "location": "…", "occupation": "…" },
   "facts": [{ "predicate": "worksAt", "object": "…", "source": "search", "url": "…", "confidence": 0.9 }],
-  "evidence": [{ "seq": 1, "kind": "anchor", "type": "score", "prompt": "…", "options": ["…"], "answer": "3", "why": null }],
+  "evidence": [{ "seq": 1, "kind": "anchor", "type": "score", "prompt": "…", "options": ["…"], "answer": "3", "why": null, "source": "session" }],
   "traits": [{ "facet": "risk_tolerance", "mean": 0.64, "dist": { "0": 0.02, "1": 0.1, "2": 0.3, "3": 0.4, "4": 0.18 }, "confidence": 0.41, "n": 6 }],
   "insights": [{ "text": "…", "facets": ["…"], "evidence": [12, 19] }],
   "kg": { "nodes": [], "edges": [] },
@@ -465,7 +465,9 @@ The snapshot is immutable, versioned and portable. It's written on a debounce af
 }
 ```
 
-Using a mimic means running any predictor against its snapshot.
+Using a mimic means running any predictor against its snapshot. Each evidence item says where it came from
+(`source`: `session`, `person` for an answer taught on the mimic page, or `agent` with the agent's name for an
+observation another agent appended; ADR-0060).
 
 ### 8.2 Browser persistence
 
@@ -738,6 +740,13 @@ Ablation strategies:
 | `structured` | identity + traits |
 | `summary` | identity + insights |
 | `full` | everything |
+| `card` | identity + traits + at most `maxEvidence` answers chosen by the evidence policy (ADR-0056) |
+
+**Evidence policies** (`stateBuilder.evidencePolicy`, ADR-0056) decide which answers survive the budget and the cap
+`stateBuilder.maxEvidence`: `mixed` (the rule above; the default), `recent`, `similar`, `surprise` (the answers the
+context-only baseline predicted worst: what the profile alone gets wrong) or `novelty` (the answers the sealed primary
+predicted worst at the time: what the earlier answers did not imply). Surprise and novelty are computed from the
+stored scores on the predictor's raw scale and are fixed with the answer, so a state rebuilds exactly from an export.
 
 `stateHash = sha256(canonicalJson(state))`.
 
@@ -863,6 +872,8 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `POST /api/mimics/:id/soul` | → new `soul.v1` draft, then the view | One LLM call; rate-limited, budget-guarded |
 | `PUT /api/mimics/:id/soul` | `{ rev, curation }` → view | Ignored if an equal or newer `rev` is stored; keys for replaced draft items are pruned |
 | `GET /api/mimics/:id/soul.md` | `?profile=full\|core` → `SOUL.md` (text/markdown) | `/persona.md` redirects here |
+| `POST /api/mimics/:id/observations` | `mimic-observations/1` batch → per-observation outcomes | Another agent's typed observations, stored as taught answers under its name (ADR-0060); `GET` lists them |
+| `POST /api/mimics/:id/footprint` | `{ docs }` (parsed with `@mimic/core/footprint`) → what was pooled | Questions the person's own documents imply answers to, verified by asking (ADR-0061) |
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
 
@@ -897,6 +908,10 @@ mimic-eval replay --data … --predictor decision:typesafe/jev-1.13 --state full
 mimic-eval select --data … --selector bald --budget 5,10,20                  # pool-restricted simulation
 mimic-eval import twin2k500 --path …                                         # external dataset adapter
 mimic-eval report --run <id>                                                 # markdown + JSON → R2 and /lab
+mimic-eval transfer --data … --readers llm:<model> --views soul-core,card,…   # what an export loses (ADR-0057)
+mimic-eval ensemble --data …                                                 # pools of stored predictions (ADR-0058)
+mimic-eval population --data … --agents 100                                  # a synthetic cohort (ADR-0059)
+mimic-eval footprint --dir <exports> [--propose --db … --mimic <id>]          # own exports → questions (ADR-0061)
 ```
 
 **Replay:** for each person and each checkpoint *k*, build the state from the first *k* evidence items, predict every later non-repeat item, and score.
@@ -920,7 +935,7 @@ Every run records the dataset hash, config hash, model snapshots and seed.
 
 ### 12.5 External data
 
-Twin-2K-500 covers about 2,000 respondents, each with 500 input questions and 88 held-out questions, and is public on Hugging Face. It lets us benchmark predictors and selectors before we have users, once its items are mapped to our typed questions. Check the dataset's license and terms before importing it.
+Twin-2K-500 covers about 2,000 respondents, each with 500 input questions and 88 held-out questions, and is public on Hugging Face. It lets us benchmark predictors and selectors before we have users, once its items are mapped to our typed questions. Its answers arrive in the survey's order (demographics, then the Big Five, then materialism, empathy, reasoning, games and lotteries) and its held-out items are mostly product choices, so a lift on it is transfer from demographics and scales to consumer decisions, with no near-transfer item and no domain that Mimic's intake does not already cover (`docs/reports/twin-benchmark.md`). Check the dataset's license and terms before importing it.
 
 ### 12.6 Population priors (P1, flagged)
 
@@ -953,7 +968,16 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   only through a predictor that learns from answers. Run it from Actions → Evidence (`pnpm eval -- evidence`).
   Result (2026-10-01, `docs/reports/e6-evidence.md`): `questions`. Both predictors learn from Twin's survey answers
   (Jev +6.2 points by k = 100), and neither from Mimic's served answers, so a held-out probe set (E7) comes before
-  E3b.
+  E3b. The Twin benchmark (`docs/reports/twin-benchmark.md`) then showed that Twin's lift is transfer from
+  demographics and personality scales to product choices, which Mimic's intake already covers, and that what the
+  state keeps beyond the budget decides which domains transfer (`docs/EVIDENCE.md` §8).
+- **E7 Held-out probe set** (served, pre-registered; ADR-0062, `docs/PROBE.md`). Fourteen fixed probes per person at
+  four transfer distances (a repeat, the same template, the same facet, an uncovered facet) plus three items shared by
+  everyone with public item means, served at fixed positions (after 0, 10, 20 and 30 adaptive answers) and predicted
+  from the sealed state before they are shown. Primary metric: paired Δ log loss against the context baseline per
+  tier and position; residual lift, across-person correlation and dispersion on the shared items; test-retest
+  consistency as the per-person ceiling. `PROBE_RULE` decides when answers help at each distance and when E3b may
+  start. Behind the `probe-set` flag; readout `docs/reports/e7-probes.md`.
 
 ---
 
@@ -1128,6 +1152,8 @@ exercise scores at least 4 of 5.
 - **Reactivity.** Showing the mimic's guess may change how people answer. `reveal` is an experiment variable, recorded on every answer.
 - **Identity mistakes for common names.** Never auto-confirm; the person always picks.
 - **Stated vs. revealed preferences.** Typed questions measure stated choices, and professional judgment is the weakest-covered area. P2: import real decision traces as evidence.
+- **Research agenda.** `docs/RESEARCH.md` lays out the next directions (fewer questions, the harness, transfer and
+  self-evolving memory, footprints, populations, compression) with the experiments that decide them.
 - **Later (P2):**
   - Per-person learned parameters (small adapters or embeddings) once enough people exist
   - Population priors (§12.6)

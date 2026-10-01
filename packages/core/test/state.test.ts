@@ -9,6 +9,7 @@ import {
   RELEVANT_K,
   SECTION_BUDGETS,
   STATE_VIEWS,
+  surpriseOf,
   toStateEvidence,
   validateDraft,
   viewState,
@@ -369,6 +370,107 @@ describe('generator schema gate (PLAN §9.4)', () => {
       ),
     ).toEqual({ error: 'duplicate options' });
     expect(validateDraft({ type: 'nope' }, known)).toEqual({ error: 'schema' });
+  });
+});
+
+describe('evidence policies and the card state (ADR-0056)', () => {
+  const signalled = (n: number) => {
+    const m = mimic(n);
+    for (const e of m.evidence) {
+      // Surprise rises with seq modulo 7, novelty falls with it, so the two policies pick different answers.
+      e.surprise = (e.seq % 7) / 7;
+      e.novelty = 1 - (e.seq % 7) / 7;
+    }
+    return m;
+  };
+
+  it('keeps every answer while it fits, whatever the policy', () => {
+    for (const evidencePolicy of ['recent', 'similar', 'surprise', 'novelty'] as const) {
+      const s = buildState(signalled(20), opts({ evidencePolicy }));
+      expect(s.evidence).toHaveLength(20);
+      expect(s.meta.builder).toBe(`full.v1.${evidencePolicy}`);
+    }
+    expect(buildState(signalled(20), opts({ evidencePolicy: 'mixed' })).meta.builder).toBe('full.v1');
+  });
+
+  it('ranks by the policy once over the cap, and renders in seq order', () => {
+    const m = signalled(30);
+    const recent = buildState(m, opts({ evidencePolicy: 'recent', maxEvidence: 5 }));
+    expect(recent.evidence.map((e) => e.seq)).toEqual([26, 27, 28, 29, 30]);
+    const surprise = buildState(m, opts({ evidencePolicy: 'surprise', maxEvidence: 5 }));
+    // seq % 7 = 6 → 6, 13, 20, 27, then the most recent with seq % 7 = 5.
+    expect(surprise.evidence.map((e) => e.seq)).toEqual([6, 13, 20, 26, 27]);
+    const novelty = buildState(m, opts({ evidencePolicy: 'novelty', maxEvidence: 5 }));
+    // seq % 7 = 0 → 7, 14, 21, 28, then the most recent with seq % 7 = 1 (29).
+    expect(novelty.evidence.map((e) => e.seq)).toEqual([7, 14, 21, 28, 29]);
+    m.evidence[16]!.prompt = 'Would you bring an umbrella to a picnic under grey skies?';
+    const similar = buildState(
+      m,
+      opts({
+        evidencePolicy: 'similar',
+        maxEvidence: 2,
+        forQuestions: [
+          {
+            id: 't',
+            mimicId: 'm1',
+            seq: null,
+            kind: 'adaptive',
+            type: 'choice',
+            domain: 'casual',
+            prompt: 'Do you pack an umbrella for a picnic when the skies look grey?',
+            options: [],
+            facetIds: [],
+            provenance: { generator: 'x', configHash: 'x', promptVersion: 'x' },
+          },
+        ],
+      }),
+    );
+    // The lexically closest answer first, then recency breaks the ties among the rest.
+    expect(similar.evidence.map((e) => e.seq)).toEqual([17, 30]);
+  });
+
+  it('answers without the signal rank last, by recency, so the ranking is total', () => {
+    const m = mimic(10);
+    m.evidence[2]!.surprise = 0.9;
+    m.evidence[6]!.surprise = 0.4;
+    const s = buildState(m, opts({ evidencePolicy: 'surprise', maxEvidence: 4 }));
+    expect(s.evidence.map((e) => e.seq)).toEqual([3, 7, 9, 10]);
+  });
+
+  it('holds the budget and the cap together, and seals like any other state', () => {
+    const m = signalled(200);
+    const s = buildState(m, opts({ evidencePolicy: 'surprise', maxEvidence: 40, budgetTokens: 1500 }));
+    expect(s.evidence.length).toBeLessThanOrEqual(40);
+    expect(s.meta.tokens).toBeLessThanOrEqual(1500);
+    for (const t of [3, 50, 120]) {
+      const sealed = buildState(m, opts({ evidencePolicy: 'surprise', maxEvidence: 8, beforeSeq: t }));
+      expect(sealed.evidence.every((e) => e.seq < t)).toBe(true);
+      expect(sealed.meta.evidenceSeqMax).toBeLessThan(t);
+    }
+    const cap = buildState(m, opts({ maxEvidence: 7 }));
+    expect(cap.evidence).toHaveLength(7);
+    expect(cap.meta.builder).toBe('full.v1');
+  });
+
+  it('builds the card: identity, traits and the capped answers, no insights', () => {
+    const m = signalled(30);
+    const card = buildState(m, opts({ strategy: 'card', evidencePolicy: 'surprise', maxEvidence: 6 }));
+    expect(card.traits).toBeDefined();
+    expect(card.insights).toBeUndefined();
+    expect(card.evidence).toHaveLength(6);
+    expect(card.meta.builder).toBe('card.v1.surprise');
+    expect(JSON.stringify(card)).not.toContain('Secret Place');
+    const again = buildState(m, opts({ strategy: 'card', evidencePolicy: 'surprise', maxEvidence: 6 }));
+    expect(again.meta.stateHash).toBe(card.meta.stateHash);
+    expect(buildState(m, opts({ strategy: 'card', contextOnly: true })).meta.builder).toBe('context.v1');
+  });
+
+  it('surpriseOf normalises a log loss by the number of options and stays in [0, 1]', () => {
+    expect(surpriseOf(0, 2)).toBe(0);
+    expect(surpriseOf(Math.log(2), 2)).toBeCloseTo(1);
+    expect(surpriseOf(Math.log(5), 5)).toBeCloseTo(1);
+    expect(surpriseOf(10, 5)).toBe(1);
+    expect(surpriseOf(-1, 1)).toBe(0);
   });
 });
 

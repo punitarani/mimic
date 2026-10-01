@@ -1,10 +1,13 @@
 import type { PipelineConfig } from '../config';
+import { rawScale } from '../predictors';
 import { factHidden, insightHidden, type ScopeView, scopeView } from '../scope';
+import { scorePrediction } from '../scoring';
 import {
   type BuildOptions,
   buildState,
   type EvidenceItem,
   type MimicData,
+  surpriseOf,
   toStateEvidence,
 } from '../state-builder';
 import type {
@@ -13,10 +16,62 @@ import type {
   InsightRecord,
   MimicRecord,
   QuestionRecord,
+  ScoredPredictionRow,
   TraitRecord,
 } from '../store';
 import { type Facet, isScoredKind, learnsFrom, type PersonState, type Question } from '../types';
 import { type EngineDeps, facetsFor, loadConfig } from './deps';
+
+/** What a loader may fetch beyond the evidence: the sealed scores that annotate surprise and novelty (ADR-0056). */
+export interface LoadOptions {
+  scores?: boolean;
+}
+
+/** Whether a config's states read the stored scores: only the `surprise` and `novelty` policies do (ADR-0056). */
+export function needsScores(cfg: Pick<PipelineConfig, 'stateBuilder'>): boolean {
+  const p = cfg.stateBuilder.evidencePolicy;
+  return p === 'surprise' || p === 'novelty';
+}
+
+/**
+ * Whether a config's trimmed states rank answers by similarity to the target questions (`mixed`, `similar`): only
+ * those read embeddings, and only those depend on the candidate pool, which an export does not hold (ADR-0056).
+ */
+export function ranksBySimilarity(cfg: Pick<PipelineConfig, 'stateBuilder'>): boolean {
+  const p = cfg.stateBuilder.evidencePolicy ?? 'mixed';
+  return p === 'mixed' || p === 'similar';
+}
+
+/**
+ * Surprise and novelty per answered question from the stored primary and baseline scores (ADR-0056): each is the
+ * prediction's log loss on the answer over log|options|, on the predictor's raw scale (`rawScale`, ADR-0048), so a
+ * calibrated primary ranks evidence exactly as an uncalibrated one. A fallback primary carries no novelty. Scores are
+ * written with the answer in one transaction and removed with it on an undo, so the annotation of an answer is
+ * fixed from the moment it exists: a state built online and one rebuilt from an export agree.
+ */
+export function evidenceSignals(
+  rows: ScoredPredictionRow[],
+  questions: QuestionRecord[],
+  answers: AnswerRecord[],
+): Map<string, { surprise?: number; novelty?: number }> {
+  const qById = new Map(questions.map((q) => [q.id, q]));
+  const valueByQ = new Map(answers.map((a) => [a.questionId, a.value]));
+  const out = new Map<string, { surprise?: number; novelty?: number }>();
+  for (const r of rows) {
+    const p = r.prediction;
+    if (!p.ok || (p.role !== 'primary' && p.role !== 'baseline')) continue;
+    if (p.role === 'primary' && p.fallback) continue;
+    const q = qById.get(p.questionId);
+    const value = valueByQ.get(p.questionId);
+    if (!q || value === undefined) continue;
+    const { logLoss } = scorePrediction(q.type, rawScale(p.predictorId, p.dist), value);
+    const s = out.get(q.id) ?? {};
+    if (p.role === 'baseline') s.surprise = surpriseOf(logLoss, q.options.length);
+    else s.novelty = surpriseOf(logLoss, q.options.length);
+    out.set(q.id, s);
+  }
+  return out;
+}
 
 export interface LoadedMimic {
   /** Evidence, traits, insights and facts within the person's scope (ADR-0040). */
@@ -73,9 +128,12 @@ function assemble(
     answers: AnswerRecord[];
     traits: TraitRecord[];
     insights: InsightRecord[];
+    /** Scored primaries and baselines, when the state's evidence policy reads them (ADR-0056). */
+    scores?: ScoredPredictionRow[];
   },
 ): LoadedMimic {
   const { questions, answers } = rows;
+  const signals = rows.scores ? evidenceSignals(rows.scores, questions, answers) : null;
   const view = scopeView(m.scope, facets, questions);
   const facts = rows.facts.filter((f) => !factHidden(view, f));
   const traits = rows.traits.filter((t) => !view.blocked.has(t.facetId));
@@ -101,6 +159,9 @@ function assemble(
       latencyMs: a.latencyMs,
     };
     if (a.why) item.why = a.why;
+    const sig = signals?.get(q.id);
+    if (sig?.surprise !== undefined) item.surprise = sig.surprise;
+    if (sig?.novelty !== undefined) item.novelty = sig.novelty;
     evidence.push(item);
   }
   return {
@@ -131,14 +192,19 @@ async function allFacets(deps: EngineDeps, m: MimicRecord): Promise<Facet[]> {
 }
 
 /** Loads everything the state builder needs, as it stands now. Evidence is the raw source of truth (PLAN §3.3). */
-export async function loadMimicData(deps: EngineDeps, m: MimicRecord): Promise<LoadedMimic> {
-  const [facts, questions, answers, traits, insights, facets] = await Promise.all([
+export async function loadMimicData(
+  deps: EngineDeps,
+  m: MimicRecord,
+  opts: LoadOptions = {},
+): Promise<LoadedMimic> {
+  const [facts, questions, answers, traits, insights, facets, scores] = await Promise.all([
     deps.store.listFacts(m.id),
     deps.store.listQuestions(m.id),
     deps.store.listAnswers(m.id),
     deps.store.listTraits(m.id),
     deps.store.listInsights(m.id),
     allFacets(deps, m),
+    opts.scores ? deps.store.listScoredPredictions(m.id, ['primary', 'baseline']) : undefined,
   ]);
   return assemble(m, facets, {
     facts,
@@ -146,6 +212,7 @@ export async function loadMimicData(deps: EngineDeps, m: MimicRecord): Promise<L
     answers,
     traits,
     insights: insights.filter((i) => i.status === 'active'),
+    ...(scores ? { scores } : {}),
   });
 }
 
@@ -161,19 +228,23 @@ export async function loadMimicDataAt(
   m: MimicRecord,
   at: number,
   beforeSeq: number,
+  opts: LoadOptions = {},
 ): Promise<LoadedMimic> {
-  const [facts, questions, answers, traits, insights, facets] = await Promise.all([
+  const [facts, questions, answers, traits, insights, facets, scores] = await Promise.all([
     deps.store.listFacts(m.id),
     deps.store.listQuestions(m.id),
     deps.store.listAnswers(m.id),
     deps.store.listTraitsAsOf(m.id, at, beforeSeq),
     deps.store.listInsights(m.id),
     allFacets(deps, m),
+    opts.scores ? deps.store.listScoredPredictions(m.id, ['primary', 'baseline']) : undefined,
   ]);
   const kindOf = new Map(questions.map((q) => [q.id, q.kind]));
   // The scope is today's, never time-travelled: what the person withdrew stays out of rebuilt states too (ADR-0040,
   // as fact removal in ADR-0017). Replay reports states served before `scopeAt` as rescoped.
   return assemble(m, facets, {
+    // Scores are sealed by seq inside the state builder, like the answers they belong to; never by time (ADR-0056).
+    ...(scores ? { scores } : {}),
     facts: facts
       .filter((f) => f.createdAt <= at)
       .map((f) => ({
@@ -205,6 +276,8 @@ export function stateOptions(
     retrievalK: cfg.stateBuilder.retrievalK,
     recentN: cfg.stateBuilder.recentN,
     ...(cfg.stateBuilder.latencyHints ? { latencyHints: true } : {}),
+    ...(cfg.stateBuilder.evidencePolicy ? { evidencePolicy: cfg.stateBuilder.evidencePolicy } : {}),
+    ...(cfg.stateBuilder.maxEvidence !== undefined ? { maxEvidence: cfg.stateBuilder.maxEvidence } : {}),
     ...extra,
   };
 }
@@ -234,7 +307,12 @@ export async function sealedState(
   const opts = stateOptions(cfg, beforeSeq, { forQuestions });
   const first = buildState(loaded.data, opts);
   const eligible = loaded.data.evidence.filter((e) => e.seq < beforeSeq && learnsFrom(e.kind));
-  if (first.evidence.length >= eligible.length || cfg.stateBuilder.strategy === 'structured') return first;
+  if (
+    first.evidence.length >= eligible.length ||
+    cfg.stateBuilder.strategy === 'structured' ||
+    !ranksBySimilarity(cfg)
+  )
+    return first;
   try {
     const ids = eligible.map((e) => vectorId.qa(loaded.data.mimicId, e.seq));
     const qIds = forQuestions.map((q) => vectorId.question(loaded.data.mimicId, q.id));

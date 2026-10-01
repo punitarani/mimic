@@ -2084,3 +2084,191 @@ its default and needs nothing extra deployed.
   assuming one is, so the field shows as before until the server says otherwise. When the flag is off, the field
   disappears and the code isn't required. A rejected code brings the field back, so a flag turned on while the form
   is open still works.
+## ADR-0056 — Evidence policies and the card state (2026-10-01)
+
+The state builder kept answers by recency, similarity and anchor status once evidence outgrew the budget (PLAN §9.9),
+which measures nothing about *which* answers carry a person. Two findings say the question matters: twins reproduce
+item means and barely the person-specific residual (arXiv 2608.29455: 3% of respondent-specific variance explained,
+against 54% for test-retest), and a few thousand tokens of the right structure match a 128K transcript
+(arXiv 2608.20344). So the builder now takes an evidence policy, and a compact strategy for transfer and compression
+experiments.
+
+- **Policies** (`stateBuilder.evidencePolicy`, optional and undefaulted, so every existing hash holds): `mixed` (the
+  incumbent), `recent`, `similar`, `surprise` and `novelty`. `surprise` keeps the answers the context-only baseline
+  predicted worst (its log loss over log|options|): what the profile alone gets wrong about the person, the residual
+  from the stereotype. `novelty` keeps the answers the sealed primary predicted worst at the time: what the earlier
+  answers did not already imply, the MDL view of new information. Both signals are frozen with the answer (its
+  scores are written in the same transaction and removed with it on an undo), so inclusion never oscillates and a
+  state rebuilds exactly from an export. A calibrated primary is read on its raw scale (`rawScale`, ADR-0048).
+- **Cap** (`stateBuilder.maxEvidence`) bounds the answers in a state whatever the budget; the policy fill also counts
+  the evidence key itself, so the budget holds exactly.
+- **`card`** (`stateBuilder.strategy`): identity, traits and the capped answers, no insights. It is the state that
+  fits a few hundred tokens, for the transfer eval (ADR-0057) and for shadows that test how small a state can be.
+- **Replay** takes `--evidence`, `--max-evidence` and `--budget` overrides, computes a baseline surprise for imported
+  answers that have none (sealed by construction), and counts a policy-trimmed state as checkable in
+  `replay --mode online`: only `mixed` and `similar` rank against the candidate pool, which an export does not hold.
+- **Online**, the loaders fetch the stored scores only for a config whose policy reads them (`needsScores`), so the
+  serve path of every current config makes no extra query.
+- **Not done:** marking surprising answers in the state text (a hint like `pace`), and the replay on real people that
+  decides whether `surprise` or `novelty` beats `mixed` at equal tokens (docs/RESEARCH.md §6).
+
+**Result (2026-10-01; `docs/reports/twin-benchmark.md`).** On 60 imported Twin-2K-500 people, raw Jev, 3,932 sealed
+held-out predictions per cell, two passes: a 12-answer card is level with the served state after 30 answers
+(+0.6 [−0.7, +2.0] points, intervals over people) at 48% of its tokens, and −1.0 [−1.7, −0.3] after 100, where the
+served state is itself the §9.9 subset of 18 answers. `mixed`, `recent` and `similar` sit within the run-to-run noise
+of each other (0.25 points on average between passes); `surprise` costs −1.1 [−2.0, −0.4] points at k = 100 and
+improves raw log loss by −0.088 [−0.120, −0.056]. Every card halves dispersion across people at equal accuracy. Next:
+the same cells with the calibrated primary, then the card against E6's `relevant` on served questions.
+
+## ADR-0057 — Transfer loss: an agent reading only the export (2026-10-01)
+
+ADR-0039 left "test my SOUL.md" for later. Products that load a person model truncate or re-extract it (OpenClaw caps
+a bootstrap file at 20,000 characters, Hermes keeps USER.md to 1,375, claude.ai re-extracts imports into entries), and
+no product or paper reports what a person model loses when it moves. `pnpm eval -- transfer` measures it.
+
+- For every person and checkpoint *k*, each view is rendered from the first *k* answers alone, with derived data as
+  of the serve time, exactly as replay builds states: `context` (identity only, the baseline), `state` (the full
+  state the mimic uses, the reference), `card` (ADR-0056), `soul-core`, `soul-full` and `mimic-json`.
+- A **reader** that knows nothing about Mimic predicts the later (or held-out) answers from the view and nothing
+  else. An LLM reader uses `transfer.v1`: third-person prediction (arXiv 2607.24782), the file first and the question
+  last so one file serves many questions from a prompt cache. A Jev reader gets the file as its whole state.
+- **Transfer loss** is the `state` view's accuracy with the same reader minus the view's, beside each view's size in
+  tokens, log loss, Brier, ECE, lift over `context`, cost and latency. The frontier of accuracy against tokens per
+  format is the deliverable.
+- **Drafts.** `--draft` writes a sealed `soul.v1` draft per person and checkpoint (one LLM call each); otherwise a
+  stored draft counts only when its `seqUpTo` is below the checkpoint.
+- **The eval checks its own sealing:** a rendered view that contains a later question's prompt, or a later reason,
+  stops the run.
+- Scripted sessions prove the machinery only; the numbers that matter come from the consented cohort
+  (docs/RESEARCH.md §3).
+
+**Result (2026-10-01; `docs/reports/twin-benchmark.md`).** A DeepSeek V4.1 Flash reader on 10 imported Twin-2K-500
+people at k = 30 (200 targets): 59.4% from the state text, 54.2% from the card, 53.7% from `mimic.json`, 53.4% from
+the full SOUL.md, 49.2% from the core SOUL.md and 48.3% from identity alone. The core profile without answers is worth
+about one point over nothing; the full SOUL.md carries the same answers as the state at twice the size and still
+loses six points. The first Jev run died on one draft timeout, so the eval now counts a failed draft and goes on
+without that person's narrative; the Jev table is in the report.
+
+## ADR-0058 — Ensembles of what is already stored (2026-10-01)
+
+Every served question carries the primary and five shadow predictions of the same sealed state (PLAN §9.6), so
+pooling them costs nothing new. `calibrationFits` already fits a fixed pool of the primary with each shadow on dev
+people; `pnpm eval -- ensemble` adds what is honest per person without fitting anything:
+
+- `log-pool` and `linear-pool` at equal weight; `hedge:η` and `hedge-log:η`, exponential weights from each member's
+  cumulative log loss on the person's *earlier* questions (η = 1 is Bayesian model averaging), so the weight for
+  question *t* depends on nothing after *t* − 1; an `oracle` that picks the best single member per person in
+  hindsight, reported as a bound and never as a result; `--with-baseline` adds the context-only prediction as a member,
+  which then acts as shrinkage toward the profile.
+- Every method is paired against the primary on the same questions with 90% bootstrap intervals, and the mean final
+  weights say which models a person's record ends up trusting.
+- `replay --views raw,structured,summary` is the **evidence-view ensemble**: the same predictor on several views of
+  the same sealed evidence, pooled log-linearly, the cheap way to get the informational diversity that pooling
+  different models on one state lacks (InfoDelphi, arXiv 2607.01661). On Jev it costs a few extra input-priced calls.
+- Not done: a served ensemble predictor. A pool that wins offline ships as a registered variant and a shadow first
+  (ADR-0024).
+
+## ADR-0059 — A population from the cohort: copula, exemplars, realism (2026-10-01)
+
+Simulation engines take personas as text and a handful of fields (Concordia's `basic__Entity` and formative
+memories, Smallville's `scratch.json`, Sotopia's `AgentProfile`), and populations are filled from demographics by a
+chat model, which flattens them: one persona gives the same answer on more than half of OpinionQA's items
+(arXiv 2607.25292), simulated panels show 0% of what 22% of real respondents report (arXiv 2609.07305). Mimic holds
+something those pipelines lack: real people's sealed answers. `pnpm eval -- population` builds from them.
+
+- **Anchor and fill.** A Gaussian copula over the cohort's facet means (`packages/core/src/synth.ts`): each person's
+  vector is mapped to normal scores by rank, the correlation matrix is shrunk toward independence with weight
+  *n* / (*n* + κ), and sampled vectors return through the empirical marginals. A small cohort exports its marginals
+  and only as much structure as it supports. `--norms` for a published prior is left for later.
+- **Answers by exemplar.** Each agent answers the cohort's stable items (anchors, reserve) by drawing from the answer
+  frequencies of its *k* nearest real people, shrunk toward the population's: a mixture of people, never a copy. It
+  draws from stated distributions, the one thing silicon sampling must do (arXiv 2411.05403).
+- **Realism against the cohort:** dispersion ratio and caricature per facet, correlation-structure distance,
+  coverage (the share of real people with an agent at least as close as their nearest real neighbour),
+  re-identification (the share with an agent within half that distance: a near-copy), and the cross-validated R² of
+  each sensitive facet from the non-sensitive ones, real vs synthetic, so a population never leaks more than its source.
+- **Renderings.** Each agent carries Concordia `basic__Entity` params and a memory bank of plain-text rows, and
+  Smallville scratch fields, written from numbers and answers only; the items form a `QuestionnaireBase` for scoring
+  agents inside a simulation. `mimic-population/1` carries provenance (people, split, seed, shrinkage).
+- **Privacy.** Consented, real people only by default; no names, facts, reasons or ids leave; facets and items below
+  `--min-people` (5) are never modelled, as `item_stats` does (PLAN §12.6a).
+- Not done: raking to external marginals, a trained twin per agent, and the in-simulation prequential check
+  (docs/RESEARCH.md §5).
+
+## ADR-0060 — The observation ledger: how other agents update a mimic (2026-10-01)
+
+A person model other agents cannot update goes stale the day it is exported. The memory systems those agents use
+rewrite in place: repeated consolidation turns useful memories faulty (arXiv 2605.12978, 100% to 52.6% after ten
+rewrites), consolidation erases who said what (arXiv 2608.01679), and revoked facts keep reaching agents in 43% of
+trials across five memory stores (arXiv 2609.08258). Mimic's rules point the other way: evidence is the source of
+truth and everything else is re-derived (PLAN §3.3). So the one thing another agent may write is evidence.
+
+- **`mimic-observations/1`**: a batch under a writer's name, of typed observations (question, options, answer, why,
+  context, when, authority `stated` or `observed`). `POST /api/mimics/:id/observations` validates each on its own
+  (the taught-answer shape; no special-category content by either lexicon; ids unique per writer and mimic, so a
+  re-sent batch changes nothing; at most 100 per batch, within a Worker's D1 query limit) and stores it through the
+  feedback path (ADR-0032) with `observation:<agent>` as the generator and
+  the observation's metadata on the question. The mimic then learns from it as from any taught answer; traits,
+  insights and the portrait re-derive from the record, never from an agent's edit.
+- **Provenance travels.** `mimic.json` evidence carries `source` (`session`, `person`, `agent`) and the agent;
+  SOUL.md marks what an agent observed, so a reader can weigh it below what the person said to Mimic; `GET
+  /observations` lists what agents appended, and the record's undo covers it.
+- **Refused:** anything that is not an observation (no edits to traits, insights, facts or the portrait), and any
+  observation touching politics, religion, sexuality or health, since only a direct, consented question may populate
+  those (ADR-0040) and an agent's observation is neither.
+- **Not done:** API tokens for agents (today the person's session authorises the write), an MCP server exposing
+  `append_observation` and `get_view`, and host-sized views (docs/RESEARCH.md §3).
+
+## ADR-0061 — Footprint: verify by asking, never infer (2026-10-01)
+
+Text predicts a person's traits at about *r* = 0.3 to 0.4 whatever the model (Park et al. 2015; Peters & Matz 2024),
+and a model shown someone's posts infers their location, income and worse at 85% top-1 (Staab et al., ICLR 2024).
+Twenty years of that ceiling say a footprint can replace some questions, not most, and that a footprint fed straight
+into a state is the shortest route to the stereotyped, hyper-rational twin (arXiv 2509.19088). So a footprint never
+becomes evidence. It proposes questions.
+
+- **Parsers** (`@mimic/core/footprint`, client-safe): an X archive's `tweets.js`, LinkedIn's Profile, Positions,
+  Education, Skills and Shares CSVs, Reddit's posts and comments, GitHub's user and repositories, and pasted notes.
+  Only the person's own words (retweets, forks, shares without commentary and quoted replies are dropped); handles,
+  links, emails and numbers are scrubbed; a document that touches a special-category area is dropped whole. Content
+  hashes make the ids stable. A browser can parse an archive without uploading it.
+- **Proposals.** `footprint.v1` reads the documents once (most recent first, within a budget) and writes questions
+  whose answers they imply, each citing documents and carrying a confidence. Items are checked like generated
+  questions (schema, scope, the quality gates, deduplication), pooled as ordinary adaptive questions with the implied
+  answer stored beside them, and never on a sensitive facet.
+- **Scoring the footprint.** When the session serves such a question, the implied answer is written as a prediction
+  of its own (`footprint:v1`, role `shadow`, no state, sealed trivially), so the person's real answer scores the
+  footprint like any model, per source, with the usual metrics; `/lab` and `evaluate --from stored` list it as a
+  predictor. This is the number no footprint paper reports: how often the record was right about the person.
+- **Spend.** Proposals and their gates are page work (`footprint.propose`, `footprint.gate` draw on the page's
+  reserve, ADR-0035), like asking, teaching and SOUL.md: a footprint is offered from the mimic page, never by the
+  session.
+- **Not done:** a selection bonus where the footprint and the baseline disagree, a verification budget that lets a
+  trusted source skip facets, and the retrieval-versus-generalisation split (docs/RESEARCH.md §4).
+
+## ADR-0062 — E7: a held-out probe set, and transfer distance as the yardstick (2026-10-01)
+
+**Context.** E6 returned `questions` (ADR-0053): predictors learn from Twin-2K-500's survey answers and not
+measurably from Mimic's served ones. The Twin benchmark (`docs/reports/twin-benchmark.md`) then showed what each
+side measures. On Twin, no held-out domain appears in the first 100 answers; the lift is transfer from demographics
+and personality scales to product choices (96% of it at k = 100 in 61% of the items), and party and ideology carry
+the policy items only while the state still holds them. Mimic's intake already supplies the demographics, and its
+selection makes every served question a far-transfer item. So the two datasets measure different distances, neither
+measures near transfer, and nothing measures the whole curve on one person. Next-question fidelity cannot be E3b's
+yardstick (ADR-0053's result), and no replacement existed.
+
+**Decision.** Add E7 to PLAN §12.7 and run it before E3b: a fixed, versioned probe bank (`probe.v1`) served to
+everyone at fixed positions (after 0, 10, 20 and 30 adaptive answers), fourteen items per person at four distances
+(a repeat, the same decision template, the same facet, an uncovered facet) plus three shared items with public item
+means, each predicted from the sealed state before it is shown and scored like any question. `PROBE_RULE` is fixed
+before the first readout. Design: `docs/PROBE.md`. Probes are a new question kind (`probe`), never selected or
+generated, behind the `probe-set` flag. The agenda (`docs/RESEARCH.md` §10) reorders around it: measurement first,
+then retrieval by meaning and compaction, then selection. Three cheap fixes go with it: a calibration temperature by
+evidence count, an evidence-only hash for the reproduction check, and state-insensitive items reported apart.
+
+**Consequences.** Fourteen more questions per session (about four minutes) and no new model spend. Learning is
+reported per distance, with a per-person ceiling from the repeats and individuation on shared items from the first
+person. E3b starts when the T2+T3 lift at 30 answers gives it a detectable effect with 64 people per arm, and not
+before. Twin stays a benchmark for ranking states, policies and readers on the same predictor and questions; it is
+not read as evidence about Mimic's people.
+

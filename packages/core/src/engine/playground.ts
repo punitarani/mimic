@@ -11,7 +11,14 @@ import {
 import { makePredictor, promptVersionOf } from '../predictors';
 import type { AnswerRecord, PredictionRecord, QuestionRecord } from '../store';
 import { type Distribution, isSessionKind } from '../types';
-import { contextState, loadMimicDataAt, STATE_SETTLE_MS, sealedState, stateBlobKey } from './data';
+import {
+  contextState,
+  loadMimicDataAt,
+  needsScores,
+  STATE_SETTLE_MS,
+  sealedState,
+  stateBlobKey,
+} from './data';
 import {
   budgetSpent,
   ctxFor,
@@ -87,7 +94,7 @@ export async function predictPlayground(
   const { rationale: _wantsRationale, ...question } = input;
   const v = validateQuestion(question);
   const stateAt = deps.clock() - STATE_SETTLE_MS;
-  const loaded = await loadMimicDataAt(deps, m, stateAt, m.seqMax + 1);
+  const loaded = await loadMimicDataAt(deps, m, stateAt, m.seqMax + 1, { scores: needsScores(cfg) });
   const seq = maxSeq(loaded.questions) + 1;
   const now = deps.clock();
   const q: QuestionRecord = {
@@ -201,6 +208,22 @@ export interface FeedbackResult {
 const FEEDBACK_ATTEMPTS = 3;
 
 /**
+ * Where a feedback answer came from (ADR-0060): the person on the mimic page by default, or an agent's observation
+ * ledger, which names the agent and keeps the observation's own metadata on the question.
+ */
+export interface FeedbackOrigin {
+  generator: string;
+  promptVersion: string;
+  quality: Record<string, unknown> | null;
+}
+
+export const PERSON_FEEDBACK: FeedbackOrigin = {
+  generator: 'feedback',
+  promptVersion: 'feedback.v1',
+  quality: null,
+};
+
+/**
  * Stores a question the person wrote together with their own answer, as `kind = feedback`, in one atomic write.
  * It enters later sealed states and learning like a session answer. Learnable answers must arrive in seq order,
  * so when a session question is served and not yet answered, the feedback takes that seq and the question moves
@@ -211,6 +234,7 @@ export async function submitFeedback(
   deps: EngineDeps,
   mimicId: string,
   input: FeedbackInput,
+  origin: FeedbackOrigin = PERSON_FEEDBACK,
 ): Promise<FeedbackResult> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
@@ -255,9 +279,13 @@ export async function submitFeedback(
       prompt: v.prompt,
       options: v.options,
       facetIds: [],
-      provenance: { generator: 'feedback', configHash: m.configHash, promptVersion: 'feedback.v1' },
+      provenance: {
+        generator: origin.generator,
+        configHash: m.configHash,
+        promptVersion: origin.promptVersion,
+      },
       status: 'answered',
-      quality: null,
+      quality: origin.quality,
       createdAt: now,
       servedAt: now,
       stateAt: null,

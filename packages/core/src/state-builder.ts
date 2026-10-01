@@ -13,7 +13,25 @@ import {
   type TraitEstimate,
 } from './types';
 
-export type StateStrategy = 'raw' | 'structured' | 'summary' | 'full';
+/**
+ * What a state holds (PLAN §9.9). `card` (ADR-0056) is the compact one: identity, traits and a capped number of
+ * answers chosen by the evidence policy, for transfer to other agents and for measuring how small a state can be.
+ */
+export type StateStrategy = 'raw' | 'structured' | 'summary' | 'full' | 'card';
+export const STATE_STRATEGIES = ['raw', 'structured', 'summary', 'full', 'card'] as const;
+
+/**
+ * Which answers are kept once evidence outgrows the budget or the cap (ADR-0056):
+ * - `mixed` (the incumbent): the last `recentN`, the `retrievalK` most similar to the targets, and every anchor;
+ * - `recent`: the latest answers only;
+ * - `similar`: the answers most similar to the target questions only;
+ * - `surprise`: the answers the context-only baseline predicted worst, i.e. what the person's profile alone gets
+ *   wrong about them (the residual from the stereotype);
+ * - `novelty`: the answers the sealed primary predicted worst at the time, i.e. what the earlier answers did not
+ *   already imply.
+ */
+export type EvidencePolicy = 'mixed' | 'recent' | 'similar' | 'surprise' | 'novelty';
+export const EVIDENCE_POLICIES = ['mixed', 'recent', 'similar', 'surprise', 'novelty'] as const;
 
 export interface EvidenceItem {
   seq: number;
@@ -28,6 +46,18 @@ export interface EvidenceItem {
   facetIds: string[];
   /** Time from question shown to answer, for latency hints. */
   latencyMs?: number;
+  /**
+   * How badly the context-only baseline predicted this answer: its log loss divided by log|options|, in [0, 1]
+   * (ADR-0056). Absent without a sealed baseline (repeats, feedback, imported answers).
+   */
+  surprise?: number;
+  /** The same for the sealed primary at the time, on its raw scale: how much the earlier answers failed to imply it. */
+  novelty?: number;
+}
+
+/** Surprise of an answer from a prediction's log loss on it, normalised by the number of options (ADR-0056). */
+export function surpriseOf(logLoss: number, nOptions: number): number {
+  return Math.min(1, Math.max(0, logLoss / Math.log(Math.max(2, nOptions))));
 }
 
 export interface MimicData {
@@ -53,6 +83,10 @@ export interface BuildOptions {
   queryEmbedding?: number[];
   /** Annotate evidence with `pace` against the person's median latency over the sealed evidence (builder `.v2`). */
   latencyHints?: boolean;
+  /** Which answers survive the budget and the cap (ADR-0056); `mixed` when absent. */
+  evidencePolicy?: EvidencePolicy;
+  /** At most this many answers in the state, whatever the budget (ADR-0056); unlimited when absent. */
+  maxEvidence?: number;
 }
 
 export const SECTION_BUDGETS = { identity: 600, traits: 500, insights: 800 } as const;
@@ -68,12 +102,16 @@ export function estimateTokens(value: unknown): number {
  */
 export function buildState(m: MimicData, opts: BuildOptions): PersonState {
   const identity = buildIdentity(m);
-  const builder = opts.contextOnly ? 'context.v1' : `${opts.strategy}.${opts.latencyHints ? 'v2' : 'v1'}`;
+  const policy = opts.evidencePolicy ?? 'mixed';
+  const builder = opts.contextOnly
+    ? 'context.v1'
+    : `${opts.strategy}.${opts.latencyHints ? 'v2' : 'v1'}${policy === 'mixed' ? '' : `.${policy}`}`;
   if (opts.contextOnly) return finalize({ identity, evidence: [] }, builder, 0);
 
-  const includeTraits = opts.strategy === 'structured' || opts.strategy === 'full';
+  const includeTraits =
+    opts.strategy === 'structured' || opts.strategy === 'full' || opts.strategy === 'card';
   const includeInsights = opts.strategy === 'summary' || opts.strategy === 'full';
-  const includeEvidence = opts.strategy === 'raw' || opts.strategy === 'full';
+  const includeEvidence = opts.strategy === 'raw' || opts.strategy === 'full' || opts.strategy === 'card';
   let seqMax = 0;
 
   let traits: PersonState['traits'];
@@ -112,7 +150,12 @@ export function buildState(m: MimicData, opts: BuildOptions): PersonState {
     const eligible = m.evidence
       .filter((e) => e.seq < opts.beforeSeq && learnsFrom(e.kind))
       .sort((a, b) => a.seq - b.seq);
-    const used = estimateTokens({ identity, traits, insights });
+    // The incumbent accounts for the sections alone; a policy fill runs closer to the line, so it also counts the
+    // evidence key itself, and the budget then holds exactly.
+    const used =
+      policy === 'mixed'
+        ? estimateTokens({ identity, traits, insights })
+        : estimateTokens({ identity, traits, insights, evidence: [] });
     const remaining = Math.max(0, opts.budgetTokens - used);
     // The median is over every sealed answer, not only the ones that fit the budget, so it is stable as evidence
     // grows and reproducible from an export.
@@ -175,7 +218,20 @@ function selectEvidence(
 ): EvidenceItem[] {
   // Costed exactly as rendered, pace marks included, so the budget holds with latency hints on.
   const cost = (xs: EvidenceItem[]) => estimateTokens(xs.map((e) => toStateEvidence(e, { medianLatencyMs })));
-  if (cost(items) <= budget) return items;
+  const cap = opts.maxEvidence ?? Number.POSITIVE_INFINITY;
+  if (cost(items) <= budget && items.length <= cap) return items;
+
+  const policy = opts.evidencePolicy ?? 'mixed';
+  if (policy !== 'mixed') {
+    // One ranking, then a greedy fill under the cap and the budget, rendered in seq order.
+    const kept: EvidenceItem[] = [];
+    for (const e of rankByPolicy(items, policy, m, opts)) {
+      if (kept.length >= cap) break;
+      if (cost([...kept, e]) > budget) continue;
+      kept.push(e);
+    }
+    return kept.sort((a, b) => a.seq - b.seq);
+  }
 
   // Outgrown the budget: anchors + top-K by similarity to the targets + the last recentN (PLAN §9.9).
   const chosen = new Map<number, EvidenceItem>();
@@ -199,6 +255,7 @@ function selectEvidence(
   const seen = new Set<number>();
   for (const e of priority) {
     if (seen.has(e.seq)) continue;
+    if (kept.length >= cap) break;
     if (cost([...kept, e]) > budget) continue;
     seen.add(e.seq);
     kept.push(e);
@@ -206,7 +263,28 @@ function selectEvidence(
   return kept.sort((a, b) => a.seq - b.seq);
 }
 
-function rankBySimilarity(items: EvidenceItem[], m: MimicData, opts: BuildOptions): EvidenceItem[] {
+/**
+ * The answers in the order a policy keeps them (ADR-0056). Ties, and answers without the policy's signal, fall back
+ * to recency, so the ranking is total and deterministic from exported data.
+ */
+export function rankByPolicy(
+  items: EvidenceItem[],
+  policy: Exclude<EvidencePolicy, 'mixed'>,
+  m: MimicData,
+  opts: Pick<BuildOptions, 'forQuestions' | 'queryEmbedding'>,
+): EvidenceItem[] {
+  const byRecency = (a: EvidenceItem, b: EvidenceItem) => b.seq - a.seq;
+  if (policy === 'recent') return [...items].sort(byRecency);
+  if (policy === 'similar') return rankBySimilarity(items, m, opts);
+  const signal = (e: EvidenceItem) => (policy === 'surprise' ? e.surprise : e.novelty) ?? -1;
+  return [...items].sort((a, b) => signal(b) - signal(a) || byRecency(a, b));
+}
+
+function rankBySimilarity(
+  items: EvidenceItem[],
+  m: MimicData,
+  opts: Pick<BuildOptions, 'forQuestions' | 'queryEmbedding'>,
+): EvidenceItem[] {
   const targets = opts.forQuestions ?? [];
   const scored = items.map((e) => {
     let s = 0;

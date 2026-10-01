@@ -4,8 +4,11 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
 import { type ArmsReport, renderArms } from './arms';
+import { renderEnsemble } from './ensemble';
 import { type EvidenceReport, renderEvidence } from './evidence';
 import { type RubricGroup, renderRubric } from './rubric';
+import { renderPopulation } from './synthesize';
+import { renderTransfer } from './transfer';
 import { remoteFlags, WORKER_DIR } from './wrangler';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -88,6 +91,12 @@ export function renderReport(run: EvalRunRecord): string {
     lines.push(...renderRubric((m.groups as RubricGroup[]) ?? []));
   } else if (spec.kind === 'arms') {
     if (m.report) lines.push(...renderArms(m.report as ArmsReport));
+  } else if (spec.kind === 'transfer') {
+    lines.push(...renderTransfer(m));
+  } else if (spec.kind === 'ensemble') {
+    lines.push(...renderEnsemble(m));
+  } else if (spec.kind === 'population') {
+    lines.push(...renderPopulation(m));
   } else if (spec.kind === 'evidence') {
     if (m.report) lines.push(...renderEvidence(m.report as EvidenceReport));
   } else if (spec.kind === 'select') {

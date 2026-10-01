@@ -73,7 +73,7 @@ Doppler settings (ADR-0035, ADR-0052); `BUDGET_USD` and `BUDGET_SESSION_SHARE` a
 | `pnpm db:generate` | Generates a Drizzle migration after a schema change |
 | `pnpm db:migrate:local` | Applies migrations to the local D1 (`pnpm dev` does this too) |
 | `pnpm --filter @mimic/core gen:docs` | Regenerates `docs/prompts`, `docs/ontology` and `docs/schemas` from `packages/core` (a test checks they match) |
-| `pnpm eval -- --help` | Eval CLI: `export`, `replay`, `select`, `import`, `report`, `session`, `evaluate`, `diagnose`, `optimize` |
+| `pnpm eval -- --help` | Eval CLI: `export`, `replay`, `select`, `import`, `report`, `session`, `evaluate`, `diagnose`, `optimize`, `transfer`, `ensemble`, `population`, `footprint` |
 | `pnpm backfill --predictor <id>` | Runs a new predictor on questions already served (ADR-0024, ADR-0037) |
 | `pnpm deploy:dry-run` | OpenNext build + `wrangler --dry-run`, like CI's build job. No credentials needed. |
 

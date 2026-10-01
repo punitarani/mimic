@@ -834,11 +834,21 @@ export function pairedComparisons(recs: EvalRecord[]): PairedRow[] {
     (a, b) =>
       Number(a.includes('@')) - Number(b.includes('@')) || a.localeCompare(b, 'en', { numeric: true }),
   );
+  // Rows that no model made (the footprint's implied answers, ADR-0061) have no predictor spec and pair with nothing.
+  const specs = new Map(
+    ids.map((id) => {
+      try {
+        return [id, parsePredictorId(id)] as const;
+      } catch {
+        return [id, null] as const;
+      }
+    }),
+  );
   const rows: PairedRow[] = [];
   for (const [i, from] of ids.entries())
     for (const to of ids.slice(i + 1)) {
-      const [f, t] = [parsePredictorId(from), parsePredictorId(to)];
-      if (f.model !== t.model || f.kind !== t.kind) continue;
+      const [f, t] = [specs.get(from), specs.get(to)];
+      if (!f || !t || f.model !== t.model || f.kind !== t.kind) continue;
       const b = byId.get(to)!;
       const shared = new Set(b.map((r) => r.instanceId));
       const a = byId.get(from)!.filter((r) => shared.has(r.instanceId));

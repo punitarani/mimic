@@ -44,6 +44,7 @@ import {
   facetCounts,
   type LoadedMimic,
   loadMimicDataAt,
+  needsScores,
   STATE_SETTLE_MS,
   sealedState,
   stateBlobKey,
@@ -62,6 +63,7 @@ import {
   sessionSpent,
   timed,
 } from './deps';
+import { footprintPrediction } from './footprint';
 
 export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.decision;
 export const MIN_POOL = 6;
@@ -211,7 +213,9 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
   const cfg = await loadConfig(deps, m.configHash);
   // Derived data is pinned to `stateAt` so the sealed states can be rebuilt exactly from an export (ADR-0017).
   const stateAt = deps.clock() - STATE_SETTLE_MS;
-  const loaded = await timed(deps, 'load', () => loadMimicDataAt(deps, m, stateAt, m.seqMax + 1));
+  const loaded = await timed(deps, 'load', () =>
+    loadMimicDataAt(deps, m, stateAt, m.seqMax + 1, { scores: needsScores(cfg) }),
+  );
   const { questions } = loaded;
   const progress = progressOf(questions, cfg);
 
@@ -659,11 +663,15 @@ async function serveWithPredictions(
     fallback: isFallback,
     createdAt: now,
   });
+  // A question a footprint proposed carries the answer its documents implied; stored as a prediction of its own so
+  // the real answer scores the footprint like any model (ADR-0061). It reads no answers, so it is sealed trivially.
+  const footprint = footprintPrediction(deps, m, chosen);
   const predictions = [
     pred('primary', primaryId, state, primaryResult, fallback),
     pred('baseline', servedPredictorId(primarySpec, baselineResult.servedModel), baseState, baselineResult),
     // The chosen question's prediction under each persona hypothesis feeds the hypothesis posterior (§6); not scored.
     ...hypothesisRows,
+    ...(footprint ? [footprint] : []),
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
   // Guarded: if an undo changed the evidence since `loaded` was read, nothing is written (ADR-0036).

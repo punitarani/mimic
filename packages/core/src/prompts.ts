@@ -395,6 +395,67 @@ ANSWERS: #seq prompt [options] → answer (why)`,
       ),
     }),
   },
+  /**
+   * ADR-0057: the reader in the transfer-loss eval. A generic agent that has been handed a person-model file (a
+   * SOUL.md, a mimic.json, a card) and nothing else: the prompt gives it no Mimic-specific help, because the point is
+   * to measure what another agent gets out of the file alone. Third-person prediction, never role-play (arXiv
+   * 2607.24782). The file comes first in the user message and the question last, so one file serves many questions
+   * from a provider's prompt cache.
+   */
+  'transfer.v1': {
+    id: 'transfer.v1',
+    title: 'Transfer reader (an agent reading only an exported person model)',
+    system: `You have been given a file that describes one real person, and a question they were asked.
+Using only the file, estimate the probability that this person would choose each option. Reason about them in the
+third person: look for a closely related recorded answer first, then their rules of thumb and tendencies. Don't make
+them more rational, agreeable or consistent than the file shows. If the file says nothing relevant, spread the
+probability rather than guessing from stereotypes.
+Return JSON: { "probs": [{ "key": string, "p": number }] } covering every option key.`,
+    input: 'FILE:\n{the exported person model, verbatim}\n\nQUESTION: {prompt}\nOPTIONS:\n{key: label}',
+    schema: obj({ probs: arr(obj({ key: str, p: num })) }),
+  },
+  /**
+   * ADR-0061: turns a person's own documents into questions whose answer the documents imply. Nothing it writes is
+   * evidence: each item is pooled as an ordinary question with the implied answer stored beside it as a prediction,
+   * and the person's real answer scores it. Sensitive facets are never offered to it.
+   */
+  'footprint.v1': {
+    id: 'footprint.v1',
+    title: 'Footprint proposals (implied answers to verify)',
+    system: `You read documents one person wrote about themselves and their work (posts, profile text, project notes), and
+you write typed questions that the documents suggest how they would answer. Each item is a question Mimic will ask
+the person, together with the answer the documents imply; the person's real answer will say whether you were right.
+Each question must be one of three types:
+- choice: 2–5 mutually exclusive options, roughly equally attractive
+- noul: a yes/no question
+- score: a 5-point ordered scale, lowest to highest
+Rules:
+- One specific, everyday situation per question that asks what they would do, at most 30 words. No self-ratings.
+- Options are actions, mutually exclusive, with no "it depends" option.
+- Only write an item when particular documents imply the answer; cite them in docIds (never in the text). No
+  citation, no item. Give confidence as the probability the person picks the implied answer: 0.5 means a coin flip.
+- Tag each item with one or more facets from the list. Never touch politics, religion, health, sexuality or money.
+- Never quote the documents, name people, places or employers, or mention that documents exist.
+- Prefer situations the documents do not describe word for word: a question that repeats a post tests memory,
+  not the person.
+Return JSON only, matching the schema.`,
+    input: `FACETS: {facet id: name, low pole ↔ high pole}
+DOCUMENTS: {[docId] date · source · text}
+Write up to {n} items.`,
+    schema: obj({
+      items: arr(
+        obj({
+          type: { type: 'string', enum: ['choice', 'noul', 'score'] },
+          prompt: str,
+          options: arr(obj({ key: str, label: str })),
+          facetIds: arr(str),
+          answer: str,
+          confidence: num,
+          docIds: arr(str),
+        }),
+      ),
+    }),
+  },
 } as const satisfies Record<string, PromptSpec>;
 
 export type PromptId = keyof typeof PROMPTS;
