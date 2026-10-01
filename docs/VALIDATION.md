@@ -566,3 +566,31 @@ of the machinery on scripted sessions with offline fakes; the experiments that d
   that is scored on the real answer, and no document text reaches any sealed state.
 - **Live:** none. The OpenRouter key in this environment was used for nothing; `pnpm eval -- footprint` ran offline on
   a two-file folder as a smoke test of the CLI.
+
+### Benchmark on Twin-2K-500 (imported people; `docs/reports/twin-benchmark.md`)
+
+Imported survey takers, not Mimic users, and not scripted: 120 people from Twin-2K-500 (CC BY 4.0) imported with
+`pnpm eval -- import twin2k500`, the same 60 in every run (`--seed bench --limit 60`), every wave 4 item held out
+(3,932 sealed predictions per run and checkpoint), Jev `typesafe/jev-1.13-20260917` on its raw scale, baseline on.
+Intervals are paired by question and bootstrapped over people.
+
+- **Replay matrix** (`replay --data data/twin.sqlite --predictor decision:typesafe/jev-1.13 --checkpoints 10,30,100
+  --split all --targets heldout --limit 60 --seed bench --rows --state full|raw|card --evidence <policy>
+  --max-evidence 12|6`), two passes per spec. Lift over the baseline: +0.5, +3.4, +7.3 points at k = 10, 30, 100 for
+  the served state. A 12-answer card is level with the served state at k = 30 (+0.6 [−0.7, +2.0]) at 48% of its tokens
+  and loses −1.0 [−1.7, −0.3] at k = 100, where the served state is itself the §9.9 subset of 18 answers. `mixed`,
+  `recent` and `similar` are within the noise floor of each other (two passes of one spec differ by 0.25 points on
+  average, 0.43 at most); `surprise` costs −1.1 [−2.0, −0.4] points at k = 100 and improves raw log loss by
+  −0.088 [−0.120, −0.056]. Every card halves dispersion across people at k = 30 (0.28 against 0.42) at equal accuracy.
+- **Transfer** (`transfer --data … --readers llm:deepseek/deepseek-v4.1-flash --views
+  context,state,card,soul-core,soul-full,mimic-json --checkpoints 30 --split all --targets heldout --draft --limit 10
+  --max-targets 20 --seed bench`): DeepSeek reads 59.4% from the state text, 54.2% from the card, 53.7% from
+  `mimic.json`, 53.4% from the full SOUL.md, 49.2% from the core SOUL.md, 48.3% from identity alone (200 targets, so
+  roughly ±6 points). The Jev reader on 60 people is in the report.
+- **E6** (`evidence --data data/twin.sqlite --split all --k 10,30,100 --max-targets 20 --limit 60 --seed bench`):
+  Jev learns from these answers (+4.0 [+1.3, +6.7] points, log loss −0.049 [−0.074, −0.022] at k = 30); `relevant`
+  is level with `full` at k = 30 and 100 at a third of the tokens; the rule returns `insufficient` because the import
+  holds no served questions.
+- **Not run:** `ensemble` and `population` need stored shadows and trait estimates, which an import has neither of.
+- **Fixed on the way:** a soul-draft timeout aborted the first Jev transfer run; the eval now counts a failed draft
+  (`draftsFailed`) and continues without that person's narrative.

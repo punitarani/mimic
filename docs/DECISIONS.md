@@ -2112,6 +2112,14 @@ experiments.
 - **Not done:** marking surprising answers in the state text (a hint like `pace`), and the replay on real people that
   decides whether `surprise` or `novelty` beats `mixed` at equal tokens (docs/RESEARCH.md §6).
 
+**Result (2026-10-01; `docs/reports/twin-benchmark.md`).** On 60 imported Twin-2K-500 people, raw Jev, 3,932 sealed
+held-out predictions per cell, two passes: a 12-answer card is level with the served state after 30 answers
+(+0.6 [−0.7, +2.0] points, intervals over people) at 48% of its tokens, and −1.0 [−1.7, −0.3] after 100, where the
+served state is itself the §9.9 subset of 18 answers. `mixed`, `recent` and `similar` sit within the run-to-run noise
+of each other (0.25 points on average between passes); `surprise` costs −1.1 [−2.0, −0.4] points at k = 100 and
+improves raw log loss by −0.088 [−0.120, −0.056]. Every card halves dispersion across people at equal accuracy. Next:
+the same cells with the calibrated primary, then the card against E6's `relevant` on served questions.
+
 ## ADR-0057 — Transfer loss: an agent reading only the export (2026-10-01)
 
 ADR-0039 left "test my SOUL.md" for later. Products that load a person model truncate or re-extract it (OpenClaw caps
@@ -2133,6 +2141,13 @@ no product or paper reports what a person model loses when it moves. `pnpm eval 
   stops the run.
 - Scripted sessions prove the machinery only; the numbers that matter come from the consented cohort
   (docs/RESEARCH.md §3).
+
+**Result (2026-10-01; `docs/reports/twin-benchmark.md`).** A DeepSeek V4.1 Flash reader on 10 imported Twin-2K-500
+people at k = 30 (200 targets): 59.4% from the state text, 54.2% from the card, 53.7% from `mimic.json`, 53.4% from
+the full SOUL.md, 49.2% from the core SOUL.md and 48.3% from identity alone. The core profile without answers is worth
+about one point over nothing; the full SOUL.md carries the same answers as the state at twice the size and still
+loses six points. The first Jev run died on one draft timeout, so the eval now counts a failed draft and goes on
+without that person's narrative; the Jev table is in the report.
 
 ## ADR-0058 — Ensembles of what is already stored (2026-10-01)
 

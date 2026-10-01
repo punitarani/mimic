@@ -327,6 +327,8 @@ benchmark either way.
   correlation as the stereotype alarms (PLAN §12.3).
 - A change ships as a registered variant and a shadow before it touches the primary (ADR-0024, ADR-0041).
 - Nothing crosses people except aggregates with a minimum group size (PLAN §3.8, `item_stats`, ADR-0059).
+- Imported people (Twin-2K-500) rank states, policies and readers for the same predictor on the same questions
+  (`docs/reports/twin-benchmark.md`); they never stand in for a result about a Mimic user.
 
 ## 9. Order of work
 
