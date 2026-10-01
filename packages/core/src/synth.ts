@@ -2,7 +2,7 @@ import { seededRng } from './hash';
 import { pearson } from './metrics';
 
 /**
- * Population synthesis and realism metrics (ADR-0055): the pure math behind `pnpm eval -- population`. Everything
+ * Population synthesis and realism metrics (ADR-0057): the pure math behind `pnpm eval -- population`. Everything
  * here is deterministic given a seed and works on numbers only; what the numbers mean (facets, people, consent) is
  * the eval command's business. No cross-person data leaves this module except as aggregates (PLAN §3.8): a
  * correlation matrix, marginals and sampled vectors.

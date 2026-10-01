@@ -80,7 +80,7 @@ const batch = (over: Partial<ObservationBatch> = {}) =>
     ...over,
   });
 
-describe('observation ledger (ADR-0056)', () => {
+describe('observation ledger (ADR-0058)', () => {
   it('appends observations as taught answers the mimic learns from, idempotently, and names the agent', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await person(6);

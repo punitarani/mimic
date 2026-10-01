@@ -6,7 +6,7 @@ import { type EngineDeps, EngineError, requireMimic } from './deps';
 import { DraftInput, type FeedbackOrigin, submitFeedback } from './playground';
 
 /**
- * The observation ledger (ADR-0056): how any other agent updates a mimic. An agent that acts for the person sees
+ * The observation ledger (ADR-0058): how any other agent updates a mimic. An agent that acts for the person sees
  * them decide; it may append those decisions here as typed observations, and nothing else. Mimic validates each
  * one, stores it as `kind = feedback` evidence with the agent named in its provenance, and re-derives traits,
  * insights and the portrait from the evidence as it always does (PLAN §3.3): no agent edits derived state, no

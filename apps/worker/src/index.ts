@@ -10,8 +10,6 @@ import {
   writeSnapshot,
 } from '@mimic/core';
 import {
-  engineDeps,
-  flaggedEnv,
   isIdentityQueue,
   type MimicBindings,
   queueFor,
@@ -68,9 +66,7 @@ export default {
   },
 
   async queue(batch: MessageBatch<unknown>, env: Env, _ctx: ExecutionContext): Promise<void> {
-    // One flag read per batch: the deps and the lane check below see the same providers (ADR-0051).
-    const flagged = await flaggedEnv(env);
-    const d = engineDeps(flagged);
+    const d = await deps(env);
     const identityLane = isIdentityQueue(batch.queue);
     await Promise.all(
       batch.messages.map(async (msg) => {
@@ -82,7 +78,7 @@ export default {
         }
         // A job too slow for the identity lane (Parallel enrichment) moves to the shared queue (ADR-0034). Straight
         // to JOBS: routing it again would send it back here.
-        if (identityLane && !runsOnIdentityLane(parsed.data, flagged)) {
+        if (identityLane && !runsOnIdentityLane(parsed.data, env)) {
           await env.JOBS.send(parsed.data);
           msg.ack();
           return;

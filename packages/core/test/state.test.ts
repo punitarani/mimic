@@ -6,10 +6,13 @@ import {
   estimateTokens,
   type MimicData,
   pickRepeat,
+  RELEVANT_K,
   SECTION_BUDGETS,
+  STATE_VIEWS,
   surpriseOf,
   toStateEvidence,
   validateDraft,
+  viewState,
 } from '../src';
 
 const opts = (over: Partial<BuildOptions> = {}): BuildOptions => ({
@@ -370,7 +373,7 @@ describe('generator schema gate (PLAN §9.4)', () => {
   });
 });
 
-describe('evidence policies and the card state (ADR-0052)', () => {
+describe('evidence policies and the card state (ADR-0054)', () => {
   const signalled = (n: number) => {
     const m = mimic(n);
     for (const e of m.evidence) {
@@ -468,5 +471,73 @@ describe('evidence policies and the card state (ADR-0052)', () => {
     expect(surpriseOf(Math.log(5), 5)).toBeCloseTo(1);
     expect(surpriseOf(10, 5)).toBe(1);
     expect(surpriseOf(-1, 1)).toBe(0);
+  });
+});
+
+describe('state views (E6, docs/EVIDENCE.md)', () => {
+  const sealed = buildState(mimic(20), opts({ beforeSeq: 15 }));
+
+  it('every view is a subset of the sealed state, so sealing holds', () => {
+    const q = { prompt: 'Question about weekend plans' };
+    for (const view of STATE_VIEWS) {
+      const v = viewState(sealed, view, q);
+      const seqs = new Set(sealed.evidence.map((e) => e.seq));
+      for (const e of v.evidence) expect(seqs.has(e.seq)).toBe(true);
+      expect(v.meta.evidenceSeqMax).toBeLessThanOrEqual(sealed.meta.evidenceSeqMax);
+      expect(v.meta.evidenceSeqMax).toBeLessThan(15);
+      expect(v.meta.tokens).toBeLessThanOrEqual(sealed.meta.tokens);
+      expect(v.identity).toEqual(sealed.identity);
+    }
+  });
+
+  it('full is the state itself', () => {
+    expect(viewState(sealed, 'full')).toBe(sealed);
+  });
+
+  it('context is exactly the context-only baseline state', () => {
+    const baseline = buildState(mimic(20), opts({ beforeSeq: 15, contextOnly: true }));
+    const v = viewState(sealed, 'context');
+    expect(v).toEqual(baseline);
+    expect(v.meta.stateHash).toBe(baseline.meta.stateHash);
+  });
+
+  it('answers drops derived data and keeps every answer; derived does the opposite', () => {
+    expect(sealed.traits?.length).toBeGreaterThan(0);
+    expect(sealed.insights?.length).toBeGreaterThan(0);
+    const a = viewState(sealed, 'answers');
+    expect(a.traits).toBeUndefined();
+    expect(a.insights).toBeUndefined();
+    expect(a.evidence).toEqual(sealed.evidence);
+    expect(a.meta.evidenceSeqMax).toBe(14);
+    expect(a.meta.builder).toBe('full.v1>answers');
+    const d = viewState(sealed, 'derived');
+    expect(d.evidence).toEqual([]);
+    expect(d.traits).toEqual(sealed.traits);
+    expect(d.insights).toEqual(sealed.insights);
+    expect(d.meta.evidenceSeqMax).toBe(sealed.meta.evidenceSeqMax);
+  });
+
+  it('relevant keeps the RELEVANT_K most similar answers in seq order, ties to the latest', () => {
+    const data = mimic(20, {
+      evidence: Array.from({ length: 14 }, (_, i) =>
+        item(i + 1, {
+          prompt: i === 2 ? 'Do you take risks when investing money?' : `Unrelated topic ${i + 1}`,
+        }),
+      ),
+    });
+    const s = buildState(data, opts({ beforeSeq: 15 }));
+    const v = viewState(s, 'relevant', { prompt: 'Would you risk money investing in a startup?' });
+    expect(v.evidence).toHaveLength(RELEVANT_K);
+    expect(v.evidence.map((e) => e.seq)).toContain(3);
+    // The rest tie at zero similarity, so the latest answers fill the remaining places.
+    expect(v.evidence.map((e) => e.seq)).toEqual([3, 8, 9, 10, 11, 12, 13, 14]);
+    expect(v.traits).toBeUndefined();
+    expect(() => viewState(s, 'relevant')).toThrow(/needs the question/);
+  });
+
+  it('is deterministic', () => {
+    const q = { prompt: 'weekend plans' };
+    for (const view of STATE_VIEWS)
+      expect(viewState(sealed, view, q).meta.stateHash).toBe(viewState(sealed, view, q).meta.stateHash);
   });
 });

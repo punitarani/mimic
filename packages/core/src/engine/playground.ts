@@ -213,7 +213,7 @@ const FEEDBACK_ATTEMPTS = 3;
  * race for a seq is retried.
  */
 /**
- * Where a feedback answer came from (ADR-0056): the person on the mimic page by default, or an agent's observation
+ * Where a feedback answer came from (ADR-0058): the person on the mimic page by default, or an agent's observation
  * ledger, which names the agent and keeps the observation's own metadata on the question.
  */
 export interface FeedbackOrigin {

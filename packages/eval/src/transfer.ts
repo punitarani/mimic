@@ -50,7 +50,7 @@ import {
 import { HELDOUT_PREFIX } from './replay';
 
 /**
- * Transfer-loss eval (ADR-0053): how much of a mimic survives being exported. For each person and checkpoint k, every
+ * Transfer-loss eval (ADR-0055): how much of a mimic survives being exported. For each person and checkpoint k, every
  * export view is rendered from the first k answers alone, a reader that knows nothing about Mimic predicts the later
  * answers from that view and nothing else, and the scores are set against the full in-context state the mimic itself
  * uses. The loss per view, at its size in tokens, is what an agent elsewhere gives up for reading the file.
@@ -73,7 +73,7 @@ export interface TransferSpec {
   targets: 'later' | 'heldout';
   /** Write a sealed `soul.v1` draft per person and checkpoint (one LLM call each); else use a stored sealed draft. */
   draft: boolean;
-  /** The card view's cap and policy (ADR-0052). */
+  /** The card view's cap and policy (ADR-0054). */
   cardMaxEvidence: number;
   cardPolicy: EvidencePolicy;
   limitPeople?: number;
@@ -329,7 +329,7 @@ export async function transfer(
     const fid = await deps.store.listFidelity(m.id);
     const storedDraft = await deps.store.latestSoulDraft(m.id);
 
-    // The card ranks answers by the baseline's surprise (ADR-0052): stored online, computed here for an import.
+    // The card ranks answers by the baseline's surprise (ADR-0054): stored online, computed here for an import.
     const surpriseBySeq = new Map<number, number>();
     if (spec.views.includes('card') && spec.cardPolicy === 'surprise') {
       const missing = train.filter((e) => e.surprise === undefined);

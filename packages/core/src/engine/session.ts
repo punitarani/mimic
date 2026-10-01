@@ -661,7 +661,7 @@ async function serveWithPredictions(
     createdAt: now,
   });
   // A question a footprint proposed carries the answer its documents implied; stored as a prediction of its own so
-  // the real answer scores the footprint like any model (ADR-0057). It reads no answers, so it is sealed trivially.
+  // the real answer scores the footprint like any model (ADR-0059). It reads no answers, so it is sealed trivially.
   const footprint = footprintPrediction(deps, m, chosen);
   const predictions = [
     pred('primary', primaryId, state, primaryResult, fallback),

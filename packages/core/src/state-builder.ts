@@ -14,14 +14,14 @@ import {
 } from './types';
 
 /**
- * What a state holds (PLAN §9.9). `card` (ADR-0052) is the compact one: identity, traits and a capped number of
+ * What a state holds (PLAN §9.9). `card` (ADR-0054) is the compact one: identity, traits and a capped number of
  * answers chosen by the evidence policy, for transfer to other agents and for measuring how small a state can be.
  */
 export type StateStrategy = 'raw' | 'structured' | 'summary' | 'full' | 'card';
 export const STATE_STRATEGIES = ['raw', 'structured', 'summary', 'full', 'card'] as const;
 
 /**
- * Which answers are kept once evidence outgrows the budget or the cap (ADR-0052):
+ * Which answers are kept once evidence outgrows the budget or the cap (ADR-0054):
  * - `mixed` (the incumbent): the last `recentN`, the `retrievalK` most similar to the targets, and every anchor;
  * - `recent`: the latest answers only;
  * - `similar`: the answers most similar to the target questions only;
@@ -48,14 +48,14 @@ export interface EvidenceItem {
   latencyMs?: number;
   /**
    * How badly the context-only baseline predicted this answer: its log loss divided by log|options|, in [0, 1]
-   * (ADR-0052). Absent without a sealed baseline (repeats, feedback, imported answers).
+   * (ADR-0054). Absent without a sealed baseline (repeats, feedback, imported answers).
    */
   surprise?: number;
   /** The same for the sealed primary at the time, on its raw scale: how much the earlier answers failed to imply it. */
   novelty?: number;
 }
 
-/** Surprise of an answer from a prediction's log loss on it, normalised by the number of options (ADR-0052). */
+/** Surprise of an answer from a prediction's log loss on it, normalised by the number of options (ADR-0054). */
 export function surpriseOf(logLoss: number, nOptions: number): number {
   return Math.min(1, Math.max(0, logLoss / Math.log(Math.max(2, nOptions))));
 }
@@ -83,9 +83,9 @@ export interface BuildOptions {
   queryEmbedding?: number[];
   /** Annotate evidence with `pace` against the person's median latency over the sealed evidence (builder `.v2`). */
   latencyHints?: boolean;
-  /** Which answers survive the budget and the cap (ADR-0052); `mixed` when absent. */
+  /** Which answers survive the budget and the cap (ADR-0054); `mixed` when absent. */
   evidencePolicy?: EvidencePolicy;
-  /** At most this many answers in the state, whatever the budget (ADR-0052); unlimited when absent. */
+  /** At most this many answers in the state, whatever the budget (ADR-0054); unlimited when absent. */
   maxEvidence?: number;
 }
 
@@ -151,7 +151,7 @@ export function buildState(m: MimicData, opts: BuildOptions): PersonState {
       .filter((e) => e.seq < opts.beforeSeq && learnsFrom(e.kind))
       .sort((a, b) => a.seq - b.seq);
     // The incumbent accounts for the sections alone; a policy fill runs closer to the line, so it also counts the
-    // evidence key itself, and the budget then holds exactly (ADR-0052).
+    // evidence key itself, and the budget then holds exactly (ADR-0054).
     const used =
       policy === 'mixed'
         ? estimateTokens({ identity, traits, insights })
@@ -223,7 +223,7 @@ function selectEvidence(
 
   const policy = opts.evidencePolicy ?? 'mixed';
   if (policy !== 'mixed') {
-    // One ranking, then a greedy fill under the cap and the budget, rendered in seq order (ADR-0052).
+    // One ranking, then a greedy fill under the cap and the budget, rendered in seq order (ADR-0054).
     const kept: EvidenceItem[] = [];
     for (const e of rankByPolicy(items, policy, m, opts)) {
       if (kept.length >= cap) break;
@@ -264,7 +264,7 @@ function selectEvidence(
 }
 
 /**
- * The answers in the order a policy keeps them (ADR-0052). Ties, and answers without the policy's signal, fall back
+ * The answers in the order a policy keeps them (ADR-0054). Ties, and answers without the policy's signal, fall back
  * to recency, so the ranking is total and deterministic from exported data.
  */
 export function rankByPolicy(
@@ -323,6 +323,50 @@ export function toStateEvidence(e: EvidenceItem, opts?: { medianLatencyMs: numbe
     if (pace !== 'even') out.pace = pace;
   }
   return out;
+}
+
+/**
+ * What a predictor is shown of a sealed state (E6, docs/EVIDENCE.md). Each view is a subset of the state, never more,
+ * so sealing (invariant 1) holds by construction:
+ * - `full`: the state as served;
+ * - `context`: identity and sourced facts only, exactly what the context-only baseline sees (same stateHash);
+ * - `answers`: identity and the person's answers, without derived traits and insights;
+ * - `derived`: identity, traits and insights, without the answers they were derived from;
+ * - `relevant`: identity and the RELEVANT_K answers most similar to the question (lexical, ties to the latest).
+ */
+export const STATE_VIEWS = ['full', 'context', 'answers', 'derived', 'relevant'] as const;
+export type StateView = (typeof STATE_VIEWS)[number];
+export const RELEVANT_K = 8;
+
+export function viewState(
+  state: PersonState,
+  view: StateView,
+  question?: Pick<Question, 'prompt'>,
+): PersonState {
+  if (view === 'full') return state;
+  let evidence: StateEvidence[] = [];
+  if (view === 'answers') evidence = state.evidence;
+  if (view === 'relevant') {
+    if (!question) throw new Error('The relevant view needs the question it is for');
+    evidence = state.evidence
+      .map((e) => ({ e, s: lexicalSimilarity(question.prompt, e.q) }))
+      .sort((a, b) => b.s - a.s || b.e.seq - a.e.seq)
+      .slice(0, RELEVANT_K)
+      .map((x) => x.e)
+      .sort((a, b) => a.seq - b.seq);
+  }
+  const body: Omit<PersonState, 'meta'> = { identity: state.identity, evidence };
+  if (view === 'derived') {
+    if (state.traits) body.traits = state.traits;
+    if (state.insights) body.insights = state.insights;
+  }
+  // Traits carry no seq in a state, so a view that keeps derived data keeps the state's bound; otherwise it is the
+  // last answer the view kept. Either way it never exceeds the state's.
+  const seqMax =
+    view === 'derived'
+      ? state.meta.evidenceSeqMax
+      : Math.min(state.meta.evidenceSeqMax, Math.max(0, ...evidence.map((e) => e.seq)));
+  return finalize(body, view === 'context' ? 'context.v1' : `${state.meta.builder}>${view}`, seqMax);
 }
 
 /** What is sent to providers: the state without builder metadata. */

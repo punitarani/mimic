@@ -10,7 +10,7 @@ import { importTwin } from '../src/twin';
 let engine: LocalEngine;
 afterEach(() => engine?.close());
 
-/** cfg.default.v8 with a card state: six answers chosen by surprise (ADR-0052). An eval config, not a default. */
+/** cfg.default.v8 with a card state: six answers chosen by surprise (ADR-0054). An eval config, not a default. */
 const CARD_CONFIG: PipelineConfig = {
   ...DEFAULT_CONFIG,
   stateBuilder: {
@@ -28,7 +28,7 @@ const script = (name: string) =>
     seed: name,
   });
 
-describe('surprise-ranked evidence and the card state (ADR-0052)', () => {
+describe('surprise-ranked evidence and the card state (ADR-0054)', () => {
   it('serves sealed card states online that replay rebuilds byte for byte', async () => {
     let t = Date.now();
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', clock: () => (t += 1_000) });

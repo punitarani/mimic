@@ -18,7 +18,7 @@ import {
 import type { EvalInstance, StoredPrediction } from './optimize/instances';
 
 /**
- * Prequential ensembles of the predictions already stored with every served question (ADR-0054): the primary and
+ * Prequential ensembles of the predictions already stored with every served question (ADR-0056): the primary and
  * each shadow predicted the same sealed state, so pooling them costs nothing new, and a weight learned from the
  * person's own earlier questions (never a later one) keeps the result as honest as the predictions it combines.
  *

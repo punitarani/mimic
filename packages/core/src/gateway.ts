@@ -104,7 +104,7 @@ export const SPEND_SCOPES: Readonly<Record<string, SpendScope>> = {
   'playground.baseline': 'page',
   'playground.rationale': 'page',
   'soul.draft': 'page',
-  // The footprint is proposed from the mimic page, like asking, teaching and SOUL.md (ADR-0057).
+  // The footprint is proposed from the mimic page, like asking, teaching and SOUL.md (ADR-0059).
   'footprint.propose': 'page',
   'footprint.gate': 'page',
 };

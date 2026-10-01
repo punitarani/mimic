@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { EvalRunRecord, PredictorMetrics } from '@mimic/core';
 import { type ArmsReport, renderArms } from './arms';
 import { renderEnsemble } from './ensemble';
+import { type EvidenceReport, renderEvidence } from './evidence';
 import { type RubricGroup, renderRubric } from './rubric';
 import { renderPopulation } from './synthesize';
 import { renderTransfer } from './transfer';
@@ -96,6 +97,8 @@ export function renderReport(run: EvalRunRecord): string {
     lines.push(...renderEnsemble(m));
   } else if (spec.kind === 'population') {
     lines.push(...renderPopulation(m));
+  } else if (spec.kind === 'evidence') {
+    if (m.report) lines.push(...renderEvidence(m.report as EvidenceReport));
   } else if (spec.kind === 'select') {
     lines.push(
       '## Pool-restricted selection (biased; iteration only)',

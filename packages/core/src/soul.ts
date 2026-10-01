@@ -315,7 +315,7 @@ export interface SoulItem {
     certainty: CertaintyTier;
     answers: number;
   };
-  /** Decision record: what was asked and chosen; `agent` names the agent that observed it (ADR-0056). */
+  /** Decision record: what was asked and chosen; `agent` names the agent that observed it (ADR-0058). */
   answer?: { options: string[]; chosen: string; why: string | null; agent?: string };
 }
 

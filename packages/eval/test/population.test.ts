@@ -15,7 +15,7 @@ const script = (name: string, seed: string) =>
     whys: { 'free afternoon': `A private reason from ${name}` },
   });
 
-describe('population builder (ADR-0055)', () => {
+describe('population builder (ADR-0057)', () => {
   it('builds a seeded synthetic population from a consented cohort, with realism metrics and no identity', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'population' });
     for (let i = 0; i < 6; i++)

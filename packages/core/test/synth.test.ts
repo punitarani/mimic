@@ -25,7 +25,7 @@ function cohort(n: number, seed = 'cohort'): number[][] {
   return rows;
 }
 
-describe('population synthesis math (ADR-0055)', () => {
+describe('population synthesis math (ADR-0057)', () => {
   it('inverts the normal CDF and factors a matrix', () => {
     for (const p of [0.001, 0.1, 0.5, 0.9, 0.999]) expect(normalCdf(normalInv(p))).toBeCloseTo(p, 5);
     const L = cholesky([

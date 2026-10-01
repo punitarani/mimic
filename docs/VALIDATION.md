@@ -492,39 +492,68 @@ Nothing below comes from real people.
 - **Not measured:** efficiency on real people (R6). The arm is ready as a draft in `/lab`, and starting it is the
   owner's decision (sample size in ADR-0045).
 
-## Research agenda: evidence policies, transfer, ensembles, populations, observations, footprints (ADR-0052–0057)
+## E6: what the mimic learns from (ADR-0053)
+
+Nothing below comes from real people. The run on real people is Actions → Evidence, after merge
+(`docs/EVIDENCE.md` §7).
+
+- **Views (offline, `packages/core/test/state.test.ts`).**
+  - Every view is a subset of the sealed state, with `evidenceSeqMax` never above the state's or the question's seq.
+  - `context` equals the context-only baseline state, state hash included.
+  - `answers` drops traits and insights; `derived` drops answers.
+  - `relevant` keeps the 8 most similar answers in seq order, ties to the latest.
+  - Views are deterministic.
+- **Analysis and rule (offline, `packages/eval/test/evidence.test.ts`).**
+  - Deltas are paired by question, with intervals that resample people.
+  - The rule ships a view only with served and (where Twin can test it) Twin support. It refuses a view that costs
+    accuracy, helps too few people or has too little data, and otherwise names the bottleneck: `learns`, `model`,
+    `questions`, `none` or `insufficient`. A predictor that wasn't measured, or was measured on too little data, makes
+    the outcome `insufficient` rather than counting as one that doesn't learn.
+  - Cells run in priority order.
+- **End to end, offline** (3 scripted people and the Twin sample, fake providers).
+  - Every arm of a dataset scores the same questions.
+  - The `context` arm's state matches the stored baseline's and the `full` arm's matches the stored primary's
+    (100%).
+  - Twin's `answers` and `full`, and `derived` and `context`, are flagged as identical states and served from the
+    cache.
+  - The report renders, and is labelled as offline.
+- **Live smoke** (one scripted person, 16 questions; real Jev and DeepSeek; $0.011): Jev took every view, including
+  `context` and `relevant`, and DeepSeek took `context` and `full`, with no failures. Scripted, so a check of the
+  requests, not a result.
+
+## Research agenda: evidence policies, transfer, ensembles, populations, observations, footprints (ADR-0054–0059)
 
 Nothing below comes from real people, and nothing is a measure of prediction accuracy. Every number here is a check
 of the machinery on scripted sessions with offline fakes; the experiments that decide the directions are listed in
 `docs/RESEARCH.md` §9 and wait for the consented cohort.
 
-- **Evidence policies and the card (ADR-0052).** `packages/core/test/state.test.ts`: each policy ranks as specified
+- **Evidence policies and the card (ADR-0054).** `packages/core/test/state.test.ts`: each policy ranks as specified
   (recency, similarity, surprise, novelty), answers without a signal rank last by recency, the cap and the budget hold
   together, sealing holds for every policy, the card carries identity, traits and the capped answers and is
   deterministic. `packages/eval/test/card.test.ts`: a scripted session under a card config serves states capped at
   six answers that are not simply the latest ones; `replay --mode online` rebuilds every one of them byte for byte
   from the export (the stored baseline scores that ranked them travel with it); replay gives imported answers a
   baseline surprise when they have none.
-- **Transfer loss (ADR-0053).** `packages/eval/test/transfer.test.ts`: six views × two readers on the same later
+- **Transfer loss (ADR-0055).** `packages/eval/test/transfer.test.ts`: six views × two readers on the same later
   answers; the core profile is never larger than the full one; the card is smaller than the state; sealed drafts are
   written per checkpoint when asked and cite only answers below it; the eval refuses a view that mentions a later
   question or reason (checked on every run); an import works with a baseline the eval computes itself.
-- **Ensembles (ADR-0054).** `packages/eval/test/ensemble.test.ts`: pools and Hedge weights are normalised; every method
+- **Ensembles (ADR-0056).** `packages/eval/test/ensemble.test.ts`: pools and Hedge weights are normalised; every method
   scores exactly the questions the primary answered; the hindsight oracle never loses to the primary in log loss;
   final weights sum to one over the six stored members; `replay --views` reports each view and the pool beside the
   main strategy.
-- **Population (ADR-0055).** `packages/core/test/synth.test.ts`: the copula keeps marginals and correlation structure
+- **Population (ADR-0057).** `packages/core/test/synth.test.ts`: the copula keeps marginals and correlation structure
   on a 400-person synthetic cohort (dispersion ratio within 0.85–1.15, structure distance under 0.1), shrinks a
   10-person cohort's correlations by half at κ = 10, tolerates missing values and constant dims; a copied population
   re-identifies everyone and a distant one no one. `packages/eval/test/population.test.ts`: six scripted people give
   a seeded population of twelve agents with realism metrics, Concordia and Smallville renderings and a questionnaire;
   no name, reason, location or mimic id reaches the artifact; fewer people than the minimum give no agents; scripted
   people stay out unless asked.
-- **Observation ledger (ADR-0056).** `packages/eval/test/observations.test.ts`: a batch is stored as taught answers
+- **Observation ledger (ADR-0058).** `packages/eval/test/observations.test.ts`: a batch is stored as taught answers
   with the agent named, enters the data the state builder reads with its context, is idempotent per writer and id,
   lists newest first with authority, and appears in `mimic.json` as `source: agent` and in SOUL.md as observed; an
   observation touching politics, one answering outside its options and a repeated id are each rejected on their own.
-- **Footprint (ADR-0057).** `packages/core/test/footprint.test.ts`: an X archive keeps own posts only, scrubs handles,
+- **Footprint (ADR-0059).** `packages/core/test/footprint.test.ts`: an X archive keeps own posts only, scrubs handles,
   links, emails and numbers, drops a sensitive post and a duplicate, and keeps replies without the handle when asked;
   LinkedIn, Reddit and GitHub parsers keep the person's words and never a name. `packages/eval/test/footprint.test.ts`:
   three notes give two pooled questions (a sensitive-facet item and an uncited one are dropped), re-proposing pools

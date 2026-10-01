@@ -42,7 +42,7 @@ type Env = 'local' | 'preview' | 'prod';
 
 export type { Env };
 
-interface Loaded {
+export interface Loaded {
   instances: EvalInstance[];
   datasetHash: string;
   files: string[];
@@ -83,7 +83,7 @@ export async function loadData(
  * summary file (GitHub's step summary), and optionally publishes to /lab. Reports hold aggregates and prompt text
  * only, never a person's questions or answers.
  */
-async function recordRun(
+export async function recordRun(
   run: EvalRunRecord,
   loaded: Loaded,
   opts: { publish?: string | undefined; summary?: string | undefined },

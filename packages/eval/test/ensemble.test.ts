@@ -16,7 +16,7 @@ const script = (name: string) =>
     seed: name,
   });
 
-describe('pools and weights (ADR-0054)', () => {
+describe('pools and weights (ADR-0056)', () => {
   it('pools distributions and keeps weights normalised', () => {
     const a = { x: 0.9, y: 0.1 };
     const b = { x: 0.1, y: 0.9 };
@@ -60,7 +60,7 @@ describe('pools and weights (ADR-0054)', () => {
   });
 });
 
-describe('ensembles of stored predictions (ADR-0054)', () => {
+describe('ensembles of stored predictions (ADR-0056)', () => {
   it('scores every method on the questions the primary answered, with prequential weights', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'ensemble' });
     await runSession(engine, script('Ens One'), { turns: 16 });

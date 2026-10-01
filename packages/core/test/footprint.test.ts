@@ -22,7 +22,7 @@ const tweets = `window.YTD.tweets.part0 = [
   { "tweet": { "id_str": "6", "created_at": "Mon Mar 10 10:00:00 +0000 2025", "full_text": "Shipped the rough version today instead of polishing for another week. Feedback beats guessing." } }
 ]`;
 
-describe('footprint parsers and hygiene (ADR-0057)', () => {
+describe('footprint parsers and hygiene (ADR-0059)', () => {
   it('reads an X archive: own posts only, scrubbed, deduplicated, with sensitive posts dropped', () => {
     expect(parseYtd(tweets)).toHaveLength(6);
     const r = parseXArchive(tweets);

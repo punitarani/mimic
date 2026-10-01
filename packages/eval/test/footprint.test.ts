@@ -19,7 +19,7 @@ When a side project stalls I come back to it on a quiet weekend rather than star
 
 I rewrote our build tool in Rust last spring mostly because I wanted to learn it.`;
 
-describe('footprint proposals: verify by asking (ADR-0057)', () => {
+describe('footprint proposals: verify by asking (ADR-0059)', () => {
   it('pools implied questions, scores the footprint when they are served, and never stores a document as evidence', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'footprint' });
     const m = await createMimic(

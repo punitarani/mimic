@@ -4,7 +4,7 @@ import { flagsCheckCli, flagshipApi, renderReport, runFlagsCheck } from '../src/
 
 const APP = 'c4598f95-4f82-48c0-a8c5-62588cc2b598';
 
-/** The five flags as the `mimic` app holds them. */
+/** The registry's flags as the `mimic` app holds them. */
 const good = (): LiveFlag[] => [
   {
     key: 'budget-session-share',
@@ -13,7 +13,7 @@ const good = (): LiveFlag[] => [
     variations: { '75': 0.75, '80': 0.8 },
     rules: [],
   },
-  { key: 'budget-usd', enabled: true, default_variation: '1', variations: { '1': 1 }, rules: [] },
+  { key: 'budget-usd', enabled: true, default_variation: '2', variations: { '1': 1, '2': 2 }, rules: [] },
   {
     key: 'decisions-model',
     enabled: true,
@@ -21,14 +21,6 @@ const good = (): LiveFlag[] => [
     variations: { jev: 'jev', 'span-01': 'span-01' },
     rules: [],
   },
-  {
-    key: 'embeddings-provider',
-    enabled: true,
-    default_variation: 'Workers AI',
-    variations: { 'Workers AI': 'workers-ai', OpenRouter: 'openrouter' },
-    rules: [],
-  },
-  { key: 'enrich-provider', enabled: true, default_variation: 'Exa', variations: { Exa: 'exa' }, rules: [] },
   { key: 'search-provider', enabled: true, default_variation: 'Exa', variations: { Exa: 'exa' }, rules: [] },
 ];
 
@@ -86,9 +78,9 @@ function fakeApi(
 describe('flags:check (ADR-0051)', () => {
   it('passes a well-formed app, across pages, and evaluates every flag', async () => {
     const { api, calls } = fakeApi(good());
-    const r = await runFlagsCheck({ api, appId: APP, settings: { EMBEDDINGS_PROVIDER: 'workers-ai' } });
+    const r = await runFlagsCheck({ api, appId: APP });
     expect(r.problems).toEqual([]);
-    expect(r.warnings).toEqual([]);
+    expect(r.warnings).toEqual(['search-provider: in the app, but no code reads it']);
     expect(r.evaluated['decisions-model']).toEqual({ value: 'jev', reason: 'DEFAULT' });
     expect(calls.filter((c) => c.startsWith('GET /flags'))).toHaveLength(2);
     expect(calls.filter((c) => c.startsWith('GET /evaluate'))).toHaveLength(ALL_FLAGS.length);
@@ -122,14 +114,14 @@ describe('flags:check (ADR-0051)', () => {
       rules: [],
     });
     const { api } = fakeApi(flags);
-    const r = await runFlagsCheck({ api, appId: APP, settings: { EMBEDDINGS_PROVIDER: 'openrouter' } });
+    const r = await runFlagsCheck({ api, appId: APP });
     expect(r.problems).toEqual([
       'decisions-model: variation "gpt" = "gpt" is not a value the code accepts',
       expect.stringMatching(/^budget-usd: missing/),
       'decisions-model: evaluates to "gpt", which the code can\'t use',
     ]);
     expect(r.warnings).toEqual([
-      'embeddings-provider: serves "workers-ai" over EMBEDDINGS_PROVIDER="openrouter"',
+      'search-provider: in the app, but no code reads it',
       'vector-backend: in the app, but no code reads it',
     ]);
     expect(renderReport(APP, r)).toMatch(/✗ 3 problem\(s\)$/);
@@ -146,30 +138,23 @@ describe('flags:check (ADR-0051)', () => {
     expect(evalDenied.problems[0]).toContain('Flagship App · Evaluate');
   });
 
-  it('--create-missing creates a missing flag at its setting, or warns when the token cannot', async () => {
-    const { api, flags } = fakeApi(good().filter((f) => f.key !== 'search-provider'));
-    const r = await runFlagsCheck({
-      api,
-      appId: APP,
-      createMissing: true,
-      settings: { SEARCH_PROVIDER: 'perplexity' },
-    });
-    expect(r.created).toEqual(['search-provider']);
+  it('--create-missing creates a missing flag at its fallback, or warns when the token cannot', async () => {
+    const without = () => good().filter((f) => f.key !== 'decisions-model' && f.key !== 'search-provider');
+    const { api, flags } = fakeApi(without());
+    const r = await runFlagsCheck({ api, appId: APP, createMissing: true });
+    expect(r.created).toEqual(['decisions-model']);
     expect(r.problems).toEqual([]);
-    expect(flags.find((f) => f.key === 'search-provider')).toMatchObject({
-      default_variation: 'perplexity',
+    expect(flags.find((f) => f.key === 'decisions-model')).toMatchObject({
+      default_variation: 'jev',
       enabled: true,
     });
 
     // A read-and-evaluate token can't create: a warning naming the permission, and the missing flag stays a problem.
-    const readOnly = fakeApi(
-      good().filter((f) => f.key !== 'search-provider'),
-      { denyPost: true },
-    );
+    const readOnly = fakeApi(without(), { denyPost: true });
     const blocked = await runFlagsCheck({ api: readOnly.api, appId: APP, createMissing: true });
     expect(blocked.created).toEqual([]);
     expect(blocked.warnings).toEqual([expect.stringContaining('Flagship App · Edit')]);
-    expect(blocked.problems).toEqual([expect.stringMatching(/^search-provider: missing/)]);
+    expect(blocked.problems).toEqual([expect.stringMatching(/^decisions-model: missing/)]);
   });
 
   it('the CLI skips without credentials only when told the check is optional', async () => {

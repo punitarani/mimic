@@ -43,8 +43,8 @@ export interface MimicBindings extends ProviderEnv {
   ADMIN_EMAILS?: string;
   INVITE_CODES?: string;
   /**
-   * Spend cap per mimic in USD on the standard budget (default 1; ADR-0035). A string, or a JSON number. The
-   * `budget-usd` flag overrides it where Flagship is bound (ADR-0051); this var is the fallback.
+   * Spend cap per mimic in USD on the standard budget (default 1; ADR-0035). A string, or a JSON number. Deployed
+   * envs set it with the `budget-usd` flag (ADR-0052); this var is for local dev, and the fallback under the flag.
    */
   BUDGET_USD?: string | number;
   /** Share of the cap the session may spend (0–1, default 0.8); the rest is kept for the mimic page. */
@@ -162,9 +162,9 @@ export function engineDeps(env: MimicBindings, overrides: Partial<EngineDeps> = 
 }
 
 /**
- * `engineDeps` over the flagged environment (ADR-0051): Flagship values over the provider and budget vars. Both apps
- * build their deps through this, once per request, queue batch or cron run, so a flag change applies without a
- * redeploy. Without FLAGS it is `engineDeps` itself.
+ * `engineDeps` over the flagged environment (ADR-0051, ADR-0052): the spend-cap flags over their vars. Both apps build
+ * their deps through this, once per request, queue batch or cron run, so a flag change applies without a redeploy.
+ * Without FLAGS it is `engineDeps` itself.
  */
 export async function runtimeEngineDeps(
   env: MimicBindings,

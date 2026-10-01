@@ -63,25 +63,35 @@ it as `FLAGS`; the ID is pinned in both `wrangler.jsonc` files. Preview and loca
 its code default there. A change in the dashboard applies within seconds, with no redeploy.
 
 Every flag the code reads is defined once, in the registry `FLAG_SPECS` (`packages/core/src/flags.ts`). Each entry has
-its key, type, code default, the var it overrides, and the values it accepts.
+its key, type, code default and the values it accepts. Only runtime levers are flags (ADR-0052): something worth
+changing without a deploy, safe at its default, and needing nothing deployed beyond what every value already has.
 
 | Flag | Values | Code default | What it does |
 | --- | --- | --- | --- |
 | `decisions-model` | `jev` or `span-01` (or the pinned model ID either maps to) | `jev` | The model Jev's served predictions run on |
-| `budget-usd` | A number above 0 | `BUDGET_USD`, else 1 | Spend cap per mimic (ADR-0035) |
-| `budget-session-share` | A number above 0, at most 1 | `BUDGET_SESSION_SHARE`, else 0.8 | The session's share of the cap |
-| `search-provider` | `exa`, `perplexity`, `none` | `SEARCH_PROVIDER` | People search |
-| `enrich-provider` | `exa`, `parallel`, `none` | `ENRICH_PROVIDER` | Enrichment |
-| `embeddings-provider` | `workers-ai`, `openrouter` | `EMBEDDINGS_PROVIDER` | Embeddings (the same model either way) |
+| `budget-usd` | A number above 0 | 1 | Spend cap per mimic (ADR-0035) |
+| `budget-session-share` | A number above 0, at most 1 | 0.8 | The session's share of the cap |
 
-- **Accepted values.** Dashboard labels such as "Exa", "OpenRouter" or "Span-01" are accepted.
-- **When a provider flag applies.** Only when its provider's key or binding is deployed; deploy pushes every provider
-  key set in Doppler.
+- **Accepted values.** Dashboard labels such as "Span-01" are accepted, and a number flag made as a string reads as
+  its number.
 - **Values the code can't use.** They read as the default, with a log line.
-- **Left as env vars:** every secret, `DEV_MODE`, `EGRESS_RELAY`, and `VECTOR_BACKEND`. `VECTOR_BACKEND` picks which
-  store holds the vectors: Vectorize in prod, or a D1 table in local dev. Prod's vectors live only in Vectorize, so
-  flipping it at runtime would read and write an empty store, and a redeploy is the right gate for that. The
-  dashboard's `vector-backend` flag is not read, and the check lists it as unused.
+- **Spend caps.** In prod the flag is the only source; the deploy no longer reads `BUDGET_USD` or
+  `BUDGET_SESSION_SHARE` (preflight warns if they are set). In local dev those vars in `.dev.vars` still apply.
+- **Left as Worker vars in `wrangler.jsonc`:** `SEARCH_PROVIDER`, `ENRICH_PROVIDER`, `EMBEDDINGS_PROVIDER` and
+  `VECTOR_BACKEND`.
+  - A provider choice needs its key deployed with it, so it changes with a deploy that pushes the key. Parallel
+    enrichment also moves jobs off the identity lane.
+  - Flagging those choices meant pushing every provider key just in case, and skipping a flag whose key was missing.
+  - `VECTOR_BACKEND` picks the store that holds the vectors. Flipping it at runtime would read an empty store.
+  - The app's `search-provider`, `enrich-provider`, `embeddings-provider` and `vector-backend` flags are no longer
+    read; the check lists them as unused, and they can be deleted.
+- **Secrets** and the local-only `DEV_MODE` and `EGRESS_RELAY` stay env vars.
+- **Cost of a read.** Cloudflare documents evaluation as local, from configuration Flagship pushes to the edge. The
+  dashboard still reported p90 65 ms per evaluation on 2026-09-30, so reads are kept few:
+  - each request, queue batch or cron run reads the two caps once, in parallel;
+  - each served decision call reads `decisions-model` once.
+- **A failed read.** A cap falls to its code default ($1, share 0.8), the conservative side for spend, and is logged
+  once. Flagship keeps evaluating from the last propagated configuration if its control plane is down.
 
 ### Checks that the flags are defined and readable
 
@@ -92,10 +102,10 @@ its key, type, code default, the var it overrides, and the values it accepts.
     - a flag can't be evaluated through Flagship's evaluate API (the evaluation the Worker binding makes).
   - It **warns** about:
     - flags no code reads;
-    - flags that serve something other than their setting (or, with the setting unset, the code default);
-    - an unusable variation nothing serves yet, such as `parallel` under `search-provider` (Parallel has no people
-      search): switching to it would fall back to the setting.
-  - `--create-missing` creates a missing flag at its setting's value; this needs Flagship App · Edit.
+    - a disabled flag, or active targeting rules;
+    - an unusable variation nothing serves yet: switching to it would fall back to the code default.
+  - It doesn't compare what a flag serves with anything else, because the flag is the source of truth for its value.
+  - `--create-missing` creates a missing flag at its code default; this needs Flagship App · Edit.
   - It needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, with Flagship App · Read and Evaluate on `mimic`.
 - **Where it runs:**
   - The **Flags** workflow (`.github/workflows/flags.yml`), on every PR, every push to main and daily, since flags

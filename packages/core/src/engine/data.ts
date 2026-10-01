@@ -22,19 +22,19 @@ import type {
 import { type Facet, isScoredKind, learnsFrom, type PersonState, type Question } from '../types';
 import { type EngineDeps, facetsFor, loadConfig } from './deps';
 
-/** What a loader may fetch beyond the evidence: the sealed scores that annotate surprise and novelty (ADR-0052). */
+/** What a loader may fetch beyond the evidence: the sealed scores that annotate surprise and novelty (ADR-0054). */
 export interface LoadOptions {
   scores?: boolean;
 }
 
-/** Whether a config's states read the stored scores: only the `surprise` and `novelty` policies do (ADR-0052). */
+/** Whether a config's states read the stored scores: only the `surprise` and `novelty` policies do (ADR-0054). */
 export function needsScores(cfg: Pick<PipelineConfig, 'stateBuilder'>): boolean {
   const p = cfg.stateBuilder.evidencePolicy;
   return p === 'surprise' || p === 'novelty';
 }
 
 /**
- * Surprise and novelty per answered question from the stored primary and baseline scores (ADR-0052): each is the
+ * Surprise and novelty per answered question from the stored primary and baseline scores (ADR-0054): each is the
  * prediction's log loss on the answer over log|options|, on the predictor's raw scale (`rawScale`, ADR-0048), so a
  * calibrated primary ranks evidence exactly as an uncalibrated one. A fallback primary carries no novelty. Scores are
  * written with the answer in one transaction and removed with it on an undo, so the annotation of an answer is
@@ -119,7 +119,7 @@ function assemble(
     answers: AnswerRecord[];
     traits: TraitRecord[];
     insights: InsightRecord[];
-    /** Scored primaries and baselines, when the state's evidence policy reads them (ADR-0052). */
+    /** Scored primaries and baselines, when the state's evidence policy reads them (ADR-0054). */
     scores?: ScoredPredictionRow[];
   },
 ): LoadedMimic {
@@ -234,7 +234,7 @@ export async function loadMimicDataAt(
   // The scope is today's, never time-travelled: what the person withdrew stays out of rebuilt states too (ADR-0040,
   // as fact removal in ADR-0017). Replay reports states served before `scopeAt` as rescoped.
   return assemble(m, facets, {
-    // Scores are sealed by seq inside the state builder, like the answers they belong to; never by time (ADR-0052).
+    // Scores are sealed by seq inside the state builder, like the answers they belong to; never by time (ADR-0054).
     ...(scores ? { scores } : {}),
     facts: facts
       .filter((f) => f.createdAt <= at)

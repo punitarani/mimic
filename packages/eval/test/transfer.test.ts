@@ -18,7 +18,7 @@ const script = (name: string) =>
     whys: { 'free afternoon': 'I always go for the long walk, no matter the weather' },
   });
 
-describe('transfer loss (ADR-0053)', () => {
+describe('transfer loss (ADR-0055)', () => {
   it('scores every view with every reader on the later answers, sealed, at its size', async () => {
     let t = Date.now();
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', clock: () => (t += 1_000) });

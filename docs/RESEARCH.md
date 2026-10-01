@@ -99,13 +99,13 @@ four hosted models), reasoning kept low (chain-of-thought lowers twin accuracy a
 primary, GEPA-style prompt optimisation (docs/OPTIMIZATION.md), and retrieval of similar answers when evidence
 outgrows the budget.
 
-### 2.1 Pools of what is already stored — built (ADR-0054)
+### 2.1 Pools of what is already stored — built (ADR-0056)
 
 `pnpm eval -- ensemble`: equal-weight pools, Hedge/BMA weights learned per person from earlier questions only, a
 hindsight oracle as a bound, all paired against the primary. Zero new calls. **Decision rule:** a pool ships as a
 registered variant and shadow if its paired log-loss interval is below zero on the test split with accuracy not lower.
 
-### 2.2 Evidence-view ensemble on Jev — built (ADR-0054)
+### 2.2 Evidence-view ensemble on Jev — built (ADR-0056)
 
 `replay --views raw,structured,summary`: the same predictor on several views of the same sealed evidence, pooled.
 Agents on identical evidence herd; information asymmetry is what gives pooling its 12–18% Brier gains
@@ -144,9 +144,9 @@ below OpenAI's 1,024-token minimum. Render the evidence log as an append-only pr
 ### What Mimic has
 
 `mimic.json` (schema `mimic/1`), `SOUL.md` in `full` and `core` profiles (ADR-0039), and now provenance per answer,
-the observation ledger (ADR-0056) and the transfer eval (ADR-0053).
+the observation ledger (ADR-0058) and the transfer eval (ADR-0055).
 
-### 3.1 Measure the loss — built (ADR-0053)
+### 3.1 Measure the loss — built (ADR-0055)
 
 `pnpm eval -- transfer` renders each export view from sealed evidence and scores a reader that knows nothing about
 Mimic on later answers, against the full state, at each view's size. **Hypotheses:** the loss is small because the
@@ -157,7 +157,7 @@ conditions nobody evaluates: the file in the system position vs the user positio
 1,375 characters, after 100 filler turns, after compaction. A re-anchor snippet (~110 tokens restores register for 20+
 turns, arXiv 2605.24279) is the mitigation to test.
 
-### 3.2 Evidence-only writes — built (ADR-0056)
+### 3.2 Evidence-only writes — built (ADR-0058)
 
 Any agent appends typed observations; Mimic validates and re-derives. This follows the strongest result in the
 memory literature: appending raw episodes beats lesson-style consolidators, whose utility rises then falls
@@ -188,10 +188,10 @@ undo and fact removal already do). Cheap, and it makes "which version of me did 
 
 ### What Mimic has
 
-Identity enrichment (sourced facts for the baseline) and now the footprint pipeline (ADR-0057): parsers for the
+Identity enrichment (sourced facts for the baseline) and now the footprint pipeline (ADR-0059): parsers for the
 person's own exports, hygiene, questions the documents imply, and the footprint scored as a predictor.
 
-### 4.1 Footprint accuracy per source — built (ADR-0057)
+### 4.1 Footprint accuracy per source — built (ADR-0059)
 
 The number no paper reports: how often a person's record was right about them, per source, measured by the person's
 own answer to a question the record implied. **Hypotheses:** GitHub and LinkedIn imply work decisions above the
@@ -231,7 +231,7 @@ only, parsed locally, with every quoted line removed; the parsers' `ownWordsOnly
 
 ### What Mimic has
 
-`pnpm eval -- population` (ADR-0055): copula over facet means, exemplar-drawn answers, realism metrics, Concordia and
+`pnpm eval -- population` (ADR-0057): copula over facet means, exemplar-drawn answers, realism metrics, Concordia and
 Smallville renderings, a questionnaire for in-simulation scoring.
 
 ### 5.1 Does the population keep the cohort's structure? — built, unmeasured
@@ -270,9 +270,9 @@ one city cannot pass for a country.
 ### What Mimic has
 
 A budgeted state builder with four ablations, latency hints, retrieval, and now evidence policies and the card
-(ADR-0052).
+(ADR-0054).
 
-### 6.1 What should a state keep? — built (ADR-0052)
+### 6.1 What should a state keep? — built (ADR-0054)
 
 `replay --state card --evidence surprise|novelty|recent|similar --max-evidence N --budget T` on the same export, at
 equal tokens. **Hypothesis:** `surprise` beats `recent` and `similar` at 8–12 answers because it keeps the residual
@@ -326,7 +326,7 @@ benchmark either way.
 - Lift over the context baseline, and residual lift where item means exist; dispersion ratio and across-person
   correlation as the stereotype alarms (PLAN §12.3).
 - A change ships as a registered variant and a shadow before it touches the primary (ADR-0024, ADR-0041).
-- Nothing crosses people except aggregates with a minimum group size (PLAN §3.8, `item_stats`, ADR-0055).
+- Nothing crosses people except aggregates with a minimum group size (PLAN §3.8, `item_stats`, ADR-0057).
 
 ## 9. Order of work
 

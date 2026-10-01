@@ -35,7 +35,7 @@ export const MimicJson = z.object({
       answer: z.string(),
       why: z.string().nullable(),
       /**
-       * Where the answer came from (ADR-0056): `session` (asked by Mimic), `person` (taught on the mimic page) or
+       * Where the answer came from (ADR-0058): `session` (asked by Mimic), `person` (taught on the mimic page) or
        * `agent` (an observation another agent appended), with the agent's name. Absent in files written before it.
        */
       source: z.enum(['session', 'person', 'agent']).optional(),
@@ -77,7 +77,7 @@ export const MimicJson = z.object({
 });
 export type MimicJson = z.infer<typeof MimicJson>;
 
-/** The origin of an answer, from its question's provenance (ADR-0056). */
+/** The origin of an answer, from its question's provenance (ADR-0058). */
 export function evidenceOrigin(q: Pick<QuestionRecord, 'kind' | 'provenance'>): {
   source: 'session' | 'person' | 'agent';
   agent?: string;
