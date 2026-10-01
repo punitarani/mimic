@@ -7,6 +7,7 @@ export * from './distribution';
 export * from './engine';
 export * from './fidelity';
 export * from './flags';
+export * from './footprint';
 export * from './gateway';
 export * from './hash';
 export * from './ids';

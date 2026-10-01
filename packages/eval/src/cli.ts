@@ -7,7 +7,9 @@ import {
   EVIDENCE_POLICIES,
   type EvalRunRecord,
   type EvidencePolicy,
+  footprintTokens,
   type PipelineConfig,
+  proposeFromFootprint,
   STATE_STRATEGIES,
   type StateStrategy,
   VOI_SELECTOR,
@@ -21,6 +23,7 @@ import { runCohort } from './cohort';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
 import { ensembleRun } from './ensemble';
 import { datasetHash, exportData } from './export';
+import { parseFootprintDir } from './footprint';
 import { calibrateGates, sampleDrafts } from './gates';
 import { openLocalEngine } from './local';
 import { diagnoseCmd, evaluateCmd, loadData, loadOptsOf, optimizeCmd } from './optimize/commands';
@@ -59,6 +62,11 @@ Commands
             [--views full,raw,structured,summary]   also predict from each of these views of the same evidence and
                             pool them log-linearly at equal weight: the evidence-view ensemble (ADR-0054)
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
+  footprint   Parse the person's own exports into clean documents (ADR-0057; no model calls): tweets.js (X archive),
+            Profile/Positions/Education/Skills/Shares.csv (LinkedIn), posts.csv and comments.csv (Reddit),
+            github.json ({ user, repos }), and *.txt or *.md notes; reports what the hygiene rules dropped
+            --dir <folder> [--out docs.json]
+            [--propose --db data/session.sqlite --mimic <id> [--live]]   pool the questions the documents imply
   population  A calibrated synthetic population from the consented cohort (ADR-0055; no model calls): a Gaussian copula
             over facet means, answers to the cohort's stable items drawn from each agent's nearest real exemplars, realism
             metrics (dispersion, caricature, structure, coverage, re-identification, sensitive leakage), and Concordia and
@@ -307,6 +315,43 @@ async function replayCmd(argv: string[]) {
   console.log(renderReport(run));
   console.log(`\nrun ${run.id} → ${files.md}`);
   engine.close();
+}
+
+async function footprintCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      dir: { type: 'string' },
+      out: { type: 'string' },
+      propose: { type: 'boolean', default: false },
+      db: { type: 'string', default: 'data/session.sqlite' },
+      mimic: { type: 'string' },
+      live: { type: 'boolean', default: false },
+    },
+  });
+  if (!values.dir) throw new Error('--dir is required');
+  const { docs, reports } = parseFootprintDir(resolve(values.dir));
+  for (const r of reports)
+    console.log(
+      `${r.file.padEnd(28)} ${String(r.docs).padStart(4)} docs · dropped: empty ${r.dropped.empty}, not own ${r.dropped.notOwn}, sensitive ${r.dropped.sensitive}, duplicate ${r.dropped.duplicate}`,
+    );
+  console.log(`${docs.length} documents, about ${footprintTokens(docs)} tokens`);
+  if (values.out) {
+    writeFileSync(resolve(values.out), `${JSON.stringify(docs, null, 2)}\n`);
+    console.log(`wrote ${values.out}`);
+  }
+  if (values.propose) {
+    if (!values.mimic) throw new Error('--mimic is required with --propose');
+    const engine = await openLocalEngine({
+      db: resolve(values.db),
+      providers: values.live ? 'live' : 'offline',
+    });
+    const r = await proposeFromFootprint(engine.deps, values.mimic, { docs });
+    console.log(
+      `read ${r.docs} documents (${r.tokens} tokens): ${r.proposed} proposed, ${r.pooled} pooled; dropped ${JSON.stringify(r.dropped)}`,
+    );
+    engine.close();
+  }
 }
 
 async function populationCmd(argv: string[]) {
@@ -686,6 +731,8 @@ async function main() {
       return ensembleCmd(rest);
     case 'population':
       return populationCmd(rest);
+    case 'footprint':
+      return footprintCmd(rest);
     case 'import':
       return importCmd(rest);
     case 'report':

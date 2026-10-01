@@ -63,6 +63,7 @@ import {
   sessionSpent,
   timed,
 } from './deps';
+import { footprintPrediction } from './footprint';
 
 export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.jev;
 export const MIN_POOL = 6;
@@ -659,11 +660,15 @@ async function serveWithPredictions(
     fallback: isFallback,
     createdAt: now,
   });
+  // A question a footprint proposed carries the answer its documents implied; stored as a prediction of its own so
+  // the real answer scores the footprint like any model (ADR-0057). It reads no answers, so it is sealed trivially.
+  const footprint = footprintPrediction(deps, m, chosen);
   const predictions = [
     pred('primary', primaryId, state, primaryResult, fallback),
     pred('baseline', primarySpec, baseState, baselineResult),
     // The chosen question's prediction under each persona hypothesis feeds the hypothesis posterior (§6); not scored.
     ...hypothesisRows,
+    ...(footprint ? [footprint] : []),
   ];
   // Primary and baseline are persisted before the question is returned (PLAN §3.2).
   // Guarded: if an undo changed the evidence since `loaded` was read, nothing is written (ADR-0036).

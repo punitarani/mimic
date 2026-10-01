@@ -229,6 +229,7 @@ export class FakeLlm implements LlmClient {
     else if (sys.startsWith("You analyze one person's answers")) out = this.reflect(user, sys);
     else if (sys.startsWith('Estimate the probability')) out = this.predict(user);
     else if (sys.startsWith('You have been given a file')) out = this.predict(user);
+    else if (sys.startsWith('You read documents one person wrote')) out = this.footprint(user);
     else if (sys.startsWith("Given a person's occupation")) out = this.occFacets();
     else if (sys.startsWith('Write {k}') || /^Write \d+ distinct/.test(sys)) out = this.hypotheses(user);
     else if (sys.startsWith("Turn the person's scenario")) out = this.ask(user);
@@ -372,6 +373,70 @@ export class FakeLlm implements LlmClient {
           text: 'A claim citing answers that do not exist.',
           evidenceSeqs: [99_999],
           confidence: 0.9,
+        },
+      ],
+    };
+  }
+
+  /**
+   * Footprint proposals (ADR-0057): two items citing the first documents, one on an allowed facet, plus a rogue item
+   * on a sensitive facet and one citing no document, which the engine must drop.
+   */
+  private footprint(user: string) {
+    const docIds = [...user.matchAll(/^\[([a-f0-9]+)\]/gm)].map((m) => m[1]!);
+    const facets = [
+      ...(user.split('FACETS:')[1]?.split('DOCUMENTS:')[0] ?? '').matchAll(/^([a-z_]+):/gm),
+    ].map((m) => m[1]!);
+    const facet = facets[0] ?? 'risk_tolerance';
+    return {
+      items: [
+        {
+          type: 'choice',
+          prompt: 'A side project stalls for a month. What do you do with it?',
+          options: [
+            { key: 'a', label: 'Pick it back up this weekend' },
+            { key: 'b', label: 'Archive it and start something new' },
+          ],
+          facetIds: [facet],
+          answer: 'a',
+          confidence: 0.7,
+          docIds: docIds.slice(0, 1),
+        },
+        {
+          type: 'noul',
+          prompt: 'Would you rewrite a working tool just to use a newer language?',
+          options: [
+            { key: 'yes', label: 'Yes' },
+            { key: 'no', label: 'No' },
+          ],
+          facetIds: [facets[1] ?? facet],
+          answer: 'yes',
+          confidence: 0.6,
+          docIds: docIds.slice(0, 2),
+        },
+        {
+          type: 'noul',
+          prompt: 'Do you pray before a big decision?',
+          options: [
+            { key: 'yes', label: 'Yes' },
+            { key: 'no', label: 'No' },
+          ],
+          facetIds: ['religiosity'],
+          answer: 'yes',
+          confidence: 0.9,
+          docIds: docIds.slice(0, 1),
+        },
+        {
+          type: 'noul',
+          prompt: 'Would you take a job with a longer commute for more pay?',
+          options: [
+            { key: 'yes', label: 'Yes' },
+            { key: 'no', label: 'No' },
+          ],
+          facetIds: [facet],
+          answer: 'no',
+          confidence: 0.8,
+          docIds: [],
         },
       ],
     };
