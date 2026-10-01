@@ -4,6 +4,7 @@ import {
   type CandidateRecord,
   type CandidateStatus,
   type ConfigRecord,
+  canonicalPredictorId,
   DEFAULT_SCOPE,
   type DerivedRollback,
   type EvalRunRecord,
@@ -224,11 +225,16 @@ const fromQuestion = (q: QuestionRecord): typeof s.questions.$inferInsert => ({
   selectionJson: q.selection ? JSON.stringify(q.selection) : null,
 });
 
+/**
+ * Predictor IDs are read and written canonically (ADR-0052): a row stored as `jev:` before the relabel
+ * (`pnpm relabel:predictors`) reads as `decision:`, and nothing new is ever written as `jev:`. Every reader, D1 or an
+ * eval export, then sees one spelling per predictor.
+ */
 const toPrediction = (r: PRow): PredictionRecord => ({
   id: r.id,
   questionId: r.questionId,
   mimicId: r.mimicId,
-  predictorId: r.predictorId,
+  predictorId: canonicalPredictorId(r.predictorId),
   role: r.role,
   dist: parse(Dist, r.distJson, {}),
   confidence: r.confidence,
@@ -251,6 +257,7 @@ const toPrediction = (r: PRow): PredictionRecord => ({
 const PREDICTION_COLS = 21;
 const fromPrediction = (p: PredictionRecord): typeof s.predictions.$inferInsert => ({
   ...p,
+  predictorId: canonicalPredictorId(p.predictorId),
   hypothesis: p.hypothesis ?? null,
   errorKind: p.errorKind ?? null,
   distJson: JSON.stringify(p.dist),
@@ -1199,7 +1206,7 @@ export class DrizzleStore implements Store {
         questionId: r.questionId,
         role: r.role as 'primary' | 'baseline',
         fallback: r.fallback,
-        predictorId: r.predictorId,
+        predictorId: canonicalPredictorId(r.predictorId),
         dist: parse(Dist, r.distJson, {}),
         itemAcc: r.itemAcc,
         logLoss: r.logLoss,

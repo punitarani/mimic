@@ -8,7 +8,7 @@ import {
   splitQuota,
   targetFacets,
 } from '../belief';
-import type { PipelineConfig } from '../config';
+import { canonicalPredictorId, type PipelineConfig } from '../config';
 import { BudgetExceededError } from '../gateway';
 import { hashJson } from '../hash';
 import { GATES_VERSION } from '../jev';
@@ -220,7 +220,8 @@ async function shadowJobs(deps: EngineDeps, mimicId: string) {
   for (const r of [...live, ...backfill]) {
     const job = jobFromKey(r.key);
     if (r.status === 'done' || !job || !('questionId' in job)) continue;
-    const id = `${job.questionId}|${job.predictorId}`;
+    // A job keeps the key it was enqueued under, so one from before ADR-0052 still says `jev:`.
+    const id = `${job.questionId}|${canonicalPredictorId(job.predictorId)}`;
     if (r.attempts >= MAX_JOB_ATTEMPTS && r.status === 'failed') {
       // A budget refusal isn't exhaustion: it runs again once the cap allows (ADR-0035).
       if (job.type === 'predict.shadow' && !r.lastError?.startsWith('budget:')) exhausted.add(id);
@@ -243,6 +244,8 @@ async function missingPredictions(
   opts: { retryFailed?: boolean | undefined; live?: boolean } = {},
 ): Promise<Array<{ questionId: string; predictorId: string }>> {
   if (!predictorIds.length) return [];
+  // Compared canonically (ADR-0052): configs spell decision predictors `jev:`, and stores read every row as `decision:`.
+  const ids = [...new Set(predictorIds.map(canonicalPredictorId))];
   const [questions, predictions, jobs] = await Promise.all([
     deps.store.listQuestions(mimicId),
     deps.store.listPredictions({ mimicId }),
@@ -252,7 +255,7 @@ async function missingPredictions(
   const have = new Set(
     predictions
       .filter((p) => p.role !== 'hypothesis' && !(opts.retryFailed && isFailedCall(p)))
-      .map((p) => `${p.questionId}|${p.predictorId}`),
+      .map((p) => `${p.questionId}|${canonicalPredictorId(p.predictorId)}`),
   );
   // A shadow reads the primary's sealed state; without a primary there is nothing to predict from.
   const sealed = new Set(predictions.filter((p) => p.role === 'primary').map((p) => p.questionId));
@@ -262,7 +265,7 @@ async function missingPredictions(
     // A question discarded after it was served (its category was withdrawn, ADR-0040) needs no more predictions.
     if (!isScoredKind(q.kind) || q.status === 'discarded') continue;
     if (!sealed.has(q.id)) continue;
-    for (const predictorId of predictorIds) {
+    for (const predictorId of ids) {
       const id = `${q.id}|${predictorId}`;
       if (have.has(id) || jobs.inFlight.has(id) || (opts.live && jobs.exhausted.has(id))) continue;
       out.push({ questionId: q.id, predictorId });
@@ -368,9 +371,11 @@ export async function runBackfillPredictor(
   checkPredictorId(job.predictorId);
   const mimics = await deps.store.listMimics(job.consentedOnly ? { consentResearch: true } : {});
   const ids = mimics.map((m) => m.id);
+  // `backfill.shadow` jobs are keyed by the canonical ID, whichever spelling the operator used (ADR-0052).
+  const run = { ...job, predictorId: canonicalPredictorId(job.predictorId) };
   return {
     mimics: mimics.length,
-    ...(await enqueueBackfill(deps, job, ids, { allMimics: !job.consentedOnly })),
+    ...(await enqueueBackfill(deps, run, ids, { allMimics: !job.consentedOnly })),
   };
 }
 
@@ -386,10 +391,15 @@ export async function runBackfillMimic(
   checkPredictorId(job.predictorId);
   if (job.consentedOnly && !(await requireMimic(deps, job.mimicId)).consentResearch)
     return { enqueued: 0, capped: false };
-  return enqueueBackfill(deps, job, [job.mimicId], {
-    offsetSeconds: job.offsetSeconds,
-    allMimics: !job.consentedOnly,
-  });
+  return enqueueBackfill(
+    deps,
+    { ...job, predictorId: canonicalPredictorId(job.predictorId) },
+    [job.mimicId],
+    {
+      offsetSeconds: job.offsetSeconds,
+      allMimics: !job.consentedOnly,
+    },
+  );
 }
 
 async function dispatch(deps: EngineDeps, job: Job, key: string, attempt: number): Promise<void> {
@@ -513,8 +523,10 @@ export async function runShadow(
   requireSessionBudget(deps, m, await loadConfig(deps, m.configHash));
   const q = await deps.store.getQuestion(questionId);
   if (!q || q.mimicId !== m.id) return;
+  // A job enqueued before ADR-0052 names a decision predictor `jev:`; it is the same predictor, stored as `decision:`.
+  const id = canonicalPredictorId(predictorId);
   const preds = await deps.store.listPredictions({ questionId });
-  const mine = preds.filter((p) => p.predictorId === predictorId && p.role !== 'hypothesis');
+  const mine = preds.filter((p) => canonicalPredictorId(p.predictorId) === id && p.role !== 'hypothesis');
   const redo = opts.backfill && opts.retryFailed ? mine.filter(isFailedCall) : [];
   if (opts.backfill ? mine.length > redo.length : mine.some((p) => p.role === 'shadow')) return;
   const primary = preds.find((p) => p.role === 'primary');
@@ -525,24 +537,26 @@ export async function runShadow(
   const { meta, ...body } = state;
   if (hashJson(body) !== meta.stateHash) throw new Error('Sealed state hash mismatch');
 
+  // Shadow and backfill purposes are never rerouted (CHALLENGER_PURPOSES), so `servedModel` is never set here: the
+  // row is this predictor's, and relabelling it would leave the shadow looking missing for ever.
   const ctx = ctxFor(m, opts.backfill ? 'predict.backfill' : 'predict.shadow', key);
-  const [r] = await makePredictor(deps.gateway, predictorId, ctx).predict(state, [q]);
+  const [r] = await makePredictor(deps.gateway, id, ctx).predict(state, [q]);
   const attempt = opts.attempt ?? MAX_JOB_ATTEMPTS;
   if (!r!.ok && r!.retryable && attempt < MAX_JOB_ATTEMPTS)
-    throw new Error(`${predictorId} call failed (attempt ${attempt} of ${MAX_JOB_ATTEMPTS}): ${r!.error}`);
+    throw new Error(`${id} call failed (attempt ${attempt} of ${MAX_JOB_ATTEMPTS}): ${r!.error}`);
   const now = deps.clock();
   const rec: PredictionRecord = {
     id: deps.newId(),
     questionId: q.id,
     mimicId: m.id,
-    predictorId,
+    predictorId: id,
     role: 'shadow',
     dist: r!.dist,
     confidence: r!.confidence ?? null,
     stateHash: meta.stateHash,
     evidenceSeqMax: meta.evidenceSeqMax,
     configHash: m.configHash,
-    promptVersion: promptVersionOf(predictorId),
+    promptVersion: promptVersionOf(id),
     modelSnapshot: r!.modelSnapshot,
     costUsd: r!.costUsd,
     latencyMs: r!.latencyMs,

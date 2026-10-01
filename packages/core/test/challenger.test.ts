@@ -22,9 +22,12 @@ import {
   makePredictor,
   NO_FLAGS,
   type PersonState,
+  promptVersionOf,
   type Question,
   SPAN_MODEL,
   StaticFlags,
+  selectionView,
+  servedPredictorId,
   unansweredQuestions,
 } from '../src';
 
@@ -112,6 +115,7 @@ describe('the decisions-model flag (ADR-0051)', () => {
       const res = await g.decide(ctx, req());
       expect(seen).toEqual([JEV_MODEL]);
       expect(res.modelSnapshot).toBe(`${JEV_MODEL}-snap`);
+      expect(res.model).toBe(JEV_MODEL);
       expect(log.rows.map((r) => [r.model, r.ok, r.purpose])).toEqual([[JEV_MODEL, true, 'predict.primary']]);
     }
   });
@@ -121,6 +125,8 @@ describe('the decisions-model flag (ADR-0051)', () => {
     const res = await g.decide(ctx, req());
     expect(seen).toEqual([SPAN_MODEL]);
     expect(res.modelSnapshot).toBe(`${SPAN_MODEL}-snap`);
+    // The model it ran on, which the dated snapshot can't stand in for (ADR-0052).
+    expect(res.model).toBe(SPAN_MODEL);
     expect(log.rows.map((r) => [r.model, r.ok])).toEqual([[SPAN_MODEL, true]]);
   });
 
@@ -151,6 +157,7 @@ describe('the decisions-model flag (ADR-0051)', () => {
     const res = await g.decide(ctx, req());
     expect(seen).toEqual([SPAN_MODEL, JEV_MODEL]);
     expect(res.modelSnapshot).toBe(`${JEV_MODEL}-snap`);
+    expect(res.model).toBe(JEV_MODEL);
     expect(log.rows.map((r) => [r.model, r.ok])).toEqual([
       [SPAN_MODEL, false],
       [JEV_MODEL, true],
@@ -197,11 +204,18 @@ describe('the decisions-model flag (ADR-0051)', () => {
     const { g, seen } = gateway(ON);
     // A predictor that names its own decisions model keeps it: the model is part of its stored ID.
     await g.decide(ctx, req('respan/span-01-lite'));
-    for (const purpose of ['pool.gate', 'traits.read', 'identity.rank', 'predict.backfill', 'eval.evaluate'])
-      await g.decide({ ...ctx, purpose }, req());
-    expect(seen).toEqual(['respan/span-01-lite', ...Array(5).fill(JEV_MODEL)]);
+    const kept = [
+      'pool.gate',
+      'traits.read',
+      'identity.rank',
+      'predict.shadow',
+      'predict.backfill',
+      'eval.evaluate',
+    ];
+    for (const purpose of kept) await g.decide({ ...ctx, purpose }, req());
+    expect(seen).toEqual(['respan/span-01-lite', ...Array(kept.length).fill(JEV_MODEL)]);
     for (const purpose of CHALLENGER_PURPOSES) await g.decide({ ...ctx, purpose }, req());
-    expect(seen.slice(6)).toEqual(Array(CHALLENGER_PURPOSES.length).fill(SPAN_MODEL));
+    expect(seen.slice(kept.length + 1)).toEqual(Array(CHALLENGER_PURPOSES.length).fill(SPAN_MODEL));
   });
 
   it('Flagship rules can narrow the purposes by the purpose attribute, never widen them', async () => {
@@ -302,5 +316,53 @@ describe('call sites are unchanged (ADR-0051)', () => {
     expect(c!.dist).toEqual(a!.dist);
     expect(on.log.rows[0]!.purpose).toBe('predict.primary');
     expect(jevKey(question)).toBe('q_q1');
+  });
+
+  it('a rerouted prediction names the model that answered, and is stored under it (ADR-0052)', async () => {
+    const primary = DEFAULT_CONFIG.predictor.primary;
+    const [a] = await makePredictor(gateway(null).g, primary, ctx).predict(state, [question]);
+    const [b] = await makePredictor(gateway(ON).g, primary, ctx).predict(state, [question]);
+    const [c] = await makePredictor(gateway(ON, { fail: [SPAN_MODEL] }).g, primary, ctx).predict(state, [
+      question,
+    ]);
+    expect([a!.servedModel, b!.servedModel, c!.servedModel]).toEqual([undefined, SPAN_MODEL, undefined]);
+    expect(servedPredictorId(primary, a!.servedModel)).toBe('decision:typesafe/jev-1.13@jev-predict.v2');
+    expect(servedPredictorId(primary, b!.servedModel)).toBe(
+      'decision:respan/span-01-20260925@jev-predict.v2',
+    );
+    expect(servedPredictorId(primary, c!.servedModel)).toBe('decision:typesafe/jev-1.13@jev-predict.v2');
+    // The prompt version, and so the calibration, is the one the config named.
+    expect(promptVersionOf(servedPredictorId(primary, b!.servedModel))).toBe('jev-predict.v2');
+
+    // Selection predicts on the raw scale and calibrates what it stores; the model that answered survives that.
+    const view = selectionView(gateway(ON).g, primary);
+    const [raw] = await view.predictor(ctx).predict(state, [question]);
+    expect(raw!.servedModel).toBe(SPAN_MODEL);
+    const stored = view.calibrate(raw!, question);
+    expect(stored.servedModel).toBe(SPAN_MODEL);
+    expect(stored.dist).toEqual(b!.dist);
+
+    // Both models failing: nothing the router chose answered, so the row keeps the configured ID.
+    const [d] = await makePredictor(gateway(ON, { fail: [SPAN_MODEL, JEV_MODEL] }).g, primary, ctx).predict(
+      state,
+      [question],
+    );
+    expect(d!.ok).toBe(false);
+    expect(d!.servedModel).toBeUndefined();
+
+    // An answer the challenger returned but the predictor can't use is still the challenger's.
+    const stub = {
+      decide: async () => ({
+        model: SPAN_MODEL,
+        modelSnapshot: `${SPAN_MODEL}-snap`,
+        answers: {},
+        usage: { inputTokens: 1, outputTokens: 0, costUsd: 0 },
+        latencyMs: 1,
+        raw: {},
+      }),
+    } as unknown as Gateway;
+    const [e] = await makePredictor(stub, primary, ctx).predict(state, [question]);
+    expect(e!.ok).toBe(false);
+    expect(e!.servedModel).toBe(SPAN_MODEL);
   });
 });
