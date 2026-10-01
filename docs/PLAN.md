@@ -555,8 +555,8 @@ What to ask about (ADR-0040, `docs/CATEGORIES.md`):
 - Five sensitive areas, each its own consent under its category with a one-line reason and "Your answers stay
   yours: they are only used to build your mimic": political views, religion and worldview, sexuality and intimate
   relationships, health and body, money in detail. All ticked by default; each can be turned off (ADR-0049).
-- With research consent on, a separate opt-in per special-category area (politics, religion, sexuality, health)
-  allows its answers in research exports.
+- Research consent covers the special-category areas (politics, religion, sexuality, health) the person agrees to be
+  asked about, with no separate box per area (ADR-0063); areas consented before that keep their stored research use.
 - All of it can be changed later from the session menu.
 
 ### 9.2 Identity resolution and enrichment
@@ -1141,7 +1141,7 @@ exercise scores at least 4 of 5.
   say" (ADR-0050).
 - **Sensitive domains need their consent.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
   inferred from other answers or web facts, and special-category answers leave research exports unless the person
-  separately consents to research on them.
+  gave research consent while consenting to that area (ADR-0063).
 - **Playground output is labeled as generated.** There is no feature to message anyone "as" a person.
 - **Export and hard delete from day one.** Write a privacy note before inviting anyone outside a small cohort.
 

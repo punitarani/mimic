@@ -24,6 +24,7 @@ import {
   stripSpecialText,
   unconfirmedAreas,
   validateDraft,
+  withResearchUse,
 } from '../src';
 
 const facet = (id: string, category: Facet['category'], sensitive?: Facet['sensitive']): Facet => ({
@@ -109,6 +110,20 @@ describe('scope model (ADR-0040)', () => {
       consents: {},
       researchConsents: {},
     });
+  });
+
+  it('research consent covers the special areas turned on, and never widens one already consented (ADR-0063)', () => {
+    const intake = withResearchUse(scope({ consents: { politics: true, health: true, money: true } }), null);
+    expect(normalizeScope(intake, true).researchConsents).toEqual({ politics: true, health: true });
+    expect(normalizeScope(intake, false).researchConsents).toEqual({});
+    // An area consented before keeps what was sent with it; one turned on now joins research use.
+    const before = scope({ consents: { politics: true, health: true }, researchConsents: { health: true } });
+    const saved = withResearchUse({ ...before, consents: { ...before.consents, religion: true } }, before);
+    expect(normalizeScope(saved, true).researchConsents).toEqual({ health: true, religion: true });
+    expect(withResearchUse(before, before)).toEqual(before);
+    // Withdrawing an area withdraws its research use, as before.
+    const withdrawn = withResearchUse({ ...before, consents: { politics: true } }, before);
+    expect(normalizeScope(withdrawn, true).researchConsents).toEqual({});
   });
 
   it('asks about a special-category area only once it is confirmed; money needs its consent alone (ADR-0050)', () => {

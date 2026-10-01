@@ -5,11 +5,10 @@ import {
   CATEGORY_INFO,
   type MimicScope,
   SELF_ONLY_NOTE,
-  SPECIAL_AREAS,
   type SpecialArea,
 } from '@mimic/core/scope';
-import { confirmArea, setCategory, setConsent, setResearch, unconfirmed } from '@/lib/scope-form';
-import { Checkbox, cn } from './ui';
+import { confirmArea, setCategory, setConsent, unconfirmed } from '@/lib/scope-form';
+import { Checkbox } from './ui';
 
 /**
  * "What to ask about" (ADR-0040, ADR-0043): the four categories, each sensitive area nested under its category with
@@ -102,45 +101,6 @@ export function ScopeTopics({
         <p id={lastId} className="text-[13px] text-muted">
           Keep at least one topic on.
         </p>
-      )}
-    </fieldset>
-  );
-}
-
-/**
- * Research use of sensitive answers: shown only with research consent overall. Answers about politics, religion,
- * sexuality and health stay out of research unless each is ticked here; money follows the overall choice.
- */
-export function ScopeResearch({
-  value,
-  onChange,
-  idPrefix = 'scope',
-  className,
-}: {
-  value: MimicScope;
-  onChange: (next: MimicScope) => void;
-  idPrefix?: string;
-  className?: string;
-}) {
-  const areas = SPECIAL_AREAS.filter((a) => value.consents[a]);
-  if (!areas.length && !value.consents.money) return null;
-  return (
-    <fieldset className={cn('space-y-3', className)}>
-      <legend className="text-[15px] font-medium text-graphite">Research use of sensitive answers</legend>
-      <p className="-mt-1 text-[13px] text-muted">
-        Answers on these topics are left out of research unless you include them here.
-      </p>
-      {areas.map((a) => (
-        <Checkbox
-          key={a}
-          id={`${idPrefix}-research-${a}`}
-          checked={!!value.researchConsents[a]}
-          onChange={(v) => onChange(setResearch(value, a, v))}
-          label={`Include my answers about ${AREA_INFO[a].name.toLowerCase()}`}
-        />
-      ))}
-      {value.consents.money && (
-        <p className="text-[13px] text-muted">Money in detail follows your research choice above.</p>
       )}
     </fieldset>
   );

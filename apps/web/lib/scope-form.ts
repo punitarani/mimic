@@ -14,6 +14,7 @@ import {
  * dialog. Pure, so the rules are tested without a browser: turning a category off forgets its sensitive consents
  * (turning it back on asks again), and withdrawing a consent withdraws its research use. Ticking a special-category
  * area is an affirmative choice, so it also confirms it; a box left at intake's pre-ticked default is not (ADR-0050).
+ * Research use isn't chosen here: the server gives it to the areas turned on under research consent (ADR-0063).
  */
 export function setCategory(scope: MimicScope, c: Category, on: boolean): MimicScope {
   const categories = CATEGORIES.filter((x) => (x === c ? on : scope.categories.includes(x)));
@@ -64,13 +65,6 @@ export const unconfirmed = unconfirmedAreas;
 export function allowDeclined(scope: MimicScope, facetId?: string): MimicScope {
   const declined = facetId ? (scope.declined ?? []).filter((f) => f !== facetId) : [];
   return { ...scope, declined };
-}
-
-export function setResearch(scope: MimicScope, a: SpecialArea, on: boolean): MimicScope {
-  const researchConsents = { ...scope.researchConsents };
-  if (on && scope.consents[a]) researchConsents[a] = true;
-  else delete researchConsents[a];
-  return { ...scope, researchConsents };
 }
 
 /** At least one category stays selected. */

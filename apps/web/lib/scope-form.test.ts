@@ -15,7 +15,6 @@ import {
   sameScope,
   setCategory,
   setConsent,
-  setResearch,
   unconfirmed,
 } from './scope-form';
 
@@ -43,14 +42,9 @@ describe('scope form (ADR-0043)', () => {
     expect(back.consents.politics).toBeUndefined();
   });
 
-  it('withdrawing a consent withdraws its research use; research needs the consent', () => {
+  it('withdrawing a consent withdraws its research use; turning one on leaves research use to the server', () => {
     expect(setConsent(all, 'health', false).researchConsents).toEqual({ politics: true });
-    expect(setResearch(DEFAULT_SCOPE, 'religion', true).researchConsents).toEqual({});
-    expect(
-      setResearch(setConsent(DEFAULT_SCOPE, 'religion', true), 'religion', true).researchConsents,
-    ).toEqual({
-      religion: true,
-    });
+    expect(setConsent(DEFAULT_SCOPE, 'religion', true).researchConsents).toEqual({});
   });
 
   it('keeps one category, names what is off, and knows when a change narrows', () => {
@@ -63,15 +57,11 @@ describe('scope form (ADR-0043)', () => {
     expect(narrows(DEFAULT_SCOPE, s)).toBe(true);
     expect(narrows(s, DEFAULT_SCOPE)).toBe(false);
     expect(narrows(all, setConsent(all, 'money', false))).toBe(true);
-    expect(narrows(all, setResearch(all, 'health', false))).toBe(false);
+    expect(narrows(all, { ...all, researchConsents: { politics: true } })).toBe(false);
   });
 
   it('matches what the server stores', () => {
-    const drafted = setResearch(
-      setConsent(setCategory(all, 'work', false), 'religion', true),
-      'religion',
-      true,
-    );
+    const drafted = setConsent(setCategory(all, 'work', false), 'religion', true);
     expect(sameScope(drafted, normalizeScope(drafted, true))).toBe(true);
     expect(sameScope(all, setConsent(all, 'money', false))).toBe(false);
   });

@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { allowDeclined, canSave, narrows, sameScope } from '@/lib/scope-form';
 import { sentence } from '@/lib/session-view';
-import { ScopeResearch, ScopeTopics } from '../scope-form';
+import { ScopeTopics } from '../scope-form';
 import { cn } from '../ui';
 
 /**
@@ -81,7 +81,12 @@ export function TopicsDialog({
         </div>
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-6 py-4">
           <ScopeTopics value={draft} onChange={setDraft} idPrefix="topics" />
-          {consentResearch && <ScopeResearch value={draft} onChange={setDraft} idPrefix="topics" />}
+          {consentResearch && (
+            <p className="m-0 text-[13px] text-muted">
+              You agreed to research use, so answers on sensitive topics you turn on here are included,
+              without your name or location.
+            </p>
+          )}
           {declined.some((f) => draft.declined?.includes(f.id)) && (
             <section aria-labelledby={`${id}-declined`} className="space-y-2">
               <h3 id={`${id}-declined`} className="m-0 text-[15px] font-medium text-graphite">
