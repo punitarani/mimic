@@ -556,7 +556,7 @@ What to ask about (ADR-0040, `docs/CATEGORIES.md`):
   yours: they are only used to build your mimic": political views, religion and worldview, sexuality and intimate
   relationships, health and body, money in detail. All ticked by default; each can be turned off (ADR-0049).
 - Research consent covers the special-category areas (politics, religion, sexuality, health) the person agrees to be
-  asked about, with no separate box per area (ADR-0064); areas consented before that keep their stored research use.
+  asked about, with no separate box per area (ADR-0065); areas consented before that keep their stored research use.
 - All of it can be changed later from the session menu.
 
 ### 9.2 Identity resolution and enrichment
@@ -745,7 +745,8 @@ Ablation strategies:
 **Evidence policies** (`stateBuilder.evidencePolicy`, ADR-0056) decide which answers survive the budget and the cap
 `stateBuilder.maxEvidence`: `mixed` (the rule above; the default), `recent`, `similar`, `surprise` (the answers the
 context-only baseline predicted worst: what the profile alone gets wrong) or `novelty` (the answers the sealed primary
-predicted worst at the time: what the earlier answers did not imply). Surprise and novelty are computed from the
+predicted worst at the time: what the earlier answers did not imply) or `fill` (`mixed`'s picks, then every other answer
+by recency until the budget is spent; ADR-0064). Surprise and novelty are computed from the
 stored scores on the predictor's raw scale and are fixed with the answer, so a state rebuilds exactly from an export.
 
 `stateHash = sha256(canonicalJson(state))`. `evidenceHash = sha256(canonicalJson(state.evidence))` is stored beside it
@@ -1143,7 +1144,7 @@ exercise scores at least 4 of 5.
   say" (ADR-0050).
 - **Sensitive domains need their consent.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
   inferred from other answers or web facts, and special-category answers leave research exports unless the person
-  gave research consent while consenting to that area (ADR-0064).
+  gave research consent while consenting to that area (ADR-0065).
 - **Playground output is labeled as generated.** There is no feature to message anyone "as" a person.
 - **Export and hard delete from day one.** Write a privacy note before inviting anyone outside a small cohort.
 

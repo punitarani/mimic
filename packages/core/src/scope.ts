@@ -64,7 +64,7 @@ export const DEFAULT_SCOPE: MimicScope = { categories: [...CATEGORIES], consents
 /**
  * What the intake form starts from (ADR-0049): every category and every sensitive area ticked, so the person turns off
  * what they'd rather not share. Research use of special-category answers comes with the research box, which starts
- * unticked (`withResearchUse`, ADR-0064).
+ * unticked (`withResearchUse`, ADR-0065).
  */
 export const INTAKE_SCOPE: MimicScope = {
   categories: [...CATEGORIES],
@@ -185,7 +185,7 @@ export function normalizeScope(scope: MimicScope, consentResearch: boolean): Mim
 }
 
 /**
- * Research use follows research consent (ADR-0064): a special-category area the person newly agrees to be asked about
+ * Research use follows research consent (ADR-0065): a special-category area the person newly agrees to be asked about
  * joins research use, so at intake (`prev` null) research consent covers every consented area. An area already
  * consented in `prev` keeps the research use sent with it, so saving never widens a choice made under the per-area
  * boxes that came before. `normalizeScope` then drops it all without research consent overall.

@@ -101,6 +101,36 @@ describe('replay (M7)', () => {
     expect(renderReport(r.run)).toContain('After 2 answers');
   }, 60_000);
 
+  it('builds a state per target when asked, so similarity has something to rank against', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'replay-per-target' });
+    await cohort(3);
+    const spec = {
+      name: 'pt',
+      predictor: 'decision:typesafe/jev-1.13',
+      strategy: 'card' as const,
+      evidencePolicy: 'similar' as const,
+      maxEvidence: 3,
+      checkpoints: [12, 16],
+      split: 'all' as const,
+      targets: 'later' as const,
+      maxTargets: 4,
+      seed: 's',
+    };
+    const shared = await replay(engine.deps, spec, 'hash');
+    const own = await replay(engine.deps, { ...spec, perTarget: true, embed: true }, 'hash');
+    const primary = (r: typeof own, k: number) =>
+      r.rows.filter((x) => x.role === 'primary' && x.questionId.endsWith(`@${k}`));
+    // At most four targets per person, the same ones at every checkpoint (later ones drop out as k grows).
+    for (const r of [shared, own]) {
+      expect(primary(r, 12).length).toBeLessThanOrEqual(2 * 4);
+      const at16 = new Set(primary(r, 16).map((x) => x.questionId.split('@')[0]));
+      for (const q of at16) expect(primary(r, 12).some((x) => x.questionId.startsWith(q ?? '?'))).toBe(true);
+    }
+    // Ranked against each target, the card holds different answers than the shared, recency-ranked one.
+    const sharedDist = new Map(primary(shared, 12).map((x) => [x.questionId, x.logLoss]));
+    expect(primary(own, 12).some((x) => sharedDist.get(x.questionId) !== x.logLoss)).toBe(true);
+  }, 60_000);
+
   it('marks a replay failed, not empty, when every prediction fails', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'replay-fail' });
     await cohort(2);

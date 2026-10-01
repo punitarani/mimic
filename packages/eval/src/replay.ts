@@ -23,6 +23,7 @@ import {
   predictorMetrics,
   type Question,
   type QuestionRecord,
+  qaText,
   quantile,
   ranksBySimilarity,
   rawScale,
@@ -54,6 +55,15 @@ export interface ReplaySpec {
    * `<predictor>@pool:views` sit beside the main strategy's.
    */
   views?: StateStrategy[];
+  /**
+   * One state per target, built with that question as the retrieval target, as production builds one per candidate
+   * batch. Without it every target shares one state, and `similar` and `mixed` have nothing to rank by but recency.
+   */
+  perTarget?: boolean;
+  /** With `perTarget`: rank by embedding similarity, as production does once vectors exist. */
+  embed?: boolean;
+  /** At most this many targets per person, sampled by seed (the same ones at every checkpoint). */
+  maxTargets?: number;
   checkpoints: number[];
   split: 'dev' | 'test' | 'all';
   /** `later`: every later non-repeat item (PLAN §12.3). `heldout`: only held-out items (e.g. Twin-2K-500 wave 4). */
@@ -147,6 +157,42 @@ export async function annotateSurprise(
   return { bySeq, costUsd: preds.reduce((a, p) => a + p.costUsd, 0) };
 }
 
+const PER_TARGET_CONCURRENCY = 8;
+const EMBED_BATCH = 64;
+
+async function mapLimit<T, R>(xs: T[], limit: number, f: (x: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(xs.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < xs.length) {
+      const i = next++;
+      out[i] = await f(xs[i]!);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, xs.length) }, worker));
+  return out;
+}
+
+/** Embeds the texts the way production embeds answers (`qaText`) and questions (the prompt). */
+async function embedAll(
+  deps: EngineDeps,
+  mimicId: string,
+  texts: Array<{ key: string; text: string }>,
+): Promise<{ byKey: Map<string, number[]>; costUsd: number }> {
+  const byKey = new Map<string, number[]>();
+  let costUsd = 0;
+  for (let i = 0; i < texts.length; i += EMBED_BATCH) {
+    const batch = texts.slice(i, i + EMBED_BATCH);
+    const r = await deps.gateway.embed(
+      { purpose: 'eval.replay.embed', mimicId },
+      batch.map((t) => t.text),
+    );
+    for (const [j, t] of batch.entries()) byKey.set(t.key, r.vectors[j]!);
+    costUsd += r.usage.costUsd;
+  }
+  return { byKey, costUsd };
+}
+
 /** An evidence item with its annotated surprise, when it has none of its own. */
 export const withSurprise =
   (bySeq: ReadonlyMap<number, number>) =>
@@ -215,7 +261,22 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
     const { repeatAgreements } = fidelityInput([], loaded.questions, loaded.answers);
     const c = selfConsistency(repeatAgreements);
 
-    const allTargets = spec.targets === 'heldout' ? heldout : items.slice(Math.min(...spec.checkpoints));
+    const capped = (xs: EvidenceItem[]) =>
+      spec.maxTargets === undefined
+        ? xs
+        : shuffle(xs, seededRng(`targets:${spec.seed}:${m.id}`)).slice(0, spec.maxTargets);
+    const allTargets = capped(
+      spec.targets === 'heldout' ? heldout : items.slice(Math.min(...spec.checkpoints)),
+    );
+    const vectors = spec.embed
+      ? await embedAll(deps, m.id, [
+          ...train
+            .slice(0, Math.max(...spec.checkpoints))
+            .map((e) => ({ key: `qa:${e.seq}`, text: qaText(e) })),
+          ...allTargets.map((e) => ({ key: `q:${e.questionId}`, text: qById.get(e.questionId)!.prompt })),
+        ])
+      : null;
+    if (vectors) cost += vectors.costUsd;
     const baseState = buildState(loaded.data, stateOptions(cfg, 0, { contextOnly: true }));
     const baseQs = allTargets.map((e) => qById.get(e.questionId)!);
     const basePreds = await predictAll(baselinePredictor, baseState, baseQs);
@@ -231,7 +292,10 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
 
     for (const k of spec.checkpoints) {
       if (k > train.length) continue;
-      const targets = spec.targets === 'heldout' ? heldout : items.slice(k);
+      const inTargets = new Set(allTargets.map((e) => e.questionId));
+      const targets = (spec.targets === 'heldout' ? heldout : items.slice(k)).filter((e) =>
+        inTargets.has(e.questionId),
+      );
       if (!targets.length) continue;
       const beforeSeq = train[k - 1]!.seq + 1;
       const trainSeqs = new Set(train.slice(0, k).map((e) => e.seq));
@@ -252,7 +316,24 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
       };
       const state = buildState(data, stateOptions(cfg, beforeSeq, overrides));
       const qs = targets.map((e) => qById.get(e.questionId)!);
-      const preds = await predictAll(predictor, state, qs);
+      let preds: PredictionResult[];
+      if (spec.perTarget) {
+        const embedded = vectors
+          ? { ...data, embeddings: new Map(train.map((e) => [e.seq, vectors.byKey.get(`qa:${e.seq}`)!])) }
+          : data;
+        preds = await mapLimit(qs, PER_TARGET_CONCURRENCY, async (q) => {
+          const qv = vectors?.byKey.get(`q:${q.id}`);
+          const own = buildState(
+            embedded,
+            stateOptions(cfg, beforeSeq, {
+              ...overrides,
+              forQuestions: [q],
+              ...(qv ? { queryEmbedding: qv } : {}),
+            }),
+          );
+          return (await predictor.predict(own, [q]))[0]!;
+        });
+      } else preds = await predictAll(predictor, state, qs);
       const rows = rowsByK.get(k) ?? [];
       const failures = failuresByK.get(k) ?? [];
       const across = acrossByK.get(k) ?? [];

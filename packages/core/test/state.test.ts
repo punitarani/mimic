@@ -404,7 +404,7 @@ describe('evidence policies and the card state (ADR-0056)', () => {
   };
 
   it('keeps every answer while it fits, whatever the policy', () => {
-    for (const evidencePolicy of ['recent', 'similar', 'surprise', 'novelty'] as const) {
+    for (const evidencePolicy of ['recent', 'similar', 'surprise', 'novelty', 'fill'] as const) {
       const s = buildState(signalled(20), opts({ evidencePolicy }));
       expect(s.evidence).toHaveLength(20);
       expect(s.meta.builder).toBe(`full.v1.${evidencePolicy}`);
@@ -446,6 +446,18 @@ describe('evidence policies and the card state (ADR-0056)', () => {
     );
     // The lexically closest answer first, then recency breaks the ties among the rest.
     expect(similar.evidence.map((e) => e.seq)).toEqual([17, 30]);
+  });
+
+  it('fill keeps what mixed keeps, then fills the budget by recency', () => {
+    const m = signalled(200);
+    const budget = { budgetTokens: 3000 };
+    const mixed = buildState(m, opts(budget));
+    const fill = buildState(m, opts({ ...budget, evidencePolicy: 'fill' }));
+    const kept = new Set(fill.evidence.map((e) => e.seq));
+    expect(mixed.evidence.every((e) => kept.has(e.seq))).toBe(true);
+    expect(fill.evidence.length).toBeGreaterThan(mixed.evidence.length);
+    expect(fill.meta.tokens).toBeLessThanOrEqual(3000);
+    expect(fill.meta.tokens).toBeGreaterThan(mixed.meta.tokens);
   });
 
   it('answers without the signal rank last, by recency, so the ranking is total', () => {

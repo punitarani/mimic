@@ -59,11 +59,14 @@ Commands
   replay    Offline replay (PLAN §12.3)
             --data <file.sqlite> --predictor decision:typesafe/jev-1.13 --state full|raw|structured|summary|card
             --checkpoints 10,20,30 --split dev|test|all [--targets later|heldout] [--limit N] [--offline]
-            [--evidence mixed|recent|similar|surprise|novelty] [--max-evidence N] [--budget <tokens>]
+            [--evidence mixed|recent|similar|surprise|novelty|fill] [--max-evidence N] [--budget <tokens>]
                             which answers a state keeps once over budget or cap (ADR-0056)
             [--views full,raw,structured,summary]   also predict from each of these views of the same evidence and
                             pool them log-linearly at equal weight: the evidence-view ensemble (ADR-0058)
             [--rows]   also write every scored prediction to rows.json beside the report, for paired comparisons
+            [--per-target [--embed]]   one state per target with that question as the retrieval target, ranked
+                            lexically or by embeddings, as production ranks against its candidates; one call each
+            [--max-targets N]   at most N targets per person, the same ones at every checkpoint
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
   footprint   Parse the person's own exports into clean documents (ADR-0061; no model calls): tweets.js (X archive),
             Profile/Positions/Education/Skills/Shares.csv (LinkedIn), posts.csv and comments.csv (Reddit),
@@ -279,6 +282,9 @@ async function replayCmd(argv: string[]) {
       budget: { type: 'string' },
       views: { type: 'string' },
       rows: { type: 'boolean', default: false },
+      'per-target': { type: 'boolean', default: false },
+      embed: { type: 'boolean', default: false },
+      'max-targets': { type: 'string' },
       checkpoints: { type: 'string', default: '10,20,30' },
       split: { type: 'string', default: 'dev' },
       targets: { type: 'string', default: 'later' },
@@ -290,6 +296,7 @@ async function replayCmd(argv: string[]) {
     },
   });
   if (!values.data) throw new Error('--data is required');
+  if (values.embed && !values['per-target']) throw new Error('--embed needs --per-target');
   const data = resolve(values.data);
   const engine = await openLocalEngine({ db: data, providers: values.offline ? 'offline' : 'live' });
   const hash = await datasetHash(engine.client);
@@ -318,6 +325,9 @@ async function replayCmd(argv: string[]) {
         ...(values['max-evidence'] ? { maxEvidence: Number(values['max-evidence']) } : {}),
         ...(values.budget ? { budgetTokens: Number(values.budget) } : {}),
         ...(values.views ? { views: values.views.split(',').map((v) => parseStrategy(v.trim())) } : {}),
+        ...(values['per-target'] ? { perTarget: true } : {}),
+        ...(values.embed ? { embed: true } : {}),
+        ...(values['max-targets'] ? { maxTargets: Number(values['max-targets']) } : {}),
         checkpoints: list(values.checkpoints),
         split: values.split as 'dev' | 'test' | 'all',
         targets: values.targets as 'later' | 'heldout',

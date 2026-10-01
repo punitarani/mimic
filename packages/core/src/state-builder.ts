@@ -28,10 +28,12 @@ export const STATE_STRATEGIES = ['raw', 'structured', 'summary', 'full', 'card']
  * - `surprise`: the answers the context-only baseline predicted worst, i.e. what the person's profile alone gets
  *   wrong about them (the residual from the stereotype);
  * - `novelty`: the answers the sealed primary predicted worst at the time, i.e. what the earlier answers did not
- *   already imply.
+ *   already imply;
+ * - `fill`: `mixed`'s picks, then the rest by recency until the budget is full. `mixed` alone stops at its picks
+ *   (18 answers of a 100-answer Twin record, under a fifth of the budget).
  */
-export type EvidencePolicy = 'mixed' | 'recent' | 'similar' | 'surprise' | 'novelty';
-export const EVIDENCE_POLICIES = ['mixed', 'recent', 'similar', 'surprise', 'novelty'] as const;
+export type EvidencePolicy = 'mixed' | 'recent' | 'similar' | 'surprise' | 'novelty' | 'fill';
+export const EVIDENCE_POLICIES = ['mixed', 'recent', 'similar', 'surprise', 'novelty', 'fill'] as const;
 
 export interface EvidenceItem {
   seq: number;
@@ -275,11 +277,21 @@ export function rankByPolicy(
   items: EvidenceItem[],
   policy: Exclude<EvidencePolicy, 'mixed'>,
   m: MimicData,
-  opts: Pick<BuildOptions, 'forQuestions' | 'queryEmbedding'>,
+  opts: Pick<BuildOptions, 'forQuestions' | 'queryEmbedding' | 'recentN' | 'retrievalK'>,
 ): EvidenceItem[] {
   const byRecency = (a: EvidenceItem, b: EvidenceItem) => b.seq - a.seq;
   if (policy === 'recent') return [...items].sort(byRecency);
   if (policy === 'similar') return rankBySimilarity(items, m, opts);
+  if (policy === 'fill') {
+    // `mixed`'s picks in its trimming priority (recent, retrieved, anchors), then everything else by recency.
+    const latest = [...items].sort(byRecency);
+    const first = new Set([
+      ...latest.slice(0, opts.recentN),
+      ...rankBySimilarity(items, m, opts).slice(0, opts.retrievalK),
+      ...items.filter((e) => e.kind === 'anchor'),
+    ]);
+    return [...first, ...latest.filter((e) => !first.has(e))];
+  }
   const signal = (e: EvidenceItem) => (policy === 'surprise' ? e.surprise : e.novelty) ?? -1;
   return [...items].sort((a, b) => signal(b) - signal(a) || byRecency(a, b));
 }

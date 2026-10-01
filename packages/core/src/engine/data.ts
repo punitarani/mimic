@@ -34,12 +34,12 @@ export function needsScores(cfg: Pick<PipelineConfig, 'stateBuilder'>): boolean 
 }
 
 /**
- * Whether a config's trimmed states rank answers by similarity to the target questions (`mixed`, `similar`): only
+ * Whether a config's trimmed states rank answers by similarity to the target questions (`mixed`, `similar`, `fill`): only
  * those read embeddings, and only those depend on the candidate pool, which an export does not hold (ADR-0056).
  */
 export function ranksBySimilarity(cfg: Pick<PipelineConfig, 'stateBuilder'>): boolean {
   const p = cfg.stateBuilder.evidencePolicy ?? 'mixed';
-  return p === 'mixed' || p === 'similar';
+  return p === 'mixed' || p === 'similar' || p === 'fill';
 }
 
 /**

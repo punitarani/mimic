@@ -13,7 +13,6 @@ import { isScoredKind, isSessionKind } from './types';
 export const PROBE_TIERS = ['shared', 'repeat', 'near', 'mid', 'far'] as const;
 export type ProbeTier = (typeof PROBE_TIERS)[number];
 
-/** `provenance.generator` of a probe question. */
 export const PROBE_GENERATOR = 'probe';
 
 export const ProbeConfig = z.object({
@@ -77,7 +76,6 @@ export function dueProbe(
   return null;
 }
 
-/** Distance from what was answered: two or more answers on one of the item's facets is near, one is mid, none far. */
 export function tierOfLoad(load: number): 'near' | 'mid' | 'far' {
   return load >= 2 ? 'near' : load === 1 ? 'mid' : 'far';
 }
