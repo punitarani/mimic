@@ -25,8 +25,8 @@ The model page is https://openrouter.ai/respan/span-01. Live calls on 2026-09-30
 ## How it is wired
 
 - **Routing.** `Gateway.decide` (`packages/core/src/gateway.ts`) asks a router, `decisionChallenger`
-  (`packages/core/src/challenger.ts`), which model to use. No call site changes: `JevPredictor`, the session, the
-  playground and every other `decide` caller behave the same.
+  (`packages/core/src/challenger.ts`), which model to use. No call site changes: `DecisionPredictor`, the session,
+  the playground and every other `decide` caller behave the same.
   - Only requests for the incumbent `typesafe/jev-1.13` are rerouted, and only for the served-prediction purposes
     (`CHALLENGER_PURPOSES`): `predict.primary`, `predict.baseline`, `select.bald`, `playground.predict` and
     `playground.baseline`.
@@ -47,11 +47,22 @@ The model page is https://openrouter.ai/respan/span-01. Live calls on 2026-09-30
   retries, a timeout, a malformed response, or a question left unanswered. Each attempt is its own `model_calls` row;
   a rejected answer's row keeps the cost span-01 billed, which counts against the budget. A budget refusal is not
   retried.
-- **Recording.** A prediction keeps its config's predictor ID. Its `modelSnapshot` names the model that answered, so
-  reports split on it.
-  - To make span-01 permanent, ship a new default config (after `cfg.default.v8`) with `jev:respan/span-01-20260925@jev-predict.v2`
-    as primary, so predictor IDs say so, then retire the flag.
+- **Recording (ADR-0054).** A served row (primary, baseline, hypothesis; session and playground) is stored under the
+  model that answered. The Gateway reports the model it ran on, and the row's predictor ID swaps in that model, keeping
+  the prompt version: `decision:respan/span-01-20260925@jev-predict.v2` when span-01 answered,
+  `decision:typesafe/jev-1.13@jev-predict.v2` when Jev did (including after a span-01 failure). The role, config hash
+  and prompt version are the config's. `/lab`, `evaluate --from stored`, calibration fits and paired comparisons
+  therefore list span-01 apart from Jev, under the same ID the benchmark uses.
+  - Before ADR-0054 a rerouted row kept Jev's ID; `pnpm relabel:predictors` moves those to span-01's ID by their
+    `modelSnapshot` (see "After deploying ADR-0054").
+  - A Jev backfill (`pnpm backfill --predictor decision:typesafe/jev-1.13@jev-predict.v2`) now fills the questions
+    span-01 served, since none of their rows is Jev's: that is how to compare the two on the same questions, and it
+    costs a Jev call each.
+  - To make span-01 permanent, ship a new default config (after `cfg.default.v8`) with
+    `decision:respan/span-01-20260925@jev-predict.v2` as primary, then retire the flag.
   - The primary's calibration (`jev-predict.v2`, temperature 4, fitted on Jev) applies to span-01's answers too.
+  - If Flagship narrows the flag to some purposes (say the primary only), a question's primary and baseline can come
+    from different models, and `/lab`'s lift compares them as served.
 
 ## Flags
 
@@ -71,7 +82,7 @@ changing without a deploy, safe at its default, and needing nothing deployed bey
 | `decisions-model` | `jev` or `span-01` (or the pinned model ID either maps to) | `jev` | The model Jev's served predictions run on |
 | `budget-usd` | A number above 0 | 1 | Spend cap per mimic (ADR-0035) |
 | `budget-session-share` | A number above 0, at most 1 | 0.8 | The session's share of the cap |
-| `use-invite-code` | A boolean, or a string with on/off values (`on`, `off`, `true`, `false` and the like) | on | Whether sign-up needs a code from `INVITE_CODES` (ADR-0054) |
+| `use-invite-code` | A boolean, or a string with on/off values (`on`, `off`, `true`, `false` and the like) | on | Whether sign-up needs a code from `INVITE_CODES` (ADR-0055) |
 
 - **Accepted values.** Dashboard labels such as "Span-01" are accepted, and a number flag made as a string reads as
   its number.
@@ -124,7 +135,8 @@ changing without a deploy, safe at its default, and needing nothing deployed bey
 2. In Flagship → `mimic` → `decisions-model` → Rules, add a rule that serves `span-01` to 10% (rollout on
    `targetingKey`, which is the mimic ID). Save.
 3. Watch `model_calls` for model `respan/span-01-20260925`: its error rate and fallbacks (a failed span-01 row
-   followed by a Jev row for the same job). Watch the primary's metrics in `/lab`, split by `modelSnapshot`.
+   followed by a Jev row for the same job). Watch `/lab`: span-01's served rows have their own predictor ID,
+   `decision:respan/span-01-20260925@jev-predict.v2`, next to Jev's.
 4. Raise the rollout (10 → 50 → 100%), or set the default variation to `span-01`.
 
 ### Roll back
@@ -133,6 +145,12 @@ Set `decisions-model`'s default variation to `jev` and delete its rules. The nex
 deploy. Turning the flag off (Enabled → off) works only while the default variation is still `jev`: a disabled flag
 serves its default variation, so after step 4 has made `span-01` the default, turning it off keeps span-01. If
 Flagship itself fails, reads return the code default (`jev`).
+
+### After deploying ADR-0054
+
+Rows stored before ADR-0054 name the decision kind `jev:`, and span-01's served answers carry Jev's ID. Once CD has
+deployed ADR-0054, relabel them: Actions → **Relabel predictors**, a dry run first, then with **apply**, then a dry run
+again (every count 0). Locally, `pnpm relabel:predictors [--env local|preview|prod] [--yes]`. Details: `docs/DEPLOY.md`.
 
 ## Run the benchmark
 
@@ -158,7 +176,7 @@ It then prints the verdict of the decision rule.
 doppler run -- pnpm deploy:config --env prod
 pnpm eval -- export --env prod --out data/bench.sqlite           # a fixed dataset: consented people only (ADR-0018)
 pnpm eval -- benchmark --data data/bench.sqlite                  # live calls, capped at --max-usd (default $1)
-pnpm eval -- benchmark --data data/bench.sqlite --incumbent jev:typesafe/jev-1.13   # raw scale too
+pnpm eval -- benchmark --data data/bench.sqlite --incumbent decision:typesafe/jev-1.13   # raw scale too
 ```
 
 - **Inputs.** Held-out people (`--split test`, never used to fit the calibration) at checkpoint `--k 30`. Up to 40

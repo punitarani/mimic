@@ -165,7 +165,7 @@ export const FLAG_SPECS = {
     key: 'use-invite-code',
     kind: 'boolean',
     description:
-      'Whether creating a mimic needs an invite code from INVITE_CODES: on (the default: invite-only) or off (open sign-up) (ADR-0054).',
+      'Whether creating a mimic needs an invite code from INVITE_CODES: on (the default: invite-only) or off (open sign-up) (ADR-0055).',
     fallback: true,
     parse: switchValue,
     variations: { on: true, off: false },

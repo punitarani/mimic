@@ -90,8 +90,8 @@ view is a subset of the state and never adds to it, so sealing holds by construc
 | `relevant` | Identity and the 8 answers most similar to the question (lexical similarity, ties to the latest) | H4 |
 
 Predictors:
-- **Jev:** the production primary, `jev:typesafe/jev-1.13@jev-predict.v2` (calibrated, T = 4). It gets all five
-  views.
+- **Jev:** the production primary, `jev:typesafe/jev-1.13@jev-predict.v2` (calibrated, T = 4; spelled
+  `decision:typesafe/jev-1.13@jev-predict.v2` since ADR-0054, the same predictor). It gets all five views.
 - **An LLM:** `llm:deepseek/deepseek-v4.1-flash@predict.v2`, the default LLM, with the best item accuracy among the
   `predict.v2` shadows. It gets `context`, `full` and `answers`, which is enough to separate its prior from its
   learning (H5).

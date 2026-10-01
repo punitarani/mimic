@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_CONFIG } from '@mimic/core';
+import { canonicalPredictorId, DEFAULT_CONFIG } from '@mimic/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   type Arm,
@@ -76,7 +76,8 @@ function row(
 
 describe('E6 analysis (ADR-0053)', () => {
   it('measures the primary as served, and the default LLM', () => {
-    expect(DEFAULT_JEV).toBe(DEFAULT_CONFIG.predictor.primary);
+    expect(DEFAULT_JEV).toBe(canonicalPredictorId(DEFAULT_CONFIG.predictor.primary));
+    expect(DEFAULT_JEV).toBe('decision:typesafe/jev-1.13@jev-predict.v2');
     expect(DEFAULT_LLM).toBe('llm:deepseek/deepseek-v4.1-flash@predict.v2');
   });
 

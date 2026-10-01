@@ -1,5 +1,12 @@
 import { z } from 'zod';
-import { DEFAULT_PROMPT_VERSION, harnessProblems, PREDICT_PROMPTS, resolvePredictPrompt } from './components';
+import {
+  DEFAULT_PROMPT_VERSION,
+  harnessProblems,
+  PREDICT_PROMPTS,
+  type PredictorKind,
+  predictorKindOf,
+  resolvePredictPrompt,
+} from './components';
 import { canonicalJson, sha256Hex } from './hash';
 
 /**
@@ -15,7 +22,7 @@ export function predictorIdProblem(id: string): string | null {
   }
   if (spec.promptVersion === undefined) return null;
   if (spec.promptVersion === DEFAULT_PROMPT_VERSION[spec.kind])
-    return `${id} names the incumbent prompt; use ${spec.kind}:${spec.model}`;
+    return `${id} names the incumbent prompt; use ${formatPredictorId({ kind: spec.kind, model: spec.model })}`;
   const v = PREDICT_PROMPTS[spec.promptVersion];
   if (!v) return `unknown prediction prompt version in ${id}`;
   if (v.kind !== spec.kind) return `${spec.promptVersion} is a ${v.kind} prompt, not ${spec.kind}`;
@@ -177,6 +184,7 @@ export const DEFAULT_CONFIG_V3: PipelineConfig = {
   },
   selector: { type: 'entropy', lambdaCoverage: 0.3, muRedundancy: 0.5 },
   predictor: {
+    // Pinned configs keep `jev:`, the decision kind's name before ADR-0054 (read as `decision:`), so their hashes hold.
     primary: `jev:${JEV_MODEL}`,
     shadows: [
       `llm:${LLM.luna}`,
@@ -392,15 +400,24 @@ export function configHash(config: PipelineConfig): string {
   return sha256Hex(canonicalJson(PipelineConfig.parse(config)));
 }
 
-export type PredictorSpec = { kind: 'jev' | 'llm'; model: string; promptVersion?: string };
+export type PredictorSpec = { kind: PredictorKind; model: string; promptVersion?: string };
+
+/** The decision kind's prefix (ADR-0054). */
+export const DECISION_PREFIX = 'decision:';
+/**
+ * The decision kind's prefix before ADR-0054. Configs v3–v8 and cfg.e3b.control spell their primary with it and are
+ * hashed, so it is read as `decision:` forever; stored rows are relabelled (`pnpm relabel:predictors`).
+ */
+export const LEGACY_DECISION_PREFIX = 'jev:';
 
 /**
- * `jev:<model>` or `llm:<model>`, optionally `@<promptVersion>` for a registered prediction prompt variant
- * (packages/core/src/components.ts, ADR-0028). Without a version the predictor uses the incumbent prompt.
+ * `decision:<model>` or `llm:<model>`, optionally `@<promptVersion>` for a registered prediction prompt variant
+ * (packages/core/src/components.ts, ADR-0028). Without a version the predictor uses the incumbent prompt. `jev:` is
+ * read as `decision:` (ADR-0054).
  */
 export function parsePredictorId(id: string): PredictorSpec {
   const idx = id.indexOf(':');
-  const kind = id.slice(0, idx);
+  const kind = predictorKindOf(id.slice(0, idx));
   const rest = id.slice(idx + 1);
   const at = rest.lastIndexOf('@');
   const model = at >= 0 ? rest.slice(0, at) : rest;
@@ -408,7 +425,44 @@ export function parsePredictorId(id: string): PredictorSpec {
   if (idx < 0 || !model) throw new Error(`Invalid predictor id: ${id}`);
   if (promptVersion !== undefined && !/^[a-z0-9][a-z0-9._-]*$/i.test(promptVersion))
     throw new Error(`Invalid prompt version in predictor id: ${id}`);
-  if (kind === 'jev' || kind === 'llm')
-    return promptVersion === undefined ? { kind, model } : { kind, model, promptVersion };
+  if (kind) return promptVersion === undefined ? { kind, model } : { kind, model, promptVersion };
   throw new Error(`Unknown predictor kind: ${id}`);
+}
+
+/** A spec's ID, spelled canonically: the inverse of `parsePredictorId` up to the `jev:` alias. */
+export function formatPredictorId(spec: PredictorSpec): string {
+  return `${spec.kind}:${spec.model}${spec.promptVersion === undefined ? '' : `@${spec.promptVersion}`}`;
+}
+
+/**
+ * The ID as stored and compared since ADR-0054: a leading `jev:` becomes `decision:`; anything else is returned as it
+ * is. A pure prefix swap, so it never throws and agrees exactly with the relabel's SQL (`scripts/relabel-predictors.mjs`).
+ */
+export function canonicalPredictorId(id: string): string {
+  return id.startsWith(LEGACY_DECISION_PREFIX)
+    ? `${DECISION_PREFIX}${id.slice(LEGACY_DECISION_PREFIX.length)}`
+    : id;
+}
+
+/**
+ * Every spelling a predictor may be stored under, canonical first: a decision ID also has its pre-ADR-0054 `jev:`
+ * spelling until the relabel has run. For lookups that can't canonicalize what they read (SQL, job keys).
+ */
+export function predictorIdSpellings(id: string): string[] {
+  const canonical = canonicalPredictorId(id);
+  return canonical.startsWith(DECISION_PREFIX)
+    ? [canonical, `${LEGACY_DECISION_PREFIX}${canonical.slice(DECISION_PREFIX.length)}`]
+    : [canonical];
+}
+
+/**
+ * The ID a served prediction is stored under (ADR-0054): the predictor's canonical ID, with its model replaced by the
+ * model that answered when the `decisions-model` flag rerouted a decision call (ADR-0051). The prompt version stays,
+ * since the same templates and calibration were applied. An LLM ID, no `servedModel`, or the predictor's own model
+ * gives the canonical ID.
+ */
+export function servedPredictorId(id: string, servedModel?: string): string {
+  const spec = parsePredictorId(id);
+  if (spec.kind !== 'decision' || !servedModel || servedModel === spec.model) return formatPredictorId(spec);
+  return formatPredictorId({ ...spec, model: servedModel });
 }

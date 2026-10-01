@@ -50,7 +50,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
     employer: '',
     link: '',
   });
-  // Whether the server said sign-up is open (`use-invite-code` off, ADR-0054). The page is prerendered, so until it
+  // Whether the server said sign-up is open (`use-invite-code` off, ADR-0055). The page is prerendered, so until it
   // answers, a code is needed (the flag's default); only an explicit `required: false` opens it.
   const [signupOpen, setSignupOpen] = useState(false);
   // A code from the link stays hidden until the server rejects it; then the field appears so the person can type another.

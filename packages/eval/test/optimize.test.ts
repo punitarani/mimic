@@ -1,7 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  canonicalPredictorId,
   componentProblems,
   DEFAULT_CONFIG,
   type DecisionAnswer,
@@ -54,6 +55,8 @@ import { runSession, SessionScript } from '../src/session';
 
 let engine: LocalEngine;
 let instances: EvalInstance[];
+/** The production primary as stored (ADR-0054): configs spell it `jev:`, rows `decision:`. */
+const PRIMARY = canonicalPredictorId(DEFAULT_CONFIG.predictor.primary);
 const dirs: string[] = [];
 
 /** Six scripted people who always pick the first option; the last one declined research use. */
@@ -159,7 +162,7 @@ describe('evaluation instances', () => {
 describe('evaluate', () => {
   it('scores stored predictions and fits calibration without model calls', () => {
     const recs = storedRecords(instances);
-    const primary = recs.filter((r) => r.candidate === `${DEFAULT_CONFIG.predictor.primary}|primary`);
+    const primary = recs.filter((r) => r.candidate === `${PRIMARY}|primary`);
     expect(primary.length).toBe(instances.length);
     const b = breakdown(primary);
     expect(b.all.n).toBe(instances.length);
@@ -181,12 +184,13 @@ describe('evaluate', () => {
         : p;
     const legacy = instances.map((i) => ({ ...i, stored: i.stored.map(raw) }));
     const recs = storedRecords(legacy);
-    const primary = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13|primary');
-    const derived = recs.filter((r) => r.candidate === 'jev:typesafe/jev-1.13@jev-predict.v2|derived');
+    // Stored as `jev:` (before ADR-0054), reported under the canonical spelling.
+    const primary = recs.filter((r) => r.candidate === 'decision:typesafe/jev-1.13|primary');
+    const derived = recs.filter((r) => r.candidate === 'decision:typesafe/jev-1.13@jev-predict.v2|derived');
     expect(derived).toHaveLength(primary.length);
     const v7 = new Map(
       storedRecords(instances)
-        .filter((r) => r.candidate === `${DEFAULT_CONFIG.predictor.primary}|primary`)
+        .filter((r) => r.candidate === `${PRIMARY}|primary`)
         .map((r) => [r.instanceId, r]),
     );
     for (const d of derived) {
@@ -199,14 +203,17 @@ describe('evaluate', () => {
     }
     // Only calibration-only variants of the primary's own templates are derived; LLM primaries have none.
     expect(derivedCalibrations('jev:typesafe/jev-1.13')).toEqual([
-      { predictorId: 'jev:typesafe/jev-1.13@jev-predict.v2', t: 4 },
+      { predictorId: 'decision:typesafe/jev-1.13@jev-predict.v2', t: 4 },
     ]);
+    expect(derivedCalibrations('decision:typesafe/jev-1.13')).toEqual(
+      derivedCalibrations('jev:typesafe/jev-1.13'),
+    );
     expect(derivedCalibrations('llm:deepseek/deepseek-v4.1-flash')).toEqual([]);
     // A primary that is already calibrated (cfg.default.v7) has nothing to derive.
     expect(derivedCalibrations(DEFAULT_CONFIG.predictor.primary)).toEqual([]);
     // Paired comparisons put the two on the same questions (ADR-0048).
     const pair = pairedComparisons(recs).find(
-      (x) => x.from === 'jev:typesafe/jev-1.13' && x.to === 'jev:typesafe/jev-1.13@jev-predict.v2',
+      (x) => x.from === 'decision:typesafe/jev-1.13' && x.to === 'decision:typesafe/jev-1.13@jev-predict.v2',
     )!;
     expect(pair.n).toBe(primary.length);
     const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
@@ -219,7 +226,7 @@ describe('evaluate', () => {
     // Baselines see another state, so they are never paired, though they carry the primary's predictor ID.
     const baselines = recs.filter((r) => r.candidate.endsWith('|baseline'));
     expect(baselines.length).toBeGreaterThan(0);
-    expect(baselines.every((r) => r.predictorId === 'jev:typesafe/jev-1.13')).toBe(true);
+    expect(baselines.every((r) => r.predictorId === 'decision:typesafe/jev-1.13')).toBe(true);
     expect(pairedComparisons(recs.filter((r) => !baselines.includes(r)))).toEqual(pairedComparisons(recs));
     // Fits report test accuracy before and after, and pool only LLM shadows with the primary.
     const fits = calibrationFits(instances);
@@ -232,9 +239,7 @@ describe('evaluate', () => {
   });
 
   it('pairs versions of one model in numeric order, one row per question (ADR-0048)', () => {
-    const primary = storedRecords(instances).filter(
-      (r) => r.candidate === `${DEFAULT_CONFIG.predictor.primary}|primary`,
-    );
+    const primary = storedRecords(instances).filter((r) => r.candidate === `${PRIMARY}|primary`);
     const as = (id: string, role = 'shadow') =>
       primary.map((r) => ({ ...r, candidate: `${id}|${role}`, predictorId: id }));
     const recs = ['llm:x/y@predict.v10', 'llm:x/y', 'llm:x/y@predict.v2', 'llm:z/w@predict.v2'].flatMap(
@@ -311,11 +316,24 @@ describe('evaluate', () => {
     expect(feedbackFor(inst, failed)).toContain('failed (boom)');
   });
 
+  it('candidate hashes are pinned (ADR-0054 kept them through the rename)', () => {
+    expect(resolveCandidate({ predictor: 'jev:typesafe/jev-1.13' }).hash).toBe(
+      'typesafe/jev-1.13:00e3cc2e765d2f3a',
+    );
+    expect(resolveCandidate({ predictor: 'jev:typesafe/jev-1.13@jev-predict.v2' }).hash).toBe(
+      'typesafe/jev-1.13:abc36f61fbb37cab',
+    );
+    const edited = { 'jev.choice': 'They would pick: {label}' };
+    expect(resolveCandidate({ predictor: 'jev:typesafe/jev-1.13', components: edited }).hash).toBe(
+      'typesafe/jev-1.13:3537092ff2e42000',
+    );
+  });
+
   it('runs a candidate through the gateway, caching by candidate and instance', async () => {
     const decisions = new HintDecisions();
     const gw = gateway(decisions);
     const c = resolveCandidate({ predictor: 'jev:typesafe/jev-1.13' });
-    expect(predictorFor(gw, c, 'x').id).toBe('jev:typesafe/jev-1.13');
+    expect(predictorFor(gw, c, 'x').id).toBe('decision:typesafe/jev-1.13');
     const cache = new Map();
     const meter = new Meter();
     const xs = instances.slice(0, 12);
@@ -331,7 +349,7 @@ describe('evaluate', () => {
       },
     });
     expect(Object.keys(changedComponents(hinted))).toEqual(['jev.instructions']);
-    expect(predictorFor(gw, hinted, 'x').id).toMatch(/^jev:typesafe\/jev-1\.13@cand-/);
+    expect(predictorFor(gw, hinted, 'x').id).toMatch(/^decision:typesafe\/jev-1\.13@cand-/);
     const h = await evaluateCandidate(hinted, xs, { gateway: gw, meter, cache });
     expect(pairedDelta(a, h).mean).toBeGreaterThan(0);
     await expect(
@@ -620,14 +638,22 @@ describe('optimize (GEPA loop, offline)', () => {
     expect(r.state.history.some((h) => h.outcome === 'accepted')).toBe(true);
     expect(r.best.candidate.prompt.components['jev.instructions']).toContain(FAKE_REFLECTION_HINT);
     expect(r.improved).toBe(true);
-    expect(r.suggestedVersion).toBe(nextVersion('jev'));
+    expect(r.suggestedVersion).toBe(nextVersion('decision'));
     expect(r.bestInput.components?.['jev.instructions']).toContain('{prompt}');
-    expect(variantSnippet(r, 'RUN')).toContain(`'${nextVersion('jev')}': {`);
+    expect(variantSnippet(r, 'RUN')).toContain(`'${nextVersion('decision')}': {`);
     // Deterministic fake: the noise floor is zero.
     expect(r.state.noise?.sd).toBe(0);
     const holdoutPeople = new Set(r.state.split.holdout.map((id) => id.split(':')[0]));
     const trainPeople = new Set([...r.state.split.train, ...r.state.split.val].map((id) => id.split(':')[0]));
     for (const p of holdoutPeople) expect(trainPeople.has(p)).toBe(false);
+
+    expect(r.bestInput.predictor).toBe('decision:typesafe/jev-1.13');
+
+    // A run directory from before ADR-0054 names the decision kind `jev`; it resumes as the same run.
+    const statePath = join(runDir, 'state.json');
+    const saved = readFileSync(statePath, 'utf8');
+    expect(saved).toContain('"kind": "decision"');
+    writeFileSync(statePath, saved.replaceAll('"kind": "decision"', '"kind": "jev"'));
 
     // Resume with a higher iteration limit: the pool and history carry over.
     const before = r.state.iteration;
@@ -638,6 +664,10 @@ describe('optimize (GEPA loop, offline)', () => {
     );
     expect(r2.state.iteration).toBe(before + 1);
     expect(r2.state.pool.length).toBeGreaterThanOrEqual(r.state.pool.length);
+    expect(
+      r2.state.pool.every((e) => e.candidate.kind === 'decision' && e.candidate.prompt.kind === 'decision'),
+    ).toBe(true);
+    expect(r2.state.pool[0]!.candidate.hash).toBe(r.state.pool[0]!.candidate.hash);
     expect(log.some((l) => l.startsWith('resuming'))).toBe(true);
     expect(readFileSync(join(runDir, 'cache.jsonl'), 'utf8').split('\n').length).toBeGreaterThan(30);
   }, 60_000);
@@ -755,7 +785,7 @@ describe('optimize (GEPA loop, offline)', () => {
     });
     expect(md).toContain('**Verdict.** Improved');
     expect(md).toContain('### jev.instructions');
-    expect(md).toContain(nextVersion('jev'));
+    expect(md).toContain(nextVersion('decision'));
     // Aggregates and prompt text only: no question from the data.
     for (const i of instances.slice(0, 20)) expect(md).not.toContain(i.question.prompt);
   }, 60_000);

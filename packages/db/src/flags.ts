@@ -63,7 +63,7 @@ export function flagsFor(env: { FLAGS?: FlagshipBinding }): FlagReader {
 const ENVIRONMENT: FlagContext = { targetingKey: 'environment' };
 
 /**
- * Whether creating a mimic needs an invite code (`use-invite-code`, ADR-0054). The flag holds for the whole
+ * Whether creating a mimic needs an invite code (`use-invite-code`, ADR-0055). The flag holds for the whole
  * environment, like the spend caps; unbound or unreadable, it is on, as before the flag.
  */
 export async function inviteRequired(env: { FLAGS?: FlagshipBinding }): Promise<boolean> {

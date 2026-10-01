@@ -2,7 +2,7 @@
 
 > Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0028).
 
-- Predictor kind: `llm` (use as `llm:<model>@predict.v1`)
+- Predictor kind: `llm` (use as `llm:<model>`, the incumbent)
 - Source: PLAN Appendix A.3
 - Harness: `{"reasoningEffort":"low","reasoningMaxTokens":null,"maxTokens":3000,"schema":"probs","jevState":"json","calibrationTemperature":1,"keyEnum":false,"labelKeys":false}`
 

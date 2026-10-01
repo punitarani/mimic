@@ -7,7 +7,7 @@ const CreateBody = IntakeInput.extend({ inviteCode: z.string().trim().max(100).o
 
 /**
  * POST /api/mimics — intake → { mimicId }. Enqueues identity.search only if the person consented. The invite code is
- * checked only while `use-invite-code` is on (ADR-0054); off, any code sent is ignored.
+ * checked only while `use-invite-code` is on (ADR-0055); off, any code sent is ignored.
  */
 export const POST = handle(async (req: Request) => {
   const { deps: d, env } = await deps();

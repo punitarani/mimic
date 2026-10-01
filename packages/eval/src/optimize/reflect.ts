@@ -153,7 +153,7 @@ export function reflectMessages(c: Candidate, id: ComponentId, cases: string) {
       content: [
         `COMPONENT: ${id}`,
         `ROLE: ${spec.role}`,
-        `PREDICTOR: ${c.kind === 'jev' ? 'a decision model that reads the state and the question text and returns calibrated probabilities (it cannot follow long instructions, so wording matters more than length)' : 'an LLM returning JSON probabilities'}`,
+        `PREDICTOR: ${c.kind === 'decision' ? 'a decision model that reads the state and the question text and returns calibrated probabilities (it cannot follow long instructions, so wording matters more than length)' : 'an LLM returning JSON probabilities'}`,
         `PLACEHOLDERS (keep exactly): ${placeholders.length ? placeholders.map((p) => `{${p}}`).join(' ') : 'none'}`,
         `WORD LIMIT: ${spec.maxWords}, hard. Aim for ${targetWords(id)} or fewer (the current text has ${wordCount(c.prompt.components[id])}); to add a point, cut a weaker one.`,
         '',
