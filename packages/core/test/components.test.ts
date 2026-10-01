@@ -9,6 +9,7 @@ import {
   INCUMBENT_COMPONENTS,
   INCUMBENT_HARNESS,
   PREDICT_PROMPTS,
+  promptHash,
   reasoningOf,
   resolvePredictPrompt,
 } from '../src/components';
@@ -194,6 +195,19 @@ describe('prediction prompt components (ADR-0028)', () => {
       for (const id of COMPONENT_IDS)
         expect(componentProblems(id, p.components[id]), `${v.id} ${id}`).toEqual([]);
     }
+  });
+
+  it('prompt hashes are pinned: they label optimizer candidates and key the eval caches', () => {
+    // Taken before ADR-0052 renamed the decision kind; a change here orphans every `cand-<hash>` label and cache entry.
+    expect(promptHash(resolvePredictPrompt('jev-predict.v1', 'jev'))).toBe(
+      '00e3cc2e765d2f3a0b67140ddc206d41317ed89a2fb36e5705daf9da5fc57d5d',
+    );
+    expect(promptHash(resolvePredictPrompt('jev-predict.v2', 'jev'))).toBe(
+      'abc36f61fbb37cab612b95db85a61b6c89cb982335060cc80892dc9ce1b81db6',
+    );
+    expect(promptHash(resolvePredictPrompt('predict.v2', 'llm', 'deepseek/deepseek-v4.1-flash'))).toBe(
+      'f052d3501e76c38937c5198ba8ae4a6cc05af2d5d4a120839f197cdda57f4079',
+    );
   });
 
   it('flags missing and unknown placeholders and over-long text', () => {

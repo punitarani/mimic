@@ -311,6 +311,19 @@ describe('evaluate', () => {
     expect(feedbackFor(inst, failed)).toContain('failed (boom)');
   });
 
+  it('candidate hashes are pinned (ADR-0052 kept them through the rename)', () => {
+    expect(resolveCandidate({ predictor: 'jev:typesafe/jev-1.13' }).hash).toBe(
+      'typesafe/jev-1.13:00e3cc2e765d2f3a',
+    );
+    expect(resolveCandidate({ predictor: 'jev:typesafe/jev-1.13@jev-predict.v2' }).hash).toBe(
+      'typesafe/jev-1.13:abc36f61fbb37cab',
+    );
+    const edited = { 'jev.choice': 'They would pick: {label}' };
+    expect(resolveCandidate({ predictor: 'jev:typesafe/jev-1.13', components: edited }).hash).toBe(
+      'typesafe/jev-1.13:3537092ff2e42000',
+    );
+  });
+
   it('runs a candidate through the gateway, caching by candidate and instance', async () => {
     const decisions = new HintDecisions();
     const gw = gateway(decisions);
