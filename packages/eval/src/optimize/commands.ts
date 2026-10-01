@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import {
   COMPONENT_IDS,
   type ComponentId,
+  canonicalPredictorId,
   type EvalRunRecord,
   parsePredictorId,
   seededRng,
@@ -127,7 +128,7 @@ function candidatesFrom(values: {
   const out: Candidate[] = [];
   for (const id of list(values.predictor)) {
     parsePredictorId(id);
-    out.push(resolveCandidate({ predictor: id, label: id }));
+    out.push(resolveCandidate({ predictor: id, label: canonicalPredictorId(id) }));
   }
   for (const f of list(values.candidate))
     out.push(resolveCandidate(CandidateInput.parse(JSON.parse(readFileSync(resolve(f), 'utf8')))));
@@ -336,7 +337,8 @@ export async function diagnoseCmd(argv: string[]) {
     options: {
       ...COMMON,
       // Without --predictor, a role's rows from any predictor: the primaries of every config version (v7's is
-      // `jev:typesafe/jev-1.13@jev-predict.v2`, earlier ones unsuffixed), never an LLM fallback.
+      // `decision:typesafe/jev-1.13@jev-predict.v2`, earlier ones unsuffixed), never an LLM fallback. Either spelling
+      // of a decision ID matches (ADR-0052).
       predictor: { type: 'string' },
       role: { type: 'string', default: 'primary' },
       cases: { type: 'string', default: '30' },
@@ -351,7 +353,9 @@ export async function diagnoseCmd(argv: string[]) {
   // Shadows are many predictors at once; a diagnosis describes one.
   if (role === 'shadow' && !values.predictor) throw new Error('--role shadow needs --predictor');
   const recs = storedRecords(loaded.instances).filter(
-    (r) => r.candidate.endsWith(`|${role}`) && (!values.predictor || r.predictorId === values.predictor),
+    (r) =>
+      r.candidate.endsWith(`|${role}`) &&
+      (!values.predictor || r.predictorId === canonicalPredictorId(values.predictor)),
   );
   if (!recs.length)
     throw new Error(
@@ -416,7 +420,7 @@ export async function optimizeCmd(argv: string[]) {
     options: {
       ...COMMON,
       split: { type: 'string', default: 'all' },
-      predictor: { type: 'string', default: 'jev:typesafe/jev-1.13' },
+      predictor: { type: 'string', default: 'decision:typesafe/jev-1.13' },
       candidate: { type: 'string' },
       components: { type: 'string' },
       'reflection-model': { type: 'string', default: DEFAULT_REFLECTION_MODEL },
@@ -437,7 +441,7 @@ export async function optimizeCmd(argv: string[]) {
     throw new Error('optimize reads every split: dev people train and validate, test people are the holdout');
   const seedInput: CandidateInput = values.candidate
     ? CandidateInput.parse(JSON.parse(readFileSync(resolve(values.candidate), 'utf8')))
-    : { predictor: values.predictor, label: `seed ${values.predictor}` };
+    : { predictor: values.predictor, label: `seed ${canonicalPredictorId(values.predictor)}` };
   const seed = resolveCandidate(seedInput);
   const components = (
     values.components ? list(values.components) : DEFAULT_COMPONENTS[seed.kind]
@@ -445,7 +449,8 @@ export async function optimizeCmd(argv: string[]) {
   for (const c of components) if (!COMPONENT_IDS.includes(c)) throw new Error(`unknown component ${c}`);
   const loaded = await loadData(values.data, loadOptsOf(values));
   const spec: OptimizeSpec = {
-    name: values.name ?? `optimize ${seed.kind === 'jev' ? 'Jev templates' : 'LLM prompt'} (${seed.model})`,
+    name:
+      values.name ?? `optimize ${seed.kind === 'decision' ? 'Jev templates' : 'LLM prompt'} (${seed.model})`,
     seed: seedInput,
     components,
     reflectionModel: values['reflection-model'],

@@ -181,10 +181,16 @@ export interface PredictionResult {
   retryable?: boolean;
   /** Raw model output (LLM only, truncated). Kept in memory for eval traces; never persisted with the prediction. */
   raw?: string;
+  /**
+   * The model that answered, when it isn't the predictor's own: a decision call the `decisions-model` flag rerouted to
+   * a challenger (ADR-0051). A served row is stored under `servedPredictorId(id, servedModel)` (ADR-0052); this field
+   * itself is never persisted.
+   */
+  servedModel?: string;
 }
 
 export interface Predictor {
-  id: string; // 'jev:typesafe/jev-1.13', 'llm:openai/gpt-6-luna', …
+  id: string; // 'decision:typesafe/jev-1.13', 'llm:openai/gpt-6-luna', … (canonical, ADR-0052)
   predict(state: PersonState, qs: Question[]): Promise<PredictionResult[]>;
 }
 

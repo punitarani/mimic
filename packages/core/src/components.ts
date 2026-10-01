@@ -19,6 +19,22 @@ export const COMPONENT_IDS = [
 export type ComponentId = (typeof COMPONENT_IDS)[number];
 export type PredictComponents = Record<ComponentId, string>;
 
+/**
+ * How a predictor is called (ADR-0052): `decision`, the OpenRouter Decisions API (Jev, span-01: a state plus typed
+ * questions, answered with probabilities), or `llm`, a chat completion that returns JSON probabilities. The kind is the
+ * prefix of a predictor ID; the model follows it.
+ */
+export type PredictorKind = 'decision' | 'llm';
+
+/**
+ * A kind by its name in a predictor ID. `jev` is the decision kind's name from before ADR-0052, accepted forever:
+ * hashed configs (v3–v8, cfg.e3b.control) spell their primary with it.
+ */
+export function predictorKindOf(name: string): PredictorKind | null {
+  if (name === 'decision' || name === 'jev') return 'decision';
+  return name === 'llm' ? 'llm' : null;
+}
+
 export interface ComponentSpec {
   /** What the component does, shown to the reflection model. */
   role: string;
@@ -26,7 +42,7 @@ export interface ComponentSpec {
   optional: string[];
   maxWords: number;
   /** Which predictor kinds read this component. */
-  kinds: Array<'jev' | 'llm'>;
+  kinds: PredictorKind[];
 }
 
 export const COMPONENT_SPECS: Record<ComponentId, ComponentSpec> = {
@@ -49,35 +65,35 @@ export const COMPONENT_SPECS: Record<ComponentId, ComponentSpec> = {
     required: ['seq', 'q', 'answer'],
     optional: ['options', 'pace', 'why'],
     maxWords: 40,
-    kinds: ['llm', 'jev'],
+    kinds: ['llm', 'decision'],
   },
   'jev.instructions': {
     role: 'Instructions of a decision-model question asking how the person in the state would answer {prompt}.',
     required: ['prompt'],
     optional: [],
     maxWords: 120,
-    kinds: ['jev'],
+    kinds: ['decision'],
   },
   'jev.choice': {
     role: 'Criterion text for one option of a multiple-choice prediction; {label} is the option label.',
     required: ['label'],
     optional: [],
     maxWords: 40,
-    kinds: ['jev'],
+    kinds: ['decision'],
   },
   'jev.noul.true': {
     role: 'Criterion for "yes" when predicting a yes/no question.',
     required: [],
     optional: [],
     maxWords: 40,
-    kinds: ['jev'],
+    kinds: ['decision'],
   },
   'jev.noul.false': {
     role: 'Criterion for "no" when predicting a yes/no question.',
     required: [],
     optional: [],
     maxWords: 40,
-    kinds: ['jev'],
+    kinds: ['decision'],
   },
 };
 
@@ -87,10 +103,10 @@ export const COMPONENT_SPECS: Record<ComponentId, ComponentSpec> = {
  */
 export function componentReadBy(
   id: ComponentId,
-  p: { kind: 'jev' | 'llm'; harness: Pick<PredictHarness, 'jevState'> },
+  p: { kind: PredictorKind; harness: Pick<PredictHarness, 'jevState'> },
 ): boolean {
   if (!COMPONENT_SPECS[id].kinds.includes(p.kind)) return false;
-  return !(p.kind === 'jev' && id === 'state.evidence.line' && p.harness.jevState !== 'text');
+  return !(p.kind === 'decision' && id === 'state.evidence.line' && p.harness.jevState !== 'text');
 }
 
 /** The components as they shipped in `predict.v1` and `jev-predict.v1` (byte-identical to the original literals). */
@@ -185,7 +201,7 @@ export type PerModelHarness = Partial<Pick<PredictHarness, (typeof PER_MODEL_HAR
 
 export interface PredictPromptVariant {
   id: string;
-  kind: 'jev' | 'llm';
+  kind: PredictorKind;
   title: string;
   /** Overrides over the incumbent; omitted components keep the incumbent text. */
   components: Partial<PredictComponents>;
@@ -203,16 +219,17 @@ export interface PredictPromptVariant {
 /** A resolved prompt: every component and harness setting, plus the version ID stored on predictions. */
 export interface PredictPrompt {
   version: string;
-  kind: 'jev' | 'llm';
+  kind: PredictorKind;
   components: PredictComponents;
   harness: PredictHarness;
 }
 
-export const DEFAULT_PROMPT_VERSION = { jev: 'jev-predict.v1', llm: 'predict.v1' } as const;
+/** The incumbent prompt per kind: a predictor ID without `@<version>` uses it. The Jev templates keep their IDs. */
+export const DEFAULT_PROMPT_VERSION = { decision: 'jev-predict.v1', llm: 'predict.v1' } as const;
 
 /**
  * Registered prediction prompt versions. Add a variant here (never edit one) to ship an optimized candidate; it is then
- * addressable as `llm:<model>@<id>` or `jev:<model>@<id>` in configs and `pnpm backfill` (ADR-0028).
+ * addressable as `llm:<model>@<id>` or `decision:<model>@<id>` in configs and `pnpm backfill` (ADR-0028).
  */
 export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
   'predict.v1': {
@@ -225,7 +242,7 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
   },
   'jev-predict.v1': {
     id: 'jev-predict.v1',
-    kind: 'jev',
+    kind: 'decision',
     title: 'Jev prediction templates (incumbent)',
     components: {},
     harness: {},
@@ -270,7 +287,7 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
    */
   'jev-predict.v2': {
     id: 'jev-predict.v2',
-    kind: 'jev',
+    kind: 'decision',
     title: 'Jev prediction templates, calibrated (temperature 4)',
     components: {},
     harness: { calibrationTemperature: 4 },
@@ -278,7 +295,7 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
   },
 };
 
-export function resolvePredictPrompt(version: string, kind: 'jev' | 'llm', model?: string): PredictPrompt {
+export function resolvePredictPrompt(version: string, kind: PredictorKind, model?: string): PredictPrompt {
   const v = PREDICT_PROMPTS[version];
   if (!v) throw new Error(`Unknown prediction prompt version: ${version}`);
   if (v.kind !== kind) throw new Error(`Prompt version ${version} is for ${v.kind} predictors, not ${kind}`);
@@ -323,18 +340,29 @@ export function componentProblems(id: ComponentId, text: string): string[] {
   return out;
 }
 
+/**
+ * The kind as `promptHash` hashes it. Every hash taken before ADR-0052 hashed the decision kind as `jev`, and those
+ * hashes label optimizer candidates (`cand-<hash>`) and key the eval caches and run directories, so it still does.
+ */
+const HASHED_KIND = { decision: 'jev', llm: 'llm' } as const satisfies Record<PredictorKind, string>;
+
 export function promptHash(p: Omit<PredictPrompt, 'version'>): string {
-  return hashJson({ kind: p.kind, components: p.components, harness: p.harness });
+  return hashJson({ kind: HASHED_KIND[p.kind], components: p.components, harness: p.harness });
 }
 
 export function renderVariantDoc(v: PredictPromptVariant): string {
   const p = resolvePredictPrompt(v.id, v.kind);
+  // The incumbent is named without a suffix: `predictorIdProblem` refuses `@<incumbent>`.
+  const use =
+    v.id === DEFAULT_PROMPT_VERSION[v.kind]
+      ? `\`${v.kind}:<model>\`, the incumbent`
+      : `\`${v.kind}:<model>@${v.id}\``;
   const lines = [
     `# ${v.id} — ${v.title}`,
     '',
     '> Generated from `packages/core/src/components.ts`. A change means a new version ID (ADR-0028).',
     '',
-    `- Predictor kind: \`${v.kind}\` (use as \`${v.kind}:<model>@${v.id}\`)`,
+    `- Predictor kind: \`${v.kind}\` (use as ${use})`,
     `- Source: ${v.source}`,
   ];
   const models = Object.keys(v.modelHarness ?? {});

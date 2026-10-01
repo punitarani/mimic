@@ -3,6 +3,7 @@ import {
   answerToDistribution,
   argmax,
   canonicalJson,
+  canonicalPredictorId,
   computeFidelity,
   configHash,
   DEFAULT_CONFIG,
@@ -16,10 +17,12 @@ import {
   E3B_CONTROL_LABEL,
   entropy,
   expectedCalibrationError,
+  formatPredictorId,
   gateFailures,
   normalizeDist,
   normalizedEntropy,
-  type PipelineConfig,
+  PipelineConfig,
+  parsePredictorId,
   repeatAgreement,
   scorePrediction,
   selfConsistency,
@@ -237,6 +240,27 @@ describe('hashing and config (PLAN §7.1)', () => {
     // v2 (ADR-0024) added MiMo V2.6 Pro; v3 (ADR-0025) replaced it with MiMo V2.6 Flash and Qwen3.8 Flash.
     expect(configHash(withShadows([...v1, 'llm:xiaomi/mimo-v2.6-pro']))).toBe(
       'c597daa8c51b8105827893241dfcbf8396ca4dc4e0f3aa8d197447aca3f7d15c',
+    );
+  });
+
+  it('pinned configs keep their jev: spelling, read as decision: (ADR-0052)', () => {
+    // Changing the spelling inside a config would change its hash; the alias is why it never has to.
+    const pinned = [
+      DEFAULT_CONFIG_V3,
+      DEFAULT_CONFIG_V4,
+      DEFAULT_CONFIG_V5,
+      DEFAULT_CONFIG_V6,
+      DEFAULT_CONFIG_V7,
+    ];
+    for (const cfg of [...pinned, DEFAULT_CONFIG, E3B_CONTROL_CONFIG]) {
+      const { primary } = cfg.predictor;
+      expect(primary.startsWith('jev:')).toBe(true);
+      expect(PipelineConfig.parse(cfg).predictor.primary).toBe(primary);
+      expect(formatPredictorId(parsePredictorId(primary))).toBe(canonicalPredictorId(primary));
+      expect(canonicalPredictorId(primary).startsWith('decision:')).toBe(true);
+    }
+    expect(canonicalPredictorId(DEFAULT_CONFIG.predictor.primary)).toBe(
+      'decision:typesafe/jev-1.13@jev-predict.v2',
     );
   });
 

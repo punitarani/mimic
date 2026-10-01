@@ -45,7 +45,7 @@ Commands
   export    D1 → SQLite (same schema); consented mimics only; names, locations, links, URLs dropped, IDs replaced
             --env local|preview|prod   --out <file.sqlite>   [--keep-identity]  (internal reproduction check only)
   replay    Offline replay (PLAN §12.3)
-            --data <file.sqlite> --predictor jev:typesafe/jev-1.13 --state full|raw|structured|summary
+            --data <file.sqlite> --predictor decision:typesafe/jev-1.13 --state full|raw|structured|summary
             --checkpoints 10,20,30 --split dev|test|all [--targets later|heldout] [--limit N] [--offline]
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
   select    Pool-restricted selection simulation (biased; iteration only)
@@ -74,10 +74,10 @@ Commands
   benchmark Jev vs span-01 on the same sealed instances (ADR-0051, docs/CHALLENGER.md): quality, latency p50/p95,
             cost per request, error rate, and the enable/keep verdict; writes benchmark.{md,csv,json}
             --data <a.sqlite>[,<b.sqlite>] [--split test] [--seed benchmark] [--limit N] [--max-targets 40]
-            [--incumbent jev:typesafe/jev-1.13@jev-predict.v2] [--challenger <id>] [--max-usd 1] [--offline]
+            [--incumbent decision:typesafe/jev-1.13@jev-predict.v2] [--challenger <id>] [--max-usd 1] [--offline]
             [--summary <file>]   also appends the Markdown there (GitHub's step summary)
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
-            --data … --predictor jev:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
+            --data … --predictor decision:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
             [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]
             [--max-iterations 30] [--reflection-model anthropic/claude-sonnet-5.5] [--no-noise] [--run-dir <dir>]
             [--k 30] [--publish local|preview|prod] [--offline]
@@ -210,7 +210,7 @@ async function replayCmd(argv: string[]) {
     args: argv,
     options: {
       data: { type: 'string' },
-      predictor: { type: 'string', default: 'jev:typesafe/jev-1.13' },
+      predictor: { type: 'string', default: 'decision:typesafe/jev-1.13' },
       state: { type: 'string', default: 'full' },
       checkpoints: { type: 'string', default: '10,20,30' },
       split: { type: 'string', default: 'dev' },

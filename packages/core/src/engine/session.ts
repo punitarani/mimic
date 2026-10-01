@@ -63,7 +63,7 @@ import {
   timed,
 } from './deps';
 
-export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.jev;
+export const JEV_PROMPT_VERSION = DEFAULT_PROMPT_VERSION.decision;
 export const MIN_POOL = 6;
 export const MAX_POOL = 15;
 

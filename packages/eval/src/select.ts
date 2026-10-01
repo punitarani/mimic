@@ -3,13 +3,13 @@ import {
   buildBelief,
   buildState,
   type Category,
+  DecisionPredictor,
   type EngineDeps,
   type EvalRunRecord,
   type EvidenceItem,
   facetsFor,
   type ItemStatRecord,
   JEV_MODEL,
-  JevPredictor,
   lexicalSimilarity,
   loadConfig,
   loadMimicData,
@@ -81,7 +81,7 @@ export async function simulateSelection(deps: EngineDeps, spec: SelectSpec, data
     all.filter((m) => spec.split === 'all' || m.split === spec.split),
     seededRng(spec.seed),
   ).slice(0, spec.limitPeople);
-  const primary = new JevPredictor(deps.gateway, JEV_MODEL, { purpose: 'eval.select' });
+  const primary = new DecisionPredictor(deps.gateway, JEV_MODEL, { purpose: 'eval.select' });
   const stats = new Map<string, ItemStatRecord>(
     spec.population === false ? [] : (await deps.store.listItemStats()).map((s) => [s.key, s]),
   );

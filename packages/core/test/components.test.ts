@@ -14,11 +14,15 @@ import {
   resolvePredictPrompt,
 } from '../src/components';
 import {
+  canonicalPredictorId,
   configHash,
   DEFAULT_CONFIG,
+  formatPredictorId,
   PipelineConfig,
   parsePredictorId,
   predictorIdProblem,
+  predictorIdSpellings,
+  servedPredictorId,
 } from '../src/config';
 import { temperatureScale } from '../src/distribution';
 import { Gateway } from '../src/gateway';
@@ -153,7 +157,7 @@ describe('prediction prompt components (ADR-0028)', () => {
   it('parses prompt versions in predictor IDs', () => {
     expect(parsePredictorId('llm:vendor/model')).toEqual({ kind: 'llm', model: 'vendor/model' });
     expect(parsePredictorId('jev:typesafe/jev-1.13@jev-predict.v1')).toEqual({
-      kind: 'jev',
+      kind: 'decision',
       model: 'typesafe/jev-1.13',
       promptVersion: 'jev-predict.v1',
     });
@@ -162,11 +166,85 @@ describe('prediction prompt components (ADR-0028)', () => {
     expect(promptVersionOf('jev:typesafe/jev-1.13')).toBe('jev-predict.v1');
     expect(promptVersionOf('llm:vendor/model@predict.v1')).toBe('predict.v1');
     expect(() => assertPredictorId('llm:vendor/model@nope.v9')).toThrow(/unknown prediction prompt version/);
-    expect(() => assertPredictorId('llm:vendor/model@jev-predict.v1')).toThrow(/is a jev prompt, not llm/);
+    expect(() => assertPredictorId('llm:vendor/model@jev-predict.v1')).toThrow(
+      /is a decision prompt, not llm/,
+    );
     expect(() => assertPredictorId('llm:vendor/model@predict.v1')).toThrow(/names the incumbent/);
     expect(() => assertPredictorId('jev:typesafe/jev-1.13')).not.toThrow();
     const gw = {} as Gateway;
     expect(makePredictor(gw, 'llm:vendor/model@predict.v1', { purpose: 't' }).id).toBe('llm:vendor/model');
+  });
+
+  it('decision: predictor IDs, with jev: read as an alias (ADR-0052)', () => {
+    const spec = { kind: 'decision', model: 'typesafe/jev-1.13', promptVersion: 'jev-predict.v2' };
+    expect(parsePredictorId('jev:typesafe/jev-1.13@jev-predict.v2')).toEqual(spec);
+    expect(parsePredictorId('decision:typesafe/jev-1.13@jev-predict.v2')).toEqual(spec);
+    expect(() => parsePredictorId('Jev:typesafe/jev-1.13')).toThrow(/Unknown predictor kind/);
+    expect(() => parsePredictorId('decisions:typesafe/jev-1.13')).toThrow(/Unknown predictor kind/);
+    for (const id of [
+      'decision:typesafe/jev-1.13',
+      'decision:respan/span-01-20260925@jev-predict.v2',
+      'llm:a/b',
+    ])
+      expect(formatPredictorId(parsePredictorId(id))).toBe(id);
+    expect(formatPredictorId(parsePredictorId('jev:typesafe/jev-1.13'))).toBe('decision:typesafe/jev-1.13');
+
+    // A pure prefix swap: total, idempotent, never throws.
+    expect(canonicalPredictorId('jev:typesafe/jev-1.13@jev-predict.v2')).toBe(
+      'decision:typesafe/jev-1.13@jev-predict.v2',
+    );
+    for (const id of [
+      'decision:typesafe/jev-1.13',
+      'llm:openai/gpt-6-luna@predict.v2',
+      'nope',
+      '',
+      'jevx:a/b',
+    ]) {
+      expect(canonicalPredictorId(id)).toBe(id);
+      expect(canonicalPredictorId(canonicalPredictorId(id))).toBe(canonicalPredictorId(id));
+    }
+    expect(predictorIdSpellings('jev:typesafe/jev-1.13')).toEqual([
+      'decision:typesafe/jev-1.13',
+      'jev:typesafe/jev-1.13',
+    ]);
+    expect(predictorIdSpellings('decision:typesafe/jev-1.13')).toEqual([
+      'decision:typesafe/jev-1.13',
+      'jev:typesafe/jev-1.13',
+    ]);
+    expect(predictorIdSpellings('llm:a/b')).toEqual(['llm:a/b']);
+
+    // The model that answered replaces the predictor's own, keeping the prompt version.
+    expect(servedPredictorId('jev:typesafe/jev-1.13@jev-predict.v2', 'respan/span-01-20260925')).toBe(
+      'decision:respan/span-01-20260925@jev-predict.v2',
+    );
+    expect(servedPredictorId('decision:typesafe/jev-1.13', 'respan/span-01-20260925')).toBe(
+      'decision:respan/span-01-20260925',
+    );
+    expect(servedPredictorId('jev:typesafe/jev-1.13@jev-predict.v2')).toBe(
+      'decision:typesafe/jev-1.13@jev-predict.v2',
+    );
+    expect(servedPredictorId('decision:typesafe/jev-1.13', 'typesafe/jev-1.13')).toBe(
+      'decision:typesafe/jev-1.13',
+    );
+    expect(servedPredictorId('llm:a/b@predict.v2', 'c/d')).toBe('llm:a/b@predict.v2');
+
+    // Predictors are always named canonically; the incumbent suffix is still refused, under the new spelling.
+    const gw = {} as Gateway;
+    expect(makePredictor(gw, 'jev:typesafe/jev-1.13@jev-predict.v2', { purpose: 't' }).id).toBe(
+      'decision:typesafe/jev-1.13@jev-predict.v2',
+    );
+    expect(makePredictor(gw, 'jev:typesafe/jev-1.13', { purpose: 't' }).id).toBe(
+      'decision:typesafe/jev-1.13',
+    );
+    expect(predictorIdProblem('jev:typesafe/jev-1.13@jev-predict.v1')).toMatch(
+      /use decision:typesafe\/jev-1\.13$/,
+    );
+    expect(predictorIdProblem('decision:typesafe/jev-1.13@predict.v2')).toMatch(
+      /is a llm prompt, not decision/,
+    );
+    expect(promptVersionOf('decision:respan/span-01-20260925@jev-predict.v2')).toBe('jev-predict.v2');
+    expect(calibrationTemperatureOf('jev:typesafe/jev-1.13@jev-predict.v2')).toBe(4);
+    expect(calibrationTemperatureOf('decision:typesafe/jev-1.13@jev-predict.v2')).toBe(4);
   });
 
   it('rejects a config naming an unregistered or incumbent prompt version, and reads what Jev reads', () => {
@@ -181,7 +259,7 @@ describe('prediction prompt components (ADR-0028)', () => {
     );
     // The defaults' hashes are pinned elsewhere; validation must not change what parse returns.
     expect(configHash(DEFAULT_CONFIG)).toBe(configHash(PipelineConfig.parse(DEFAULT_CONFIG)));
-    const jev = resolvePredictPrompt('jev-predict.v1', 'jev');
+    const jev = resolvePredictPrompt('jev-predict.v1', 'decision');
     expect(componentReadBy('state.evidence.line', jev)).toBe(false);
     expect(
       componentReadBy('state.evidence.line', { ...jev, harness: { ...jev.harness, jevState: 'text' } }),
@@ -199,10 +277,10 @@ describe('prediction prompt components (ADR-0028)', () => {
 
   it('prompt hashes are pinned: they label optimizer candidates and key the eval caches', () => {
     // Taken before ADR-0052 renamed the decision kind; a change here orphans every `cand-<hash>` label and cache entry.
-    expect(promptHash(resolvePredictPrompt('jev-predict.v1', 'jev'))).toBe(
+    expect(promptHash(resolvePredictPrompt('jev-predict.v1', 'decision'))).toBe(
       '00e3cc2e765d2f3a0b67140ddc206d41317ed89a2fb36e5705daf9da5fc57d5d',
     );
-    expect(promptHash(resolvePredictPrompt('jev-predict.v2', 'jev'))).toBe(
+    expect(promptHash(resolvePredictPrompt('jev-predict.v2', 'decision'))).toBe(
       'abc36f61fbb37cab612b95db85a61b6c89cb982335060cc80892dc9ce1b81db6',
     );
     expect(promptHash(resolvePredictPrompt('predict.v2', 'llm', 'deepseek/deepseek-v4.1-flash'))).toBe(
