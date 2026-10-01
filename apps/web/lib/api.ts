@@ -48,7 +48,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export interface IntakeRequest {
-  /** Needed only while sign-up is invite-only (`use-invite-code`, ADR-0053). */
+  /** Needed only while sign-up is invite-only (`use-invite-code`, ADR-0054). */
   inviteCode?: string;
   name: string;
   location: string;

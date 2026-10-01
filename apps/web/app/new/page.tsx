@@ -50,12 +50,15 @@ function IntakeForm({ invite }: { invite: string | null }) {
     employer: '',
     link: '',
   });
-  // Whether sign-up is invite-only (`use-invite-code`, ADR-0053). The page is prerendered, so this starts at the
-  // flag's default and the server says otherwise; a rejected code turns it back on.
-  const [inviteNeeded, setInviteNeeded] = useState(true);
+  // Whether the server said sign-up is open (`use-invite-code` off, ADR-0054). The page is prerendered, so until it
+  // answers, a code is needed (the flag's default); only an explicit `required: false` opens it.
+  const [signupOpen, setSignupOpen] = useState(false);
   // A code from the link stays hidden until the server rejects it; then the field appears so the person can type another.
   const [inviteLocked, setInviteLocked] = useState(invite !== null);
   const [rejections, setRejections] = useState(0);
+  // A rejected code means one is needed after all (the flag was turned on while the form was open), whatever
+  // `/api/invite` answered or answers later.
+  const inviteNeeded = !signupOpen || rejections > 0;
   const inviteRef = useRef<HTMLInputElement>(null);
   const [attest, setAttest] = useState(false);
   const [search, setSearch] = useState(true);
@@ -71,7 +74,7 @@ function IntakeForm({ invite }: { invite: string | null }) {
     api
       .inviteRequired()
       .then((r) => {
-        if (live) setInviteNeeded(r.required);
+        if (live) setSignupOpen(r.required === false);
       })
       .catch(() => {});
     return () => {
@@ -110,7 +113,6 @@ function IntakeForm({ invite }: { invite: string | null }) {
       setError(err instanceof Error ? err.message : 'Something went wrong.');
       setBusy(false);
       if (err instanceof ApiError && inviteRejected(err.status, err.message)) {
-        setInviteNeeded(true);
         setInviteLocked(false);
         setRejections((n) => n + 1);
       }

@@ -76,9 +76,10 @@ since it can then be deleted. The key each choice needs:
 Only the chosen providers' keys are required and pushed. A deploy adds secrets and never deletes one, so a key pushed
 earlier for a provider no longer chosen stays on the worker until `wrangler secret delete <NAME> --env prod` removes
 it (ADR-0052). Runtime levers are Flagship flags in the app `mimic` instead,
-and change without a redeploy (ADR-0052, docs/CHALLENGER.md): `decisions-model`, and the spend caps `budget-usd` (USD
+and change without a redeploy (ADR-0052, docs/CHALLENGER.md): `decisions-model`, the spend caps `budget-usd` (USD
 per mimic on the standard budget, default 1; ADR-0035) and `budget-session-share` (the session's share of it, default
-0.8). Where Flagship is unbound (preview, local dev) the caps are their code defaults, or `BUDGET_USD` and
+0.8), and `use-invite-code` (whether sign-up needs a code from `INVITE_CODES`, default on; ADR-0054). Where Flagship
+is unbound (preview, local dev) every flag reads its code default; the caps can still be set with `BUDGET_USD` and
 `BUDGET_SESSION_SHARE` in `.dev.vars`. A deploy no longer reads those two names; preflight warns if they are set.
 
 Fixtures and the hash embedder are for tests only, so preflight refuses them. Doppler's own metadata

@@ -15,7 +15,7 @@ import {
 /**
  * The `mimic` app as the Flags workflow saw it on 2026-09-30: variations named by their labels, values as the code
  * spells them, a $2 cap, plus the provider flags and `vector-backend`, which no code reads since ADR-0052. Since then,
- * `use-invite-code` as an on/off switch (ADR-0053).
+ * `use-invite-code` as an on/off switch (ADR-0054).
  */
 const live = (): LiveFlag[] => [
   {
@@ -104,7 +104,7 @@ describe('flag registry (ADR-0051, ADR-0052)', () => {
     expect(FLAG_SPECS.budgetSessionShare.parse('0.75')).toBe(0.75);
   });
 
-  it('use-invite-code takes a boolean, or a string flag with on/off values (ADR-0053)', () => {
+  it('use-invite-code takes a boolean, or a string flag with on/off values (ADR-0054)', () => {
     const spec = FLAG_SPECS.useInviteCode;
     expect(spec.fallback).toBe(true);
     for (const v of [true, 'on', 'true', 'yes', 'enabled', '1', 1]) expect(spec.parse(v)).toBe(true);

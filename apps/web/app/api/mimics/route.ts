@@ -7,15 +7,14 @@ const CreateBody = IntakeInput.extend({ inviteCode: z.string().trim().max(100).o
 
 /**
  * POST /api/mimics — intake → { mimicId }. Enqueues identity.search only if the person consented. The invite code is
- * checked only while `use-invite-code` is on (ADR-0053); off, any code sent is ignored.
+ * checked only while `use-invite-code` is on (ADR-0054); off, any code sent is ignored.
  */
 export const POST = handle(async (req: Request) => {
   const { deps: d, env } = await deps();
   const pid = await participant(env);
   if (await rateLimited(env, pid)) return fail(429, 'Too many requests. Try again in a minute.');
-  const input = await body(req, CreateBody);
-  if ((await inviteRequired(env as MimicBindings)) && !inviteOk(env, input.inviteCode))
-    return fail(403, 'That invite code is not valid.');
+  const [input, required] = await Promise.all([body(req, CreateBody), inviteRequired(env as MimicBindings)]);
+  if (required && !inviteOk(env, input.inviteCode)) return fail(403, 'That invite code is not valid.');
   const { inviteCode: _code, ...intake } = input;
   const m = await createMimic(d, intake, pid);
   return ok({ mimicId: m.id, identity: m.consentSearch }, { status: 201 });

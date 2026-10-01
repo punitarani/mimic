@@ -1945,7 +1945,7 @@ changed those values in that time. This ADR gives every value one home, chosen b
   ADR-0051 pushed for a provider not chosen (`PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`) stays on the worker, and is
   no longer rotated with Doppler. Delete each with `wrangler secret delete <NAME> --env prod` from `apps/worker`.
 
-## ADR-0053 — The invite code behind the `use-invite-code` flag (2026-10-01)
+## ADR-0054 — The invite code behind the `use-invite-code` flag (2026-10-01)
 
 Sign-up has needed an invite code since the start (PLAN §11, ADR-0026). Opening it up, or closing it again, meant a
 code change. The gate is now a runtime lever, which is what flags are for (ADR-0052): a kill switch that is safe at

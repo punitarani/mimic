@@ -56,12 +56,19 @@ export function flagsFor(env: { FLAGS?: FlagshipBinding }): FlagReader {
 }
 
 /**
- * Whether creating a mimic needs an invite code (`use-invite-code`, ADR-0053). The flag holds for the whole
+ * The context for flags that hold for the whole environment, not a person (the spend caps, `use-invite-code`): a fixed
+ * targeting key makes every request, batch and cron run evaluate them alike (without one, Flagship buckets a
+ * percentage rule at random on each read).
+ */
+const ENVIRONMENT: FlagContext = { targetingKey: 'environment' };
+
+/**
+ * Whether creating a mimic needs an invite code (`use-invite-code`, ADR-0054). The flag holds for the whole
  * environment, like the spend caps; unbound or unreadable, it is on, as before the flag.
  */
 export async function inviteRequired(env: { FLAGS?: FlagshipBinding }): Promise<boolean> {
   const spec = FLAG_SPECS.useInviteCode;
-  return flagsFor(env).boolean(spec.key, spec.fallback, { targetingKey: 'environment' });
+  return flagsFor(env).boolean(spec.key, spec.fallback, ENVIRONMENT);
 }
 
 const warned = new Set<string>();
@@ -87,9 +94,6 @@ export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
   if (!env.FLAGS) return env;
   const flags = flagsFor(env);
   const out: E = { ...env };
-  // These flags hold for the whole environment, not a person: a fixed targeting key makes every request, batch and
-  // cron run evaluate them alike (without one, Flagship buckets a percentage rule at random on each read).
-  const ctx = { targetingKey: 'environment' };
   await Promise.all(
     SETTING_SPECS.map(async (spec) => {
       const name = spec.setting!;
@@ -98,8 +102,8 @@ export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
       const fallback = current ?? spec.fallback;
       const read =
         spec.kind === 'number'
-          ? await flags.number(spec.key, Number(fallback), ctx)
-          : await flags.string(spec.key, String(fallback), ctx);
+          ? await flags.number(spec.key, Number(fallback), ENVIRONMENT)
+          : await flags.string(spec.key, String(fallback), ENVIRONMENT);
       const value = spec.parse(read);
       if (value === null)
         return warnOnce(
@@ -143,12 +147,11 @@ export async function flagHealth(env: {
             : spec.kind === 'boolean'
               ? await binding.getBooleanDetails(spec.key, spec.fallback === true, ctx)
               : await binding.getStringDetails(spec.key, String(spec.fallback), ctx);
-        // Runtime reads are untyped and coerced (FlagshipFlags), so a flag made with another type (a number flag
-        // made as a string, say) still works there: judge it by that read, and keep the error code visible.
+        // Runtime reads are untyped (FlagshipFlags), so a flag made with another type (a number flag made as a
+        // string, say) still works there: judge the untyped value as `flags:check` does, and keep the error code
+        // visible. Not the coerced read: an unusable value coerces to the default and would pass.
         const mismatch = d.errorCode === 'TYPE_MISMATCH';
-        const value = mismatch
-          ? coerceFlag(await binding.get(spec.key, spec.fallback, ctx), spec.fallback)
-          : d.value;
+        const value = mismatch ? await binding.get(spec.key, spec.fallback, ctx) : d.value;
         flags[spec.key] = {
           ...(d.reason ? { reason: d.reason } : {}),
           ...(d.errorCode ? { errorCode: d.errorCode } : {}),

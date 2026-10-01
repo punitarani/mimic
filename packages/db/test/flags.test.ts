@@ -67,7 +67,7 @@ describe('Flagship flags (ADR-0051)', () => {
     expect(flagsFor({})).toBe(NO_FLAGS);
   });
 
-  it('use-invite-code: on unless the flag says off, for the whole environment (ADR-0053)', async () => {
+  it('use-invite-code: on unless the flag says off, for the whole environment (ADR-0054)', async () => {
     expect(await inviteRequired({})).toBe(true);
     expect(await inviteRequired({ FLAGS: flagship({}) })).toBe(true);
     expect(await inviteRequired({ FLAGS: flagship({ 'use-invite-code': true }) })).toBe(true);
@@ -205,5 +205,17 @@ describe('Flagship flags (ADR-0051)', () => {
     });
     expect(asString.ok).toBe(true);
     expect(await new FlagshipFlags(flagship({ 'budget-usd': '1' })).number('budget-usd', 5)).toBe(1);
+
+    // use-invite-code made as a string on/off flag reads as a switch (ADR-0054); any other string can't be used.
+    const switchAsString = await flagHealth({ FLAGS: flagship({ ...all, 'use-invite-code': 'off' }) });
+    expect(switchAsString.flags['use-invite-code']).toEqual({
+      reason: 'ERROR',
+      errorCode: 'TYPE_MISMATCH',
+      ok: true,
+    });
+    expect(switchAsString.ok).toBe(true);
+    const badSwitch = await flagHealth({ FLAGS: flagship({ ...all, 'use-invite-code': 'maybe' }) });
+    expect(badSwitch.flags['use-invite-code']).toMatchObject({ errorCode: 'TYPE_MISMATCH', ok: false });
+    expect(badSwitch.ok).toBe(false);
   });
 });
