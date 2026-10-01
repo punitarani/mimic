@@ -249,29 +249,30 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     // The request as asked, with the model the API expects: nothing else.
     expect(calls[0]!.body).toEqual({ model: 'clef', state: clefAsked.state, questions: clefAsked.questions });
     expect(res.modelSnapshot).toBe('@cf/cloudflare/clef');
-    expect(res.usage).toEqual({ inputTokens: 412, outputTokens: 3, costUsd: (412 * 0.24) / 1e6 });
-    expect(res.answers.urgent).toEqual({ type: 'noul', p: 0.97 });
-    expect(res.answers.team).toMatchObject({ type: 'choice', choice: 'technical', confidence: 0.88 });
-    expect(res.answers.severity).toMatchObject({ type: 'score', score: 2.62 });
+    expect(res.usage).toEqual({ inputTokens: 380, outputTokens: 0, costUsd: (380 * 0.24) / 1e6 });
+    expect(res.answers.q_canary_noul).toEqual({ type: 'noul', p: 0.8889 });
+    expect(res.answers.q_canary_choice).toMatchObject({ type: 'choice', choice: 'a', confidence: 0.9484 });
+    expect(res.answers.q_canary_score).toMatchObject({ type: 'score', score: 2.3795 });
     expect(res.raw).toEqual(fixture('clef-decisions.json'));
     // Read as Jev's answers are: score levels by index.
     const dist = answerToDistribution(
-      { type: 'score', options: ['0', '1', '2', '3'].map((key) => ({ key, label: key })) },
-      res.answers.severity!,
+      { type: 'score', options: ['0', '1', '2', '3', '4'].map((key) => ({ key, label: key })) },
+      res.answers.q_canary_score!,
     );
-    expect(argmaxKey(dist)).toBe('3');
+    expect(argmaxKey(dist)).toBe('2');
   });
 
   it('prices clef-flash at its own rate and calls its own model', async () => {
-    const env = fixture('clef-decisions.json') as { result: Record<string, unknown> };
-    const { fetch, calls } = replay({ json: { ...env, result: { ...env.result, model: 'clef-flash' } } });
+    const { fetch, calls } = replay({ json: fixture('clef-flash-decisions.json') });
     const res = await new WorkersAiDecisions({ fetch, accountId: 'acct' }).decide({
       ...clefAsked,
       model: CLEF_FLASH_MODEL,
     });
     expect(calls[0]!.url).toMatch(/\/ai\/run\/@cf\/cloudflare\/clef-flash$/);
     expect(calls[0]!.body?.model).toBe('clef-flash');
-    expect(res.usage.costUsd).toBeCloseTo((412 * 0.09) / 1e6, 12);
+    expect(res.modelSnapshot).toBe('@cf/cloudflare/clef-flash');
+    expect(res.usage.costUsd).toBeCloseTo((380 * 0.09) / 1e6, 12);
+    expect(res.answers.q_canary_choice).toMatchObject({ type: 'choice', choice: 'a' });
   });
 
   it("rejects a Workers AI error envelope, and doesn't retry a refused token", async () => {
@@ -318,10 +319,10 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     expect(Object.keys(calls[0]!.body ?? {}).sort()).toEqual(['model', 'questions', 'state']);
     expect(calls[0]!.body?.model).toBe('pplx-decider-v1-27b');
     expect(res.modelSnapshot).toBe('pplx-decider-v1-27b');
-    expect(res.usage).toEqual({ inputTokens: 367, outputTokens: 3, costUsd: (367 * 0.04) / 1e6 });
-    expect(res.answers.defect).toEqual({ type: 'noul', p: 0.9424522889347015 });
-    expect(res.answers.sentiment).toMatchObject({ type: 'choice', choice: 'mixed' });
-    expect(res.answers.severity).toMatchObject({ type: 'score', score: 1.7838686319784252 });
+    expect(res.usage).toEqual({ inputTokens: 408, outputTokens: 3, costUsd: (408 * 0.04) / 1e6 });
+    expect(res.answers.q_canary_noul).toEqual({ type: 'noul', p: 0.9910192511294047 });
+    expect(res.answers.q_canary_choice).toMatchObject({ type: 'choice', choice: 'a' });
+    expect(res.answers.q_canary_score).toMatchObject({ type: 'score', score: 2.2740044727288993 });
   });
 
   it('retries a rate limit but not a bad request', async () => {
@@ -340,7 +341,7 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     const good = fixture('pplx-decisions.json') as { model: string; answers: Record<string, unknown> };
     const variants: Array<[unknown, RegExp]> = [
       [{ ...good, model: 'pplx-decider-v2' }, /answered as pplx-decider-v2/],
-      [{ ...good, answers: { defect: { type: 'multi' } } }, /unreadable response/],
+      [{ ...good, answers: { q_canary_noul: { type: 'multi' } } }, /unreadable response/],
     ];
     for (const [json, message] of variants) {
       const { fetch, calls } = replay({ json });
@@ -349,7 +350,7 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
         .catch((e: unknown) => e as RejectedResponseError);
       expect(err).toBeInstanceOf(RejectedResponseError);
       expect((err as RejectedResponseError).message).toMatch(message);
-      expect((err as RejectedResponseError).outcome.usage.costUsd).toBe((367 * 0.04) / 1e6);
+      expect((err as RejectedResponseError).outcome.usage.costUsd).toBe((408 * 0.04) / 1e6);
       expect(calls).toHaveLength(1);
     }
   });
@@ -361,22 +362,25 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     const json = {
       ...good,
       answers: {
-        defect: good.answers.defect,
+        q_canary_noul: good.answers.q_canary_noul,
         // Score levels keyed from 1, a choice outside the options, an answer to no question.
-        severity: { ...good.answers.severity, probabilities: { 1: 0.1, 2: 0.2, 3: 0.7 } },
-        sentiment: { ...good.answers.sentiment, choice: 'neutral' },
+        q_canary_score: {
+          ...good.answers.q_canary_score,
+          probabilities: { 1: 0.1, 2: 0.2, 3: 0.2, 4: 0.2, 5: 0.3 },
+        },
+        q_canary_choice: { ...good.answers.q_canary_choice, choice: 'd' },
         extra: { type: 'noul', noul: 0.5 },
       },
     };
     const { fetch } = replay({ json });
     const res = await new PerplexityDecisions({ fetch }).decide(pplxAsked);
-    expect(Object.keys(res.answers)).toEqual(['defect']);
+    expect(Object.keys(res.answers)).toEqual(['q_canary_noul']);
     expect(res.usage.costUsd).toBeGreaterThan(0);
     expect(
       answerProblems(pplxAsked, {
-        severity: { type: 'score', score: 2, probabilities: { 1: 0.1, 2: 0.2, 3: 0.7 } },
+        q_canary_score: { type: 'score', score: 2, probabilities: { 1: 0.5, 5: 0.5 } },
       }),
-    ).toEqual(['severity: probabilities for 3 not in the question']);
+    ).toEqual(['q_canary_score: probabilities for 5 not in the question']);
   });
 
   it("prices from the vendor's usage.cost when it sends one", async () => {

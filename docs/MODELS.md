@@ -1,7 +1,7 @@
 # E8: decision models compared
 
-v1 · 2026-10-01 · Status: designed, not run. ADR-0068. Run from Actions → Decision models; the readout goes to
-`docs/reports/e8-models.md`. The rule in §5 was fixed before the first run.
+v1 · 2026-10-01 · Status: run on 2026-10-01 (Actions run `36926382050`, eval run `01M3WP08Q7MSSY0772PRNCQE27`, $2.00).
+Verdict: keep Jev. Readout: `docs/reports/e8-models.md`. ADR-0068. The rule in §5 was fixed before the first run.
 
 E8 asks which decision model predicts a person best. Jev is Mimic's primary. span-01 is the challenger behind the
 `decisions-model` flag (ADR-0051). Cloudflare's clef and clef-flash, and Perplexity's decider, were released this week
@@ -198,7 +198,6 @@ pnpm eval -- models --data data/twin.sqlite --offline --population all --k 8   #
 `--predictors` takes any decision predictors that share a prompt version, the reference first. For example,
 `decision:typesafe/jev-1.13,decision:cloudflare/clef` runs a two-model run.
 
-**After the first live run:**
-1. Replace the schema-built clef fixtures and the documented Perplexity fixture with the recorded responses in
-   `canary.json` (`packages/adapters/fixtures/README.md`).
-2. Write `docs/reports/e8-models.md`.
+**After a live run:** re-record the adapter fixtures from `canary.json` if a vendor's response shape changed
+(`packages/adapters/fixtures/README.md`), and update `docs/reports/e8-models.md`. The first run's canary is the current
+fixture set.

@@ -1,24 +1,24 @@
 {
   "result": {
-    "model": "clef",
+    "model": "clef-flash",
     "answers": {
       "q_canary_noul": {
         "type": "noul",
-        "noul": 0.8889
+        "noul": 0.8878
       },
       "q_canary_choice": {
         "type": "choice",
         "choice": "a",
         "probabilities": {
-          "a": 0.9826,
-          "b": 0.0114,
-          "c": 0.006
+          "a": 0.9728,
+          "b": 0.0142,
+          "c": 0.013
         },
-        "confidence": 0.9484
+        "confidence": 0.92
       },
       "q_canary_score": {
         "type": "score",
-        "score": 2.3795,
+        "score": 1.708,
         "legend": {
           "0": "Not at all",
           "1": "A little",
@@ -27,13 +27,13 @@
           "4": "Extremely"
         },
         "probabilities": {
-          "0": 0.0324,
-          "1": 0.1445,
-          "2": 0.3544,
-          "3": 0.3486,
-          "4": 0.1201
+          "0": 0.0733,
+          "1": 0.3408,
+          "2": 0.437,
+          "3": 0.1025,
+          "4": 0.0464
         },
-        "confidence": 0.1043
+        "confidence": 0.1564
       }
     },
     "usage": {

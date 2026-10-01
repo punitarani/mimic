@@ -1,25 +1,45 @@
 {
   "model": "cloudflare/clef",
-  "state": "Checkout has been failing for every customer for the last hour.",
-  "questions": {
-    "urgent": {
-      "type": "noul",
-      "instructions": "Is this support request urgent?",
-      "criteria": { "true": "It needs attention now", "false": "It can wait" }
+  "state": {
+    "identity": {
+      "occupation": "Teacher",
+      "location": "Porto, PT"
     },
-    "team": {
-      "type": "choice",
-      "instructions": "Which team should handle this request?",
+    "evidence": [
+      {
+        "q": "How often do you read for pleasure?",
+        "a": "Most evenings"
+      }
+    ]
+  },
+  "questions": {
+    "q_canary_noul": {
+      "type": "noul",
+      "instructions": "Would the person enjoy a book club?",
       "criteria": {
-        "billing": "Payments, invoices, and refunds",
-        "technical": "Outages, errors, and configuration",
-        "sales": "Plans and upgrades"
+        "true": "Yes",
+        "false": "No"
       }
     },
-    "severity": {
+    "q_canary_choice": {
+      "type": "choice",
+      "instructions": "Which weekend plan would the person pick?",
+      "criteria": {
+        "a": "A quiet day reading",
+        "b": "A loud concert",
+        "c": "A long run"
+      }
+    },
+    "q_canary_score": {
       "type": "score",
-      "instructions": "How severe is the customer impact?",
-      "criteria": ["No impact", "Minor", "Major", "Critical"]
+      "instructions": "How much does the person value routine?",
+      "criteria": [
+        "Not at all",
+        "A little",
+        "Somewhat",
+        "Very",
+        "Extremely"
+      ]
     }
   }
 }

@@ -1,28 +1,45 @@
 {
   "model": "perplexity/pplx-decider-v1-27b",
   "state": {
-    "title": "Battery died after two weeks",
-    "review": "The headphones sound great, but the battery stopped charging after two weeks."
+    "identity": {
+      "occupation": "Teacher",
+      "location": "Porto, PT"
+    },
+    "evidence": [
+      {
+        "q": "How often do you read for pleasure?",
+        "a": "Most evenings"
+      }
+    ]
   },
   "questions": {
-    "defect": {
+    "q_canary_noul": {
       "type": "noul",
-      "instructions": "Does the review report a product defect?",
-      "criteria": { "true": "Something is broken or not working.", "false": "Normal wear or personal preference." }
-    },
-    "sentiment": {
-      "type": "choice",
-      "instructions": "What is the overall sentiment of the review?",
+      "instructions": "Would the person enjoy a book club?",
       "criteria": {
-        "positive": "Mostly satisfied",
-        "mixed": "Praise and complaints in one review",
-        "negative": "Mostly dissatisfied"
+        "true": "Yes",
+        "false": "No"
       }
     },
-    "severity": {
+    "q_canary_choice": {
+      "type": "choice",
+      "instructions": "Which weekend plan would the person pick?",
+      "criteria": {
+        "a": "A quiet day reading",
+        "b": "A loud concert",
+        "c": "A long run"
+      }
+    },
+    "q_canary_score": {
       "type": "score",
-      "instructions": "How severe is the reported problem?",
-      "criteria": ["Cosmetic", "Inconvenient", "Product unusable"]
+      "instructions": "How much does the person value routine?",
+      "criteria": [
+        "Not at all",
+        "A little",
+        "Somewhat",
+        "Very",
+        "Extremely"
+      ]
     }
   }
 }
