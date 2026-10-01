@@ -197,6 +197,7 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
   };
   /** Training answers with no stored baseline (an import), given one here so `surprise` can rank them. */
   let annotated = 0;
+  let firstError: string | undefined;
   let surpriseRanked = false;
 
   for (const m of mimics) {
@@ -301,6 +302,7 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
           const predictorId = role === 'replay' ? predictor.id : `${baselinePredictor.id}`;
           if (!p.ok) {
             failures.push({ predictorId, role: role === 'replay' ? 'primary' : 'baseline' });
+            firstError ??= p.error ?? 'unknown error';
             continue;
           }
           if (role === 'replay') cost += p.costUsd;
@@ -340,18 +342,21 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
       };
     });
   const people = mimics.length || 1;
+  // A run in which no prediction succeeded (no credit, a dead endpoint) is a failed run, not an empty one.
+  const allFailed = firstError !== undefined && !checkpoints.some((c) => c.predictors.some((p) => p.n > 0));
   const run: EvalRunRecord = {
     id: ulid(),
     name: spec.name,
     spec: { ...spec, kind: 'replay' },
     datasetHash,
-    status: 'done',
+    status: allFailed ? 'failed' : 'done',
     metrics: {
       checkpoints,
       costPerPersonUsd: cost / people,
       people: mimics.length,
       modelSnapshots: [...snapshots].sort(),
       ...(surpriseRanked ? { surpriseAnnotated: annotated } : {}),
+      ...(firstError !== undefined ? { firstError } : {}),
     },
     r2ReportKey: null,
     createdAt: deps.clock(),

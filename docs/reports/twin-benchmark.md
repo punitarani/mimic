@@ -293,6 +293,11 @@ too few to decide.
   by a temperature; calibration-sensitive conclusions (`surprise`, the small cards' log loss) need the calibrated
   primary before they carry over.
 - Transfer ran on 10 people for DeepSeek, and the soul drafts were written by the same model family that read them.
+- The calibrated `surprise` cells ranked training answers by the baseline's surprise on the calibrated scale. The
+  review of this work moved the annotation onto the raw scale, as stored signals are (ADR-0056), which can reorder
+  answers across questions with different numbers of options. The raw-Jev cells are unaffected. A re-run with the
+  fixed annotation was started and stopped: the OpenRouter account ran out of credit (HTTP 402 on every call), so
+  those two rows still carry the earlier ranking.
 - Beyond the budget the replayed state is recency-only (no target questions to retrieve for), where production
   retrieves by lexical similarity to the candidate batch. At k = 100 "served state" here means the 18 most recent
   answers; at k ≤ 30 nothing is dropped and the comparison is exact.

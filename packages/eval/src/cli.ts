@@ -329,6 +329,10 @@ async function replayCmd(argv: string[]) {
   console.log(renderReport(run));
   console.log(`\nrun ${run.id} → ${files.md}`);
   engine.close();
+  if (run.status === 'failed') {
+    console.error(`Every prediction failed; first error: ${String(run.metrics?.firstError)}`);
+    process.exitCode = 1;
+  }
 }
 
 async function footprintCmd(argv: string[]) {
