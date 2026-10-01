@@ -381,9 +381,9 @@ too few to decide.
 - These are imported survey takers, not Mimic users, and E6's prod readout already showed that Twin's held-out items
   (repeated batteries) reward earlier answers in a way Mimic's next question does not. Numbers here rank states and
   policies for the same predictor on the same questions; they do not say what a Mimic session will gain.
-- Jev ran on its raw scale, so every log loss, Brier and ECE above is uncalibrated. Accuracy and top-1 are unaffected
-  by a temperature; calibration-sensitive conclusions (`surprise`, the small cards' log loss) need the calibrated
-  primary before they carry over.
+- The replay matrix and the first Jev transfer ran Jev on its raw scale, so their log loss, Brier and ECE are
+  uncalibrated; accuracy and top-1 are unaffected by a temperature. The calibrated, per-target and second Jev
+  transfer sections use the served temperature, which was fitted on served states, not on cards or summaries.
 - Transfer ran on 10 people for DeepSeek, and the soul drafts were written by the same model family that read them.
 - The replay matrix, transfer and E6 built one state per person (no target questions to retrieve for), so beyond the
   budget their "served state" is the 18 most recent answers; at k ≤ 30 nothing is dropped and the comparison is
