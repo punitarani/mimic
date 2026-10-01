@@ -8,7 +8,7 @@ reported; see ADR-0028 and "What is built" below. M12 (re-derivation) and M13 (g
 | Piece | Where | Notes |
 | --- | --- | --- |
 | Prompt components and registered variants | `packages/core/src/components.ts`, `docs/prompts/variants/` | `predict.system`, `predict.user`, `state.evidence.line`, `jev.instructions`, `jev.choice`, `jev.noul.true`, `jev.noul.false`; harness: reasoning effort or budget, max tokens, `probs`/`reasoned` schema, Jev state as JSON or text, calibration temperature; per-model harness overrides (ADR-0041) |
-| Variant predictor IDs | `parsePredictorId`, `makePredictor`, `pnpm backfill` | `llm:<model>@<version>`, `decision:<model>@<version>` (`jev:` before ADR-0052, still read); unsuffixed IDs unchanged |
+| Variant predictor IDs | `parsePredictorId`, `makePredictor`, `pnpm backfill` | `llm:<model>@<version>`, `decision:<model>@<version>` (`jev:` before ADR-0054, still read); unsuffixed IDs unchanged |
 | `mimic-eval evaluate` | `packages/eval/src/optimize/` | `--from stored` (free: per predictor, split, person and type; paired comparisons of each model's versions on shared questions; self-consistency; temperature, shrinkage and pooling fits) or live candidates with paired deltas and `--repeat` for the noise floor |
 | `mimic-eval diagnose` | same | One reflection-model call per person (up to `--people`) over a stored predictor's costliest misses; local only |
 | `mimic-eval optimize` | same | GEPA loop: Pareto sampling, minibatch reflection, noise-margin acceptance, leakage lint, spend and call caps, resume, holdout check, verdict ("Improved" only when the gain replicates on the holdout, ADR-0048), `PREDICT_PROMPTS` snippet |
@@ -675,7 +675,7 @@ The reflection model dominates: budget it explicitly (`--max-reflection-usd`) an
 | 3 | Training data for optimization | Every consented dev person in the given files (prod export, plus Twin-2K-500 if added); by person with ≥ 6 dev people, else by question; test people are the holdout only |
 | 4 | First optimization target | Jev's `jev.instructions` and `jev.choice` (default for `decision:` seeds); `predict.system` and `predict.user` for `llm:` seeds |
 | 5 | Identity in local validation runs | Scrubbed exports everywhere by default, including Actions; `--keep-identity` stays reserved for the reproduction check |
-| 6 | Predictor ID format for prompt variants | `llm:<model>@<version>` and `decision:<model>@<version>` (built; `jev:` until ADR-0052) |
+| 6 | Predictor ID format for prompt variants | `llm:<model>@<version>` and `decision:<model>@<version>` (built; `jev:` until ADR-0054) |
 | 7 | Where calibration lives | Fits are reported (`evaluate --from stored`); applying one online is a later config field |
 
 ---

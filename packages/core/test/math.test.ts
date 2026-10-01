@@ -243,7 +243,7 @@ describe('hashing and config (PLAN §7.1)', () => {
     );
   });
 
-  it('pinned configs keep their jev: spelling, read as decision: (ADR-0052)', () => {
+  it('pinned configs keep their jev: spelling, read as decision: (ADR-0054)', () => {
     // Changing the spelling inside a config would change its hash; the alias is why it never has to.
     const pinned = [
       DEFAULT_CONFIG_V3,

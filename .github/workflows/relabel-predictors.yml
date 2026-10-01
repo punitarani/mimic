@@ -1,5 +1,5 @@
-# Relabel stored predictor IDs for ADR-0052 against prod, from the Actions tab: Actions → Relabel predictors → Run
-# workflow. Run it after CD has deployed ADR-0052 (old code still writes `jev:`). A dry run unless "apply" is checked:
+# Relabel stored predictor IDs for ADR-0054 against prod, from the Actions tab: Actions → Relabel predictors → Run
+# workflow. Run it after CD has deployed ADR-0054 (old code still writes `jev:`). A dry run unless "apply" is checked:
 # it counts the `jev:` rows to rename `decision:`, shadows stored under both spellings, and span-01 answers stored
 # under Jev's ID. Applied, it rewrites them in batches; a dry run afterwards should count 0 everywhere.
 # "reverse" renames `decision:` back to `jev:`, for a code rollback: run it once the rollback deploy has finished.

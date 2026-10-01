@@ -1902,8 +1902,7 @@ $0.042/M. It is added as a challenger behind the Flagship string flag `decisions
     1 point lower, errors no more than 1 point higher, and latency and cost within 1.5×, on at least 200 predictions
     from at least 5 people.
 
-
-## ADR-0052 — `decision:` predictor IDs, and rerouted predictions stored under the model that answered (2026-10-01)
+## ADR-0054 — `decision:` predictor IDs, and rerouted predictions stored under the model that answered (2026-10-01)
 
 A predictor ID's prefix names how the predictor is called, not a model: `llm:` is a chat completion that returns JSON
 probabilities, and `jev:` was the OpenRouter Decisions API (a state plus typed questions, answered with
@@ -1957,7 +1956,7 @@ split on `modelSnapshot`; none did.
 - **No new config.** Existing mimics keep their config either way; a new config only for the spelling would split the
   primary's history at an arbitrary point. The next config made for another reason uses `decision:`.
 - **Evidence.** `served-model.test.ts` (sessions with the flag off, on, span-01 failing and both failing; the
-  playground; `/lab` and the stored report), `relabel-predictors.test.ts` (pre-ADR-0052 rows relabelled to exactly
+  playground; `/lab` and the stored report), `relabel-predictors.test.ts` (pre-ADR-0054 rows relabelled to exactly
   what the new code stores, idempotent, reversible), the mixed-spelling cases in `backfill.test.ts`, and the alias,
   hash and served-ID cases in `components.test.ts`, `math.test.ts` and `challenger.test.ts`. A local run through
   wrangler relabelled seeded rows as expected.

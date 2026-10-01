@@ -28,7 +28,7 @@ import { canonicalPredictorId, predictorIdSpellings } from './predictor-ids.mjs'
 
 const ENVS = ['local', 'preview', 'prod'];
 /**
- * `llm:<vendor>/<model>` or `decision:<vendor>/<model>` (`jev:` before ADR-0052, still accepted), optionally
+ * `llm:<vendor>/<model>` or `decision:<vendor>/<model>` (`jev:` before ADR-0054, still accepted), optionally
  * `@<promptVersion>` for a registered prediction prompt variant (ADR-0028; the worker rejects an unregistered one).
  * Strict, since the local path inlines it into SQL. The kind is lower case, as core requires.
  */
@@ -74,7 +74,7 @@ export function parseBackfillArgs(argv) {
     throw new Error(
       '--predictor must look like llm:<vendor>/<model> or decision:<vendor>/<model>, optionally @<promptVersion>',
     );
-  // Named canonically (ADR-0052): `jev:X` and `decision:X` are one predictor.
+  // Named canonically (ADR-0054): `jev:X` and `decision:X` are one predictor.
   out.predictors = [...new Set(out.predictors.map(canonicalPredictorId))];
   if (!ENVS.includes(out.env)) throw new Error(`--env must be one of ${ENVS.join(', ')}`);
   for (const m of out.mimics) if (!MIMIC_ID.test(m ?? '')) throw new Error(`--mimic ${m} is not a mimic ID`);
@@ -94,7 +94,7 @@ const FAILED_CALL = "(p.role = 'shadow' AND p.ok = 0 AND p.error_kind = 'transpo
 
 /**
  * A shadow job for (question q, predictor ?1, or its other spelling ?4) that is queued, running or being retried, and
- * not stale (?3). Jobs keep the key they were enqueued under, so one from before ADR-0052 still says `jev:`.
+ * not stale (?3). Jobs keep the key they were enqueued under, so one from before ADR-0054 still says `jev:`.
  */
 const IN_FLIGHT = [
   'EXISTS (SELECT 1 FROM jobs j WHERE j.key IN',
@@ -178,6 +178,7 @@ export function errorsQuery(predictor) {
  * re-run skips them.
  */
 export function inFlightQuery(predictor, now = Date.now()) {
+  const [canonical, other] = spellings(predictor);
   return {
     sql: [
       'SELECT COUNT(*) AS n, MAX(j.updated_at) AS last FROM jobs j',
@@ -185,7 +186,7 @@ export function inFlightQuery(predictor, now = Date.now()) {
       "AND (substr(j.key, length(j.key) - length(?1)) = ':' || ?1 OR substr(j.key, length(j.key) - length(?3)) = ':' || ?3)",
       `AND j.status != 'done' AND NOT (j.status = 'failed' AND j.attempts >= ${MAX_ATTEMPTS}) AND j.updated_at >= ?2`,
     ].join(' '),
-    params: [spellings(predictor)[0], String(now - STALE_JOB_MS), spellings(predictor)[1]],
+    params: [canonical, String(now - STALE_JOB_MS), other],
   };
 }
 

@@ -130,9 +130,13 @@ describe('relabel', () => {
 
   it('--reverse rewrites the prefix only', async () => {
     const { sql, target } = fakeDb({ legacy: 4, served: 9 });
-    await relabel(parseRelabelArgs(['--reverse', '--yes']), target, { log: quiet });
+    const lines = [];
+    await relabel(parseRelabelArgs(['--reverse', '--yes']), target, { log: (l) => lines.push(l) });
     assert.ok(sql.some((s) => s.startsWith("UPDATE predictions SET predictor_id = 'jev:'")));
     assert.ok(!sql.some((s) => s.includes('model_snapshot') && s.startsWith('UPDATE')));
+    // Job keys are never rewritten: the rolled-back code is told about the `decision:` ones it can't run.
+    assert.ok(sql.some((s) => s.includes("instr(key, ':decision:')")));
+    assert.ok(lines.some((l) => /jobs keyed decision: still queued or retrying: 0/.test(l)));
   });
 
   it('stops when a batch changes nothing', async () => {

@@ -175,7 +175,7 @@ describe('prediction prompt components (ADR-0028)', () => {
     expect(makePredictor(gw, 'llm:vendor/model@predict.v1', { purpose: 't' }).id).toBe('llm:vendor/model');
   });
 
-  it('decision: predictor IDs, with jev: read as an alias (ADR-0052)', () => {
+  it('decision: predictor IDs, with jev: read as an alias (ADR-0054)', () => {
     const spec = { kind: 'decision', model: 'typesafe/jev-1.13', promptVersion: 'jev-predict.v2' };
     expect(parsePredictorId('jev:typesafe/jev-1.13@jev-predict.v2')).toEqual(spec);
     expect(parsePredictorId('decision:typesafe/jev-1.13@jev-predict.v2')).toEqual(spec);
@@ -276,7 +276,7 @@ describe('prediction prompt components (ADR-0028)', () => {
   });
 
   it('prompt hashes are pinned: they label optimizer candidates and key the eval caches', () => {
-    // Taken before ADR-0052 renamed the decision kind; a change here orphans every `cand-<hash>` label and cache entry.
+    // Taken before ADR-0054 renamed the decision kind; a change here orphans every `cand-<hash>` label and cache entry.
     expect(promptHash(resolvePredictPrompt('jev-predict.v1', 'decision'))).toBe(
       '00e3cc2e765d2f3a0b67140ddc206d41317ed89a2fb36e5705daf9da5fc57d5d',
     );

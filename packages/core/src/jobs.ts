@@ -118,7 +118,7 @@ type BackfillTokenOpts = { perMinute?: number; retryFailed?: boolean; offsetSeco
 /**
  * A backfill job's options as one key segment, `r<perMinute>[f][+<offsetSeconds>]:` (for example `r12f:`), or ''
  * when none are set (the keys of jobs from before the options existed). Predictor IDs start with `llm:`, `decision:`
- * or (keys from before ADR-0052) `jev:`, none of which reads as an option segment.
+ * or (keys from before ADR-0054) `jev:`, none of which reads as an option segment.
  * backfill.mimic's `consentedOnly` rides on the mimic segment instead (`<mimicId>!`), since named mimics are rare.
  */
 function backfillToken(o: BackfillTokenOpts): string {

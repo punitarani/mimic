@@ -587,7 +587,7 @@ async function serveWithPredictions(
       for (const h of sel.hypothesisPreds) {
         hypothesisStates.push(h.state);
         // Stored as the primary's own output, like every row it makes; the posterior reads it on the raw scale.
-        // Named after the model that answered, should the flag have rerouted the call (ADR-0051, ADR-0052).
+        // Named after the model that answered, should the flag have rerouted the call (ADR-0051, ADR-0054).
         const r = view.calibrate(h.result, chosen);
         hypothesisRows.push({
           id: deps.newId(),
@@ -617,7 +617,7 @@ async function serveWithPredictions(
   const baselineResult = baselines[pool.indexOf(chosen)]!;
 
   // Rows are named canonically, after the model that answered: span-01 when the `decisions-model` flag rerouted the
-  // call (ADR-0051), so reports never pool it with Jev (ADR-0052). A failed primary keeps the ID of what failed.
+  // call (ADR-0051), so reports never pool it with Jev (ADR-0054). A failed primary keeps the ID of what failed.
   let primaryId = servedPredictorId(primarySpec, primaryResult.servedModel);
   let fallback = false;
   if (!primaryResult.ok) {

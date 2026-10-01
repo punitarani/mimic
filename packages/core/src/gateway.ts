@@ -285,7 +285,7 @@ export interface GatewayDeps extends CallDeps {
 
 /**
  * A decision response and the model it ran on: the challenger's when the router rerouted the call and the challenger
- * answered, else the model asked for (ADR-0052). `modelSnapshot` is the provider's dated name for it, so it can't stand
+ * answered, else the model asked for (ADR-0054). `modelSnapshot` is the provider's dated name for it, so it can't stand
  * in for the model ID.
  */
 export type RoutedDecision = DecisionResponse & { model: string };

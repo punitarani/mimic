@@ -338,7 +338,7 @@ export async function diagnoseCmd(argv: string[]) {
       ...COMMON,
       // Without --predictor, a role's rows from any predictor: the primaries of every config version (v7's is
       // `decision:typesafe/jev-1.13@jev-predict.v2`, earlier ones unsuffixed), never an LLM fallback. Either spelling
-      // of a decision ID matches (ADR-0052).
+      // of a decision ID matches (ADR-0054).
       predictor: { type: 'string' },
       role: { type: 'string', default: 'primary' },
       cases: { type: 'string', default: '30' },

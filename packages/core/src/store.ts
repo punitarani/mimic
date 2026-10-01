@@ -74,7 +74,7 @@ export interface PredictionRecord {
   questionId: string;
   mimicId: string;
   /**
-   * Canonical (ADR-0052): stores read and write `decision:`, never the pre-ADR-0052 `jev:`. A served row names the model
+   * Canonical (ADR-0054): stores read and write `decision:`, never the pre-ADR-0054 `jev:`. A served row names the model
    * that answered (`servedPredictorId`), so a call the `decisions-model` flag rerouted carries the challenger's ID.
    */
   predictorId: string;
@@ -345,7 +345,7 @@ export interface ScoredItemSource {
   role: 'primary' | 'baseline';
   fallback: boolean;
   /**
-   * The row's predictor (canonical, ADR-0052) and distribution, so a calibrated primary can be re-scored on its raw
+   * The row's predictor (canonical, ADR-0054) and distribution, so a calibrated primary can be re-scored on its raw
    * scale (ADR-0048).
    */
   predictorId: string;

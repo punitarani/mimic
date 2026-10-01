@@ -19,7 +19,7 @@ export function rewriteQuery(reverse: boolean, batch: number): Query;
 export function servedCountQuery(challenger: string, prefixes?: string[]): Query;
 export function servedRewriteQuery(challenger: string, batch: number): Query;
 export function snapshotsQuery(): Query;
-export function legacyJobsQuery(): Query;
+export function legacyJobsQuery(prefix?: string): Query;
 export function relabel(
   opts: RelabelOptions,
   target: Pick<Target, 'name' | 'query'>,

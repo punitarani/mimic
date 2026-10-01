@@ -404,8 +404,8 @@ describe('failed calls vs. the model failing (ADR-0037)', () => {
   });
 });
 
-describe('a decision predictor under either spelling (ADR-0052)', () => {
-  // span-01 as a backfilled shadow, stored before ADR-0052 as `jev:` (until `pnpm relabel:predictors` runs).
+describe('a decision predictor under either spelling (ADR-0054)', () => {
+  // span-01 as a backfilled shadow, stored before ADR-0054 as `jev:` (until `pnpm relabel:predictors` runs).
   const DECISION = 'decision:respan/span-01-20260925';
   const LEGACY = 'jev:respan/span-01-20260925';
 
@@ -431,7 +431,7 @@ describe('a decision predictor under either spelling (ADR-0052)', () => {
       ).rows.map((r) => [r.id, Number(r.n)]);
     expect(await raw()).toEqual([[DECISION, all]]);
 
-    // As the code before ADR-0052 stored them.
+    // As the code before ADR-0054 stored them.
     await engine.client.execute({
       sql: 'UPDATE predictions SET predictor_id = ?1 WHERE predictor_id = ?2',
       args: [LEGACY, DECISION],

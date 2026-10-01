@@ -16,7 +16,7 @@ import * as cli from '../../../scripts/relabel-predictors.mjs';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 import { runSession, SessionScript } from '../src/session';
 
-// `pnpm relabel:predictors` (ADR-0052) on the real schema: rows stored before ADR-0052 (`jev:`, and span-01 answers
+// `pnpm relabel:predictors` (ADR-0054) on the real schema: rows stored before ADR-0054 (`jev:`, and span-01 answers
 // under Jev's ID) end up exactly as the new code stores them.
 const script = SessionScript.parse({
   intake: { name: 'Sam Rivera', location: 'Austin, US', occupation: 'Software engineer' },
@@ -90,7 +90,7 @@ beforeAll(async () => {
   expected.set('TWIN-OLD', TWIN);
   expected.delete(twinLoser);
 
-  // What the code before ADR-0052 stored: `jev:`, and span-01's served answers under Jev's ID.
+  // What the code before ADR-0054 stored: `jev:`, and span-01's served answers under Jev's ID.
   await exec(
     "UPDATE predictions SET predictor_id = 'jev:' || substr(predictor_id, 10) WHERE substr(predictor_id, 1, 9) = 'decision:' AND id <> 'TWIN-NEW'",
   );
@@ -102,7 +102,7 @@ beforeAll(async () => {
 
 afterAll(() => engine?.close());
 
-describe('pnpm relabel:predictors (ADR-0052)', () => {
+describe('pnpm relabel:predictors (ADR-0054)', () => {
   it("mirrors core's spellings and pinned models", () => {
     expect(ids.DECISION_PREFIX).toBe(DECISION_PREFIX);
     expect(ids.LEGACY_DECISION_PREFIX).toBe(LEGACY_DECISION_PREFIX);

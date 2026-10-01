@@ -47,14 +47,14 @@ The model page is https://openrouter.ai/respan/span-01. Live calls on 2026-09-30
   retries, a timeout, a malformed response, or a question left unanswered. Each attempt is its own `model_calls` row;
   a rejected answer's row keeps the cost span-01 billed, which counts against the budget. A budget refusal is not
   retried.
-- **Recording (ADR-0052).** A served row (primary, baseline, hypothesis; session and playground) is stored under the
+- **Recording (ADR-0054).** A served row (primary, baseline, hypothesis; session and playground) is stored under the
   model that answered. The Gateway reports the model it ran on, and the row's predictor ID swaps in that model, keeping
   the prompt version: `decision:respan/span-01-20260925@jev-predict.v2` when span-01 answered,
   `decision:typesafe/jev-1.13@jev-predict.v2` when Jev did (including after a span-01 failure). The role, config hash
   and prompt version are the config's. `/lab`, `evaluate --from stored`, calibration fits and paired comparisons
   therefore list span-01 apart from Jev, under the same ID the benchmark uses.
-  - Before ADR-0052 a rerouted row kept Jev's ID; `pnpm relabel:predictors` moves those to span-01's ID by their
-    `modelSnapshot` (see "After deploying ADR-0052").
+  - Before ADR-0054 a rerouted row kept Jev's ID; `pnpm relabel:predictors` moves those to span-01's ID by their
+    `modelSnapshot` (see "After deploying ADR-0054").
   - A Jev backfill (`pnpm backfill --predictor decision:typesafe/jev-1.13@jev-predict.v2`) now fills the questions
     span-01 served, since none of their rows is Jev's: that is how to compare the two on the same questions, and it
     costs a Jev call each.
@@ -134,10 +134,10 @@ deploy. Turning the flag off (Enabled → off) works only while the default vari
 serves its default variation, so after step 4 has made `span-01` the default, turning it off keeps span-01. If
 Flagship itself fails, reads return the code default (`jev`).
 
-### After deploying ADR-0052
+### After deploying ADR-0054
 
-Rows stored before ADR-0052 name the decision kind `jev:`, and span-01's served answers carry Jev's ID. Once CD has
-deployed ADR-0052, relabel them: Actions → **Relabel predictors**, a dry run first, then with **apply**, then a dry run
+Rows stored before ADR-0054 name the decision kind `jev:`, and span-01's served answers carry Jev's ID. Once CD has
+deployed ADR-0054, relabel them: Actions → **Relabel predictors**, a dry run first, then with **apply**, then a dry run
 again (every count 0). Locally, `pnpm relabel:predictors [--env local|preview|prod] [--yes]`. Details: `docs/DEPLOY.md`.
 
 ## Run the benchmark

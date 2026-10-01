@@ -125,7 +125,7 @@ describe('the decisions-model flag (ADR-0051)', () => {
     const res = await g.decide(ctx, req());
     expect(seen).toEqual([SPAN_MODEL]);
     expect(res.modelSnapshot).toBe(`${SPAN_MODEL}-snap`);
-    // The model it ran on, which the dated snapshot can't stand in for (ADR-0052).
+    // The model it ran on, which the dated snapshot can't stand in for (ADR-0054).
     expect(res.model).toBe(SPAN_MODEL);
     expect(log.rows.map((r) => [r.model, r.ok])).toEqual([[SPAN_MODEL, true]]);
   });
@@ -318,7 +318,7 @@ describe('call sites are unchanged (ADR-0051)', () => {
     expect(jevKey(question)).toBe('q_q1');
   });
 
-  it('a rerouted prediction names the model that answered, and is stored under it (ADR-0052)', async () => {
+  it('a rerouted prediction names the model that answered, and is stored under it (ADR-0054)', async () => {
     const primary = DEFAULT_CONFIG.predictor.primary;
     const [a] = await makePredictor(gateway(null).g, primary, ctx).predict(state, [question]);
     const [b] = await makePredictor(gateway(ON).g, primary, ctx).predict(state, [question]);

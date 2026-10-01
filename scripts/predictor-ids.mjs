@@ -1,9 +1,9 @@
 // Predictor ID spellings for the dependency-free scripts (`pnpm backfill`, `pnpm relabel:predictors`). Mirrors of
-// packages/core/src/config.ts (ADR-0051, ADR-0052); packages/eval/test/relabel-predictors.test.ts checks them.
+// packages/core/src/config.ts (ADR-0051, ADR-0054); packages/eval/test/relabel-predictors.test.ts checks them.
 
 /** The decision kind's prefix: the OpenRouter Decisions API (Jev, span-01). */
 export const DECISION_PREFIX = 'decision:';
-/** Its name before ADR-0052. Hashed configs keep it, so it is read as `decision:` for ever. */
+/** Its name before ADR-0054. Hashed configs keep it, so it is read as `decision:` for ever. */
 export const LEGACY_DECISION_PREFIX = 'jev:';
 /** JEV_MODEL: the incumbent decision model. */
 export const JEV_MODEL = 'typesafe/jev-1.13';

@@ -20,14 +20,14 @@ export type ComponentId = (typeof COMPONENT_IDS)[number];
 export type PredictComponents = Record<ComponentId, string>;
 
 /**
- * How a predictor is called (ADR-0052): `decision`, the OpenRouter Decisions API (Jev, span-01: a state plus typed
+ * How a predictor is called (ADR-0054): `decision`, the OpenRouter Decisions API (Jev, span-01: a state plus typed
  * questions, answered with probabilities), or `llm`, a chat completion that returns JSON probabilities. The kind is the
  * prefix of a predictor ID; the model follows it.
  */
 export type PredictorKind = 'decision' | 'llm';
 
 /**
- * A kind by its name in a predictor ID. `jev` is the decision kind's name from before ADR-0052, accepted forever:
+ * A kind by its name in a predictor ID. `jev` is the decision kind's name from before ADR-0054, accepted forever:
  * hashed configs (v3–v8, cfg.e3b.control) spell their primary with it.
  */
 export function predictorKindOf(name: string): PredictorKind | null {
@@ -341,7 +341,7 @@ export function componentProblems(id: ComponentId, text: string): string[] {
 }
 
 /**
- * The kind as `promptHash` hashes it. Every hash taken before ADR-0052 hashed the decision kind as `jev`, and those
+ * The kind as `promptHash` hashes it. Every hash taken before ADR-0054 hashed the decision kind as `jev`, and those
  * hashes label optimizer candidates (`cand-<hash>`) and key the eval caches and run directories, so it still does.
  */
 const HASHED_KIND = { decision: 'jev', llm: 'llm' } as const satisfies Record<PredictorKind, string>;

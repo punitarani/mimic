@@ -56,7 +56,7 @@ function predictorIdOf(kind: PredictorKind, model: string, prompt: PredictPrompt
 /**
  * Primary / baseline predictor on the Decisions API (Jev, span-01): one batched request per shared state (PLAN §5.1).
  * When the `decisions-model` flag reroutes the call (ADR-0051), each result names the model that answered
- * (`servedModel`), so the row is stored under it (ADR-0052).
+ * (`servedModel`), so the row is stored under it (ADR-0054).
  */
 export class DecisionPredictor implements Predictor {
   readonly id: string;
@@ -336,7 +336,7 @@ export function calibratedResult(
   t: number,
 ): PredictionResult {
   if (t === 1 || !r.ok) return r;
-  // Spread from `r`, so fields such as `servedModel` (ADR-0052) survive calibration.
+  // Spread from `r`, so fields such as `servedModel` (ADR-0054) survive calibration.
   const dist = temperatureScale(r.dist, t);
   // Only a predictor that reports a confidence (Jev) gets it recomputed; an LLM's stays absent.
   if (r.confidence === undefined) return { ...r, dist };

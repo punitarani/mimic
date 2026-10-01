@@ -359,7 +359,7 @@ export const PipelineConfig = z.object({
 | Anchors | `anchors.v1`, 10 items |
 | Generator | GPT-6 Luna, low reasoning effort, batch of 12, domain mix core 10 / casual 45 / professional 45 |
 | Selector | `entropy` with λ = 0.3, μ = 0.5 (v1–v3); `voi` since v4: K 4, λ 0.3, μ 0.5, β 0.25, γ 0.25, π 0.15, ν 0.2, exposure cap 0.35 (ADR-0027) |
-| Predictors | Primary `jev:typesafe/jev-1.13` (read as `decision:`, ADR-0052); shadows are the three LLMs |
+| Predictors | Primary `jev:typesafe/jev-1.13` (read as `decision:`, ADR-0054); shadows are the three LLMs |
 | State builder | `full`, 8,000 tokens, retrievalK 12, recentN 6 |
 | Trait reader | Jev, after every answer |
 | Reflector | GPT-6 Luna, every 5 answers |

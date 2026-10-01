@@ -55,7 +55,7 @@ import { runSession, SessionScript } from '../src/session';
 
 let engine: LocalEngine;
 let instances: EvalInstance[];
-/** The production primary as stored (ADR-0052): configs spell it `jev:`, rows `decision:`. */
+/** The production primary as stored (ADR-0054): configs spell it `jev:`, rows `decision:`. */
 const PRIMARY = canonicalPredictorId(DEFAULT_CONFIG.predictor.primary);
 const dirs: string[] = [];
 
@@ -184,7 +184,7 @@ describe('evaluate', () => {
         : p;
     const legacy = instances.map((i) => ({ ...i, stored: i.stored.map(raw) }));
     const recs = storedRecords(legacy);
-    // Stored as `jev:` (before ADR-0052), reported under the canonical spelling.
+    // Stored as `jev:` (before ADR-0054), reported under the canonical spelling.
     const primary = recs.filter((r) => r.candidate === 'decision:typesafe/jev-1.13|primary');
     const derived = recs.filter((r) => r.candidate === 'decision:typesafe/jev-1.13@jev-predict.v2|derived');
     expect(derived).toHaveLength(primary.length);
@@ -316,7 +316,7 @@ describe('evaluate', () => {
     expect(feedbackFor(inst, failed)).toContain('failed (boom)');
   });
 
-  it('candidate hashes are pinned (ADR-0052 kept them through the rename)', () => {
+  it('candidate hashes are pinned (ADR-0054 kept them through the rename)', () => {
     expect(resolveCandidate({ predictor: 'jev:typesafe/jev-1.13' }).hash).toBe(
       'typesafe/jev-1.13:00e3cc2e765d2f3a',
     );
@@ -646,7 +646,7 @@ describe('optimize (GEPA loop, offline)', () => {
 
     expect(r.bestInput.predictor).toBe('decision:typesafe/jev-1.13');
 
-    // A run directory from before ADR-0052 names the decision kind `jev`; it resumes as the same run.
+    // A run directory from before ADR-0054 names the decision kind `jev`; it resumes as the same run.
     const statePath = join(runDir, 'state.json');
     const saved = readFileSync(statePath, 'utf8');
     expect(saved).toContain('"kind": "decision"');

@@ -23,7 +23,7 @@ describe('job keys', () => {
         consentedOnly: true,
       },
       { type: 'backfill.predictor', runId: 'R', predictorId: 'jev:typesafe/jev-1.13', consentedOnly: false },
-      // ADR-0052: decision IDs, and keys from before it (`jev:`) round-trip verbatim, so the ledger row still closes.
+      // ADR-0054: decision IDs, and keys from before it (`jev:`) round-trip verbatim, so the ledger row still closes.
       {
         type: 'backfill.predictor',
         runId: 'R',

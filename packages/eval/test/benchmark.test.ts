@@ -68,7 +68,7 @@ describe('benchmark (ADR-0051)', () => {
   it('compares the production primary with the same predictor on span-01', () => {
     expect(INCUMBENT).toBe(canonicalPredictorId(DEFAULT_CONFIG.predictor.primary));
     expect(INCUMBENT).toBe('decision:typesafe/jev-1.13@jev-predict.v2');
-    // The ID span-01's served rows are stored under (ADR-0052), so the benchmark and /lab name it alike.
+    // The ID span-01's served rows are stored under (ADR-0054), so the benchmark and /lab name it alike.
     expect(CHALLENGER).toBe(`decision:${SPAN_MODEL}@jev-predict.v2`);
     expect(CHALLENGER).toBe(servedPredictorId(DEFAULT_CONFIG.predictor.primary, SPAN_MODEL));
     expect(challengerOf('jev:typesafe/jev-1.13')).toBe(`decision:${SPAN_MODEL}`);

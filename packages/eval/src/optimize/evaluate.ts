@@ -452,7 +452,7 @@ export function storedRecords(instances: EvalInstance[]): EvalRecord[] {
   const derived = new Map<string, Array<{ predictorId: string; t: number }>>();
   for (const inst of instances)
     for (const stored of inst.stored) {
-      // Stores read IDs canonically (ADR-0052); instances built in memory may not, and one predictor under two
+      // Stores read IDs canonically (ADR-0054); instances built in memory may not, and one predictor under two
       // spellings would be reported, fitted and paired as two.
       const p = { ...stored, predictorId: canonicalPredictorId(stored.predictorId) };
       // A primary the LLM fallback served (Jev failed) is reported apart from the configured primary and from any
@@ -735,7 +735,7 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
     for (const p of inst.stored) {
       if (!p.ok || (p.role !== 'primary' && p.role !== 'shadow') || (p.role === 'primary' && p.fallback))
         continue;
-      // One key per predictor, whichever spelling an in-memory instance carries (ADR-0052).
+      // One key per predictor, whichever spelling an in-memory instance carries (ADR-0054).
       const id = canonicalPredictorId(p.predictorId);
       const k = p.role === 'primary' ? `${id} (primary)` : id;
       const list = byPredictor.get(k);

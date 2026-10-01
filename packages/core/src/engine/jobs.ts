@@ -220,7 +220,7 @@ async function shadowJobs(deps: EngineDeps, mimicId: string) {
   for (const r of [...live, ...backfill]) {
     const job = jobFromKey(r.key);
     if (r.status === 'done' || !job || !('questionId' in job)) continue;
-    // A job keeps the key it was enqueued under, so one from before ADR-0052 still says `jev:`.
+    // A job keeps the key it was enqueued under, so one from before ADR-0054 still says `jev:`.
     const id = `${job.questionId}|${canonicalPredictorId(job.predictorId)}`;
     if (r.attempts >= MAX_JOB_ATTEMPTS && r.status === 'failed') {
       // A budget refusal isn't exhaustion: it runs again once the cap allows (ADR-0035).
@@ -244,7 +244,7 @@ async function missingPredictions(
   opts: { retryFailed?: boolean | undefined; live?: boolean } = {},
 ): Promise<Array<{ questionId: string; predictorId: string }>> {
   if (!predictorIds.length) return [];
-  // Compared canonically (ADR-0052): configs spell decision predictors `jev:`, and stores read every row as `decision:`.
+  // Compared canonically (ADR-0054): configs spell decision predictors `jev:`, and stores read every row as `decision:`.
   const ids = [...new Set(predictorIds.map(canonicalPredictorId))];
   const [questions, predictions, jobs] = await Promise.all([
     deps.store.listQuestions(mimicId),
@@ -371,7 +371,7 @@ export async function runBackfillPredictor(
   checkPredictorId(job.predictorId);
   const mimics = await deps.store.listMimics(job.consentedOnly ? { consentResearch: true } : {});
   const ids = mimics.map((m) => m.id);
-  // `backfill.shadow` jobs are keyed by the canonical ID, whichever spelling the operator used (ADR-0052).
+  // `backfill.shadow` jobs are keyed by the canonical ID, whichever spelling the operator used (ADR-0054).
   const run = { ...job, predictorId: canonicalPredictorId(job.predictorId) };
   return {
     mimics: mimics.length,
@@ -523,7 +523,7 @@ export async function runShadow(
   requireSessionBudget(deps, m, await loadConfig(deps, m.configHash));
   const q = await deps.store.getQuestion(questionId);
   if (!q || q.mimicId !== m.id) return;
-  // A job enqueued before ADR-0052 names a decision predictor `jev:`; it is the same predictor, stored as `decision:`.
+  // A job enqueued before ADR-0054 names a decision predictor `jev:`; it is the same predictor, stored as `decision:`.
   const id = canonicalPredictorId(predictorId);
   const preds = await deps.store.listPredictions({ questionId });
   const mine = preds.filter((p) => canonicalPredictorId(p.predictorId) === id && p.role !== 'hypothesis');

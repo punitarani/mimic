@@ -97,7 +97,7 @@ interface OptimizeState {
 }
 
 /**
- * A saved run as this code reads it. Run directories from before ADR-0052 name the decision kind `jev`; their
+ * A saved run as this code reads it. Run directories from before ADR-0054 name the decision kind `jev`; their
  * candidate hashes are unchanged (`promptHash`), so only the kind needs renaming.
  */
 export function upgradeState(state: OptimizeState): OptimizeState {
@@ -218,7 +218,7 @@ function entry(
 
 /** The next free version ID for a winner, e.g. `predict.v2` or `jev-predict.v2`. */
 export function nextVersion(kind: PredictorKind): string {
-  // Decision prompts keep the `jev-predict` family: their templates were written for and tuned on Jev (ADR-0052).
+  // Decision prompts keep the `jev-predict` family: their templates were written for and tuned on Jev (ADR-0054).
   const stem = kind === 'decision' ? 'jev-predict' : 'predict';
   let n = 2;
   while (PREDICT_PROMPTS[`${stem}.v${n}`]) n++;

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // `pnpm relabel:predictors [--env local|preview|prod] [--batch <rows>] [--reverse] [--yes]`
 //
-// Relabels stored predictor IDs for ADR-0052. Run it after the deploy that ships ADR-0052 has finished (CD green):
+// Relabels stored predictor IDs for ADR-0054. Run it after the deploy that ships ADR-0054 has finished (CD green):
 // until then the old code still writes `jev:` and can't read `decision:`.
 //
 //   1. Shadows stored under both spellings for one question (only when old and new code stored the same shadow at
@@ -27,7 +27,7 @@
 //   local           the `pnpm dev` D1 (wrangler d1 execute --local)
 //   preview, prod   the Cloudflare D1 HTTP API; needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
 //                   (`doppler run -- pnpm relabel:predictors --env prod`, or Actions → Relabel predictors)
-import { localTarget, remoteTarget } from './backfill.mjs';
+import { localTarget, MAX_ATTEMPTS, remoteTarget } from './backfill.mjs';
 import { cloudflareFromEnv } from './deploy/lib.mjs';
 import { DECISION_MODELS, DECISION_PREFIX, JEV_MODEL, LEGACY_DECISION_PREFIX } from './predictor-ids.mjs';
 
@@ -36,8 +36,6 @@ export const DEFAULT_BATCH = 500;
 export const MAX_BATCH = 5000;
 /** The roles a served call stores, so the roles the flag can reroute (CHALLENGER_PURPOSES in packages/core). */
 export const SERVED_ROLES = ['primary', 'baseline', 'hypothesis'];
-/** MAX_JOB_ATTEMPTS in packages/core: a failed job with this many attempts is not retried. */
-const MAX_ATTEMPTS = 5;
 
 export function parseRelabelArgs(argv) {
   const out = { env: 'local', batch: DEFAULT_BATCH, reverse: false, yes: false };
@@ -131,18 +129,24 @@ export function rewriteQuery(reverse, batch) {
   };
 }
 
+/** A served row: one of SERVED_ROLES. */
+const SERVED = `role IN (${SERVED_ROLES.map((r) => `'${r}'`).join(', ')})`;
+
+/** `predictor_id` is Jev's ID (?1, the incumbent model) in any of `prefixes`, bare or `@<version>`. */
+const jevIdIn = (prefixes) =>
+  prefixes
+    .map(
+      (prefix) =>
+        `(predictor_id = '${prefix}' || ?1 OR substr(predictor_id, 1, length(?1) + ${prefix.length + 1}) = '${prefix}' || ?1 || '@')`,
+    )
+    .join(' OR ');
+
 /**
  * Served rows under Jev's ID (?1, the incumbent model, in any of `prefixes`, bare or `@<version>`) answered by the
  * challenger ?2, by model snapshot.
  */
 function servedWhere(prefixes) {
-  const jevId = (prefix) =>
-    `(predictor_id = '${prefix}' || ?1 OR substr(predictor_id, 1, length(?1) + ${prefix.length + 1}) = '${prefix}' || ?1 || '@')`;
-  return [
-    `role IN (${SERVED_ROLES.map((r) => `'${r}'`).join(', ')})`,
-    'AND substr(model_snapshot, 1, length(?2)) = ?2',
-    `AND (${prefixes.map(jevId).join(' OR ')})`,
-  ].join(' ');
+  return [SERVED, 'AND substr(model_snapshot, 1, length(?2)) = ?2', `AND (${jevIdIn(prefixes)})`].join(' ');
 }
 
 /** Step 3's rows for one challenger. In a dry run step 2 hasn't run, so both spellings count. */
@@ -166,27 +170,24 @@ export function servedRewriteQuery(challenger, batch) {
 
 /** Model snapshots on served rows still under Jev's ID: anything not pinned is listed, never relabelled. */
 export function snapshotsQuery() {
-  const jevAny = [DECISION_PREFIX, LEGACY_DECISION_PREFIX]
-    .map(
-      (prefix) =>
-        `predictor_id = '${prefix}' || ?1 OR substr(predictor_id, 1, length(?1) + ${prefix.length + 1}) = '${prefix}' || ?1 || '@'`,
-    )
-    .join(' OR ');
   return {
     sql: [
       'SELECT model_snapshot AS snapshot, COUNT(*) AS n FROM predictions',
-      `WHERE role IN (${SERVED_ROLES.map((r) => `'${r}'`).join(', ')}) AND (${jevAny})`,
+      `WHERE ${SERVED} AND (${jevIdIn([DECISION_PREFIX, LEGACY_DECISION_PREFIX])})`,
       'GROUP BY 1 ORDER BY n DESC LIMIT 20',
     ].join(' '),
     params: [JEV_MODEL],
   };
 }
 
-/** Jobs keyed `jev:` still queued or retrying: they run under the new code and store `decision:`. */
-export function legacyJobsQuery() {
+/**
+ * Jobs keyed with `prefix` still queued or retrying. `jev:` (the default): they run under the new code and store
+ * `decision:`. `decision:` (after a rollback): the old code can't parse them, so they fail.
+ */
+export function legacyJobsQuery(prefix = LEGACY_DECISION_PREFIX) {
   return {
     sql: [
-      `SELECT COUNT(*) AS n FROM jobs WHERE instr(key, ':${LEGACY_DECISION_PREFIX}') > 0`,
+      `SELECT COUNT(*) AS n FROM jobs WHERE instr(key, ':${prefix}') > 0`,
       `AND status != 'done' AND NOT (status = 'failed' AND attempts >= ${MAX_ATTEMPTS})`,
     ].join(' '),
     params: [],
@@ -241,7 +242,7 @@ export async function relabel(opts, target, { log = console.log } = {}) {
 
   const legacyRows = await target.query(countQuery(opts.reverse));
   const newest = legacyRows.reduce((m, r) => Math.max(m, Number(r.newest ?? 0)), 0);
-  log(`  ${from} → ${to} (ADR-0052): ${byRole(legacyRows)}${newest ? ` (newest ${when(newest)} UTC)` : ''}`);
+  log(`  ${from} → ${to} (ADR-0054): ${byRole(legacyRows)}${newest ? ` (newest ${when(newest)} UTC)` : ''}`);
 
   const [twins] = await target.query(twinCountQuery());
   const twinCount = Number(twins?.n ?? 0);
@@ -268,6 +269,12 @@ export async function relabel(opts, target, { log = console.log } = {}) {
     const [jobs] = await target.query(legacyJobsQuery());
     log(
       `  jobs keyed ${LEGACY_DECISION_PREFIX} still queued or retrying: ${Number(jobs?.n ?? 0)} (they store ${DECISION_PREFIX} when they run)`,
+    );
+  } else {
+    // Job keys are never rewritten, and the rolled-back code can't parse `decision:`.
+    const [jobs] = await target.query(legacyJobsQuery(DECISION_PREFIX));
+    log(
+      `  jobs keyed ${DECISION_PREFIX} still queued or retrying: ${Number(jobs?.n ?? 0)} (the rolled-back code can't parse them, so they fail)`,
     );
   }
   log('  Not rewritten: configs (hashed), job keys (the ledger), eval reports, model_calls.');

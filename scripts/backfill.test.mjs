@@ -63,7 +63,7 @@ describe('backfill arguments', () => {
       parseBackfillArgs(['--predictor', 'decision:typesafe/jev-1.13@jev-predict.v2']).predictors,
       ['decision:typesafe/jev-1.13@jev-predict.v2'],
     );
-    // `jev:` (before ADR-0052) is the same predictor, named canonically.
+    // `jev:` (before ADR-0054) is the same predictor, named canonically.
     assert.deepEqual(
       parseBackfillArgs([
         '--predictor',
@@ -106,7 +106,7 @@ describe('backfill plan', () => {
     const q = missingQuery({ predictor: MIMO, consented: true, mimics: [M1], retryFailed: false }, NOW);
     assert.match(q.sql, /q\.kind IN \('anchor', 'adaptive'\)/);
     assert.match(q.sql, /p\.role = 'primary'/);
-    // Either spelling of the predictor counts as present (ADR-0052), as does a job keyed by either.
+    // Either spelling of the predictor counts as present (ADR-0054), as does a job keyed by either.
     assert.match(q.sql, /p\.predictor_id IN \(\?1, \?4\) AND p\.role != 'hypothesis' \)/);
     assert.match(q.sql, /'predict\.shadow:' \|\| q\.mimic_id \|\| ':' \|\| q\.id \|\| ':' \|\| \?4/);
     assert.match(q.sql, /q\.served_at < \?2/);
@@ -192,7 +192,7 @@ describe('backfill plan', () => {
       () => checkPromptVersion('jev:typesafe/jev-1.13@predict.v2', dir),
       /not a decision prompt variant/,
     );
-    // The generated docs name the decision kind (ADR-0052); a `jev:` ID reads them as such.
+    // The generated docs name the decision kind (ADR-0054); a `jev:` ID reads them as such.
     writeFileSync(
       join(dir, 'docs/prompts/variants/jev-predict.v2.md'),
       '- Predictor kind: `decision` (use as …)\n',

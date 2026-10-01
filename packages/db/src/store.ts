@@ -226,7 +226,7 @@ const fromQuestion = (q: QuestionRecord): typeof s.questions.$inferInsert => ({
 });
 
 /**
- * Predictor IDs are read and written canonically (ADR-0052): a row stored as `jev:` before the relabel
+ * Predictor IDs are read and written canonically (ADR-0054): a row stored as `jev:` before the relabel
  * (`pnpm relabel:predictors`) reads as `decision:`, and nothing new is ever written as `jev:`. Every reader, D1 or an
  * eval export, then sees one spelling per predictor.
  */

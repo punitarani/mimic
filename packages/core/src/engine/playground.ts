@@ -124,7 +124,7 @@ export async function predictPlayground(
     id: deps.newId(),
     questionId: q.id,
     mimicId: m.id,
-    // Named after the model that answered, should the flag have rerouted the call (ADR-0051, ADR-0052).
+    // Named after the model that answered, should the flag have rerouted the call (ADR-0051, ADR-0054).
     predictorId: servedPredictorId(primarySpec, r.servedModel),
     role,
     dist: r.dist,

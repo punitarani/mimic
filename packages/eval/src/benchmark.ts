@@ -36,7 +36,7 @@ import type { EvalInstance } from './optimize/instances';
 
 /**
  * The production primary, and the same predictor on span-01: exactly what `decisions-model: span-01` serves, under
- * the ID its served rows are stored with (ADR-0052).
+ * the ID its served rows are stored with (ADR-0054).
  */
 export const INCUMBENT = canonicalPredictorId(DEFAULT_CONFIG.predictor.primary);
 export const CHALLENGER = challengerOf(INCUMBENT);

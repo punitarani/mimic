@@ -18,7 +18,7 @@ import { storedRecords } from '../src/optimize/evaluate';
 import { loadInstances } from '../src/optimize/instances';
 import { runSession, SessionScript } from '../src/session';
 
-// ADR-0052: rows are stored canonically (`decision:`), and a served prediction the `decisions-model` flag rerouted to
+// ADR-0054: rows are stored canonically (`decision:`), and a served prediction the `decisions-model` flag rerouted to
 // span-01 is stored under span-01's predictor ID, so /lab and the eval reports never pool it with Jev's.
 const JEV = canonicalPredictorId(DEFAULT_CONFIG.predictor.primary);
 const SPAN = `decision:${SPAN_MODEL}@jev-predict.v2`;
@@ -78,7 +78,7 @@ afterAll(() => engine?.close());
 const rows = (mimicId: string, roles?: PredictionRecord['role'][]) =>
   engine.deps.store.listPredictions({ mimicId, ...(roles ? { roles } : {}) });
 
-describe('rows are named canonically, after the model that answered (ADR-0052)', () => {
+describe('rows are named canonically, after the model that answered (ADR-0054)', () => {
   it('flag off: every served row is Jev, as decision:, and nothing is written as jev:', async () => {
     const served = await rows(sessions.off, [...SERVED]);
     expect(served.length).toBeGreaterThan(20);
