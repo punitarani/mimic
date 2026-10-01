@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { getOntology, PROBE_V1, probeMetaOf } from '@mimic/core';
 import type { MemoryBlobs } from '@mimic/db/local';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runCohort } from '../src/cohort';
+import { type EvidenceReport, evidenceCmd, SERVED } from '../src/evidence';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 import { probeReadout } from '../src/probes';
 import { renderReport } from '../src/report';
@@ -79,5 +83,48 @@ describe('E7 held-out probes (ADR-0062)', () => {
     expect(report.shadows.length).toBeGreaterThan(0);
     expect(report.insensitiveShare).not.toBeNull();
     expect(renderReport(run)).toContain('PROBE_RULE');
+  }, 300_000);
+
+  it('E6 runs its views on served probes alone with --probes-only', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'e7-'));
+    try {
+      const db = join(dir, 'served.sqlite');
+      engine = await openLocalEngine({ db, providers: 'offline', seed: 'e7-e6' });
+      await runCohort(engine, { preset: 'e7', people: 2, turns: 24 });
+      const probes = (
+        await Promise.all(
+          (
+            await engine.deps.store.listMimics({})
+          ).map((m) => engine.deps.store.listQuestions(m.id, ['answered'])),
+        )
+      )
+        .flat()
+        .filter((q) => probeMetaOf(q)).length;
+      engine.close();
+      await evidenceCmd([
+        '--data',
+        db,
+        '--k',
+        '4',
+        '--llm',
+        'none',
+        '--probes-only',
+        '--offline',
+        '--out',
+        join(dir, 'run'),
+      ]);
+      engine = await openLocalEngine({ db, providers: 'offline' });
+      const run = (await engine.deps.store.listEvalRuns()).find(
+        (r) => (r.spec as { kind?: string }).kind === 'evidence',
+      )!;
+      const r = (run.metrics as { report: EvidenceReport }).report;
+      expect((run.spec as { probesOnly?: boolean }).probesOnly).toBe(true);
+      // Every served arm scored exactly the probes, nothing else the session asked.
+      const served = r.rows.filter((x) => x.dataset === SERVED);
+      expect(served.length).toBeGreaterThan(0);
+      for (const row of served) expect(row.n).toBe(probes);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }, 300_000);
 });

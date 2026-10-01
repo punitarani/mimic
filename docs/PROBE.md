@@ -99,9 +99,9 @@ E7 is a measurement, not a comparison, but it is cheap to carry two pre-register
 
 - **`probe-blind`** (not built in v1.1): for half the people, probe answers would not enter the belief state used by
   selection. Probe answers do inform selection today, as any answer does.
-- **Views on probes** (not built in v1.1): every E6 view (`answers`, `derived`, `relevant`) and the `card`
-  (ADR-0056) scored offline on the probes alone. Probes are ordinary served questions, so `pnpm eval -- evidence`
-  already includes them among served questions; a filter to probes only is the missing piece.
+- **Views on probes:** `pnpm eval -- evidence --probes-only` runs E6's views (`context`, `full`, `answers`,
+  `derived`, `relevant`) on served probes alone, so the state-form question gets the yardstick E6 lacked. The card
+  (ADR-0056) is not one of E6's views; `replay --state card` covers it.
 
 ## 7. What it can't show
 

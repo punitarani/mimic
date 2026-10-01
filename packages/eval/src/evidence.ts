@@ -9,6 +9,7 @@ import {
   itemAcrossPeople,
   mean,
   parsePredictorId,
+  probeMetaOf,
   quantile,
   RELEVANT_K,
   STATE_VIEWS,
@@ -816,6 +817,8 @@ export async function evidenceCmd(argv: string[]) {
       'llm-people': { type: 'string', default: '40' },
       'llm-k': { type: 'string', default: String(EVIDENCE_RULE.twinK) },
       'max-usd': { type: 'string', default: '4' },
+      /** Served questions that are E7 probes only (ADR-0062), so the views are compared on the probe yardstick. */
+      'probes-only': { type: 'boolean', default: false },
       concurrency: { type: 'string', default: '8' },
       seed: { type: 'string', default: 'evidence' },
       name: { type: 'string' },
@@ -855,7 +858,9 @@ export async function evidenceCmd(argv: string[]) {
     const loaded = await loadData(values.data, loadOptsOf({ ...values, k: String(k), seed: values.seed }));
     if (!first) {
       first = loaded;
-      served = loaded.instances.filter((i) => i.mode === 'online');
+      served = loaded.instances.filter(
+        (i) => i.mode === 'online' && (!values['probes-only'] || probeMetaOf(i.question) !== null),
+      );
     }
     const held = loaded.instances.filter((i) => i.mode === 'heldout');
     if (held.length) twin.set(k, held);
@@ -938,6 +943,7 @@ export async function evidenceCmd(argv: string[]) {
       llmPeople: o.llmPeople,
       llmK: o.llmK,
       limit: values.limit ?? null,
+      probesOnly: values['probes-only'],
       maxUsd: values['max-usd'],
       seed: values.seed,
       stopReason,

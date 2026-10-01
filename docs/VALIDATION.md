@@ -621,5 +621,7 @@ Scripted sessions on offline fakes: a check of the machinery, not a result. Noth
   sensitive facet; every probe has a primary and a baseline sealed below its seq, with the state blob to match;
   repeats re-ask anchors. `pnpm eval -- probes` sees no one by default (scripted people are not people) and, with
   `--population all`, reads 42 probes from three people with tiers, slots, shadows, repeat consistency and a verdict of
-  `insufficient`.
+  `insufficient`. `pnpm eval -- evidence --probes-only` scores every served arm on exactly the probes.
+- `packages/eval/test/optimize.test.ts`: `calibrationFits` adds a temperature per band of answers in the state for
+  the primary (RESEARCH §10.4).
 
