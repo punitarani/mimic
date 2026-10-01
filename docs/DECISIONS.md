@@ -2042,5 +2042,8 @@ becomes evidence. It proposes questions.
   of its own (`footprint:v1`, role `shadow`, no state, sealed trivially), so the person's real answer scores the
   footprint like any model, per source, with the usual metrics; `/lab` and `evaluate --from stored` list it as a
   predictor. This is the number no footprint paper reports: how often the record was right about the person.
+- **Spend.** Proposals and their gates are page work (`footprint.propose`, `footprint.gate` draw on the page's
+  reserve, ADR-0035), like asking, teaching and SOUL.md: a footprint is offered from the mimic page, never by the
+  session.
 - **Not done:** a selection bonus where the footprint and the baseline disagree, a verification budget that lets a
   trusted source skip facets, and the retrieval-versus-generalisation split (docs/RESEARCH.md §4).

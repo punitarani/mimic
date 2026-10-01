@@ -104,6 +104,9 @@ export const SPEND_SCOPES: Readonly<Record<string, SpendScope>> = {
   'playground.baseline': 'page',
   'playground.rationale': 'page',
   'soul.draft': 'page',
+  // The footprint is proposed from the mimic page, like asking, teaching and SOUL.md (ADR-0057).
+  'footprint.propose': 'page',
+  'footprint.gate': 'page',
 };
 
 /** An unlisted purpose is held to the session's share, so a new call can't spend the reserve by accident. */
