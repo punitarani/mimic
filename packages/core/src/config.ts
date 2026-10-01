@@ -324,7 +324,7 @@ export const DEFAULT_CONFIG_V8_LABEL = 'cfg.default.v8';
  * traits and insights (`jev-derived.v1`), and DeepSeek reading only the context (`predict.v2-context`). The primary,
  * selection and everything a person sees are v8's.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V9: PipelineConfig = {
   ...DEFAULT_CONFIG_V8,
   predictor: {
     primary: `decision:${JEV_MODEL}@jev-predict.v2`,
@@ -335,7 +335,20 @@ export const DEFAULT_CONFIG: PipelineConfig = {
     ],
   },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v9';
+export const DEFAULT_CONFIG_V9_LABEL = 'cfg.default.v9';
+
+/**
+ * `cfg.default.v10` (ADR-0066): v9 with a shadow that asks Jev scale questions as unordered choices
+ * (`jev-scales.v1`). Everything a person sees, the primary and selection are v8's.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V9,
+  predictor: {
+    ...DEFAULT_CONFIG_V9.predictor,
+    shadows: [...DEFAULT_CONFIG_V9.predictor.shadows, `decision:${JEV_MODEL}@jev-scales.v1`],
+  },
+};
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v10';
 
 /**
  * The E3b control (ADR-0045): cfg.default.v8 with the selection it had before M12. Everything else is v8's (the
@@ -371,8 +384,8 @@ export const PROBE_V1: ProbeConfig = {
 const PROBES_V1 = PROBE_V1.slots.reduce((a, s) => a + s.tiers.length, 0);
 
 /**
- * `cfg.e7.probes` (ADR-0062): the default config with the probes; since ADR-0065 that is v9, so the view shadows are
- * read on the probes too. The session target grows by the fourteen probes, so a person who reaches it has answered the
+ * `cfg.e7.probes` (ADR-0062): the default config with the probes; since ADR-0066 that is v10, so the view and scale
+ * shadows are read on the probes too. The session target grows by the fourteen probes, so a person who reaches it has answered the
  * default's 30 and every probe; the session budget grows by about the same share.
  */
 export const E7_PROBES_CONFIG: PipelineConfig = {

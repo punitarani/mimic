@@ -126,14 +126,14 @@ describe('E7 probe schedule (ADR-0062)', () => {
     expect(retry).toMatchObject({ tier: 'shared', item: { itemKey: PROBE_V1.shared[0] } });
   });
 
-  it('cfg.e7.probes is the default config (v9) with the probes and a longer session', () => {
+  it('cfg.e7.probes is the default config (v10) with the probes and a longer session', () => {
     expect({ ...E7_PROBES_CONFIG, probes: undefined, session: DEFAULT_CONFIG.session }).toEqual({
       ...DEFAULT_CONFIG,
       probes: undefined,
     });
     expect(E7_PROBES_CONFIG.session).toEqual({ target: DEFAULT_CONFIG.session.target + 14, budgetUsd: 0.75 });
     expect(configHash(E7_PROBES_CONFIG)).toBe(
-      '316ca6f21e1174e26bb123597ce0baccf8f3b8731417745d95b9187e99c59a8b',
+      '6df76ca3cd2fada2775ce006263cff6676897e42e1224b8b677d8783bcf46fb0',
     );
     // Adding the optional field leaves every older config's hash where it was.
     expect(configHash(DEFAULT_CONFIG_V8)).toBe(

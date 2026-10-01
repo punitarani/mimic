@@ -34,7 +34,7 @@ export const EXPERIMENT_PRESETS = {
   e7: {
     name: 'E7: held-out probes',
     summary:
-      'cfg.default.v9 with fourteen probes per person at fixed points (cfg.e7.probes): three items asked of everyone, two repeats, and the rest at a measured distance from what the person answered. Measures what the mimic learns per distance, apart from what selection asks next; read with pnpm eval -- probes. Decides when E3b can start.',
+      'cfg.default.v10 with fourteen probes per person at fixed points (cfg.e7.probes): three items asked of everyone, two repeats, and the rest at a measured distance from what the person answered. Measures what the mimic learns per distance, apart from what selection asks next; read with pnpm eval -- probes. Decides when E3b can start.',
     arms: [{ arm: 'probes', config: E7_PROBES_CONFIG, label: E7_PROBES_LABEL, weight: 1 }],
   },
 } as const satisfies Record<string, ExperimentPreset>;

@@ -157,6 +157,11 @@ export interface PredictHarness {
    * a subset of the state, so a prediction keeps the sealed state's hash and its version names the view.
    */
   stateView?: HarnessStateView;
+  /**
+   * How a decision model is asked a scale question: its `score` primitive (absent), or `choice`, the labels as
+   * unordered options (RESEARCH §2.3). Only the decision kind reads it.
+   */
+  scoreAs?: 'score' | 'choice';
 }
 
 /** Views a predictor may read for a whole batch of questions (`relevant` is chosen per question, so it is not one). */
@@ -211,6 +216,7 @@ export const INCUMBENT_HARNESS: PredictHarness = {
 export const HARNESS_KEYS: ReadonlyArray<keyof PredictHarness> = [
   ...(Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>),
   'stateView',
+  'scoreAs',
 ];
 
 export type PerModelHarness = Partial<Pick<PredictHarness, (typeof PER_MODEL_HARNESS_KEYS)[number]>>;
@@ -324,6 +330,18 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
     components: {},
     harness: { calibrationTemperature: 4, stateView: 'derived' },
     source: 'ADR-0065: E6 exploratory lead (docs/reports/e6-evidence.md)',
+  },
+  /**
+   * ADR-0066: the primary with scale questions asked as unordered choices. On 118 Twin people's five-point policy
+   * items it lowered log loss by 0.059 [0.034, 0.084] at the primary's temperature (RESEARCH §2.3).
+   */
+  'jev-scales.v1': {
+    id: 'jev-scales.v1',
+    kind: 'decision',
+    title: 'Jev with scale questions asked as choices, calibrated (temperature 4)',
+    components: {},
+    harness: { calibrationTemperature: 4, scoreAs: 'choice' },
+    source: 'ADR-0066: Twin-2K-500 benchmark, scales as choices',
   },
   /**
    * ADR-0065: `predict.v2` reading the context alone. E6 found DeepSeek's context-only prior ahead of every Jev view

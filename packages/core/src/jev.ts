@@ -17,9 +17,12 @@ export function predictionQuestion(
     PredictComponents,
     'jev.instructions' | 'jev.choice' | 'jev.noul.true' | 'jev.noul.false'
   > = INCUMBENT_COMPONENTS,
+  scoreAs: 'score' | 'choice' = 'score',
 ): DecisionQuestion {
   const instructions = fill(c['jev.instructions'], { prompt: q.prompt });
-  switch (q.type) {
+  // A scale asked as unordered options (harness `scoreAs`): each label a criterion keyed by its option key.
+  const type = q.type === 'score' && scoreAs === 'choice' ? 'choice' : q.type;
+  switch (type) {
     case 'choice':
       return {
         type: 'choice',
@@ -52,6 +55,8 @@ export function answerToDistribution(q: Pick<Question, 'type' | 'options'>, a: D
     const no = keys.includes('no') ? 'no' : keys[1]!;
     return normalizeDist({ [yes]: p, [no]: 1 - p }, keys);
   }
+  // A scale asked as a choice comes back keyed by option keys, like any choice.
+  if (q.type === 'score' && a.type === 'choice') return normalizeDist(a.probabilities, keys);
   if (a.type !== q.type) throw new Error(`Expected ${q.type} answer, got ${a.type}`);
   if (q.type === 'score') {
     // Jev keys score levels by index; our score option keys are "0".."4" in the same order.

@@ -120,8 +120,8 @@ E7 is a measurement, not a comparison, but it is cheap to carry two pre-register
   is measured on, so they are versioned in the config (`cfg.e7.probes`), and only runtime levers are flags
   (ADR-0052). Setting up the `e7` preset registers the config and saves a draft experiment with one arm; starting it
   sends new people to it, and stays a person's decision. Older mimics and the default config are unchanged. Since
-  ADR-0065 the config is v9 with the probes, so the view shadows (Jev on derived data, DeepSeek on the context) are
-  read per distance too.
+  ADR-0065 and ADR-0066 the config is the default (v10) with the probes, so the view shadows (Jev on derived data,
+  DeepSeek on the context) and the scale shadow are read per distance too.
 - Readout: `pnpm eval -- probes --data <export>` (no model calls), then `docs/reports/e7-probes.md`, written as the
   rule gives it. Scripted sessions prove the machinery; nothing from them is a result.
 

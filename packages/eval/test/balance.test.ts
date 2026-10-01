@@ -1,5 +1,6 @@
 import {
   beliefFromLoaded,
+  DEFAULT_CONFIG_LABEL,
   facetsFor,
   loadConfig,
   loadMimicData,
@@ -53,7 +54,7 @@ afterAll(() => engine.close());
 describe('the default config (v8 selection) on offline sessions (ADR-0044)', () => {
   it('keeps every category between 15% and 40% by question 30 with all four selected', () => {
     for (const p of people.all) {
-      expect(p.config).toBe('cfg.default.v9');
+      expect(p.config).toBe(DEFAULT_CONFIG_LABEL);
       expect(p.sharesInBounds).toBe(true);
       for (const s of Object.values(p.shares)) {
         expect(s).toBeGreaterThanOrEqual(SHARE_BOUNDS.min);
@@ -102,7 +103,7 @@ describe('the default config (v8 selection) on offline sessions (ADR-0044)', () 
     expect(groups.map((g) => g.population)).toEqual(['scripted']);
     expect(groups[0]!.people).toBe(3);
     const md = renderReport(run);
-    expect(md).toContain('scripted (not a result) · cfg.default.v9');
+    expect(md).toContain(`scripted (not a result) · ${DEFAULT_CONFIG_LABEL}`);
     expect(md).toContain('R4 sensitive by 30');
   });
 

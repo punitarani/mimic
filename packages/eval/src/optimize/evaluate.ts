@@ -64,6 +64,7 @@ export const CandidateInput = z.object({
       keyEnum: z.boolean(),
       labelKeys: z.boolean(),
       stateView: z.enum(HARNESS_STATE_VIEWS),
+      scoreAs: z.enum(['score', 'choice']),
     })
     .partial()
     .default({}),
@@ -374,7 +375,7 @@ export function jevRequests(
     let cur: EvalInstance[] = [];
     let used = stateTokens;
     for (const i of g) {
-      const t = tokens(predictionQuestion(i.question, c.prompt.components));
+      const t = tokens(predictionQuestion(i.question, c.prompt.components, c.prompt.harness.scoreAs));
       if (cur.length && (used + t > JEV_REQUEST_TOKENS || cur.length >= maxQuestions)) {
         out.push(cur);
         cur = [];
@@ -504,9 +505,9 @@ export function derivedCalibrations(primaryId: string): Array<{ predictorId: str
   const baseVersion = spec.promptVersion ?? DEFAULT_PROMPT_VERSION.decision;
   const base = resolvePredictPrompt(baseVersion, 'decision', spec.model);
   if (base.harness.calibrationTemperature !== 1) return [];
+  // Everything but the temperature: a view or a question format (ADR-0065, ADR-0066) is another predictor.
   const same = (a: PredictPrompt, b: PredictPrompt) =>
-    a.harness.jevState === b.harness.jevState &&
-    a.harness.stateView === b.harness.stateView &&
+    HARNESS_KEYS.every((k) => k === 'calibrationTemperature' || a.harness[k] === b.harness[k]) &&
     COMPONENT_IDS.every((id) => !componentReadBy(id, a) || a.components[id] === b.components[id]);
   const idOf = (version: string) =>
     formatPredictorId({ kind: 'decision', model: spec.model, promptVersion: version });

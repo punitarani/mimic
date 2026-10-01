@@ -2370,3 +2370,28 @@ E6's `model` branch (an LLM or pooled primary within the latency target), not a 
 context-only prompt. New mimics get v9; older ones keep their config and get the shadows by backfill. The leads stay
 exploratory until the rule reads them.
 
+## ADR-0066 — Scale questions asked as choices, as a shadow (cfg.default.v10) (2026-10-01)
+
+**Context.** Jev's largest deficit on the Twin benchmark is the five-point policy items, which Mimic asks with the
+Decisions API's `score` primitive: log loss 1.45 against 1.37 for the population's item mean, after 30 answers
+(`docs/reports/twin-benchmark.md`). RESEARCH §2.3 proposed changing how Jev is asked, not what it reads.
+
+**Decision.** A decision variant may ask scale questions as unordered choices (`harness.scoreAs: 'choice'`): each label
+becomes a criterion keyed by its option key, and the answer maps back like any choice. The option is absent from the
+incumbent harness, so no prompt hash moves, and the free calibration derivation treats it as another predictor.
+`jev-scales.v1` is the primary with that setting and the primary's temperature. `cfg.default.v10` is v9 plus
+`decision:typesafe/jev-1.13@jev-scales.v1` as a shadow; E3b stays on v8; E7 moves to v10.
+
+**Result that motivated it** (118 Twin people with policy items, 389 questions, intervals over people): at the
+primary's temperature, choices lower log loss on scale questions by −0.059 [−0.084, −0.034] after 30 answers and
+−0.082 [−0.111, −0.052] after 100, and raise top-1 accuracy by about 2.6 points. With each format at its own temperature
+fitted on dev people (4.07 for the primitive, 3.54 for choices), −0.067 [−0.101, −0.034]. Other question types are
+untouched.
+
+**Reading.** On served scale questions, paired with the primary over people (`evaluate --from stored`, "Against the
+primary"), on people who joined after this ADR. It replaces the primary only as a calibrated variant of its own, after
+at least 25 such people show lower log loss with an upper bound below 0 and accuracy no worse.
+
+**Consequences.** One more Jev call per scored question as a shadow, about $0.00001. Trait estimation keeps the score
+primitive (it is not a prediction of an answer).
+

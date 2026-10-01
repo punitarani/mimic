@@ -72,6 +72,7 @@ const dirs: string[] = [];
 /** Six scripted people who always pick the first option; the last one declined research use. */
 beforeAll(async () => {
   engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'optimize-cohort' });
+  const ids: string[] = [];
   for (let i = 0; i < 6; i++) {
     const script = SessionScript.parse({
       intake: { name: `Person ${i}`, location: 'Porto, PT', occupation: 'Teacher', employer: 'Escola Norte' },
@@ -80,8 +81,11 @@ beforeAll(async () => {
       seed: `p${i}`,
       whys: { 'anchors.v1/risk_gamble': 'Certainty matters more to me than upside.' },
     });
-    await runSession(engine, script, { turns: 22 });
+    ids.push((await runSession(engine, script, { turns: 22 })).mimicId);
   }
+  // The split is hash(mimicId), and IDs shift whenever a session makes another call; pin one consented person to test
+  // so the holdout always has someone on it.
+  await engine.client.execute({ sql: "UPDATE mimics SET split = 'test' WHERE id = ?", args: [ids[4]!] });
   instances = await loadInstances(engine.deps, { k: 30, split: 'all', seed: 's' });
 }, 120_000);
 

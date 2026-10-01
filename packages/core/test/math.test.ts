@@ -15,6 +15,8 @@ import {
   DEFAULT_CONFIG_V7,
   DEFAULT_CONFIG_V8,
   DEFAULT_CONFIG_V8_LABEL,
+  DEFAULT_CONFIG_V9,
+  DEFAULT_CONFIG_V9_LABEL,
   E3B_CONTROL_CONFIG,
   E3B_CONTROL_LABEL,
   entropy,
@@ -170,12 +172,22 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v9 and its predecessors (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v10 and its predecessors (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
-    // v9 (ADR-0065): v8 with two view shadows; the primary is v8's, spelled with its canonical kind.
-    expect(DEFAULT_CONFIG_LABEL).toBe('cfg.default.v9');
-    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V8.predictor }).toEqual(DEFAULT_CONFIG_V8);
+    // v10 (ADR-0066): v9 with a shadow that asks Jev scale questions as choices.
+    expect(DEFAULT_CONFIG_LABEL).toBe('cfg.default.v10');
     expect(DEFAULT_CONFIG.predictor).toEqual({
+      primary: DEFAULT_CONFIG_V9.predictor.primary,
+      shadows: [...DEFAULT_CONFIG_V9.predictor.shadows, 'decision:typesafe/jev-1.13@jev-scales.v1'],
+    });
+    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V9.predictor }).toEqual(DEFAULT_CONFIG_V9);
+    expect(configHash(DEFAULT_CONFIG)).toBe(
+      '1c9840dc37684d1e64ac1e8170f8a66efa504ec6aa2689263722884d575c61c1',
+    );
+    // v9 (ADR-0065): v8 with two view shadows; the primary is v8's, spelled with its canonical kind.
+    expect(DEFAULT_CONFIG_V9_LABEL).toBe('cfg.default.v9');
+    expect({ ...DEFAULT_CONFIG_V9, predictor: DEFAULT_CONFIG_V8.predictor }).toEqual(DEFAULT_CONFIG_V8);
+    expect(DEFAULT_CONFIG_V9.predictor).toEqual({
       primary: 'decision:typesafe/jev-1.13@jev-predict.v2',
       shadows: [
         ...DEFAULT_CONFIG_V8.predictor.shadows,
@@ -183,7 +195,7 @@ describe('hashing and config (PLAN §7.1)', () => {
         'llm:deepseek/deepseek-v4.1-flash@predict.v2-context',
       ],
     });
-    expect(configHash(DEFAULT_CONFIG)).toBe(
+    expect(configHash(DEFAULT_CONFIG_V9)).toBe(
       'ecb942c9e739c68c5f52609cbdd4891ae711e1601c83d59ff95f5f4dacab8cfd',
     );
     // v8 (ADR-0044): v7's calibrated primary and shadows on ontology v2 with reserve.v2, gen.v3, gates.v3, reflect.v2,

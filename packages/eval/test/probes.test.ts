@@ -43,8 +43,11 @@ describe('E7 held-out probes (ADR-0062)', () => {
       );
       expect(qs[0]!.itemKey).toBe(PROBE_V1.shared[0]);
       sharedSeen.push(probes.filter((q) => probeMetaOf(q)!.tier === 'shared').map((q) => q.itemKey!));
-      // The selector never asks a shared item outside its slot, and no probe touches a sensitive facet.
-      expect(qs.filter((q) => !probeMetaOf(q) && PROBE_V1.shared.includes(q.itemKey ?? ''))).toEqual([]);
+      // The selector never asks a shared item outside its slot (a self-consistency repeat of an answered probe may come
+      // back, unpredicted, as any repeat does), and no probe touches a sensitive facet.
+      expect(
+        qs.filter((q) => q.kind !== 'repeat' && !probeMetaOf(q) && PROBE_V1.shared.includes(q.itemKey ?? '')),
+      ).toEqual([]);
       for (const p of probes) expect(p.facetIds.some((f) => SENSITIVE.has(f))).toBe(false);
       // Each probe carries a sealed primary and a context-only baseline, as any served question does.
       const preds = await engine.deps.store.listPredictions({ mimicId });

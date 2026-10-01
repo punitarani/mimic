@@ -118,12 +118,15 @@ registered variant and shadow if its paired log-loss interval is below zero on t
 Agents on identical evidence herd; information asymmetry is what gives pooling its 12–18% Brier gains
 (arXiv 2607.01661). On Jev the extra views cost input-priced calls only.
 
-### 2.3 One-vs-rest criteria with structure — designed
+### 2.3 One-vs-rest criteria with structure — partly built
 
 TypeSafe's own guidance: criteria as `{what, not_for, examples}` objects, dotted references into the state
 ("judge from `evidence` and `traits`"), only the context the questions need. Mimic already emulates one-vs-rest for
 span-01 (ADR-0051). **Experiment:** `jev-predict.v3` with structured criteria and one `noul` per option, against the
 `choice` primitive, on sealed instances via `evaluate`; it also cancels option-position effects (arXiv 2506.14092).
+**Built first** (ADR-0066): scale questions asked as unordered choices (`harness.scoreAs`), −0.059 [−0.084, −0.034]
+nats per scale question on 118 Twin people, shadowed as `jev-scales.v1` in `cfg.default.v10`. Structured criteria and
+one `noul` per option remain.
 
 ### 2.4 Per-person empirical-Bayes temperature — built
 
