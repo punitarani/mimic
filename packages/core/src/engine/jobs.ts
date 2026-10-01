@@ -555,6 +555,8 @@ export async function runShadow(
     dist: r!.dist,
     confidence: r!.confidence ?? null,
     stateHash: meta.stateHash,
+    // A state stored before evidence hashes existed still gets one, from its own evidence.
+    evidenceHash: meta.evidenceHash ?? hashJson(body.evidence),
     evidenceSeqMax: meta.evidenceSeqMax,
     configHash: m.configHash,
     promptVersion: promptVersionOf(id),

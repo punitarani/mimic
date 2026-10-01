@@ -291,7 +291,7 @@ export interface PersonState {                              // what predictors s
   traits?: TraitEstimate[];
   insights?: Insight[];
   evidence: Array<{ seq: number; q: string; type: QType; options: string[]; answer: string; why?: string }>;
-  meta: { evidenceSeqMax: number; stateHash: string; builder: string; tokens: number };
+  meta: { evidenceSeqMax: number; stateHash: string; evidenceHash?: string; builder: string; tokens: number };
 }
 
 export interface PredictionResult {
@@ -389,7 +389,7 @@ questions           id, mimic_id, seq?, kind, type, domain, prompt, options_json
                     status(pooled|served|answered|discarded), config_hash, prompt_version, generator,
                     quality_json, selection_json?, created_at, served_at?
 predictions         id, question_id, mimic_id, predictor_id, role(primary|baseline|shadow|hypothesis),
-                    dist_json, confidence?, state_hash, evidence_seq_max, config_hash, model_snapshot,
+                    dist_json, confidence?, state_hash, evidence_hash?, evidence_seq_max, config_hash, model_snapshot,
                     cost_usd, latency_ms, ok, error?, hypothesis?, created_at
 item_stats          key PK, kind(item|archetype), n_people, n_answers, answer_entropy?, baseline_error,
                     primary_error, surprise, lift?, mean_latency_ms, updated_at   (aggregate only; §12.6a)
@@ -556,7 +556,7 @@ What to ask about (ADR-0040, `docs/CATEGORIES.md`):
   yours: they are only used to build your mimic": political views, religion and worldview, sexuality and intimate
   relationships, health and body, money in detail. All ticked by default; each can be turned off (ADR-0049).
 - Research consent covers the special-category areas (politics, religion, sexuality, health) the person agrees to be
-  asked about, with no separate box per area (ADR-0063); areas consented before that keep their stored research use.
+  asked about, with no separate box per area (ADR-0064); areas consented before that keep their stored research use.
 - All of it can be changed later from the session menu.
 
 ### 9.2 Identity resolution and enrichment
@@ -748,7 +748,9 @@ context-only baseline predicted worst: what the profile alone gets wrong) or `no
 predicted worst at the time: what the earlier answers did not imply). Surprise and novelty are computed from the
 stored scores on the predictor's raw scale and are fixed with the answer, so a state rebuilds exactly from an export.
 
-`stateHash = sha256(canonicalJson(state))`.
+`stateHash = sha256(canonicalJson(state))`. `evidenceHash = sha256(canonicalJson(state.evidence))` is stored beside it
+on every prediction (migration 0009): an export's scrub rewrites identity, so only the evidence can be checked against
+production there (RESEARCH §10.5).
 
 ### 9.10 Headline fidelity
 
@@ -1141,7 +1143,7 @@ exercise scores at least 4 of 5.
   say" (ADR-0050).
 - **Sensitive domains need their consent.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
   inferred from other answers or web facts, and special-category answers leave research exports unless the person
-  gave research consent while consenting to that area (ADR-0063).
+  gave research consent while consenting to that area (ADR-0064).
 - **Playground output is labeled as generated.** There is no feature to message anyone "as" a person.
 - **Export and hard delete from day one.** Write a privacy note before inviting anyone outside a small cohort.
 

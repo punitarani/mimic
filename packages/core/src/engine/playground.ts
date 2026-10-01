@@ -137,6 +137,7 @@ export async function predictPlayground(
     dist: r.dist,
     confidence: r.confidence ?? null,
     stateHash: s.meta.stateHash,
+    evidenceHash: s.meta.evidenceHash ?? null,
     evidenceSeqMax: s.meta.evidenceSeqMax,
     configHash: m.configHash,
     promptVersion: promptVersionOf(primarySpec),

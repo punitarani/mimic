@@ -73,7 +73,7 @@ try {
   assert.equal(
     await page.getByRole('group', { name: 'Research use of sensitive answers' }).count(),
     0,
-    'research consent covers sensitive topics, with no box per area (ADR-0063)',
+    'research consent covers sensitive topics, with no box per area (ADR-0064)',
   );
   log('research consent covers the sensitive topics left on, with no box per area');
   await topics.scrollIntoViewIfNeeded();

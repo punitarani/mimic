@@ -80,6 +80,25 @@ function mimic(n: number, over: Partial<MimicData> = {}): MimicData {
   };
 }
 
+describe('evidence hash (RESEARCH §10.5)', () => {
+  it('follows the answers a state holds and ignores who the person is', () => {
+    const a = buildState(mimic(20), opts({ beforeSeq: 15 }));
+    // What an export's scrub does to identity: a new name, no location, no facts.
+    const scrubbed = buildState(
+      mimic(20, {
+        identity: { displayName: 'Participant', location: '', occupation: 'Nurse', employer: null },
+        facts: [],
+      }),
+      opts({ beforeSeq: 15 }),
+    );
+    expect(scrubbed.meta.stateHash).not.toBe(a.meta.stateHash);
+    expect(scrubbed.meta.evidenceHash).toBe(a.meta.evidenceHash);
+    // One more answer is a different state and different evidence.
+    const later = buildState(mimic(20), opts({ beforeSeq: 16 }));
+    expect(later.meta.evidenceHash).not.toBe(a.meta.evidenceHash);
+  });
+});
+
 describe('sealing (PLAN §3.1): the state for question t never contains answer t', () => {
   it('excludes evidence, traits and insights at or after beforeSeq', () => {
     for (const t of [1, 2, 6, 10, 11, 12, 30]) {

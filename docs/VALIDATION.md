@@ -625,3 +625,11 @@ Scripted sessions on offline fakes: a check of the machinery, not a result. Noth
 - `packages/eval/test/optimize.test.ts`: `calibrationFits` adds a temperature per band of answers in the state for
   the primary (RESEARCH §10.4).
 
+## Evidence hash (RESEARCH §10.5)
+
+- `packages/core/test/state.test.ts`: a state rebuilt with a scrubbed identity has a different `stateHash` and the same
+  `evidenceHash`; one more answer changes both.
+- `packages/eval/test/evidence.test.ts`: on an unscrubbed export every `full` arm row matches the stored primary's
+  evidence hash; on the same export after `scrubExport`, state hashes no longer match and the evidence check still
+  reads 100%.
+

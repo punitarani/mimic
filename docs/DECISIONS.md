@@ -2282,8 +2282,22 @@ measured when a probe is served (answers on its facets: near, mid, far) instead 
 counts every other session answer, so the last slot opens where a v8 session ends. Scripted cohorts check the
 machinery (`packages/eval/test/probes.test.ts`); nothing has run on people.
 
+## ADR-0063 — An evidence hash beside the state hash (2026-10-01)
 
-## ADR-0063 — Research consent covers sensitive answers (2026-10-01)
+**Context.** E6's reproduction check compares the state hash of a rebuilt state with the stored prediction's. The
+Evidence workflow runs on a scrubbed export (ADR-0018), whose identity is rewritten, so no state can match there and the
+check read 0% while nothing was wrong (`docs/reports/e6-evidence.md`). Which answers a state held is what sealing and
+the evidence policies decide, and the scrub does not touch answers.
+
+**Decision.** Every state carries `meta.evidenceHash = sha256(canonicalJson(evidence))`, and every prediction stores it
+in a new nullable column, `predictions.evidence_hash` (migration 0009). A shadow on a state stored before this hashes
+that state's own evidence. E6 reports, beside the state and top-pick checks, the share of `full` arm rows whose evidence
+matches the stored primary's. `stateHash` is unchanged, so no config, state or stored hash moves.
+
+**Consequences.** One more column per prediction row; rows written before it have none and are left out of the check.
+The workflow's reproduction check becomes meaningful on every run without `--keep-identity`.
+
+## ADR-0064 — Research consent covers sensitive answers (2026-10-01)
 
 **Context.** Since ADR-0043, ticking research consent at intake opened "Research use of sensitive answers": one box
 per consented special-category area (politics, religion, sexuality, health) and a line saying money follows the

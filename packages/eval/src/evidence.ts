@@ -192,6 +192,11 @@ export interface Checks {
   context: { stateMatch: number; top1Agreement: number; n: number };
   /** The full arm sees exactly the stored primary's state, and picks what it picked. */
   full: { stateMatch: number; top1Agreement: number; n: number };
+  /**
+   * The full arm holds the answers the stored primary's state held: the check a scrubbed export can pass, over the
+   * stored rows that carry an evidence hash (null when none does).
+   */
+  evidence?: { match: number | null; n: number };
 }
 
 export interface RuleCheck {
@@ -352,7 +357,22 @@ export function reproductionChecks(
     return { stateMatch: n ? state / n : 0, top1Agreement: n ? top1 / n : 0, n };
   };
   if (!find(arms, SERVED, jev, 'context') && !find(arms, SERVED, jev, 'full')) return null;
-  return { context: check('context', 'baseline'), full: check('full', 'primary') };
+  // The full arm reads the instance's rebuilt state as it is, so its evidence is the instance's.
+  let n = 0;
+  let same = 0;
+  for (const r of find(arms, SERVED, jev, 'full')?.records ?? []) {
+    const inst = instances.get(r.instanceId);
+    const stored = inst?.stored.find((p) => p.role === 'primary' && p.ok && !p.fallback);
+    const rebuilt = inst?.state.meta.evidenceHash;
+    if (!stored?.evidenceHash || !rebuilt) continue;
+    n++;
+    if (stored.evidenceHash === rebuilt) same++;
+  }
+  return {
+    context: check('context', 'baseline'),
+    full: check('full', 'primary'),
+    evidence: { match: n ? same / n : null, n },
+  };
 }
 
 const peopleN = (n: number) => `${n} ${n === 1 ? 'person' : 'people'}`;
@@ -636,12 +656,16 @@ export function renderEvidence(r: EvidenceReport): string[] {
     out.push(
       '## Reproduction checks (served questions)',
       '',
-      "Whether the harness shows Jev what production showed it, and gets the same pick. States can match only on an internal `--keep-identity` export. A scrubbed export (the workflow's) replaces names and drops locations (ADR-0018), so its states never match, and top-pick agreement is the check. Production asked each question in a batch with other candidates; here it is asked alone, so a pick can differ.",
+      "Whether the harness shows Jev what production showed it, and gets the same pick. States can match only on an internal `--keep-identity` export. A scrubbed export (the workflow's) replaces names and drops locations (ADR-0018), so its states never match; the answers they hold still can, and the evidence check compares them wherever the stored row carries an evidence hash. Production asked each question in a batch with other candidates; here it is asked alone, so a pick can differ.",
       '',
       '| Arm | Stored prediction | n | Same state | Same top pick |',
       '| --- | --- | --- | --- | --- |',
       `| Jev · context | baseline | ${r.checks.context.n} | ${pct(r.checks.context.stateMatch)} | ${pct(r.checks.context.top1Agreement)} |`,
       `| Jev · full | primary | ${r.checks.full.n} | ${pct(r.checks.full.stateMatch)} | ${pct(r.checks.full.top1Agreement)} |`,
+      '',
+      r.checks.evidence?.match != null
+        ? `Same answers in the state as the stored primary's: ${pct(r.checks.evidence.match)} of ${r.checks.evidence.n} rows with an evidence hash.`
+        : 'Same answers in the state: — (no stored row carries an evidence hash; rows written before it existed have none).',
       '',
     );
   for (const d of r.datasets) {

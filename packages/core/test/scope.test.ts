@@ -112,7 +112,7 @@ describe('scope model (ADR-0040)', () => {
     });
   });
 
-  it('research consent covers the special areas turned on, and never widens one already consented (ADR-0063)', () => {
+  it('research consent covers the special areas turned on, and never widens one already consented (ADR-0064)', () => {
     const intake = withResearchUse(scope({ consents: { politics: true, health: true, money: true } }), null);
     expect(normalizeScope(intake, true).researchConsents).toEqual({ politics: true, health: true });
     expect(normalizeScope(intake, false).researchConsents).toEqual({});

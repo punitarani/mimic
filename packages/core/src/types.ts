@@ -157,7 +157,17 @@ export interface PersonState {
   evidence: StateEvidence[];
   /** BALD only: one persona hypothesis added on top of the sealed state. */
   hypothesis?: string;
-  meta: { evidenceSeqMax: number; stateHash: string; builder: string; tokens: number };
+  meta: {
+    evidenceSeqMax: number;
+    stateHash: string;
+    /**
+     * Hash of the evidence alone. An export's scrub rewrites identity, so states rebuilt from it can't match
+     * `stateHash`; the answers they hold still can (RESEARCH §10.5). Absent on states built before it existed.
+     */
+    evidenceHash?: string;
+    builder: string;
+    tokens: number;
+  };
 }
 
 export type PredictionErrorKind = 'transport' | 'output' | 'timeout';
