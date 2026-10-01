@@ -16,7 +16,6 @@ import {
   HARNESS_STATE_VIEWS,
   type HarnessStateView,
   harnessProblems,
-  INCUMBENT_HARNESS,
   LlmPredictor,
   lexicalSimilarity,
   normalizeDist,

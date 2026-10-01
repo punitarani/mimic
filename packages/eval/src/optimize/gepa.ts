@@ -8,7 +8,6 @@ import {
   formatPredictorId,
   type Gateway,
   HARNESS_KEYS,
-  INCUMBENT_HARNESS,
   PER_MODEL_HARNESS_KEYS,
   type PerModelHarness,
   PREDICT_PROMPTS,
