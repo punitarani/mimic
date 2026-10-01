@@ -116,6 +116,13 @@ describe('E7 probe schedule (ADR-0062)', () => {
       due: { slot: 30, index: 1, planned: 'repeat' },
     })!;
     expect(second.tier).not.toBe('repeat');
+    // A shared probe that lost a race and was discarded does not use up the shared item.
+    const lost = probe(
+      { slot: 0, index: 0, planned: 'shared', tier: 'shared' },
+      { status: 'discarded', itemKey: PROBE_V1.shared[0] },
+    );
+    const retry = pickProbe({ ...args, questions: [lost], due: { slot: 0, index: 0, planned: 'shared' } })!;
+    expect(retry).toMatchObject({ tier: 'shared', item: { itemKey: PROBE_V1.shared[0] } });
   });
 
   it('cfg.e7.probes is cfg.default.v8 with the probes and a longer session', () => {

@@ -117,7 +117,9 @@ export function pickProbe(args: {
       for (const f of q.facetIds) counts.set(f, (counts.get(f) ?? 0) + 1);
   const loadOf = (item: { facetIds: string[] }) =>
     Math.max(0, ...item.facetIds.map((f) => counts.get(f) ?? 0));
-  const used = new Set(questions.map((q) => q.itemKey).filter(Boolean));
+  // A discarded record, or a probe that was never served (a lost race, an undo), does not use up its item.
+  const live = questions.filter((q) => q.status !== 'discarded' && !(isProbe(q) && q.status === 'pooled'));
+  const used = new Set(live.map((q) => q.itemKey).filter(Boolean));
   const shared = new Set(probes.shared);
   const bank = getReserveSet(args.bank);
   const rng = seededRng(`probe:${args.mimicId}:${due.slot}:${due.index}`);
@@ -135,7 +137,7 @@ export function pickProbe(args: {
       continue;
     }
     if (tier === 'repeat') {
-      const repeated = new Set(questions.map((q) => probeMetaOf(q)?.sourceId).filter(Boolean));
+      const repeated = new Set(live.map((q) => probeMetaOf(q)?.sourceId).filter(Boolean));
       const src = questions
         .filter((q) => q.kind === 'anchor' && q.status === 'answered' && !repeated.has(q.id))
         .sort((a, b) => a.seq! - b.seq!)[0];
