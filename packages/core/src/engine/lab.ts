@@ -12,6 +12,7 @@ import { populationOf } from '../participants';
 import type { ConfigRecord, EvalRunRecord, ExperimentRecord } from '../store';
 import { isPredictedKind } from '../types';
 import { type EngineDeps, loadConfig } from './deps';
+import { FOOTPRINT_PREDICTOR_ID } from './footprint';
 
 export interface ArmCurve {
   arm: string;
@@ -130,7 +131,8 @@ export async function labOverview(
       const ps = predsByQ.get(q.id) ?? [];
       const primary = ps.find((p) => p.role === 'primary');
       const baseline = ps.find((p) => p.role === 'baseline');
-      const shadows = ps.filter((p) => p.role === 'shadow');
+      // The footprint's implied answer is stored as a shadow but reads no state (ADR-0061): not a config shadow.
+      const shadows = ps.filter((p) => p.role === 'shadow' && p.predictorId !== FOOTPRINT_PREDICTOR_ID);
       const expectShadows = q.kind === 'playground' ? 0 : cfg.predictor.shadows.length;
       if (!primary || !baseline || shadows.length < expectShadows) {
         if (q.servedAt !== null && deps.clock() - q.servedAt < PENDING_WINDOW_MS) inv.pending++;

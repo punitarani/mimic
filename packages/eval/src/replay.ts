@@ -16,15 +16,16 @@ import {
   loadMimicDataAt,
   makePredictor,
   needsScores,
-  normalizeDist,
-  P_FLOOR,
   type PersonState,
   type PredictionResult,
+  type Predictor,
   type PredictorMetrics,
   predictorMetrics,
   type Question,
   type QuestionRecord,
   quantile,
+  ranksBySimilarity,
+  rawScale,
   type ScoredRow,
   scorePrediction,
   seededRng,
@@ -34,6 +35,7 @@ import {
   surpriseOf,
   ulid,
 } from '@mimic/core';
+import { logPool } from './pool';
 
 export interface ReplaySpec {
   name: string;
@@ -81,7 +83,7 @@ export const HELDOUT_PREFIX = 'twin2k/w4/';
 const JEV_CHUNK = 40;
 
 /** Predicts in chunks so a Jev request stays well inside its 32K context. */
-async function predictAll(predictor: ReturnType<typeof makePredictor>, state: PersonState, qs: Question[]) {
+export async function predictAll(predictor: Predictor, state: PersonState, qs: Question[]) {
   const out: PredictionResult[] = [];
   for (let i = 0; i < qs.length; i += JEV_CHUNK)
     out.push(...(await predictor.predict(state, qs.slice(i, i + JEV_CHUNK))));
@@ -112,6 +114,44 @@ function scoredRow(
     latencyMs: p.latencyMs,
   };
 }
+
+/**
+ * Baseline surprise for training answers that have none stored (an import), so `surprise` can rank them (ADR-0056).
+ * The context-only baseline reads no answers, so the signal is sealed by construction; it is taken on the predictor's
+ * raw scale, as stored signals are. Questions already predicted in `known` are not asked again.
+ */
+export async function annotateSurprise(
+  baseline: Predictor,
+  baseState: PersonState,
+  items: EvidenceItem[],
+  qById: ReadonlyMap<string, QuestionRecord>,
+  answerByQ: ReadonlyMap<string, { value: string }>,
+  known: ReadonlyMap<string, PredictionResult> = new Map(),
+): Promise<{ bySeq: Map<number, number>; costUsd: number }> {
+  const missing = items.filter((e) => e.surprise === undefined);
+  const fresh = missing.filter((e) => !known.has(e.questionId));
+  const preds = await predictAll(
+    baseline,
+    baseState,
+    fresh.map((e) => qById.get(e.questionId)!),
+  );
+  const freshByQ = new Map(fresh.map((e, i) => [e.questionId, preds[i]!]));
+  const bySeq = new Map<number, number>();
+  for (const e of missing) {
+    const p = known.get(e.questionId) ?? freshByQ.get(e.questionId)!;
+    if (!p.ok) continue;
+    const q = qById.get(e.questionId)!;
+    const { logLoss } = scorePrediction(q.type, rawScale(baseline.id, p.dist), answerByQ.get(q.id)!.value);
+    bySeq.set(e.seq, surpriseOf(logLoss, q.options.length));
+  }
+  return { bySeq, costUsd: preds.reduce((a, p) => a + p.costUsd, 0) };
+}
+
+/** An evidence item with its annotated surprise, when it has none of its own. */
+export const withSurprise =
+  (bySeq: ReadonlyMap<number, number>) =>
+  (e: EvidenceItem): EvidenceItem =>
+    e.surprise === undefined && bySeq.has(e.seq) ? { ...e, surprise: bySeq.get(e.seq)! } : e;
 
 /** Numeric value of an answer for across-person metrics: score index, yes = 1, or 2-option choice index. */
 export function itemValue(q: Pick<QuestionRecord, 'type' | 'options'>, key: string): number | null {
@@ -155,14 +195,15 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
     ...(spec.maxEvidence !== undefined ? { maxEvidence: spec.maxEvidence } : {}),
     ...(spec.budgetTokens !== undefined ? { budgetTokens: spec.budgetTokens } : {}),
   };
-  const wantsSurprise = spec.evidencePolicy === 'surprise';
-  const wantsScores = wantsSurprise || spec.evidencePolicy === 'novelty';
   /** Training answers with no stored baseline (an import), given one here so `surprise` can rank them. */
   let annotated = 0;
+  let surpriseRanked = false;
 
   for (const m of mimics) {
     const cfg = await loadConfig(deps, m.configHash);
-    const scores = wantsScores || needsScores(cfg);
+    // The spec's policy, else the config's: either way surprise and novelty need the stored scores.
+    const policy = spec.evidencePolicy ?? cfg.stateBuilder.evidencePolicy ?? 'mixed';
+    const scores = policy === 'surprise' || policy === 'novelty';
     const loaded = await loadMimicData(deps, m, { scores });
     const qById = new Map(loaded.questions.map((q) => [q.id, q]));
     const answerByQ = new Map(loaded.answers.map((a) => [a.questionId, a]));
@@ -178,27 +219,14 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
     const baseQs = allTargets.map((e) => qById.get(e.questionId)!);
     const basePreds = await predictAll(baselinePredictor, baseState, baseQs);
     const baseByQ = new Map(baseQs.map((q, i) => [q.id, basePreds[i]!]));
-    // The surprise policy ranks training answers by the baseline's log loss on them. Online sessions store it with
-    // every answer; an import has none, so the same context-only baseline supplies it here, sealed by construction.
-    const surpriseBySeq = new Map<number, number>();
-    if (wantsSurprise) {
-      const missing = train.filter((e) => e.surprise === undefined);
-      const qs = missing.map((e) => qById.get(e.questionId)!);
-      const preds = await predictAll(baselinePredictor, baseState, qs);
-      preds.forEach((p, i) => {
-        if (!p.ok) return;
-        const e = missing[i]!;
-        const q = qs[i]!;
-        const { logLoss } = scorePrediction(q.type, p.dist, answerByQ.get(q.id)!.value);
-        surpriseBySeq.set(e.seq, surpriseOf(logLoss, q.options.length));
-        cost += p.costUsd;
-        annotated++;
-      });
+    let surprise = new Map<number, number>();
+    if (policy === 'surprise') {
+      surpriseRanked = true;
+      const r = await annotateSurprise(baselinePredictor, baseState, train, qById, answerByQ, baseByQ);
+      surprise = r.bySeq;
+      cost += r.costUsd;
+      annotated += r.bySeq.size;
     }
-    const withSurprise = (e: EvidenceItem): EvidenceItem =>
-      e.surprise === undefined && surpriseBySeq.has(e.seq)
-        ? { ...e, surprise: surpriseBySeq.get(e.seq)! }
-        : e;
 
     for (const k of spec.checkpoints) {
       if (k > train.length) continue;
@@ -219,7 +247,7 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
         ...asOf.data,
         evidence: asOf.data.evidence
           .filter((e) => trainSeqs.has(e.seq) || (e.kind === 'feedback' && e.seq < beforeSeq))
-          .map(withSurprise),
+          .map(withSurprise(surprise)),
       };
       const state = buildState(data, stateOptions(cfg, beforeSeq, overrides));
       const qs = targets.map((e) => qById.get(e.questionId)!);
@@ -249,18 +277,9 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
             rows.push(scoredRow(m.id, `${q.id}@${k}`, predictorId, q, answer.value, p));
           }
           if (okViews.length) {
-            const keys = q.options.map((o) => o.key);
-            const dist = normalizeDist(
-              Object.fromEntries(
-                keys.map((key) => [
-                  key,
-                  Math.exp(
-                    okViews.reduce((a, x) => a + Math.log(Math.max(x.p.dist[key] ?? P_FLOOR, P_FLOOR)), 0) /
-                      okViews.length,
-                  ),
-                ]),
-              ),
-              keys,
+            const dist = logPool(
+              okViews.map((x) => ({ dist: x.p.dist, w: 1 })),
+              q.options.map((o) => o.key),
             );
             rows.push(
               scoredRow(m.id, `${q.id}@${k}`, `${predictor.id}@pool:views`, q, answer.value, {
@@ -286,22 +305,10 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
           }
           if (role === 'replay') cost += p.costUsd;
           snapshots.add(p.modelSnapshot);
-          const s = scorePrediction(q.type, p.dist, answer.value);
-          rows.push({
-            mimicId: m.id,
-            questionId: `${q.id}@${k}`,
-            predictorId,
-            role: role === 'replay' ? 'primary' : 'baseline',
-            itemAcc: s.itemAcc,
-            top1: s.top1,
-            logLoss: s.logLoss,
-            brier: s.brier,
-            confidence: p.dist[argmax(p.dist)] ?? 0,
-            costUsd: p.costUsd,
-            latencyMs: p.latencyMs,
-          });
+          const row = scoredRow(m.id, `${q.id}@${k}`, predictorId, q, answer.value, p);
+          rows.push(role === 'replay' ? row : { ...row, role: 'baseline' });
           if (role === 'replay') {
-            accs.push(s.itemAcc);
+            accs.push(row.itemAcc);
             const pv = predictedValue(q, p.dist);
             const av = itemValue(q, answer.value);
             if (q.itemKey && pv !== null && av !== null)
@@ -344,7 +351,7 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
       costPerPersonUsd: cost / people,
       people: mimics.length,
       modelSnapshots: [...snapshots].sort(),
-      ...(wantsSurprise ? { surpriseAnnotated: annotated } : {}),
+      ...(surpriseRanked ? { surpriseAnnotated: annotated } : {}),
     },
     r2ReportKey: null,
     createdAt: deps.clock(),
@@ -443,12 +450,11 @@ export async function reproduceOnline(
       }
       const state = buildState(loaded.data, stateOptions(cfg, q.seq, { forQuestions: [q] }));
       const eligible = loaded.data.evidence.filter((e) => e.seq < q.seq! && learnsFrom(e.kind)).length;
-      // A trimmed state is rebuilt exactly unless the trimming ranked evidence by similarity to the candidate pool
-      // (the `mixed` and `similar` policies); the other policies rank by exported signals alone (ADR-0056).
-      const policy = cfg.stateBuilder.evidencePolicy ?? 'mixed';
-      const poolRanked = policy === 'mixed' || policy === 'similar';
+      // A trimmed state is rebuilt exactly unless the trimming ranked evidence against the candidate pool (ADR-0056).
       const overBudget =
-        cfg.stateBuilder.strategy !== 'structured' && poolRanked && state.evidence.length < eligible;
+        cfg.stateBuilder.strategy !== 'structured' &&
+        ranksBySimilarity(cfg) &&
+        state.evidence.length < eligible;
       n++;
       if (q.stateAt === null) legacy++;
       else if (overBudget) truncated++;

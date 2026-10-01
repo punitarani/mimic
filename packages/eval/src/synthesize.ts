@@ -1,4 +1,5 @@
 import {
+  allOntologyFacets,
   type CopulaFit,
   conditionalAnswer,
   drawKey,
@@ -118,11 +119,12 @@ export async function buildPopulation(
       (spec.split === 'all' || m.split === spec.split) &&
       (spec.population === 'all' || populationOf(m.participantId) === ('real' satisfies Population)),
   );
-  // One ontology for the cohort: the default config's, so facet ids line up across people.
+  // One ontology's facets as the dims (the first person's), so facet ids line up across people. Scope and research
+  // consent are checked against every version's facets: an answer on a facet the dims' version lacks is still gated.
   const facets: Facet[] = mimics.length
     ? getOntology((await loadConfig(deps, mimics[0]!.configHash)).ontologyVersion)
     : [];
-  const facetById = new Map(facets.map((f) => [f.id, f]));
+  const facetById = allOntologyFacets();
   const dims = facets.map((f) => f.id);
   const people: Person[] = [];
   const items = new Map<string, Item>();
@@ -344,7 +346,7 @@ export function renderPopulation(m: Record<string, unknown>): string[] {
       `| Mean dispersion ratio | ${f3(r.meanDispersionRatio)} | 1 keeps the cohort's spread; below 1 is the under-dispersion twins show |`,
       `| Structure distance | ${f3(r.structureDistance)} | RMS difference of off-diagonal correlations, synthetic vs real |`,
       `| Coverage | ${f3(r.coverage)} | share of real people with a synthetic neighbour at least as close as any real one |`,
-      `| Identifiability | ${f3(r.identifiability)} | share of real people a synthetic agent sits closer to than any other real person: near 1 copies people |`,
+      `| Identifiability | ${f3(r.identifiability)} | share of real people with a synthetic agent within half the distance to their nearest real neighbour: near 1 copies people |`,
       '',
       '| Facet | Real mean | Real SD | Synthetic mean | Synthetic SD | Dispersion | Caricature |',
       '| --- | --- | --- | --- | --- | --- | --- |',

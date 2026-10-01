@@ -78,7 +78,7 @@ describe('surprise-ranked evidence and the card state (ADR-0056)', () => {
         engine.deps,
         {
           name: `card ${evidencePolicy}`,
-          predictor: 'jev:typesafe/jev-1.13',
+          predictor: 'decision:typesafe/jev-1.13',
           strategy: 'card',
           evidencePolicy,
           maxEvidence: 4,
@@ -103,7 +103,7 @@ describe('surprise-ranked evidence and the card state (ADR-0056)', () => {
       engine.deps,
       {
         name: 'twin card',
-        predictor: 'jev:typesafe/jev-1.13',
+        predictor: 'decision:typesafe/jev-1.13',
         strategy: 'card',
         evidencePolicy: 'surprise',
         maxEvidence: 3,

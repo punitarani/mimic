@@ -1,6 +1,13 @@
 import { z } from 'zod';
 import { normalizeDist } from '../distribution';
-import { type FootprintDoc, footprintTokens, selectDocs, sensitiveAreasOf } from '../footprint';
+import {
+  type FootprintDoc,
+  footprintTokens,
+  ownWordsOnly,
+  scrubIdentifiers,
+  selectDocs,
+  sensitiveAreasOf,
+} from '../footprint';
 import { GATES_VERSION } from '../jev';
 import { type DraftQuestion, runQualityGates, validateDraft } from '../learning';
 import { parseJsonLoose } from '../predictors';
@@ -9,7 +16,7 @@ import { questionAllowed } from '../scope';
 import { lexicalSimilarity } from '../state-builder';
 import type { PredictionRecord, QuestionRecord } from '../store';
 import type { Distribution, Facet } from '../types';
-import { loadMimicData } from './data';
+import { loadMimicData, vectorId } from './data';
 import {
   budgetSpent,
   ctxFor,
@@ -75,7 +82,7 @@ export function footprintFacets(facets: Facet[]): Facet[] {
 export function footprintInput(facets: Facet[], docs: FootprintDoc[], n: number): string {
   const facetLines = facets.map((f) => `${f.id}: ${f.name}, ${f.low} ↔ ${f.high}`);
   const docLines = docs.map((d) => {
-    const date = d.at ? new Date(d.at).toISOString().slice(0, 10) : 'undated';
+    const date = d.at === null ? 'undated' : new Date(d.at).toISOString().slice(0, 10);
     return `[${d.id}] ${date} · ${d.source} ${d.kind} · ${d.text.replace(/\s+/g, ' ')}`;
   });
   return `FACETS:\n${facetLines.join('\n')}\n\nDOCUMENTS:\n${docLines.join('\n')}\n\nWrite up to ${n} items.`;
@@ -142,8 +149,11 @@ export async function proposeFromFootprint(
   if (budgetSpent(deps, m, cfg)) throw new EngineError('budget', 'Budget reached');
   const loaded = await loadMimicData(deps, m);
   const facets = footprintFacets(await facetsFor(deps, m, cfg));
+  // The browser cleaned the documents, but the server holds the same hygiene rules at its own boundary.
   const docs = selectDocs(
-    input.docs.filter((d) => !sensitiveAreasOf(d.text).length),
+    input.docs
+      .map((d) => ({ ...d, text: scrubIdentifiers(ownWordsOnly(d.text)) }))
+      .filter((d) => d.text.length > 0 && !sensitiveAreasOf(d.text).length),
     FOOTPRINT_DOC_BUDGET,
   );
   const dropped: Record<string, number> = {};
@@ -275,7 +285,25 @@ export async function proposeFromFootprint(
       stateAt: null,
     });
   });
-  if (recs.length) await deps.store.insertQuestions(recs);
+  if (recs.length) {
+    await deps.store.insertQuestions(recs);
+    // Embedded like generated questions, so refills dedupe against them and selection measures their redundancy.
+    try {
+      const { vectors } = await deps.gateway.embed(
+        ctxFor(m, 'footprint.embed'),
+        recs.map((r) => r.prompt),
+      );
+      await deps.vectors.upsert(
+        recs.map((r, i) => ({
+          id: vectorId.question(m.id, r.id),
+          values: vectors[i]!,
+          metadata: { mimicId: m.id, kind: 'question' as const, facetIds: r.facetIds.join(','), seq: 0 },
+        })),
+      );
+    } catch {
+      // Without vectors, dedupe and redundancy fall back to lexical similarity, as for any unembedded question.
+    }
+  }
   return {
     docs: docs.length,
     tokens: footprintTokens(docs),

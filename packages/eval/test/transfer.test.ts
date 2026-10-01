@@ -30,7 +30,7 @@ describe('transfer loss (ADR-0057)', () => {
       engine.deps,
       {
         name: 't',
-        readers: ['llm:deepseek/deepseek-v4.1-flash', 'jev:typesafe/jev-1.13'],
+        readers: ['llm:deepseek/deepseek-v4.1-flash', 'decision:typesafe/jev-1.13'],
         views: [...TRANSFER_VIEWS],
         checkpoints: [8, 16],
         split: 'all',

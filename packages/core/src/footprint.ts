@@ -27,8 +27,8 @@ export const FootprintDoc = z.object({
   id: z.string().min(1).max(64),
   source: z.enum(FOOTPRINT_SOURCES),
   kind: z.enum(['post', 'comment', 'profile', 'position', 'education', 'skills', 'repo', 'note']),
-  /** When it was written, integer milliseconds; null when the export says nothing. */
-  at: z.number().int().nullable(),
+  /** When it was written, integer milliseconds (within Date's range); null when the export says nothing. */
+  at: z.number().int().min(-8.64e15).max(8.64e15).nullable(),
   text: z.string().min(1).max(4000),
   /** Where it sat, for the person's own review: a subreddit, a repository, a company. */
   where: z.string().max(200).optional(),
@@ -148,9 +148,7 @@ const toMs = (s: string | undefined | null): number | null => {
   return Number.isFinite(t) ? t : null;
 };
 
-// ---------------------------------------------------------------------------------------------------------------
 // X / Twitter archive: data/tweets.js is `window.YTD.tweets.part0 = [ { tweet: {...} }, ... ]`
-// ---------------------------------------------------------------------------------------------------------------
 
 const XTweet = z.object({
   tweet: z.object({
@@ -190,9 +188,7 @@ export function parseXArchive(tweetsJs: string, opts: { replies?: boolean } = {}
   return clean(raws);
 }
 
-// ---------------------------------------------------------------------------------------------------------------
 // CSV (LinkedIn and Reddit exports)
-// ---------------------------------------------------------------------------------------------------------------
 
 /** A small RFC 4180 reader: quoted fields, doubled quotes, CRLF. Returns rows of strings. */
 export function parseCsv(text: string): string[][] {

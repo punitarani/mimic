@@ -34,6 +34,15 @@ export function needsScores(cfg: Pick<PipelineConfig, 'stateBuilder'>): boolean 
 }
 
 /**
+ * Whether a config's trimmed states rank answers by similarity to the target questions (`mixed`, `similar`): only
+ * those read embeddings, and only those depend on the candidate pool, which an export does not hold (ADR-0056).
+ */
+export function ranksBySimilarity(cfg: Pick<PipelineConfig, 'stateBuilder'>): boolean {
+  const p = cfg.stateBuilder.evidencePolicy ?? 'mixed';
+  return p === 'mixed' || p === 'similar';
+}
+
+/**
  * Surprise and novelty per answered question from the stored primary and baseline scores (ADR-0056): each is the
  * prediction's log loss on the answer over log|options|, on the predictor's raw scale (`rawScale`, ADR-0048), so a
  * calibrated primary ranks evidence exactly as an uncalibrated one. A fallback primary carries no novelty. Scores are
@@ -298,7 +307,12 @@ export async function sealedState(
   const opts = stateOptions(cfg, beforeSeq, { forQuestions });
   const first = buildState(loaded.data, opts);
   const eligible = loaded.data.evidence.filter((e) => e.seq < beforeSeq && learnsFrom(e.kind));
-  if (first.evidence.length >= eligible.length || cfg.stateBuilder.strategy === 'structured') return first;
+  if (
+    first.evidence.length >= eligible.length ||
+    cfg.stateBuilder.strategy === 'structured' ||
+    !ranksBySimilarity(cfg)
+  )
+    return first;
   try {
     const ids = eligible.map((e) => vectorId.qa(loaded.data.mimicId, e.seq));
     const qIds = forQuestions.map((q) => vectorId.question(loaded.data.mimicId, q.id));

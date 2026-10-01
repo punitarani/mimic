@@ -151,7 +151,7 @@ export function buildState(m: MimicData, opts: BuildOptions): PersonState {
       .filter((e) => e.seq < opts.beforeSeq && learnsFrom(e.kind))
       .sort((a, b) => a.seq - b.seq);
     // The incumbent accounts for the sections alone; a policy fill runs closer to the line, so it also counts the
-    // evidence key itself, and the budget then holds exactly (ADR-0056).
+    // evidence key itself, and the budget then holds exactly.
     const used =
       policy === 'mixed'
         ? estimateTokens({ identity, traits, insights })
@@ -223,7 +223,7 @@ function selectEvidence(
 
   const policy = opts.evidencePolicy ?? 'mixed';
   if (policy !== 'mixed') {
-    // One ranking, then a greedy fill under the cap and the budget, rendered in seq order (ADR-0056).
+    // One ranking, then a greedy fill under the cap and the budget, rendered in seq order.
     const kept: EvidenceItem[] = [];
     for (const e of rankByPolicy(items, policy, m, opts)) {
       if (kept.length >= cap) break;

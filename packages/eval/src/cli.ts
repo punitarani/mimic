@@ -82,7 +82,7 @@ Commands
   transfer  Transfer loss (ADR-0057): a reader that knows nothing about Mimic predicts later answers from one exported
             view alone (SOUL.md core or full, mimic.json, the card, or the identity-only context), against the full
             in-context state; per view: accuracy, log loss, lift, tokens, cost
-            --data <file.sqlite> [--readers llm:deepseek/deepseek-v4.1-flash[,jev:typesafe/jev-1.13]]
+            --data <file.sqlite> [--readers llm:deepseek/deepseek-v4.1-flash[,decision:typesafe/jev-1.13]]
             [--views context,state,card,soul-core,soul-full,mimic-json] [--checkpoints 10,20] [--split dev]
             [--targets later|heldout] [--draft] [--card-max 12] [--card-policy surprise] [--limit N]
             [--max-targets N] [--offline]
@@ -289,6 +289,7 @@ async function replayCmd(argv: string[]) {
   const hash = await datasetHash(engine.client);
   const limit = values.limit ? Number(values.limit) : undefined;
   let run: EvalRunRecord;
+  let rows: unknown[] | undefined;
   if (values.mode === 'online') {
     const r = await reproduceOnline(
       engine.deps,
@@ -320,11 +321,11 @@ async function replayCmd(argv: string[]) {
       hash,
     );
     run = r.run;
-    // Every scored row beside the report, so two runs can be compared pairwise by question (data/bench/compare.py).
-    if (values.rows)
-      writeFileSync(resolve(writeReport(run).md, '..', 'rows.json'), `${JSON.stringify(r.rows)}\n`);
+    rows = r.rows;
   }
   const files = writeReport(run);
+  // Every scored row beside the report, so two runs can be compared pairwise by question.
+  if (values.rows && rows) writeFileSync(resolve(files.md, '..', 'rows.json'), `${JSON.stringify(rows)}\n`);
   console.log(renderReport(run));
   console.log(`\nrun ${run.id} → ${files.md}`);
   engine.close();

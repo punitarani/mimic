@@ -54,6 +54,7 @@ import {
   facetCounts,
   type LoadedMimic,
   loadMimicData,
+  needsScores,
   qaText,
   stateBlobKey,
   stateOptions,
@@ -826,7 +827,8 @@ export async function runLearn(
 ): Promise<void> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
-  const loaded = await loadMimicData(deps, m);
+  // The trait read builds a state, so a surprise or novelty policy needs the scores (ADR-0056).
+  const loaded = await loadMimicData(deps, m, { scores: needsScores(cfg) });
   if (answerId && !loaded.answers.some((a) => a.seq === seq && a.id === answerId)) return;
   const item = loaded.data.evidence.find((e) => e.seq === seq);
   if (!item || !learnsFrom(item.kind)) return;
@@ -1103,7 +1105,7 @@ export async function runHypotheses(
   // Hypotheses only steer session selection, so they stop with the session's share.
   requireSessionBudget(deps, m, cfg);
   if (((await loadHypotheses(deps, m.id))?.seqUpTo ?? -1) >= seqUpTo) return;
-  const loaded = await loadMimicData(deps, m);
+  const loaded = await loadMimicData(deps, m, { scores: needsScores(cfg) });
   const state = buildState(loaded.data, stateOptions(cfg, seqUpTo + 1));
   const facets = await facetsFor(deps, m, cfg);
   const conf = new Map(

@@ -122,6 +122,30 @@ describe('observation ledger (ADR-0060)', () => {
     expect(md).toContain('**The direct flight**');
   }, 60_000);
 
+  it('keeps the same writer and observation ids apart across mimics', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const a = await person(3);
+    const b = await createMimic(
+      engine.deps,
+      {
+        name: 'Ana Lima',
+        location: 'Porto, PT',
+        occupation: 'Teacher',
+        attestSelf: true,
+        consentSearch: false,
+        consentResearch: true,
+      },
+      'p-ana',
+    );
+    await engine.drain();
+    expect((await importObservations(engine.deps, a.id, batch())).accepted).toBe(2);
+    expect(await importObservations(engine.deps, b.id, batch())).toMatchObject({
+      accepted: 2,
+      duplicates: 0,
+    });
+    expect(await listObservations(engine.deps, b.id)).toHaveLength(2);
+  }, 60_000);
+
   it('rejects what an agent may not write, one observation at a time', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
     const m = await person(3);

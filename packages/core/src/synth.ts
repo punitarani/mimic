@@ -208,9 +208,7 @@ export function nearest(x: number[], pool: number[][], k: number): number[] {
     .map((r) => r.i);
 }
 
-// ---------------------------------------------------------------------------------------------------------------
 // Realism metrics
-// ---------------------------------------------------------------------------------------------------------------
 
 export interface RealismMetrics {
   /** Per dim: real mean and SD, synthetic mean and SD, dispersion ratio (synthetic SD / real SD), caricature index. */
@@ -228,11 +226,11 @@ export interface RealismMetrics {
   meanDispersionRatio: number;
   /** Frobenius distance between the synthetic and the raw real correlation matrices, per off-diagonal entry. */
   structureDistance: number;
-  /** Share of real people whose nearest synthetic neighbour is closer than their nearest real neighbour. */
+  /** Share of real people with a synthetic agent at least as close as their nearest real neighbour. */
   coverage: number;
   /**
-   * Re-identification: share of real people whose single nearest synthetic agent is closer than any other real
-   * person to them; a value near 1 means the synthetic population copies individuals, near 0 that it ignores them.
+   * Re-identification: share of real people with a synthetic agent within half the distance to their nearest real
+   * neighbour, a near-copy of them. Near 1 the population copies individuals; it stays below `coverage`.
    */
   identifiability: number;
 }
@@ -244,6 +242,9 @@ function meanSd(xs: number[]): { mean: number; sd: number } {
   const sd = v.length > 1 ? Math.sqrt(v.reduce((a, x) => a + (x - mean) ** 2, 0) / (v.length - 1)) : 0;
   return { mean, sd };
 }
+
+/** An agent closer to a real person than this share of the distance to that person's nearest real neighbour. */
+const NEAR_COPY = 0.5;
 
 export function realism(dims: string[], real: number[][], synth: number[][]): RealismMetrics {
   const rows = dims.map((dim, j) => {
@@ -279,7 +280,7 @@ export function realism(dims: string[], real: number[][], synth: number[][]): Re
       ? Math.min(...synth.map((s) => distance(real[i]!, s)))
       : Number.POSITIVE_INFINITY;
     if (dSynth <= dReal) covered++;
-    if (dSynth < dReal) identified++;
+    if (dSynth < NEAR_COPY * dReal) identified++;
   }
   return {
     dims: rows,
@@ -370,7 +371,6 @@ export function conditionalAnswer(
   };
   const nb = count(neighbourAnswers);
   const pop = count(populationAnswers);
-  const nN = neighbourAnswers.length;
   const nP = populationAnswers.length || 1;
   const out: Record<string, number> = {};
   let total = 0;
@@ -380,7 +380,6 @@ export function conditionalAnswer(
     total += v;
   }
   for (const k of keys) out[k] = out[k]! / (total || 1);
-  void nN;
   return out;
 }
 

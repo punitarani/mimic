@@ -2184,9 +2184,9 @@ something those pipelines lack: real people's sealed answers. `pnpm eval -- popu
   frequencies of its *k* nearest real people, shrunk toward the population's: a mixture of people, never a copy. It
   draws from stated distributions, the one thing silicon sampling must do (arXiv 2411.05403).
 - **Realism against the cohort:** dispersion ratio and caricature per facet, correlation-structure distance,
-  coverage, re-identification (the share of real people a synthetic agent sits closer to than any other real person),
-  and the cross-validated R² of each sensitive facet from the non-sensitive ones, real vs synthetic, so a population
-  never leaks more than its source.
+  coverage (the share of real people with an agent at least as close as their nearest real neighbour),
+  re-identification (the share with an agent within half that distance: a near-copy), and the cross-validated R² of
+  each sensitive facet from the non-sensitive ones, real vs synthetic, so a population never leaks more than its source.
 - **Renderings.** Each agent carries Concordia `basic__Entity` params and a memory bank of plain-text rows, and
   Smallville scratch fields, written from numbers and answers only; the items form a `QuestionnaireBase` for scoring
   agents inside a simulation. `mimic-population/1` carries provenance (people, split, seed, shrinkage).
@@ -2205,8 +2205,9 @@ truth and everything else is re-derived (PLAN §3.3). So the one thing another a
 
 - **`mimic-observations/1`**: a batch under a writer's name, of typed observations (question, options, answer, why,
   context, when, authority `stated` or `observed`). `POST /api/mimics/:id/observations` validates each on its own
-  (the taught-answer shape; no special-category content by either lexicon; ids unique per writer, so a re-sent batch
-  changes nothing) and stores it through the feedback path (ADR-0032) with `observation:<agent>` as the generator and
+  (the taught-answer shape; no special-category content by either lexicon; ids unique per writer and mimic, so a
+  re-sent batch changes nothing; at most 100 per batch, within a Worker's D1 query limit) and stores it through the
+  feedback path (ADR-0032) with `observation:<agent>` as the generator and
   the observation's metadata on the question. The mimic then learns from it as from any taught answer; traits,
   insights and the portrait re-derive from the record, never from an agent's edit.
 - **Provenance travels.** `mimic.json` evidence carries `source` (`session`, `person`, `agent`) and the agent;

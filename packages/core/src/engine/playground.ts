@@ -208,13 +208,6 @@ export interface FeedbackResult {
 const FEEDBACK_ATTEMPTS = 3;
 
 /**
- * Stores a question the person wrote together with their own answer, as `kind = feedback`, in one atomic write.
- * It enters later sealed states and learning like a session answer. Learnable answers must arrive in seq order,
- * so when a session question is served and not yet answered, the feedback takes that seq and the question moves
- * past it (its predictions were sealed below it, so they stay sealed). Idempotent per key; a write that loses a
- * race for a seq is retried.
- */
-/**
  * Where a feedback answer came from (ADR-0060): the person on the mimic page by default, or an agent's observation
  * ledger, which names the agent and keeps the observation's own metadata on the question.
  */
@@ -230,6 +223,13 @@ export const PERSON_FEEDBACK: FeedbackOrigin = {
   quality: null,
 };
 
+/**
+ * Stores a question the person wrote together with their own answer, as `kind = feedback`, in one atomic write.
+ * It enters later sealed states and learning like a session answer. Learnable answers must arrive in seq order,
+ * so when a session question is served and not yet answered, the feedback takes that seq and the question moves
+ * past it (its predictions were sealed below it, so they stay sealed). Idempotent per key; a write that loses a
+ * race for a seq is retried.
+ */
 export async function submitFeedback(
   deps: EngineDeps,
   mimicId: string,

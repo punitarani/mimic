@@ -16,19 +16,20 @@ import { DraftInput, type FeedbackOrigin, submitFeedback } from './playground';
  * - the same shape as a taught answer (2–5 options, yes/no, or a 5-point scale), answered with one option key;
  * - no special-category content (politics, religion, sexuality, health): only direct, consented questions may
  *   populate those (ADR-0040), and an agent's observation is neither;
- * - an id unique per writer, so a re-sent batch changes nothing (idempotent per observation);
+ * - an id unique per writer and mimic, so a re-sent batch changes nothing (idempotent per observation);
  * - a writer name of letters, digits, dots, dashes and slashes.
  */
 
 export const OBSERVATIONS_SCHEMA = 'mimic-observations/1';
 export const OBSERVATIONS_PROMPT_VERSION = 'observations.v1';
-export const MAX_OBSERVATIONS_PER_BATCH = 200;
+/** Each observation costs a handful of D1 queries, and a Worker invocation is held to 1,000 of them. */
+export const MAX_OBSERVATIONS_PER_BATCH = 100;
 
 export const ObservationAuthority = z.enum(['stated', 'observed']);
 export type ObservationAuthority = z.infer<typeof ObservationAuthority>;
 
 export const Observation = z.object({
-  /** Unique per writer; the idempotency key is `obs:<writer>:<id>`. */
+  /** Unique per writer and mimic; the idempotency key is `obs:<mimicId>:<writer>:<id>`. */
   id: z.string().trim().min(1).max(100),
   /** When the person decided, integer milliseconds. */
   at: z.number().int().nonnegative(),
@@ -81,7 +82,8 @@ export interface ImportObservationsResult {
   learns: boolean;
 }
 
-export const observationKey = (agent: string, id: string) => `obs:${agent}:${id}`;
+/** Idempotency keys are unique across every mimic, so the mimic is part of the key. */
+export const observationKey = (mimicId: string, agent: string, id: string) => `obs:${mimicId}:${agent}:${id}`;
 
 /**
  * Special-category areas a decision can touch, as questions put them (the fact lexicon in `scope.ts` is written
@@ -170,7 +172,7 @@ export async function importObservations(
       outcomes.push({ id: o.id, status: 'rejected', reason: problem });
       continue;
     }
-    const key = observationKey(agent, o.id);
+    const key = observationKey(mimicId, agent, o.id);
     const existing = await deps.store.getAnswerByIdempotencyKey(key);
     if (existing) {
       outcomes.push({ id: o.id, status: 'duplicate', seq: existing.seq });

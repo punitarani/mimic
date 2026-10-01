@@ -2,6 +2,7 @@ import {
   createMimic,
   FOOTPRINT_PREDICTOR_ID,
   footprintMetaOf,
+  labOverview,
   parseText,
   proposeFromFootprint,
   serveNext,
@@ -9,6 +10,8 @@ import {
 } from '@mimic/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type LocalEngine, openLocalEngine } from '../src/local';
+import { pairedComparisons, storedRecords } from '../src/optimize/evaluate';
+import { loadInstances } from '../src/optimize/instances';
 
 let engine: LocalEngine;
 afterEach(() => engine?.close());
@@ -93,6 +96,13 @@ describe('footprint proposals: verify by asking (ADR-0061)', () => {
     const fpScores = scored.filter((s) => s.prediction.predictorId === FOOTPRINT_PREDICTOR_ID);
     expect(fpScores.length).toBe(footprintScored);
     for (const s of fpScores) expect(s.score.logLoss).toBeGreaterThan(0);
+    // The footprint row reads no state and is no config shadow: the invariant monitor doesn't count it as either.
+    const { invariants } = await labOverview(engine.deps, { includeAll: true, population: 'all' });
+    expect(invariants.shadowStateMismatches).toBe(0);
+    // Stored-prediction reports read the footprint row without taking it for a model predictor.
+    const recs = storedRecords(await loadInstances(engine.deps, { k: 30, split: 'all', seed: 's' }));
+    expect(recs.some((r) => r.predictorId === FOOTPRINT_PREDICTOR_ID)).toBe(true);
+    expect(() => pairedComparisons(recs)).not.toThrow();
     // No document text reached a state, a trait or an insight: only answers did.
     const states = await engine.deps.blobs.list(`states/${m.id}/`);
     for (const key of states) expect(await engine.deps.blobs.get(key)).not.toContain('rough version first');

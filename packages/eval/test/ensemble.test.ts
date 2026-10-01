@@ -108,6 +108,37 @@ describe('ensembles of stored predictions (ADR-0058)', () => {
     expect(md).toContain('## Final weights');
   }, 60_000);
 
+  it('gives a member that joins late no head start: it is charged the uniform loss for what it missed', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'late' });
+    await runSession(engine, script('Late One'), { turns: 8 });
+    const tmpl = (await loadInstances(engine.deps, { k: 30, split: 'all', seed: 's' })).find(
+      (i) => i.mode === 'online',
+    )!;
+    const keys = tmpl.question.options.map((o) => o.key);
+    const sure = Object.fromEntries(keys.map((k) => [k, k === tmpl.answer ? 0.9 : 0.1 / (keys.length - 1)]));
+    const row = (predictorId: string, role: 'primary' | 'shadow') => ({
+      predictorId,
+      role,
+      fallback: false,
+      dist: sure,
+      ok: true,
+      costUsd: 0,
+      latencyMs: 0,
+      modelSnapshot: 'x',
+      stateHash: 'h',
+    });
+    // Two equally good members; `llm:late` only predicts the last five questions.
+    const insts = Array.from({ length: 10 }, (_, i) => ({
+      ...tmpl,
+      id: `late:${i}`,
+      seq: i + 1,
+      stored: [row('llm:early', 'primary'), ...(i >= 5 ? [row('llm:late', 'shadow')] : [])],
+    }));
+    const r = ensembleFromStored(insts, { name: 'late', etas: [1], withBaseline: false, seed: 's' });
+    const w = r.methods.find((m) => m.method === 'hedge:1')!.finalWeights!;
+    expect(w['llm:early']!).toBeGreaterThan(w['llm:late']!);
+  }, 60_000);
+
   it('replays the evidence-view ensemble beside the main strategy', async () => {
     engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'views' });
     await runSession(engine, script('View One'), { turns: 14 });
@@ -115,7 +146,7 @@ describe('ensembles of stored predictions (ADR-0058)', () => {
       engine.deps,
       {
         name: 'views',
-        predictor: 'jev:typesafe/jev-1.13',
+        predictor: 'decision:typesafe/jev-1.13',
         strategy: 'full',
         views: ['raw', 'structured', 'summary'],
         checkpoints: [6],

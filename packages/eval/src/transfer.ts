@@ -48,11 +48,11 @@ import {
   seededRng,
   shuffle,
   stateOptions,
-  surpriseOf,
   ulid,
   writeSoulDraft,
 } from '@mimic/core';
-import { HELDOUT_PREFIX } from './replay';
+import { z } from 'zod';
+import { annotateSurprise, HELDOUT_PREFIX, withSurprise } from './replay';
 
 /**
  * Transfer-loss eval (ADR-0057): how much of a mimic survives being exported. For each person and checkpoint k, every
@@ -70,7 +70,7 @@ export type TransferView = (typeof TRANSFER_VIEWS)[number];
 
 export interface TransferSpec {
   name: string;
-  /** Reader predictor IDs: `llm:<model>` reads the view with `transfer.v1`; `jev:<model>` gets it as a text state. */
+  /** Reader predictor IDs: `llm:<model>` reads the view with `transfer.v1`; `decision:<model>` gets it as a state. */
   readers: string[];
   views: TransferView[];
   checkpoints: number[];
@@ -117,7 +117,6 @@ export interface TransferResult {
 const VIEW_SEP = ' » ';
 export const viewPredictorId = (reader: string, view: TransferView) => `${reader}${VIEW_SEP}${view}`;
 
-/** Tokens as every size in Mimic is estimated: four characters each. */
 export const viewTokens = (text: string) => Math.ceil(text.length / 4);
 
 /** A reader that predicts from a rendered view: a plain LLM with `transfer.v1`, or Jev given the view as its state. */
@@ -127,6 +126,9 @@ export interface ViewReader {
 }
 
 const CHUNK = 40;
+
+/** The reader's answer (`transfer.v1`), validated at the provider boundary. */
+const ReaderProbs = z.object({ probs: z.array(z.object({ key: z.string(), p: z.number() })) });
 
 class LlmViewReader implements ViewReader {
   readonly id: string;
@@ -170,10 +172,10 @@ class LlmViewReader implements ViewReader {
         },
       );
       const base = { costUsd: res.usage.costUsd, latencyMs: res.latencyMs, modelSnapshot: res.modelSnapshot };
-      const parsed = parseJsonLoose(res.content) as { probs?: Array<{ key: string; p: number }> } | undefined;
-      if (!parsed?.probs || !Array.isArray(parsed.probs))
+      const parsed = ReaderProbs.safeParse(parseJsonLoose(res.content));
+      if (!parsed.success)
         return { ...base, dist: {}, ok: false, error: 'invalid JSON output', errorKind: 'output' };
-      const raw = keyedByLabel(Object.fromEntries(parsed.probs.map((x) => [x.key, x.p])), q);
+      const raw = keyedByLabel(Object.fromEntries(parsed.data.probs.map((x) => [x.key, x.p])), q);
       const covered = keys.filter((k) => typeof raw[k] === 'number' && raw[k]! >= 0);
       if (covered.length < keys.length || !(covered.reduce((a, k) => a + raw[k]!, 0) > 0))
         return {
@@ -347,32 +349,16 @@ export async function transfer(
     const storedDraft = await deps.store.latestSoulDraft(m.id);
 
     // The card ranks answers by the baseline's surprise (ADR-0056): stored online, computed here for an import.
-    const surpriseBySeq = new Map<number, number>();
+    let surprise = new Map<number, number>();
     if (spec.views.includes('card') && spec.cardPolicy === 'surprise') {
-      const missing = train.filter((e) => e.surprise === undefined);
-      if (missing.length) {
-        const baseline = makePredictor(deps.gateway, cfg.predictor.primary, {
-          purpose: 'eval.transfer.baseline',
-        });
-        const baseState = buildState(loaded.data, stateOptions(cfg, 0, { contextOnly: true }));
-        const qs = missing.map((e) => qById.get(e.questionId)!);
-        for (let i = 0; i < qs.length; i += CHUNK) {
-          const batch = qs.slice(i, i + CHUNK);
-          const preds = await baseline.predict(baseState, batch);
-          preds.forEach((p, j) => {
-            if (!p.ok) return;
-            const q = batch[j]!;
-            const { logLoss } = scorePrediction(q.type, p.dist, answerByQ.get(q.id)!.value);
-            surpriseBySeq.set(missing[i + j]!.seq, surpriseOf(logLoss, q.options.length));
-            cost += p.costUsd;
-          });
-        }
-      }
+      const baseline = makePredictor(deps.gateway, cfg.predictor.primary, {
+        purpose: 'eval.transfer.baseline',
+      });
+      const baseState = buildState(loaded.data, stateOptions(cfg, 0, { contextOnly: true }));
+      const r = await annotateSurprise(baseline, baseState, train, qById, answerByQ);
+      surprise = r.bySeq;
+      cost += r.costUsd;
     }
-    const withSurprise = (e: EvidenceItem): EvidenceItem =>
-      e.surprise === undefined && surpriseBySeq.has(e.seq)
-        ? { ...e, surprise: surpriseBySeq.get(e.seq)! }
-        : e;
 
     for (const k of spec.checkpoints) {
       if (k > train.length) continue;
@@ -387,7 +373,7 @@ export async function transfer(
         .sort((a, b) => a.seq! - b.seq!)[0];
       const at = next?.stateAt ?? next?.servedAt ?? Number.MAX_SAFE_INTEGER;
       const asOf = await loadMimicDataAt(deps, m, at, beforeSeq, { scores: true });
-      const { parts, data } = sealedParts(m, asOf, beforeSeq, trainSeqs, withSurprise);
+      const { parts, data } = sealedParts(m, asOf, beforeSeq, trainSeqs, withSurprise(surprise));
       const fidelity = fid.filter((f) => f.seqUpTo < beforeSeq).at(-1);
       const source = soulSource(
         parts,

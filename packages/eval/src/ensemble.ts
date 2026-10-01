@@ -1,11 +1,4 @@
-import {
-  type Distribution,
-  type EvalRunRecord,
-  normalizeDist,
-  P_FLOOR,
-  scorePrediction,
-  ulid,
-} from '@mimic/core';
+import { type Distribution, type EvalRunRecord, scorePrediction, ulid } from '@mimic/core';
 import {
   type EvalRecord,
   groupBy,
@@ -16,6 +9,9 @@ import {
   toRecord,
 } from './optimize/evaluate';
 import type { EvalInstance, StoredPrediction } from './optimize/instances';
+import { linearPool, logPool } from './pool';
+
+export { linearPool, logPool };
 
 /**
  * Prequential ensembles of the predictions already stored with every served question (ADR-0058): the primary and
@@ -80,33 +76,7 @@ function membersOf(
   return { primary, members };
 }
 
-export function logPool(ms: Array<{ dist: Distribution; w: number }>, keys: string[]): Distribution {
-  const total = ms.reduce((a, m) => a + m.w, 0) || 1;
-  return normalizeDist(
-    Object.fromEntries(
-      keys.map((k) => [
-        k,
-        Math.exp(
-          ms.reduce((a, m) => a + (m.w / total) * Math.log(Math.max(m.dist[k] ?? P_FLOOR, P_FLOOR)), 0),
-        ),
-      ]),
-    ),
-    keys,
-  );
-}
-
-export function linearPool(ms: Array<{ dist: Distribution; w: number }>, keys: string[]): Distribution {
-  const total = ms.reduce((a, m) => a + m.w, 0) || 1;
-  return normalizeDist(
-    Object.fromEntries(keys.map((k) => [k, ms.reduce((a, m) => a + (m.w / total) * (m.dist[k] ?? 0), 0)])),
-    keys,
-  );
-}
-
-/**
- * Exponential weights from cumulative log loss: w_j ∝ exp(−η · L_j). A member with no prediction on an earlier
- * question is charged the uniform loss for it, so absence is neither rewarded nor punished.
- */
+/** Exponential weights from cumulative log loss: w_j ∝ exp(−η · L_j). */
 export function hedgeWeights(loss: Map<string, number>, eta: number, ids: string[]): Map<string, number> {
   const min = Math.min(...ids.map((id) => loss.get(id) ?? 0));
   const raw = ids.map((id) => Math.exp(-eta * ((loss.get(id) ?? 0) - min)));
@@ -136,8 +106,12 @@ export function ensembleFromStored(
   const finalWeights = new Map<string, Map<string, number[]>>();
 
   for (const [, insts] of groupBy(online, (i) => i.mimicId)) {
-    // Cumulative log loss per member over this person's earlier questions: the only thing a weight may depend on.
+    // Cumulative log loss per member over this person's earlier questions: the only thing a weight may depend on. A
+    // member is charged the uniform loss for every earlier question it did not predict (including those before it
+    // first appeared), so absence is neither rewarded nor punished.
     const loss = new Map<string, number>();
+    let uniformSoFar = 0;
+    const lossOf = (id: string) => loss.get(id) ?? uniformSoFar;
     // Hindsight: the member with the lowest total loss over the whole record (every question it answered).
     const total = new Map<string, { loss: number; n: number }>();
     for (const inst of insts) {
@@ -175,8 +149,9 @@ export function ensembleFromStored(
           keys,
         ),
       );
+      const earlier = new Map(ids.map((id) => [id, lossOf(id)]));
       for (const eta of spec.etas) {
-        const w = hedgeWeights(loss, eta, ids);
+        const w = hedgeWeights(earlier, eta, ids);
         const weighted = members.map((m) => ({ dist: m.dist, w: w.get(m.id)! }));
         add(`hedge:${eta}`, linearPool(weighted, keys));
         add(`hedge-log:${eta}`, logPool(weighted, keys));
@@ -193,11 +168,12 @@ export function ensembleFromStored(
 
       // Only now, after the question is scored, does its loss reach the weights (prequential, invariant 1).
       const uniform = Math.log(keys.length);
-      for (const id of memberIds) {
+      for (const id of new Set([...loss.keys(), ...ids])) {
         const m = members.find((x) => x.id === id);
         const l = m ? scorePrediction(inst.question.type, m.dist, inst.answer).logLoss : uniform;
-        loss.set(id, (loss.get(id) ?? 0) + l);
+        loss.set(id, lossOf(id) + l);
       }
+      uniformSoFar += uniform;
     }
   }
 

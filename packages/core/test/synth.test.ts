@@ -93,6 +93,15 @@ describe('population synthesis math (ADR-0059)', () => {
     );
     expect(far.identifiability).toBe(0);
     expect(far.coverage).toBe(0);
+    // Agents halfway between neighbours cover everyone and copy no one.
+    const line = Array.from({ length: 10 }, (_, i) => [i]);
+    const between = realism(
+      ['a'],
+      line,
+      line.slice(1).map(([x]) => [x! - 0.5]),
+    );
+    expect(between.coverage).toBe(1);
+    expect(between.identifiability).toBe(0);
     expect(
       nearest(
         [0, 0, 0],
