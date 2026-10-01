@@ -14,7 +14,7 @@ import { argmax, normalizeDist, optionKeys, temperatureScale, uncalibrate } from
 import { type CallContext, type Gateway, isTimeoutError, isTransientError } from './gateway';
 import { answerToDistribution, confidenceOf, predictionQuestion } from './jev';
 import { PROMPTS } from './prompts';
-import { renderStateText, stateForProvider } from './state-builder';
+import { renderStateText, stateForProvider, viewState } from './state-builder';
 import type {
   ChatMessage,
   DecisionQuestion,
@@ -45,6 +45,11 @@ function promptOf(kind: PredictorKind, ref: PromptRef, model: string): PredictPr
   return { ...ref, version: `cand-${promptHash(ref).slice(0, 12)}` };
 }
 
+/** The part of the state a prompt's harness reads (ADR-0065); the whole state when it names no view. */
+function seenState(state: PersonState, prompt: PredictPrompt): PersonState {
+  return prompt.harness.stateView ? viewState(state, prompt.harness.stateView) : state;
+}
+
 function predictorIdOf(kind: PredictorKind, model: string, prompt: PredictPrompt): string {
   return formatPredictorId(
     prompt.version === DEFAULT_PROMPT_VERSION[kind]
@@ -71,11 +76,12 @@ export class DecisionPredictor implements Predictor {
     this.id = predictorIdOf('decision', model, this.prompt);
   }
 
-  async predict(state: PersonState, qs: Question[]): Promise<PredictionResult[]> {
+  async predict(sealed: PersonState, qs: Question[]): Promise<PredictionResult[]> {
     if (qs.length === 0) return [];
+    const state = seenState(sealed, this.prompt);
     const questions: Record<string, DecisionQuestion> = {};
     const c = this.prompt.components;
-    for (const q of qs) questions[jevKey(q)] = predictionQuestion(q, c);
+    for (const q of qs) questions[jevKey(q)] = predictionQuestion(q, c, this.prompt.harness.scoreAs);
     try {
       const res = await this.gateway.decide(this.ctx, {
         model: this.model,
@@ -174,7 +180,7 @@ export class LlmPredictor implements Predictor {
   }
 
   predict(state: PersonState, qs: Question[]): Promise<PredictionResult[]> {
-    const stateText = renderStateText(state, this.prompt.components);
+    const stateText = renderStateText(seenState(state, this.prompt), this.prompt.components);
     return Promise.all(qs.map((q) => this.one(stateText, q)));
   }
 

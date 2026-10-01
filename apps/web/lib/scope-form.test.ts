@@ -65,7 +65,7 @@ describe('scope form (ADR-0043)', () => {
     const drafted = setConsent(setCategory(all, 'work', false), 'religion', true);
     expect(sameScope(drafted, normalizeScope(drafted, true))).toBe(true);
     expect(sameScope(all, setConsent(all, 'money', false))).toBe(false);
-    // The server gives research use to the area turned on (ADR-0065) and keeps it on the ones already consented.
+    // The server gives research use to the area turned on (ADR-0067) and keeps it on the ones already consented.
     expect(normalizeScope(withResearchUse(drafted, all), true).researchConsents).toEqual({
       politics: true,
       religion: true,
@@ -73,7 +73,7 @@ describe('scope form (ADR-0043)', () => {
     });
   });
 
-  it('an area turned off and on again before saving keeps its research use (ADR-0065)', () => {
+  it('an area turned off and on again before saving keeps its research use (ADR-0067)', () => {
     const toggled = setConsent(setConsent(all, 'health', false), 'health', true);
     expect(toggled.researchConsents).toEqual({ politics: true });
     expect(normalizeScope(withResearchUse(toggled, all), true).researchConsents).toEqual(

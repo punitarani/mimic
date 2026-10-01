@@ -8,6 +8,7 @@ import {
   harnessProblems,
   INCUMBENT_COMPONENTS,
   INCUMBENT_HARNESS,
+  isCalibrationOnly,
   PREDICT_PROMPTS,
   promptHash,
   reasoningOf,
@@ -24,7 +25,7 @@ import {
   predictorIdSpellings,
   servedPredictorId,
 } from '../src/config';
-import { temperatureScale } from '../src/distribution';
+import { argmax, temperatureScale } from '../src/distribution';
 import { Gateway } from '../src/gateway';
 import { predictionQuestion } from '../src/jev';
 import {
@@ -41,7 +42,7 @@ import {
 } from '../src/predictors';
 import { PROMPTS } from '../src/prompts';
 import { renderStateText } from '../src/state-builder';
-import type { ChatRequest, PersonState, Question } from '../src/types';
+import type { ChatRequest, DecisionRequest, PersonState, Question } from '../src/types';
 
 const q = (type: Question['type']): Question => ({
   id: 'q1',
@@ -519,5 +520,141 @@ describe('per-model reasoning budgets and calibration (ADR-0041)', () => {
     const [llmCal] = await new LlmPredictor(gw, 'x/y', ctx, t2).predict(state, [q('choice')]);
     expect(llmCal!.confidence).toBeUndefined();
     expect(calibratedResult(llmRaw!, q('choice'), 2)).toEqual({ ...llmCal!, latencyMs: llmRaw!.latencyMs });
+  });
+});
+
+describe('view variants (ADR-0065)', () => {
+  const capture = (decided: DecisionRequest[], chats: ChatRequest[]) =>
+    new Gateway({
+      decisions: {
+        provider: 'x',
+        decide: async (req) => {
+          decided.push(req);
+          return {
+            modelSnapshot: 'jev-snap',
+            answers: Object.fromEntries(
+              Object.keys(req.questions).map((k) => [
+                k,
+                { type: 'choice' as const, choice: 'a', confidence: 0.9, probabilities: { a: 0.9, b: 0.1 } },
+              ]),
+            ),
+            usage: { inputTokens: 1, outputTokens: 0, costUsd: 0 },
+            latencyMs: 1,
+            raw: {},
+          };
+        },
+      },
+      llm: {
+        provider: 'x',
+        chat: async (req) => {
+          chats.push(req);
+          return {
+            content: '{"probs":[{"key":"a","p":0.6},{"key":"b","p":0.4}]}',
+            modelSnapshot: 'm',
+            usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 },
+            latencyMs: 1,
+            raw: {},
+          };
+        },
+      },
+      log: { write: async () => {} },
+      clock: () => 0,
+      newId: () => 'id',
+    });
+
+  it('Jev on derived data reads traits and insights without the answers, at the primary temperature', async () => {
+    const decided: DecisionRequest[] = [];
+    const p = makePredictor(capture(decided, []), 'decision:typesafe/jev-1.13@jev-derived.v1', {
+      purpose: 't',
+    });
+    const [r] = await p.predict(state, [q('choice')]);
+    expect(p.id).toBe('decision:typesafe/jev-1.13@jev-derived.v1');
+    expect(decided[0]!.state).toEqual({
+      identity: state.identity,
+      evidence: [],
+      traits: state.traits,
+      insights: state.insights,
+    });
+    expect(r!.dist).toEqual(temperatureScale({ a: 0.9, b: 0.1 }, 4));
+    expect(calibrationTemperatureOf(p.id)).toBe(4);
+  });
+
+  it('the context variant shows an LLM only the identity, with predict.v2 settings', async () => {
+    const chats: ChatRequest[] = [];
+    const p = makePredictor(capture([], chats), 'llm:deepseek/deepseek-v4.1-flash@predict.v2-context', {
+      purpose: 't',
+    });
+    await p.predict(state, [q('choice')]);
+    const user = chats[0]!.messages[1]!.content;
+    expect(user).not.toContain('Tea or coffee?');
+    expect(user).not.toContain('Likes tea');
+    expect(user).toContain('hasSkill: Go');
+    expect(chats[0]).toMatchObject({ maxTokens: 6000 });
+    expect(predictorIdProblem('llm:acme/other@predict.v2-context')).not.toBeNull();
+  });
+
+  it('the scale variant asks a score question as a choice of its labels and reads the answer back (ADR-0066)', async () => {
+    const decided: DecisionRequest[] = [];
+    const gw = new Gateway({
+      decisions: {
+        provider: 'x',
+        decide: async (req) => {
+          decided.push(req);
+          return {
+            modelSnapshot: 'jev-snap',
+            answers: Object.fromEntries(
+              Object.entries(req.questions).map(([k, dq]) => [
+                k,
+                {
+                  type: 'choice' as const,
+                  choice: '3',
+                  probabilities: Object.fromEntries(
+                    Object.keys(dq.criteria).map((c) => [c, c === '3' ? 0.6 : 0.1]),
+                  ),
+                },
+              ]),
+            ),
+            usage: { inputTokens: 1, outputTokens: 0, costUsd: 0 },
+            latencyMs: 1,
+            raw: {},
+          };
+        },
+      },
+      llm: { provider: 'x', chat: async () => Promise.reject(new Error('unused')) },
+      log: { write: async () => {} },
+      clock: () => 0,
+      newId: () => 'id',
+    });
+    const scale: Question = {
+      ...q('choice'),
+      type: 'score',
+      options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Always'].map((label, i) => ({
+        key: String(i),
+        label,
+      })),
+    };
+    const p = makePredictor(gw, 'decision:typesafe/jev-1.13@jev-scales.v1', { purpose: 't' });
+    const [r] = await p.predict(state, [scale]);
+    const sent = Object.values(decided[0]!.questions)[0]!;
+    expect(sent.type).toBe('choice');
+    expect(Object.keys(sent.criteria)).toEqual(['0', '1', '2', '3', '4']);
+    expect(r!.ok).toBe(true);
+    expect(argmax(r!.dist)).toBe('3');
+    expect(Object.keys(r!.dist).sort()).toEqual(['0', '1', '2', '3', '4']);
+    // The incumbent still uses the score primitive.
+    await makePredictor(gw, 'decision:typesafe/jev-1.13@jev-predict.v2', { purpose: 't' })
+      .predict(state, [scale])
+      .catch(() => undefined);
+    expect(Object.values(decided[1]!.questions)[0]!.type).toBe('score');
+  });
+
+  it('a view is not a calibration: only text- and view-identical variants count as one', () => {
+    expect(isCalibrationOnly('jev-predict.v2')).toBe(true);
+    expect(isCalibrationOnly('jev-derived.v1')).toBe(false);
+    expect(isCalibrationOnly('jev-scales.v1')).toBe(false);
+    expect(isCalibrationOnly('predict.v2')).toBe(false);
+    expect(isCalibrationOnly('nope')).toBe(false);
+    // The incumbents' resolved harness has no view, so their prompt hashes are unchanged by the option.
+    expect(resolvePredictPrompt('jev-predict.v1', 'decision').harness).not.toHaveProperty('stateView');
   });
 });

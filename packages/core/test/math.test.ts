@@ -13,6 +13,10 @@ import {
   DEFAULT_CONFIG_V5,
   DEFAULT_CONFIG_V6,
   DEFAULT_CONFIG_V7,
+  DEFAULT_CONFIG_V8,
+  DEFAULT_CONFIG_V8_LABEL,
+  DEFAULT_CONFIG_V9,
+  DEFAULT_CONFIG_V9_LABEL,
   E3B_CONTROL_CONFIG,
   E3B_CONTROL_LABEL,
   entropy,
@@ -168,25 +172,49 @@ describe('hashing and config (PLAN §7.1)', () => {
     expect(configHash(changed)).not.toBe(configHash(DEFAULT_CONFIG));
   });
 
-  it('pins the hash of cfg.default.v8 and its predecessors (configs are immutable: a change needs a new config)', () => {
+  it('pins the hash of cfg.default.v10 and its predecessors (configs are immutable: a change needs a new config)', () => {
     expect(configHash(DEFAULT_CONFIG)).toBe(sha256Hex(canonicalJson(DEFAULT_CONFIG)));
+    // v10 (ADR-0066): v9 with a shadow that asks Jev scale questions as choices.
+    expect(DEFAULT_CONFIG_LABEL).toBe('cfg.default.v10');
+    expect(DEFAULT_CONFIG.predictor).toEqual({
+      primary: DEFAULT_CONFIG_V9.predictor.primary,
+      shadows: [...DEFAULT_CONFIG_V9.predictor.shadows, 'decision:typesafe/jev-1.13@jev-scales.v1'],
+    });
+    expect({ ...DEFAULT_CONFIG, predictor: DEFAULT_CONFIG_V9.predictor }).toEqual(DEFAULT_CONFIG_V9);
+    expect(configHash(DEFAULT_CONFIG)).toBe(
+      '1c9840dc37684d1e64ac1e8170f8a66efa504ec6aa2689263722884d575c61c1',
+    );
+    // v9 (ADR-0065): v8 with two view shadows; the primary is v8's, spelled with its canonical kind.
+    expect(DEFAULT_CONFIG_V9_LABEL).toBe('cfg.default.v9');
+    expect({ ...DEFAULT_CONFIG_V9, predictor: DEFAULT_CONFIG_V8.predictor }).toEqual(DEFAULT_CONFIG_V8);
+    expect(DEFAULT_CONFIG_V9.predictor).toEqual({
+      primary: 'decision:typesafe/jev-1.13@jev-predict.v2',
+      shadows: [
+        ...DEFAULT_CONFIG_V8.predictor.shadows,
+        'decision:typesafe/jev-1.13@jev-derived.v1',
+        'llm:deepseek/deepseek-v4.1-flash@predict.v2-context',
+      ],
+    });
+    expect(configHash(DEFAULT_CONFIG_V9)).toBe(
+      'ecb942c9e739c68c5f52609cbdd4891ae711e1601c83d59ff95f5f4dacab8cfd',
+    );
     // v8 (ADR-0044): v7's calibrated primary and shadows on ontology v2 with reserve.v2, gen.v3, gates.v3, reflect.v2,
     // an everyday-first domain mix and the balanced, ramped selector.
-    expect(DEFAULT_CONFIG_LABEL).toBe('cfg.default.v8');
-    expect(DEFAULT_CONFIG.predictor).toEqual(DEFAULT_CONFIG_V7.predictor);
-    expect(DEFAULT_CONFIG.selector).toEqual({
+    expect(DEFAULT_CONFIG_V8_LABEL).toBe('cfg.default.v8');
+    expect(DEFAULT_CONFIG_V8.predictor).toEqual(DEFAULT_CONFIG_V7.predictor);
+    expect(DEFAULT_CONFIG_V8.selector).toEqual({
       ...DEFAULT_CONFIG_V7.selector,
       balance: { category: 0.35, group: 0.25, cap: 0.4, groupsBy: 20 },
       trustRamp: { minAnswered: 6, sweepFrom: 10, sweepBonus: 0.3, sweepBy: 30 },
     });
-    expect(DEFAULT_CONFIG.ontologyVersion).toBe('v2');
-    expect(DEFAULT_CONFIG.generator.promptVersion).toBe('gen.v3');
-    expect(configHash(DEFAULT_CONFIG)).toBe(
+    expect(DEFAULT_CONFIG_V8.ontologyVersion).toBe('v2');
+    expect(DEFAULT_CONFIG_V8.generator.promptVersion).toBe('gen.v3');
+    expect(configHash(DEFAULT_CONFIG_V8)).toBe(
       '08956a2222de74c94bb21e6ace0a7a2c69e4d441a41e0cbe4be5a26d638ac44f',
     );
     // The E3b control (ADR-0045): v8 with v4's selection plus the trust ramp; the sweep and its deadline are off.
     expect(E3B_CONTROL_LABEL).toBe('cfg.e3b.control');
-    expect({ ...E3B_CONTROL_CONFIG, selector: DEFAULT_CONFIG.selector }).toEqual(DEFAULT_CONFIG);
+    expect({ ...E3B_CONTROL_CONFIG, selector: DEFAULT_CONFIG_V8.selector }).toEqual(DEFAULT_CONFIG_V8);
     expect(E3B_CONTROL_CONFIG.selector).toEqual({
       ...DEFAULT_CONFIG_V7.selector,
       trustRamp: { minAnswered: 6, sweepFrom: 1000, sweepBonus: 0, sweepBy: 1000 },
@@ -252,16 +280,16 @@ describe('hashing and config (PLAN §7.1)', () => {
       DEFAULT_CONFIG_V6,
       DEFAULT_CONFIG_V7,
     ];
-    for (const cfg of [...pinned, DEFAULT_CONFIG, E3B_CONTROL_CONFIG]) {
+    for (const cfg of [...pinned, DEFAULT_CONFIG_V8, E3B_CONTROL_CONFIG]) {
       const { primary } = cfg.predictor;
       expect(primary.startsWith('jev:')).toBe(true);
       expect(PipelineConfig.parse(cfg).predictor.primary).toBe(primary);
       expect(formatPredictorId(parsePredictorId(primary))).toBe(canonicalPredictorId(primary));
       expect(canonicalPredictorId(primary).startsWith('decision:')).toBe(true);
     }
-    expect(canonicalPredictorId(DEFAULT_CONFIG.predictor.primary)).toBe(
-      'decision:typesafe/jev-1.13@jev-predict.v2',
-    );
+    expect(canonicalPredictorId(DEFAULT_CONFIG_V8.predictor.primary)).toBe(DEFAULT_CONFIG.predictor.primary);
+    // A config written after ADR-0054 spells it canonically.
+    expect(DEFAULT_CONFIG.predictor.primary).toBe('decision:typesafe/jev-1.13@jev-predict.v2');
   });
 
   it('unitHash is stable and in [0, 1)', () => {

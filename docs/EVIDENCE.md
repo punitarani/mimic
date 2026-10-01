@@ -248,8 +248,9 @@ what the first run's numbers rest on. Each point names what E7 (`docs/PROBE.md`)
 7. **Jev reads summaries better than answers.** `derived` gave Jev +4.8 points on served questions and no log-loss
    gain; the core SOUL.md (a DeepSeek narrative of 30 answers, no answers) gave the Jev reader +3.7 over the state
    text on 60 Twin people at a large log-loss cost. With the calibrated primary the gain holds (+3.1 for the core
-   profile, +3.6 for the full one, which is level with the state on log loss). One lead, seen twice. It needs its
-   own calibration and a served shadow before it means anything.
+   profile, +3.6 for the full one, which is level with the state on log loss). One lead, seen twice. Shadowed since
+   `cfg.default.v9` (`decision:typesafe/jev-1.13@jev-derived.v1`, ADR-0065) and read by that ADR's rule on new
+   people; it needs its own calibration before it can serve.
 8. **The reproduction check needs an evidence hash (built).** State hashes cannot match on a scrubbed export. Every
    prediction now stores `evidenceHash`, the hash of its state's evidence alone, which scrubbing does not touch, and
    the report's reproduction checks compare it for the `full` arm. Rows written before it carry none and are left
@@ -258,6 +259,11 @@ what the first run's numbers rest on. Each point names what E7 (`docs/PROBE.md`)
    correlation and dispersion on every person, and the Twin run shows dispersion is where state policies differ
    (0.201 for the served state at k = 30 and 0.127–0.141 for 12-answer cards, but 0.231 for 8 answers retrieved by
    embeddings for the question).
+10. **Lift over context is not learning the person.** On 120 Twin people the other respondents' answers to an item
+    (the leave-one-out item mean) predict it as well as Jev with 30 answers (−0.005 [−0.025, +0.015]), and better than
+    any context-only prior. DeepSeek with 30 answers passes the item mean (−0.030), and either model pooled with it
+    beats both. So `full` against `context` measures some of what the population already knows; residual rows
+    (`evaluate --from stored`, RESEARCH §1.2) measure the rest, and E7's shared probes give them on served people.
 
 ## References
 

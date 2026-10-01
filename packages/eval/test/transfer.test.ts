@@ -109,6 +109,10 @@ describe('transfer loss (ADR-0057)', () => {
     expect(() => makeViewReader(g, 'llm:deepseek/deepseek-v4.1-flash@predict.v2', 'p')).toThrow(
       /prompt version/,
     );
+    // A view variant reads part of a state, not the file (ADR-0065).
+    expect(() => makeViewReader(g, 'decision:typesafe/jev-1.13@jev-derived.v1', 'p')).toThrow(
+      /prompt version/,
+    );
   });
 
   it('writes a sealed soul.v1 draft per person and checkpoint when asked', async () => {

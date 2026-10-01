@@ -6,6 +6,7 @@ import {
   componentProblems,
   DEFAULT_CONFIG,
   type DecisionAnswer,
+  type DecisionPredictor,
   type DecisionProvider,
   type DecisionRequest,
   Gateway,
@@ -17,17 +18,26 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FAKE_REFLECTION_HINT, FakeLlm } from '../src/fakes';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 import {
+  againstPrimary,
   breakdown,
   calibrationFits,
   changedComponents,
+  changedHarness,
   derivedCalibrations,
   evaluateCandidate,
   feedbackFor,
   jevRequests,
   Meter,
+  type Pair,
+  pairedByPerson,
   pairedComparisons,
   pairedDelta,
+  personTemperature,
   predictorFor,
+  prequentialTemperatures,
+  probabilityAudit,
+  RESIDUAL_MIN_OTHERS,
+  residualReport,
   resolveCandidate,
   storedRecords,
   temperatureScale,
@@ -62,6 +72,7 @@ const dirs: string[] = [];
 /** Six scripted people who always pick the first option; the last one declined research use. */
 beforeAll(async () => {
   engine = await openLocalEngine({ db: ':memory:', providers: 'offline', seed: 'optimize-cohort' });
+  const ids: string[] = [];
   for (let i = 0; i < 6; i++) {
     const script = SessionScript.parse({
       intake: { name: `Person ${i}`, location: 'Porto, PT', occupation: 'Teacher', employer: 'Escola Norte' },
@@ -70,8 +81,11 @@ beforeAll(async () => {
       seed: `p${i}`,
       whys: { 'anchors.v1/risk_gamble': 'Certainty matters more to me than upside.' },
     });
-    await runSession(engine, script, { turns: 22 });
+    ids.push((await runSession(engine, script, { turns: 22 })).mimicId);
   }
+  // The split is hash(mimicId), and IDs shift whenever a session makes another call; pin one consented person to test
+  // so the holdout always has someone on it.
+  await engine.client.execute({ sql: "UPDATE mimics SET split = 'test' WHERE id = ?", args: [ids[4]!] });
   instances = await loadInstances(engine.deps, { k: 30, split: 'all', seed: 's' });
 }, 120_000);
 
@@ -180,6 +194,95 @@ describe('evaluate', () => {
     expect(t.a! + t.b!).toBeCloseTo(1);
   });
 
+  it('compares every shadow with the primary over people, and gives view shadows ADR-0065 verdicts', () => {
+    const recs = storedRecords(instances);
+    const rows = againstPrimary(recs);
+    const derived = rows.find((r) => r.predictor === 'decision:typesafe/jev-1.13@jev-derived.v1')!;
+    expect(derived.primary).toBe(PRIMARY);
+    expect(derived.view).toBe('derived');
+    // Five scripted people are far from the 25 the rule needs.
+    expect(derived.logLoss.people).toBe(5);
+    expect(derived.verdict).toBe('insufficient');
+    expect(rows.find((r) => r.predictor.endsWith('@predict.v2-context'))!.view).toBe('context');
+    // An LLM shadow is compared across models but reads the whole state, so it gets no verdict.
+    const luna = rows.find((r) => r.predictor === 'llm:openai/gpt-6-luna@predict.v2')!;
+    expect(luna.view).toBeNull();
+    expect(luna.verdict).toBeNull();
+    // A person-level interval is no narrower than a question-level one on the same pairs.
+    const p = recs.filter((r) => r.candidate === `${PRIMARY}|primary`);
+    const x = recs.filter((r) => r.candidate === 'llm:openai/gpt-6-luna@predict.v2|shadow');
+    const q = pairedDelta(p, x, 'logLoss', 'q', 2000);
+    const byP = pairedByPerson(p, x, 'logLoss', 'q', 2000);
+    expect(byP.mean).toBeCloseTo(q.mean, 9);
+    expect(byP.better + byP.worse).toBeLessThanOrEqual(byP.people);
+    expect(byP.ciHigh - byP.ciLow).toBeGreaterThan((q.ciHigh - q.ciLow) * 0.5);
+  });
+
+  it('scores residual skill against a leave-one-out item mean on shared items only (RESEARCH §1.2)', () => {
+    const recs = storedRecords(instances);
+    // Five people share the anchors: each has four others, under the default minimum.
+    expect(RESIDUAL_MIN_OTHERS).toBe(5);
+    expect(residualReport(instances, recs).instances).toBe(0);
+    const r = residualReport(instances, recs, 4);
+    expect(r.people).toBe(5);
+    expect(r.items).toBeGreaterThan(3);
+    // Every scripted person picks the first option, so the population predicts them well: the item mean is the
+    // first option at (4 + 0.5) / (4 + 0.5·options).
+    expect(r.itemMean.itemAcc).toBeGreaterThan(0.6);
+    const primary = r.rows.find((x) => x.role === 'primary')!;
+    expect(primary.logLoss.n).toBe(r.instances);
+    expect(r.rows.some((x) => x.role === 'baseline')).toBe(true);
+    expect(r.rows.some((x) => x.predictor === 'item-mean')).toBe(false);
+    // Pooling with the item mean is fitted on dev people and scored on test people, when there are both.
+    const people = new Set(instances.map((i) => `${i.mimicId}:${i.split}`));
+    const splits = new Set([...people].map((p) => p.split(':')[1]));
+    if (splits.size === 2) {
+      expect(primary.pooled!.w).toBeGreaterThanOrEqual(0);
+      expect(primary.pooled!.w).toBeLessThanOrEqual(1);
+      expect(primary.pooled!.logLoss.n).toBeGreaterThan(0);
+    } else expect(primary.pooled).toBeNull();
+  });
+
+  it("fits a person's temperature only from their earlier questions, shrunk toward the global one (RESEARCH §2.4)", () => {
+    const temps = [0.5, 1, 2, 4, 8];
+    const pairs: Pair[] = instances
+      .filter((i) => i.stored.some((p) => p.role === 'primary' && p.ok))
+      .map((inst) => ({ inst, dist: inst.stored.find((p) => p.role === 'primary' && p.ok)!.dist }));
+    const one = pairs.filter((p) => p.inst.mimicId === pairs[0]!.inst.mimicId);
+    expect(personTemperature([], 2, 0, temps)).toBe(2);
+    expect(personTemperature(one, 2, Number.POSITIVE_INFINITY, temps)).toBe(2);
+    // No shrinkage: the person's own best temperature on the grid.
+    expect(temps).toContain(personTemperature(one, 2, 0, temps));
+    const t = prequentialTemperatures(pairs, 2, 10, temps);
+    const first = new Map<string, Pair>();
+    for (const p of [...pairs].sort((a, b) => a.inst.seq - b.inst.seq))
+      if (!first.has(p.inst.mimicId)) first.set(p.inst.mimicId, p);
+    for (const p of first.values()) expect(t.get(p)).toBe(2);
+    // Changing a person's last answer leaves every earlier temperature where it was.
+    const last = [...one].sort((a, b) => b.inst.seq - a.inst.seq)[0]!;
+    const changed = pairs.map((p) =>
+      p === last ? { ...p, inst: { ...p.inst, answer: p.inst.question.options.at(-1)!.key } } : p,
+    );
+    const t2 = prequentialTemperatures(changed, 2, 10, temps);
+    for (const [i, p] of pairs.entries()) if (p !== last) expect(t2.get(changed[i]!)).toBe(t.get(p));
+  });
+
+  it('counts the distinct top probabilities each predictor says (RESEARCH §2.5)', () => {
+    const recs = storedRecords(instances);
+    const audit = probabilityAudit(recs);
+    const primary = audit.find((a) => a.candidate === `${PRIMARY}|primary`)!;
+    expect(primary.n).toBe(recs.filter((r) => r.candidate === `${PRIMARY}|primary` && r.ok).length);
+    expect(primary.distinct).toBeGreaterThan(0);
+    expect(primary.modeShare).toBeGreaterThan(0);
+    expect(primary.modeShare).toBeLessThanOrEqual(1);
+    const fake = recs
+      .slice(0, 4)
+      .map((r, i) => ({ ...r, candidate: 'x|shadow', confidence: i < 3 ? 0.95 : 0.6 }));
+    expect(probabilityAudit(fake)).toEqual([
+      { candidate: 'x|shadow', n: 4, distinct: 2, mode: 0.95, modeShare: 0.75 },
+    ]);
+  });
+
   it('derives calibrated Jev from the stored primary for free, and reports what calibration does to accuracy', () => {
     // Mimics made before cfg.default.v7 store an uncalibrated primary: this cohort's v7 rows on Jev's raw scale.
     const raw = (p: EvalInstance['stored'][number]) =>
@@ -232,14 +335,21 @@ describe('evaluate', () => {
     expect(baselines.length).toBeGreaterThan(0);
     expect(baselines.every((r) => r.predictorId === 'decision:typesafe/jev-1.13')).toBe(true);
     expect(pairedComparisons(recs.filter((r) => !baselines.includes(r)))).toEqual(pairedComparisons(recs));
-    // Fits report test accuracy before and after, and pool only LLM shadows with the primary.
+    // Fits report test accuracy before and after, and pool with the primary only predictors that see something else:
+    // LLM shadows and view shadows (ADR-0065).
     const fits = calibrationFits(instances);
     for (const f of fits.filter((x) => x.nTest > 0)) {
       expect(f.testAccBefore).toBeTypeOf('number');
       expect(f.testAccAfter).toBeTypeOf('number');
     }
-    for (const f of fits.filter((x) => x.method.startsWith('log-linear pool')))
-      expect(f.predictor.startsWith('llm:')).toBe(true);
+    const pools = fits.filter((x) => x.method.startsWith('log-linear pool'));
+    for (const f of pools)
+      expect(
+        f.predictor.startsWith('llm:') || f.predictor.startsWith('decision:typesafe/jev-1.13@jev-derived.v1'),
+      ).toBe(true);
+    expect(pools.some((f) => f.predictor.startsWith('decision:typesafe/jev-1.13@jev-derived.v1 ×'))).toBe(
+      true,
+    );
   });
 
   it('pairs versions of one model in numeric order, one row per question (ADR-0048)', () => {
@@ -277,6 +387,17 @@ describe('evaluate', () => {
     );
     expect(pairedComparisons(recs).some((p) => p.from === fallback || p.to === fallback)).toBe(false);
     expect(calibrationFits(failedOver).some((f) => f.predictor.includes('(primary)'))).toBe(false);
+  });
+
+  it('a candidate that only changes the view is a change: its predictor reads that view (ADR-0065)', () => {
+    const c = resolveCandidate({
+      predictor: 'decision:typesafe/jev-1.13@jev-predict.v2',
+      harness: { stateView: 'context' },
+    });
+    expect(changedHarness(c)).toEqual({ stateView: 'context' });
+    const p = predictorFor(gateway(), c, 't') as DecisionPredictor;
+    expect(p.prompt.harness.stateView).toBe('context');
+    expect(p.prompt.version.startsWith('cand-')).toBe(true);
   });
 
   it('refuses a candidate whose reasoning budget leaves no room for the answer, or a model a variant does not list', () => {

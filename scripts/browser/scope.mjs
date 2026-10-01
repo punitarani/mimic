@@ -73,7 +73,7 @@ try {
   assert.equal(
     await page.getByRole('group', { name: 'Research use of sensitive answers' }).count(),
     0,
-    'research consent covers sensitive topics, with no box per area (ADR-0065)',
+    'research consent covers sensitive topics, with no box per area (ADR-0067)',
   );
   log('research consent covers the sensitive topics left on, with no box per area');
   await topics.scrollIntoViewIfNeeded();
@@ -114,7 +114,7 @@ try {
     'the intake default line is not shown in the dialog',
   );
   await dialog.getByText(/You agreed to research use/).waitFor();
-  log('dialog: with research consent, one line says sensitive topics turned on are included (ADR-0065)');
+  log('dialog: with research consent, one line says sensitive topics turned on are included (ADR-0067)');
   assert.equal(
     await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
     true,

@@ -47,7 +47,7 @@ item means come from the cohort itself (leave-one-out, five other people at leas
 ## 3. Schedule
 
 Probes are served at fixed points, the same for everyone. A slot opens once the person has answered that many other
-session questions (anchors, adaptive questions and repeats), so slot 30 opens where a cfg.default.v8 session reaches
+session questions (anchors, adaptive questions and repeats), so slot 30 opens where a default (v8 or v9) session reaches
 its target:
 
 | After other answers | Probes | Reads |
@@ -119,7 +119,9 @@ E7 is a measurement, not a comparison, but it is cheap to carry two pre-register
 - Ships as a config and a `/lab` preset, not a flag: the probes are part of what a person is asked and what the mimic
   is measured on, so they are versioned in the config (`cfg.e7.probes`), and only runtime levers are flags
   (ADR-0052). Setting up the `e7` preset registers the config and saves a draft experiment with one arm; starting it
-  sends new people to it, and stays a person's decision. Older mimics and cfg.default.v8 are unchanged.
+  sends new people to it, and stays a person's decision. Older mimics and the default config are unchanged. Since
+  ADR-0065 and ADR-0066 the config is the default (v10) with the probes, so the view shadows (Jev on derived data,
+  DeepSeek on the context) and the scale shadow are read per distance too.
 - Readout: `pnpm eval -- probes --data <export>` (no model calls), then `docs/reports/e7-probes.md`, written as the
   rule gives it. Scripted sessions prove the machinery; nothing from them is a result.
 

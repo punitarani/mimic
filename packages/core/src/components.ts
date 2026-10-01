@@ -1,5 +1,6 @@
 import { hashJson } from './hash';
 import { PROMPTS } from './prompts';
+import type { StateView } from './state-builder';
 
 /**
  * Prediction prompts as named text components (docs/OPTIMIZATION.md §4). The optimizer rewrites these; production
@@ -151,7 +152,21 @@ export interface PredictHarness {
    * enforce `keyEnum`.
    */
   labelKeys: boolean;
+  /**
+   * The view of the sealed state the predictor reads (`viewState`, ADR-0065); absent reads the whole state. A view is
+   * a subset of the state, so a prediction keeps the sealed state's hash and its version names the view.
+   */
+  stateView?: HarnessStateView;
+  /**
+   * How a decision model is asked a scale question: its `score` primitive (absent), or `choice`, the labels as
+   * unordered options (RESEARCH §2.3). Only the decision kind reads it.
+   */
+  scoreAs?: 'score' | 'choice';
 }
+
+/** Views a predictor may read for a whole batch of questions (`relevant` is chosen per question, so it is not one). */
+export const HARNESS_STATE_VIEWS = ['context', 'answers', 'derived'] as const satisfies readonly StateView[];
+export type HarnessStateView = (typeof HARNESS_STATE_VIEWS)[number];
 
 /**
  * The harness settings a registered variant may set per model (`modelHarness`): how the model reasons and its token
@@ -197,6 +212,13 @@ export const INCUMBENT_HARNESS: PredictHarness = {
   labelKeys: false,
 };
 
+/** Every harness setting, the optional ones included: what a diff between two harnesses must walk. */
+export const HARNESS_KEYS: ReadonlyArray<keyof PredictHarness> = [
+  ...(Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>),
+  'stateView',
+  'scoreAs',
+];
+
 export type PerModelHarness = Partial<Pick<PredictHarness, (typeof PER_MODEL_HARNESS_KEYS)[number]>>;
 
 export interface PredictPromptVariant {
@@ -223,6 +245,15 @@ export interface PredictPrompt {
   components: PredictComponents;
   harness: PredictHarness;
 }
+
+/** `predict.v2`'s measured reasoning settings and caps (ADR-0041); its variants that change only the view share them. */
+const PREDICT_V2_MODEL_HARNESS: Record<string, PerModelHarness> = {
+  'openai/gpt-6-luna': { reasoningEffort: 'low', maxTokens: 1500 },
+  'deepseek/deepseek-v4.1-flash': { reasoningEffort: 'low', maxTokens: 6000 },
+  'z-ai/glm-5.3-flash': { reasoningEffort: 'low', maxTokens: 3000 },
+  'xiaomi/mimo-v2.6-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
+  'qwen/qwen3.8-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
+};
 
 /** The incumbent prompt per kind: a predictor ID without `@<version>` uses it. The Jev templates keep their IDs. */
 export const DEFAULT_PROMPT_VERSION = { decision: 'jev-predict.v1', llm: 'predict.v1' } as const;
@@ -270,13 +301,7 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
     title: 'LLM predictor, per-model reasoning budgets',
     components: {},
     harness: { keyEnum: true, labelKeys: true },
-    modelHarness: {
-      'openai/gpt-6-luna': { reasoningEffort: 'low', maxTokens: 1500 },
-      'deepseek/deepseek-v4.1-flash': { reasoningEffort: 'low', maxTokens: 6000 },
-      'z-ai/glm-5.3-flash': { reasoningEffort: 'low', maxTokens: 3000 },
-      'xiaomi/mimo-v2.6-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
-      'qwen/qwen3.8-flash': { reasoningMaxTokens: 1024, maxTokens: 2048 },
-    },
+    modelHarness: PREDICT_V2_MODEL_HARNESS,
     source: 'ADR-0041: reasoning usage measured per model on long states',
   },
   /**
@@ -293,7 +318,53 @@ export const PREDICT_PROMPTS: Record<string, PredictPromptVariant> = {
     harness: { calibrationTemperature: 4 },
     source: 'ADR-0041: temperature fitted on stored prod predictions (Actions → Optimize report, 2026-09-30)',
   },
+  /**
+   * ADR-0065: the primary reading only identity, traits and insights. E6 saw it raise Jev's served accuracy by 4.8
+   * points over the whole state with no log-loss gain, on six people (exploratory); a shadow tests it on new ones.
+   * The primary's temperature, so the two differ only in what they read.
+   */
+  'jev-derived.v1': {
+    id: 'jev-derived.v1',
+    kind: 'decision',
+    title: 'Jev on derived data only (traits and insights), calibrated (temperature 4)',
+    components: {},
+    harness: { calibrationTemperature: 4, stateView: 'derived' },
+    source: 'ADR-0065: E6 exploratory lead (docs/reports/e6-evidence.md)',
+  },
+  /**
+   * ADR-0066: the primary with scale questions asked as unordered choices. On 118 Twin people's five-point policy
+   * items it lowered log loss by 0.059 [0.034, 0.084] at the primary's temperature (RESEARCH §2.3).
+   */
+  'jev-scales.v1': {
+    id: 'jev-scales.v1',
+    kind: 'decision',
+    title: 'Jev with scale questions asked as choices, calibrated (temperature 4)',
+    components: {},
+    harness: { calibrationTemperature: 4, scoreAs: 'choice' },
+    source: 'ADR-0066: Twin-2K-500 benchmark, scales as choices',
+  },
+  /**
+   * ADR-0065: `predict.v2` reading the context alone. E6 found DeepSeek's context-only prior ahead of every Jev view
+   * on served questions; a shadow measures that prior on new people beside the primary.
+   */
+  'predict.v2-context': {
+    id: 'predict.v2-context',
+    kind: 'llm',
+    title: 'LLM predictor (predict.v2 settings) on the context alone',
+    components: {},
+    harness: { keyEnum: true, labelKeys: true, stateView: 'context' },
+    modelHarness: PREDICT_V2_MODEL_HARNESS,
+    source: 'ADR-0065: E6 exploratory lead (docs/reports/e6-evidence.md)',
+  },
 };
+
+/** A registered variant that only rescales its kind's incumbent (a calibration temperature): same text, same view. */
+export function isCalibrationOnly(version: string): boolean {
+  const v = PREDICT_PROMPTS[version];
+  if (!v) return false;
+  const { calibrationTemperature: _t, ...rest } = v.harness;
+  return !Object.keys(v.components).length && !Object.keys(rest).length && !v.modelHarness;
+}
 
 export function resolvePredictPrompt(version: string, kind: PredictorKind, model?: string): PredictPrompt {
   const v = PREDICT_PROMPTS[version];

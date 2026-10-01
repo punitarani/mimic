@@ -43,12 +43,19 @@ dev split for a predict-the-rest objective: pick the 10 stable items (anchors an
 the remaining answers across people, under embedding-cluster coverage. **Experiment:** `pnpm eval -- select` with a
 `fixed` opening block against `voi` on questions-to-sustained-fidelity; then an arm.
 
-### 1.2 Residual fidelity — designed
+### 1.2 Residual fidelity — built
 
 Report lift over an item-mean predictor beside lift over the context baseline, and select by expected residual-variance
 reduction. `item_stats` already holds per-item answer entropy and baseline error; a population-mode predictor is a
-derived row per stable item. **Experiment:** add `residual` rows to `evaluate --from stored` and to `/lab`; selection
-weight `pop(q)` becomes primary once the residual metric exists.
+derived row per stable item. **Built:** `evaluate --from stored` (and its `/lab` report) scores every predictor
+against a leave-one-out item mean on items asked of at least six people (anchors, reserve items, E7's shared probes,
+an import's held-out items), with intervals over people. **Found** on 120 Twin people
+(`docs/reports/twin-benchmark.md`): with 30 answers Jev is only level with the leave-one-out item mean (−0.005
+[−0.025, +0.015]) and DeepSeek passes it (−0.030 [−0.058, −0.001]); a context-only prior loses to it; and either model
+pooled with the item mean beats both on test people (−0.024 for Jev's state, −0.042 for DeepSeek's). **Next:** read it
+on E7's shared probes; a population prior pooled with the primary on shared items, as a flagged experiment (invariant
+8: `item_stats` aggregates, never in a prompt or a state); selection weight `pop(q)` becomes primary once residual
+skill shows on served people.
 
 ### 1.3 Decision coverage, not trait coverage — open
 
@@ -111,24 +118,30 @@ registered variant and shadow if its paired log-loss interval is below zero on t
 Agents on identical evidence herd; information asymmetry is what gives pooling its 12–18% Brier gains
 (arXiv 2607.01661). On Jev the extra views cost input-priced calls only.
 
-### 2.3 One-vs-rest criteria with structure — designed
+### 2.3 One-vs-rest criteria with structure — partly built
 
 TypeSafe's own guidance: criteria as `{what, not_for, examples}` objects, dotted references into the state
 ("judge from `evidence` and `traits`"), only the context the questions need. Mimic already emulates one-vs-rest for
 span-01 (ADR-0051). **Experiment:** `jev-predict.v3` with structured criteria and one `noul` per option, against the
 `choice` primitive, on sealed instances via `evaluate`; it also cancels option-position effects (arXiv 2506.14092).
+**Built first** (ADR-0066): scale questions asked as unordered choices (`harness.scoreAs`), −0.059 [−0.084, −0.034]
+nats per scale question on 118 Twin people, shadowed as `jev-scales.v1` in `cfg.default.v10`. Structured criteria and
+one `noul` per option remain.
 
-### 2.4 Per-person empirical-Bayes temperature — designed
+### 2.4 Per-person empirical-Bayes temperature — built
 
 ADR-0048 fitted one temperature. People differ in how predictable they are; the many-small-problems regime wants a
-per-person *T* shrunk toward the global one (Prediction-Powered Adaptive Shrinkage, arXiv 2502.14166). Derived from
-stored rows at zero cost; `evaluate --from stored` is the place.
+per-person *T* shrunk toward the global one (Prediction-Powered Adaptive Shrinkage, arXiv 2502.14166). **Built:**
+`evaluate --from stored` fits the primary's global temperature and a shrinkage strength on dev people, then scores
+test people prequentially, each question at the temperature their earlier answers allowed (weight n / (n + n0) on the
+person's own fit, on the log scale). **Next:** a registered variant only if test people gain beyond the global
+temperature, with enough of them to say so.
 
-### 2.5 Audit the shadows' probabilities — designed
+### 2.5 Audit the shadows' probabilities — built
 
 Verbalised probabilities are sparse (one model emits eight distinct values, half of them "95%"; arXiv 2608.04899), so
-ECE differences between shadows can be binning artefacts. Report the number of distinct values per shadow in `/lab`
-and judge shadows on log loss; for scale items try semantic similarity rating (a one-sentence answer mapped to the
+ECE differences between shadows can be binning artefacts. The stored report (and `/lab`) counts distinct top
+probabilities per predictor and the share of the most common one; judge shadows on log loss; for scale items try semantic similarity rating (a one-sentence answer mapped to the
 five labels by embedding, arXiv 2510.08338).
 
 ### 2.6 Order for the cache — designed
@@ -336,10 +349,12 @@ benchmark either way.
 | --- | --- | --- |
 | E7 probe set (`docs/PROBE.md`): built as `cfg.e7.probes` and the `e7` preset; start it in `/lab` | people to read it | §10.1, E3b's yardstick |
 | Evidence hash for the reproduction check; temperature by evidence count | nothing | §10.4, §10.5 |
-| Retrieval by meaning and the LLM-written state for Jev, as shadows on served questions | nothing | §10.2, §10.3 |
+| View shadows in `cfg.default.v9` (Jev on derived data, DeepSeek's context prior), backfilled; read by ADR-0065's rule | people to read them | §10.3 |
+| Retrieval by meaning and `fill` where the budget binds (long-lived mimics, agents' cards) | nothing | §10.2 |
 | Run `transfer`, `ensemble`, `replay --evidence` on the consented cohort | people, ~$1 | §3.1, §2.1, §6.1 |
-| Residual metric in `evaluate` and `/lab` | nothing | §1.2 |
-| `jev-predict.v3` structured criteria; per-person temperature | nothing | §2.3, §2.4 |
+| Residual metric in `evaluate` and `/lab` (built; read it on E7's shared probes) | people | §1.2 |
+| `jev-predict.v3` structured criteria | nothing | §2.3 |
+| Per-person temperature and the probability audit (built; read them on the stored report) | people | §2.4, §2.5 |
 | Footprint proposals with consenting people | people, ~$0.05 each | §4.1 |
 | Host-sized views and the host-condition matrix | §3.1 | §3.3 |
 | Opening block, generate-to-split, VoI stopping, latency terms | exports | §1.1, §1.4, §1.5, §1.6 |
@@ -376,21 +391,25 @@ once per run through the gateway), and a `fill` policy that takes `mixed`'s pick
 by recency until the budget is spent (ADR-0064). **Found** on 60 Twin people at 100 answers, calibrated primary
 (`docs/reports/twin-benchmark.md`): embeddings bring the policy lift from +1.6 to +4.4 points, word overlap to +2.5;
 filling the budget by recency lifts product items (+9.8 against +8.7); `fill` with embeddings gets both, +2.7
-[+0.8, +4.6] points and −0.053 [−0.082, −0.024] log loss over the served state, the best state measured. **Next:**
-`fill` as a served shadow on E7's probes, with its own calibration (§10.4), and an LLM-chosen "which answers bear on
-this question" pass as a view. Pitfall: an LLM retriever that reads the question can smuggle a guess; log its picks
-and score the view, never its text.
+[+0.8, +4.6] points and −0.053 [−0.082, −0.024] log loss over the served state, the best state measured. **But**
+served sessions never reach the budget (up to about 90 answers fit), so on today's sessions `fill` equals `mixed` and
+a served shadow of it would measure nothing. It matters where the budget binds: long-lived mimics that keep answering,
+observations and footprint documents (§3.2, §4), and an agent's card. **Next:** retrieval for a batch centroid, as
+production retrieves, before `fill` becomes a default; an LLM-chosen "which answers bear on this question" pass as a
+view. Pitfall: an LLM retriever that reads the question can smuggle a guess; log its picks and score the view, never
+its text.
 
 ### 10.3 Compaction that keeps what the window loses
 
 The served state at 100 answers is the 18 most recent, and the answers that predicted policy support left with the
 window. Traits and insights exist to hold what the answers said after the answers are gone, and two findings say Jev
 reads them well: `derived` gave +4.8 points on served questions (E6, exploratory) and the core SOUL.md gave the Jev
-reader +3.7 over the state text on 60 Twin people, both with no log-loss gain or a loss. **Build:** the reflector
-writes the primary's state (an LLM-written state for Jev), calibrated on its own stored predictions, as a shadow
-predictor (`decision:typesafe/jev-1.13@jev-predict.v3` with a `stateView: derived+answers` harness). **Experiment:**
-served shadow, then E7's probes, with residual lift and dispersion beside accuracy, since a summary can be a
-stereotype written down. The `surprise` policy, which keeps the answers the stereotype got wrong, is not the cheap
+reader +3.7 over the state text on 60 Twin people, both with no log-loss gain or a loss. On served people the LLM
+summary already exists: the reflector's insights sit in the state beside the answers. **Built** (ADR-0065): a variant
+may read a view of the sealed state (`harness.stateView`), and `cfg.default.v9` shadows Jev on derived data
+(`@jev-derived.v1`) and DeepSeek on the context alone; both are backfilled onto served questions. **Reading:**
+ADR-0065's rule, on people who joined after E6's export (`evaluate --from stored --since`), then per distance on E7's
+probes, with residual lift and dispersion beside accuracy, since a summary can be a stereotype written down. The `surprise` policy, which keeps the answers the stereotype got wrong, is not the cheap
 version it looked like: with the calibrated primary and surprise ranked on the raw scale, its dispersion (0.141 at
 k = 30) is close to a recency card's (0.127) and its log-loss gain at 100 answers is small (−0.010).
 

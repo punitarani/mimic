@@ -2323,11 +2323,79 @@ items (+9.8 against +8.7); `fill` with embeddings gets both: 67.8% accuracy and 
 and −0.053 [−0.082, −0.024] over the served state, 39 of 60 people better. Batching moves accuracy by under half a
 point.
 
-**Consequences.** A filled state costs about five times the primary's input tokens late in a session. Per-target
-retrieval is an upper bound on retrieval for a batch centroid. Next: a config with `evidencePolicy: 'fill'` as a served
-shadow (ADR-0024), read on E7's probes, with its own calibration because a larger state shifts it (RESEARCH §10.4).
+**Consequences.** A filled state costs about five times the primary's input tokens once the budget binds.
+Per-target retrieval is an upper bound on retrieval for a batch centroid. Served sessions never reach the budget (up to
+about 90 answers fit), so on today's sessions `fill` equals `mixed`: it matters for long-lived mimics and for smaller
+budgets such as an agent's card, and a served shadow of it would measure nothing yet (ADR-0065).
 
-## ADR-0065 — Research consent covers sensitive answers (2026-10-01)
+## ADR-0065 — View shadows: Jev on derived data, and an LLM's context-only prior (cfg.default.v9) (2026-10-01)
+
+**Context.** E6 left two exploratory leads to test on new people (`docs/reports/e6-evidence.md`): Jev reading only
+traits and insights was 4.8 points more accurate than on the whole state, with no log-loss gain, on six people; and
+DeepSeek's context-only prior beat every Jev view on served questions. The Twin benchmark points the same way: Jev
+reading an LLM's narrative beat Jev reading the answers by 3.6 points with the calibrated reader. On served people the
+narrative already exists, as the reflector's insights in the state. A shadow is how a lead becomes evidence (ADR-0024),
+but a shadow reads the primary's sealed state, and both leads read part of it. `fill` (ADR-0064) is not a candidate:
+served sessions never outgrow the §9.9 budget, so it would equal `mixed`.
+
+**Decision.**
+
+- A registered variant may name a view of the sealed state in its harness (`stateView`: `context`, `answers` or
+  `derived`, as E6 defines them). Both predictor classes apply it, so the primary, shadows, backfill, replay and
+  evaluate all read the same thing. The option is absent from the incumbent harness, so no prompt hash moves. A
+  prediction keeps the sealed state's hash: the view is a function of that state, and the version names it, so the
+  "shadow state = primary state" invariant holds.
+- Two variants: `jev-derived.v1` (the primary's temperature, derived data) and `predict.v2-context` (`predict.v2`'s
+  measured per-model settings, the context alone).
+- `cfg.default.v9`: v8 plus `decision:typesafe/jev-1.13@jev-derived.v1` and
+  `llm:deepseek/deepseek-v4.1-flash@predict.v2-context` as shadows. Its primary is v8's, spelled `decision:`. E3b stays
+  v8 against its control; E7 moves to v9 (`cfg.e7.probes` gets a new hash before anyone joined it), so the view shadows
+  are read per probe distance.
+- A view is never a calibration: `isCalibrationOnly`, evaluate's free derived calibrations and transfer's readers
+  treat a view variant as its own predictor.
+- Both run over served questions of consented people with `pnpm backfill` (Actions → Backfill).
+- The stored report reads them: every shadow against the primary that served the same questions, across models, with
+  intervals over people and this ADR's verdict for view shadows; `--since` keeps people who joined after a date. It
+  also gains residual rows (RESEARCH §1.2): each predictor against the population's answers on items asked of at
+  least six people, leaving the person's own answer out. That aggregate stays in the report, never in a prompt or a
+  state.
+
+**Reading rule, fixed before any data.** On people not in E6's export, paired with the primary on the same questions,
+intervals by person (`pnpm eval -- evaluate --from stored`): `jev-derived.v1` is worth a calibrated variant of its own
+only if, on at least 25 such people, its item accuracy is higher (90% interval above 0) and its log loss is no worse
+(upper bound below +0.01). The context prior is read the same way against the primary; if it wins, the next step is
+E6's `model` branch (an LLM or pooled primary within the latency target), not a change to Jev's state.
+
+**Consequences.** Two more shadow rows per scored question: about $0.00001 for Jev and $0.0004 for DeepSeek on a
+context-only prompt. New mimics get v9; older ones keep their config and get the shadows by backfill. The leads stay
+exploratory until the rule reads them.
+
+## ADR-0066 — Scale questions asked as choices, as a shadow (cfg.default.v10) (2026-10-01)
+
+**Context.** Jev's largest deficit on the Twin benchmark is the five-point policy items, which Mimic asks with the
+Decisions API's `score` primitive: log loss 1.45 against 1.37 for the population's item mean, after 30 answers
+(`docs/reports/twin-benchmark.md`). RESEARCH §2.3 proposed changing how Jev is asked, not what it reads.
+
+**Decision.** A decision variant may ask scale questions as unordered choices (`harness.scoreAs: 'choice'`): each label
+becomes a criterion keyed by its option key, and the answer maps back like any choice. The option is absent from the
+incumbent harness, so no prompt hash moves, and the free calibration derivation treats it as another predictor.
+`jev-scales.v1` is the primary with that setting and the primary's temperature. `cfg.default.v10` is v9 plus
+`decision:typesafe/jev-1.13@jev-scales.v1` as a shadow; E3b stays on v8; E7 moves to v10.
+
+**Result that motivated it** (118 Twin people with policy items, 389 questions, intervals over people): at the
+primary's temperature, choices lower log loss on scale questions by −0.059 [−0.084, −0.034] after 30 answers and
+−0.082 [−0.111, −0.052] after 100, and raise top-1 accuracy by about 2.6 points. With each format at its own temperature
+fitted on dev people (4.07 for the primitive, 3.54 for choices), −0.067 [−0.101, −0.034]. Other question types are
+untouched.
+
+**Reading.** On served scale questions, paired with the primary over people (`evaluate --from stored`, "Against the
+primary"), on people who joined after this ADR. It replaces the primary only as a calibrated variant of its own, after
+at least 25 such people show lower log loss with an upper bound below 0 and accuracy no worse.
+
+**Consequences.** One more Jev call per scored question as a shadow, about $0.00001. Trait estimation keeps the score
+primitive (it is not a prediction of an answer).
+
+## ADR-0067 — Research consent covers sensitive answers (2026-10-01)
 
 **Context.** Since ADR-0043, ticking research consent at intake opened "Research use of sensitive answers": one box
 per consented special-category area (politics, religion, sexuality, health) and a line saying money follows the

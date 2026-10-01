@@ -12,8 +12,10 @@ import {
   expectedIndex,
   formatPredictorId,
   type Gateway,
+  HARNESS_KEYS,
+  HARNESS_STATE_VIEWS,
+  type HarnessStateView,
   harnessProblems,
-  INCUMBENT_HARNESS,
   LlmPredictor,
   lexicalSimilarity,
   normalizeDist,
@@ -60,6 +62,8 @@ export const CandidateInput = z.object({
       calibrationTemperature: z.number().min(0.1).max(20),
       keyEnum: z.boolean(),
       labelKeys: z.boolean(),
+      stateView: z.enum(HARNESS_STATE_VIEWS),
+      scoreAs: z.enum(['score', 'choice']),
     })
     .partial()
     .default({}),
@@ -127,7 +131,7 @@ export function changedComponents(
 export function changedHarness(c: Candidate, against: string = c.baseVersion): Partial<PredictHarness> {
   const base = resolvePredictPrompt(against, c.kind, c.model).harness;
   const out: Partial<PredictHarness> = {};
-  for (const k of Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>)
+  for (const k of HARNESS_KEYS)
     if (c.prompt.harness[k] !== base[k]) Object.assign(out, { [k]: c.prompt.harness[k] });
   return out;
 }
@@ -370,7 +374,7 @@ export function jevRequests(
     let cur: EvalInstance[] = [];
     let used = stateTokens;
     for (const i of g) {
-      const t = tokens(predictionQuestion(i.question, c.prompt.components));
+      const t = tokens(predictionQuestion(i.question, c.prompt.components, c.prompt.harness.scoreAs));
       if (cur.length && (used + t > JEV_REQUEST_TOKENS || cur.length >= maxQuestions)) {
         out.push(cur);
         cur = [];
@@ -500,8 +504,9 @@ export function derivedCalibrations(primaryId: string): Array<{ predictorId: str
   const baseVersion = spec.promptVersion ?? DEFAULT_PROMPT_VERSION.decision;
   const base = resolvePredictPrompt(baseVersion, 'decision', spec.model);
   if (base.harness.calibrationTemperature !== 1) return [];
+  // Everything but the temperature: a view or a question format (ADR-0065, ADR-0066) is another predictor.
   const same = (a: PredictPrompt, b: PredictPrompt) =>
-    a.harness.jevState === b.harness.jevState &&
+    HARNESS_KEYS.every((k) => k === 'calibrationTemperature' || a.harness[k] === b.harness[k]) &&
     COMPONENT_IDS.every((id) => !componentReadBy(id, a) || a.components[id] === b.components[id]);
   const idOf = (version: string) =>
     formatPredictorId({ kind: 'decision', model: spec.model, promptVersion: version });
@@ -672,7 +677,7 @@ export interface FitRow {
   testAccAfter: number | null;
 }
 
-interface Pair {
+export interface Pair {
   inst: EvalInstance;
   dist: Distribution;
   other?: Distribution;
@@ -796,15 +801,17 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
             ),
           );
       }
+      const person = personTemperatureFit(k, method, temps, dev, test);
+      if (person) rows.push(person);
       const withBase = ps.filter((p) => p.inst.baseline);
       const [d2, t2] = split(withBase);
       if (d2.length >= 10)
         rows.push(
           fitParam(k, 'shrink to baseline', unit, d2, t2, (p, a) => shrink(p.dist, p.inst.baseline!, a), 0),
         );
-    } else if (k.startsWith('llm:')) {
-      // Pools with LLM shadows only (a decision shadow pooled with a decision primary is a temperature fit by another name),
-      // one fit per primary so a fit never mixes scales.
+    } else if (k.startsWith('llm:') || viewOf(k) !== null) {
+      // Pools with LLM shadows and view shadows only (a decision shadow reading the primary's state is a temperature
+      // fit by another name), one fit per primary so a fit never mixes scales.
       for (const [pid, primary] of [...primaries.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const paired = ps
           .filter((p) => primary.has(p.inst.id))
@@ -826,6 +833,122 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
     }
   }
   return rows;
+}
+
+/** Shrinkage toward the global temperature, in pseudo-questions; the last is the global temperature alone. */
+const PERSON_SHRINK = [0, 5, 10, 20, 40, 80, Number.POSITIVE_INFINITY];
+
+/**
+ * A person's temperature from their own earlier questions, shrunk toward the global one on the log scale: with n
+ * earlier questions and strength n0, the weight on the person's own fit is n / (n + n0) (RESEARCH §2.4).
+ */
+export function personTemperature(prev: Pair[], global: number, n0: number, temps: number[]): number {
+  if (!prev.length || n0 === Number.POSITIVE_INFINITY) return global;
+  let own = global;
+  let bestLl = Number.POSITIVE_INFINITY;
+  for (const t of temps) {
+    const v = ll(prev, (p) => temperatureScale(p.dist, t));
+    if (v < bestLl - 1e-12) {
+      own = t;
+      bestLl = v;
+    }
+  }
+  // No shrinkage is the person's own fit exactly (the log-scale blend would round it off the grid).
+  if (n0 === 0) return own;
+  const w = prev.length / (prev.length + n0);
+  return Math.exp(w * Math.log(own) + (1 - w) * Math.log(global));
+}
+
+/** Each question at the temperature fitted on the same person's earlier questions only: no question sees itself. */
+export function prequentialTemperatures(
+  ps: Pair[],
+  global: number,
+  n0: number,
+  temps: number[],
+): Map<Pair, number> {
+  const out = new Map<Pair, number>();
+  for (const xs of groupBy(ps, (p) => p.inst.mimicId).values()) {
+    const ordered = [...xs].sort((a, b) => a.inst.seq - b.inst.seq);
+    ordered.forEach((p, i) => {
+      out.set(p, personTemperature(ordered.slice(0, i), global, n0, temps));
+    });
+  }
+  return out;
+}
+
+/**
+ * RESEARCH §2.4: a per-person temperature, scored prequentially. The global temperature and the shrinkage strength
+ * are chosen on dev people; test people are scored question by question with what their earlier answers allowed.
+ * "Before" is the global temperature, so the row shows only what personalising it adds.
+ */
+function personTemperatureFit(
+  predictor: string,
+  method: string,
+  temps: number[],
+  dev: Pair[],
+  test: Pair[],
+): FitRow | null {
+  if (new Set(dev.map((p) => p.inst.mimicId)).size < 2) return null;
+  const global = fitParam(predictor, method, temps, dev, [], (p, t) => temperatureScale(p.dist, t), 1).param;
+  const at = (ps: Pair[], n0: number) => {
+    const t = prequentialTemperatures(ps, global, n0, temps);
+    return (p: Pair) => temperatureScale(p.dist, t.get(p)!);
+  };
+  const flat = (p: Pair) => temperatureScale(p.dist, global);
+  let n0 = Number.POSITIVE_INFINITY;
+  let bestLl = ll(dev, flat);
+  for (const x of PERSON_SHRINK) {
+    const v = ll(dev, at(dev, x));
+    if (v < bestLl - 1e-9) {
+      n0 = x;
+      bestLl = v;
+    }
+  }
+  const has = test.length > 0;
+  const personal = has ? at(test, n0) : flat;
+  return {
+    predictor,
+    method: `${method}, per person (prequential; ${Number.isFinite(n0) ? `prior worth ${n0} questions` : 'no person fit beat the global one'})`,
+    // The global temperature the person's is shrunk toward; the method names the shrinkage.
+    param: global,
+    nFit: dev.length,
+    nTest: test.length,
+    fitBefore: ll(dev, flat),
+    fitAfter: bestLl,
+    testBefore: has ? ll(test, flat) : null,
+    testAfter: has ? ll(test, personal) : null,
+    testEceBefore: has ? ece(test, flat) : null,
+    testEceAfter: has ? ece(test, personal) : null,
+    testAccBefore: has ? acc(test, flat) : null,
+    testAccAfter: has ? acc(test, personal) : null,
+  };
+}
+
+const round3 = (x: number) => Math.round(x * 1000) / 1000;
+
+/**
+ * RESEARCH §2.5: how many distinct top probabilities each predictor emits. Verbalised probabilities cluster on a few
+ * values, so a calibration error measured in bins can be an artefact; log loss is the fair yardstick.
+ */
+export function probabilityAudit(
+  recs: EvalRecord[],
+): Array<{ candidate: string; n: number; distinct: number; mode: number; modeShare: number }> {
+  return [
+    ...groupBy(
+      recs.filter((r) => r.ok),
+      (r) => r.candidate,
+    ).entries(),
+  ]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([candidate, rs]) => {
+      const counts = new Map<number, number>();
+      for (const r of rs) {
+        const v = round3(r.confidence);
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+      }
+      const [mode, top] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]!;
+      return { candidate, n: rs.length, distinct: counts.size, mode, modeShare: top / rs.length };
+    });
 }
 
 export interface PairedRow {
@@ -894,6 +1017,250 @@ export function pairedComparisons(recs: EvalRecord[]): PairedRow[] {
       });
     }
   return rows;
+}
+
+/** A paired difference whose interval resamples people, so correlated questions within a person do not narrow it. */
+export interface PersonDelta extends PairedDelta {
+  people: number;
+  /** People whose own mean difference is an improvement (lower log loss, higher accuracy), and the reverse. */
+  better: number;
+  worse: number;
+}
+
+/** Mean of (b − a) over the questions both answered, with a 90% interval from resampling people (as E6 does). */
+export function pairedByPerson(
+  a: EvalRecord[],
+  b: EvalRecord[],
+  metric: 'itemAcc' | 'logLoss',
+  seed: string,
+  resamples = 2000,
+): PersonDelta {
+  const bi = new Map(b.map((r) => [r.instanceId, r]));
+  const byPerson = new Map<string, number[]>();
+  for (const r of a) {
+    const o = bi.get(r.instanceId);
+    if (!o) continue;
+    const d = byPerson.get(r.mimicId) ?? [];
+    d.push(o[metric] - r[metric]);
+    byPerson.set(r.mimicId, d);
+  }
+  const people = [...byPerson.values()];
+  const n = people.reduce((x, d) => x + d.length, 0);
+  if (!n) return { n: 0, mean: 0, ciLow: 0, ciHigh: 0, people: 0, better: 0, worse: 0 };
+  const sign = metric === 'logLoss' ? -1 : 1;
+  const means = people.map(mean);
+  const rng = seededRng(seed);
+  const samples: number[] = [];
+  for (let s = 0; s < resamples; s++) {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < people.length; i++) {
+      const d = people[Math.floor(rng() * people.length)]!;
+      for (const x of d) sum += x;
+      count += d.length;
+    }
+    samples.push(sum / count);
+  }
+  return {
+    n,
+    mean: mean(people.flat()),
+    ciLow: quantile(samples, 0.05),
+    ciHigh: quantile(samples, 0.95),
+    people: people.length,
+    better: means.filter((m) => sign * m > 0).length,
+    worse: means.filter((m) => sign * m < 0).length,
+  };
+}
+
+/**
+ * ADR-0065's rule, fixed before any data: a view shadow earns a calibrated variant of its own only if, on enough
+ * people who joined after E6's export, it is more accurate than the primary and no worse on log loss.
+ */
+export const VIEW_RULE = { minPeople: 25, maxLogLossWorse: 0.01 } as const;
+export type ViewVerdict = 'insufficient' | 'passes' | 'fails';
+
+export interface AgainstPrimaryRow {
+  primary: string;
+  predictor: string;
+  role: string;
+  /** The view the predictor reads (ADR-0065), when it reads one. */
+  view: HarnessStateView | null;
+  logLoss: PersonDelta;
+  itemAcc: PersonDelta;
+  verdict: ViewVerdict | null;
+}
+
+function viewOf(predictorId: string): HarnessStateView | null {
+  try {
+    const spec = parsePredictorId(predictorId);
+    const version = spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind];
+    return resolvePredictPrompt(version, spec.kind, spec.model).harness.stateView ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every shadow and derived row against the primary that served the same questions, across models, with intervals
+ * over people. A view shadow also gets ADR-0065's verdict.
+ */
+export function againstPrimary(recs: EvalRecord[]): AgainstPrimaryRow[] {
+  const role = (r: EvalRecord) => r.candidate.split('|')[1]!;
+  const primaries = groupBy(
+    recs.filter((r) => role(r) === 'primary'),
+    (r) => r.predictorId,
+  );
+  const others = groupBy(
+    recs.filter((r) => role(r) === 'shadow' || role(r) === 'derived'),
+    (r) => r.candidate,
+  );
+  const rows: AgainstPrimaryRow[] = [];
+  for (const [primary, ps] of [...primaries.entries()].sort(([a], [b]) => a.localeCompare(b)))
+    for (const [candidate, xs] of [...others.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const [predictor, r] = candidate.split('|') as [string, string];
+      if (predictor === primary) continue;
+      const logLoss = pairedByPerson(ps, xs, 'logLoss', `${primary}>${candidate}`);
+      if (logLoss.n < 10) continue;
+      const itemAcc = pairedByPerson(ps, xs, 'itemAcc', `${primary}>${candidate}:acc`);
+      const view = viewOf(predictor);
+      const verdict: ViewVerdict | null =
+        view === null
+          ? null
+          : logLoss.people < VIEW_RULE.minPeople
+            ? 'insufficient'
+            : itemAcc.ciLow > 0 && logLoss.ciHigh < VIEW_RULE.maxLogLossWorse
+              ? 'passes'
+              : 'fails';
+      rows.push({ primary, predictor, role: r, view, logLoss, itemAcc, verdict });
+    }
+  return rows;
+}
+
+/** People besides the one predicted who must have answered an item before its mean is used (as PROBE_RULE's). */
+export const RESIDUAL_MIN_OTHERS = 5;
+
+export interface ResidualReport {
+  minOthers: number;
+  items: number;
+  instances: number;
+  people: number;
+  /** The item mean's own scores on those questions. */
+  itemMean: { logLoss: number; itemAcc: number };
+  /** Each predictor against the item mean on the same questions: negative log loss is skill beyond the population. */
+  rows: Array<{
+    predictor: string;
+    role: string;
+    logLoss: PersonDelta;
+    itemAcc: PersonDelta;
+    /**
+     * The predictor pooled with the item mean (p ∝ predictor^w · mean^(1−w)), w fitted on dev people, against the item
+     * mean on test people; null without both.
+     */
+    pooled: { w: number; logLoss: PersonDelta } | null;
+  }>;
+}
+
+/** Weights tried when pooling a predictor with the item mean. */
+const POOL_GRID = Array.from({ length: 21 }, (_, i) => i / 20);
+
+/**
+ * Residual fidelity (RESEARCH §1.2): on items asked of many people (anchors, reserve items, E7's shared probes, an
+ * import's held-out items), the population's answer distribution is a predictor that knows nothing about the person.
+ * Each person's item mean leaves their own answer out and is smoothed by half an answer per option. Only aggregates
+ * over at least `minOthers` other people are used, and only here, never in a prompt or a state (PLAN §3.8).
+ */
+export function residualReport(
+  instances: EvalInstance[],
+  recs: EvalRecord[],
+  minOthers = RESIDUAL_MIN_OTHERS,
+): ResidualReport {
+  const answers = new Map<string, Map<string, string>>();
+  for (const i of instances) {
+    const key = i.question.itemKey;
+    if (!key) continue;
+    const m = answers.get(key) ?? new Map<string, string>();
+    if (!m.has(i.mimicId)) m.set(i.mimicId, i.answer);
+    answers.set(key, m);
+  }
+  const means: EvalRecord[] = [];
+  for (const i of instances) {
+    const by = i.question.itemKey ? answers.get(i.question.itemKey) : undefined;
+    const others = [...(by?.entries() ?? [])].filter(([m]) => m !== i.mimicId).map(([, a]) => a);
+    if (others.length < minOthers) continue;
+    const keys = i.question.options.map((o) => o.key);
+    const dist: Distribution = Object.fromEntries(
+      keys.map((k) => [
+        k,
+        (others.filter((a) => a === k).length + 0.5) / (others.length + 0.5 * keys.length),
+      ]),
+    );
+    means.push(
+      toRecord(i, 'item-mean|population', 'item-mean', {
+        dist,
+        ok: true,
+        costUsd: 0,
+        latencyMs: 0,
+        modelSnapshot: 'item-mean',
+      }),
+    );
+  }
+  const covered = new Set(means.map((r) => r.instanceId));
+  const meanOf = new Map(means.map((r) => [r.instanceId, r]));
+  const instOf = new Map(instances.map((i) => [i.id, i]));
+  const pooledAt = (xs: EvalRecord[], w: number) =>
+    xs.map((r) =>
+      toRecord(instOf.get(r.instanceId)!, 'pooled|population', 'pooled', {
+        dist: pool(r.dist, meanOf.get(r.instanceId)!.dist, w),
+        ok: true,
+        costUsd: 0,
+        latencyMs: 0,
+        modelSnapshot: 'pooled',
+      }),
+    );
+  const pooledRow = (xs: EvalRecord[], seed: string) => {
+    const ok = xs.filter((r) => r.ok);
+    const dev = ok.filter((r) => r.split === 'dev');
+    const test = ok.filter((r) => r.split === 'test');
+    if (!dev.length || !test.length) return null;
+    const devLl = (w: number) =>
+      mean(
+        dev.map(
+          (r) => -Math.log(Math.max(pool(r.dist, meanOf.get(r.instanceId)!.dist, w)[r.answer] ?? 0, P_FLOOR)),
+        ),
+      );
+    const scored = POOL_GRID.map((x) => ({ x, ll: devLl(x) }));
+    const w = scored.reduce((best, c) => (c.ll < best.ll - 1e-12 ? c : best)).x;
+    return { w, logLoss: pairedByPerson(means, pooledAt(test, w), 'logLoss', seed) };
+  };
+  const role = (r: EvalRecord) => r.candidate.split('|')[1]!;
+  const rows = [
+    ...groupBy(
+      recs.filter((r) => covered.has(r.instanceId) && role(r) !== 'fallback'),
+      (r) => r.candidate,
+    ).entries(),
+  ]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([candidate, xs]) => {
+      const [predictor, r] = candidate.split('|') as [string, string];
+      return {
+        predictor,
+        role: r,
+        logLoss: pairedByPerson(means, xs, 'logLoss', `residual>${candidate}`),
+        itemAcc: pairedByPerson(means, xs, 'itemAcc', `residual>${candidate}:acc`),
+        pooled: pooledRow(xs, `residual>${candidate}:pooled`),
+      };
+    });
+  return {
+    minOthers,
+    items: new Set(instances.filter((i) => covered.has(i.id)).map((i) => i.question.itemKey)).size,
+    instances: means.length,
+    people: new Set(means.map((r) => r.mimicId)).size,
+    itemMean: {
+      logLoss: means.length ? mean(means.map((r) => r.logLoss)) : 0,
+      itemAcc: means.length ? mean(means.map((r) => r.itemAcc)) : 0,
+    },
+    rows,
+  };
 }
 
 /** Self-consistency per person from repeat probes, smoothed toward the 0.8 prior (PLAN §9.10). */

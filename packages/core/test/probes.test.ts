@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   configHash,
   DEFAULT_CONFIG,
+  DEFAULT_CONFIG_V8,
   dueProbe,
   E7_PROBES_CONFIG,
   getOntology,
@@ -125,17 +126,17 @@ describe('E7 probe schedule (ADR-0062)', () => {
     expect(retry).toMatchObject({ tier: 'shared', item: { itemKey: PROBE_V1.shared[0] } });
   });
 
-  it('cfg.e7.probes is cfg.default.v8 with the probes and a longer session', () => {
+  it('cfg.e7.probes is the default config (v10) with the probes and a longer session', () => {
     expect({ ...E7_PROBES_CONFIG, probes: undefined, session: DEFAULT_CONFIG.session }).toEqual({
       ...DEFAULT_CONFIG,
       probes: undefined,
     });
     expect(E7_PROBES_CONFIG.session).toEqual({ target: DEFAULT_CONFIG.session.target + 14, budgetUsd: 0.75 });
     expect(configHash(E7_PROBES_CONFIG)).toBe(
-      '8d878da4369e72c6cf57affa999abb2bc84d0e6e844f1126ac6fd744670c93d5',
+      '6df76ca3cd2fada2775ce006263cff6676897e42e1224b8b677d8783bcf46fb0',
     );
     // Adding the optional field leaves every older config's hash where it was.
-    expect(configHash(DEFAULT_CONFIG)).toBe(
+    expect(configHash(DEFAULT_CONFIG_V8)).toBe(
       '08956a2222de74c94bb21e6ace0a7a2c69e4d441a41e0cbe4be5a26d638ac44f',
     );
     // The shared items exist, are distinct, and touch no sensitive facet.

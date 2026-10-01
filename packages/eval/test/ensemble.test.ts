@@ -70,8 +70,19 @@ describe('ensembles of stored predictions (ADR-0058)', () => {
     const r = ensembleFromStored(instances, { name: 'e', etas: [1, 2], withBaseline: false, seed: 's' });
     expect(r.people).toBe(2);
     expect(r.instances).toBe(instances.length);
-    // The default config's primary and five shadows.
-    expect(r.members.length).toBe(6);
+    // `since` keeps only people who joined then or later, as ADR-0065's rule reads them.
+    const joined = (await engine.deps.store.listMimics({ consentResearch: true })).sort(
+      (a, b) => a.createdAt - b.createdAt,
+    );
+    const later = await loadInstances(engine.deps, {
+      k: 30,
+      split: 'all',
+      seed: 's',
+      since: joined[1]!.createdAt,
+    });
+    expect(new Set(later.map((i) => i.mimicId))).toEqual(new Set([joined[1]!.id]));
+    // The default config's primary and eight shadows (five LLMs, two view shadows and the scale shadow).
+    expect(r.members.length).toBe(9);
     expect(r.members).toContain('decision:typesafe/jev-1.13@jev-predict.v2');
     expect(r.methods.map((m) => m.method)).toEqual([
       'primary',
@@ -93,10 +104,10 @@ describe('ensembles of stored predictions (ADR-0058)', () => {
     expect(r.methods.at(-1)!.all.logLoss).toBeLessThanOrEqual(primary.all.logLoss + 1e-9);
     const hedge = r.methods.find((m) => m.method === 'hedge:1')!;
     const ws = Object.values(hedge.finalWeights!);
-    expect(ws.length).toBe(6);
+    expect(ws.length).toBe(r.members.length);
     expect(ws.reduce((a, b) => a + b, 0)).toBeCloseTo(1, 5);
     const withBase = ensembleFromStored(instances, { name: 'e', etas: [1], withBaseline: true, seed: 's' });
-    expect(withBase.members.length).toBe(7);
+    expect(withBase.members.length).toBe(r.members.length + 1);
     const { run } = ensembleRun(
       instances,
       { name: 'e', etas: [1], withBaseline: false, seed: 's' },

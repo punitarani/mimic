@@ -600,6 +600,10 @@ Intervals are paired by question and bootstrapped over people.
   [--embed] --state full|card --evidence mixed|recent|similar|fill [--max-evidence 8]`): at k = 100 embeddings lift
   policy items from +1.6 to +4.4 points, word overlap to +2.5; `fill` with embeddings is 67.8% accuracy and 0.814 log
   loss, +2.7 [+0.8, +4.6] points and −0.053 [−0.082, −0.024] over the shared served state (39 of 60 people better).
+- **Residual** (`evaluate --data data/twin.sqlite --predictor <id> --candidate <id on the context, harness.stateView
+  "context">.json --split all --k 30|100 --limit 120 --max-targets 20 --seed bench`): against the leave-one-out item
+  mean (log loss 0.813), Jev with 30 answers is −0.005 [−0.025, +0.015], DeepSeek −0.030 [−0.058, −0.001]; pooled with
+  the item mean on test people, −0.024 and −0.042 (the report's pooled column; a rerun gives −0.023).
 - **Jev transfer** (60 people, 1,200 targets, 55 drafts written and 5 timed out): state 61.9%, card 62.8%, core
   SOUL.md 65.6% (log loss 1.582 against 1.071), full SOUL.md 66.2%, `mimic.json` 62.7%, context 57.0%. Jev reads
   the narrative better than the answers it came from, and trusts it too much. With `--readers

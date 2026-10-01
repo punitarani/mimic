@@ -304,7 +304,7 @@ export const VOI_SELECTOR_V8: Extract<PipelineConfig['selector'], { type: 'voi' 
  * balanced, ramped selector. Sensitive areas are asked about only with the person's consent (ADR-0040, ADR-0043).
  * Older mimics keep their config.
  */
-export const DEFAULT_CONFIG: PipelineConfig = {
+export const DEFAULT_CONFIG_V8: PipelineConfig = {
   ...DEFAULT_CONFIG_V7,
   ontologyVersion: 'v2',
   reserve: { setId: 'reserve.v2' },
@@ -317,7 +317,38 @@ export const DEFAULT_CONFIG: PipelineConfig = {
   selector: VOI_SELECTOR_V8,
   reflector: { ...DEFAULT_CONFIG_V7.reflector, promptVersion: 'reflect.v2' },
 };
-export const DEFAULT_CONFIG_LABEL = 'cfg.default.v8';
+export const DEFAULT_CONFIG_V8_LABEL = 'cfg.default.v8';
+
+/**
+ * `cfg.default.v9` (ADR-0065): v8 with two view shadows, E6's exploratory leads tested on new people: Jev reading only
+ * traits and insights (`jev-derived.v1`), and DeepSeek reading only the context (`predict.v2-context`). The primary,
+ * selection and everything a person sees are v8's.
+ */
+export const DEFAULT_CONFIG_V9: PipelineConfig = {
+  ...DEFAULT_CONFIG_V8,
+  predictor: {
+    primary: `decision:${JEV_MODEL}@jev-predict.v2`,
+    shadows: [
+      ...DEFAULT_CONFIG_V8.predictor.shadows,
+      `decision:${JEV_MODEL}@jev-derived.v1`,
+      `llm:${LLM.deepseek}@predict.v2-context`,
+    ],
+  },
+};
+export const DEFAULT_CONFIG_V9_LABEL = 'cfg.default.v9';
+
+/**
+ * `cfg.default.v10` (ADR-0066): v9 with a shadow that asks Jev scale questions as unordered choices
+ * (`jev-scales.v1`). Everything a person sees, the primary and selection are v8's.
+ */
+export const DEFAULT_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG_V9,
+  predictor: {
+    ...DEFAULT_CONFIG_V9.predictor,
+    shadows: [...DEFAULT_CONFIG_V9.predictor.shadows, `decision:${JEV_MODEL}@jev-scales.v1`],
+  },
+};
+export const DEFAULT_CONFIG_LABEL = 'cfg.default.v10';
 
 /**
  * The E3b control (ADR-0045): cfg.default.v8 with the selection it had before M12. Everything else is v8's (the
@@ -328,7 +359,7 @@ export const DEFAULT_CONFIG_LABEL = 'cfg.default.v8';
  * efficiency, and is not what E3b tests.
  */
 export const E3B_CONTROL_CONFIG: PipelineConfig = {
-  ...DEFAULT_CONFIG,
+  ...DEFAULT_CONFIG_V8,
   selector: {
     ...VOI_SELECTOR,
     trustRamp: { minAnswered: 6, sweepFrom: 1000, sweepBonus: 0, sweepBy: 1000 },
@@ -353,8 +384,9 @@ export const PROBE_V1: ProbeConfig = {
 const PROBES_V1 = PROBE_V1.slots.reduce((a, s) => a + s.tiers.length, 0);
 
 /**
- * `cfg.e7.probes` (ADR-0062): cfg.default.v8 with the probes. The session target grows by the fourteen probes, so a
- * person who reaches it has answered v8's 30 and every probe; the session budget grows by about the same share.
+ * `cfg.e7.probes` (ADR-0062): the default config with the probes; since ADR-0066 that is v10, so the view and scale
+ * shadows are read on the probes too. The session target grows by the fourteen probes, so a person who reaches it has answered the
+ * default's 30 and every probe; the session budget grows by about the same share.
  */
 export const E7_PROBES_CONFIG: PipelineConfig = {
   ...DEFAULT_CONFIG,

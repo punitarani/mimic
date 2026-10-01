@@ -7,7 +7,7 @@ import {
   DEFAULT_PROMPT_VERSION,
   formatPredictorId,
   type Gateway,
-  INCUMBENT_HARNESS,
+  HARNESS_KEYS,
   PER_MODEL_HARNESS_KEYS,
   type PerModelHarness,
   PREDICT_PROMPTS,
@@ -704,7 +704,7 @@ export function variantSnippet(r: OptimizeResult, runId: string): string | null 
     const shared: Partial<PredictHarness> = { ...base?.harness };
     const perModel: Record<string, PerModelHarness> = { ...base?.modelHarness };
     const own: PerModelHarness = { ...perModel[c.model] };
-    for (const k of Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>) {
+    for (const k of HARNESS_KEYS) {
       if (c.prompt.harness[k] === seeded[k]) continue;
       if ((PER_MODEL_HARNESS_KEYS as readonly string[]).includes(k))
         Object.assign(own, { [k]: c.prompt.harness[k] });

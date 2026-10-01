@@ -113,7 +113,8 @@ Commands
   evaluate  Score prediction prompts on sealed instances (docs/OPTIMIZATION.md §5)
             --data <a.sqlite>[,<b.sqlite>] --from stored        stored online predictions, calibration fits; no calls
             --data … --predictor <id>[,<id>] [--candidate <cand.json>[,…]] [--repeat] [--max-usd 2]
-            [--split dev|test|all] [--k 30] [--limit N] [--max-targets 40] [--publish local|preview|prod]
+            [--split dev|test|all] [--k 30] [--limit N] [--max-targets 40] [--since <date>]   people who joined then
+            or later (ADR-0065's rule reads new people)   [--publish local|preview|prod]
   diagnose  Failure analysis of stored predictions by the reflection model (one call per person)
             --data … [--role primary|baseline|shadow] [--predictor <id>, required for shadow] [--cases 30]
             [--people 3] [--reflection-model <id>]

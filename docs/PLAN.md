@@ -556,7 +556,7 @@ What to ask about (ADR-0040, `docs/CATEGORIES.md`):
   yours: they are only used to build your mimic": political views, religion and worldview, sexuality and intimate
   relationships, health and body, money in detail. All ticked by default; each can be turned off (ADR-0049).
 - Research consent covers the special-category areas (politics, religion, sexuality, health) the person agrees to be
-  asked about, with no separate box per area (ADR-0065); areas consented before that keep their stored research use.
+  asked about, with no separate box per area (ADR-0067); areas consented before that keep their stored research use.
 - All of it can be changed later from the session menu.
 
 ### 9.2 Identity resolution and enrichment
@@ -690,7 +690,10 @@ When a question is served:
 
 1. **Primary.** Jev on `state(answers < t)`. This comes from the selector call.
 2. **Baseline.** Jev on `state(contextOnly)`.
-3. **Shadows.** Enqueue `predict.shadow` for each shadow LLM, using the same sealed state (identical `stateHash`).
+3. **Shadows.** Enqueue `predict.shadow` for each shadow, using the same sealed state (identical `stateHash`). A
+   registered variant may read a view of it (`harness.stateView`: context, answers or derived data; ADR-0065), so a
+   shadow can test what a predictor should read without a second sealed state, or ask a decision model scale
+   questions as choices (`harness.scoreAs`, ADR-0066).
 
 **Jev templates:**
 
@@ -1144,7 +1147,7 @@ exercise scores at least 4 of 5.
   say" (ADR-0050).
 - **Sensitive domains need their consent.** Enforced in code wherever facets are used (`docs/CATEGORIES.md` §5), never
   inferred from other answers or web facts, and special-category answers leave research exports unless the person
-  gave research consent while consenting to that area (ADR-0065).
+  gave research consent while consenting to that area (ADR-0067).
 - **Playground output is labeled as generated.** There is no feature to message anyone "as" a person.
 - **Export and hard delete from day one.** Write a privacy note before inviting anyone outside a small cohort.
 
