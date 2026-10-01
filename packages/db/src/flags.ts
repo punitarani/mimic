@@ -1,6 +1,7 @@
 import {
   ALL_FLAGS,
   coerceFlag,
+  FLAG_SPECS,
   type FlagContext,
   type FlaggedSetting,
   type FlagReader,
@@ -9,7 +10,10 @@ import {
 } from '@mimic/core';
 
 /** The part of the Flagship binding the app uses (workers-types `Flagship`). */
-export type FlagshipBinding = Pick<Flagship, 'get' | 'getStringDetails' | 'getNumberDetails'>;
+export type FlagshipBinding = Pick<
+  Flagship,
+  'get' | 'getStringDetails' | 'getNumberDetails' | 'getBooleanDetails'
+>;
 
 /**
  * Flags from Cloudflare Flagship (ADR-0051). Values are read untyped and coerced (`coerceFlag`), so a flag made in the
@@ -49,6 +53,15 @@ export class FlagshipFlags implements FlagReader {
 /** The environment's flags: Flagship when the FLAGS binding exists, else every default. */
 export function flagsFor(env: { FLAGS?: FlagshipBinding }): FlagReader {
   return env.FLAGS ? new FlagshipFlags(env.FLAGS) : NO_FLAGS;
+}
+
+/**
+ * Whether creating a mimic needs an invite code (`use-invite-code`, ADR-0053). The flag holds for the whole
+ * environment, like the spend caps; unbound or unreadable, it is on, as before the flag.
+ */
+export async function inviteRequired(env: { FLAGS?: FlagshipBinding }): Promise<boolean> {
+  const spec = FLAG_SPECS.useInviteCode;
+  return flagsFor(env).boolean(spec.key, spec.fallback, { targetingKey: 'environment' });
 }
 
 const warned = new Set<string>();
@@ -93,7 +106,7 @@ export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
           `flag ${spec.key} is ${JSON.stringify(read)}, which the code can't use; using ${name}`,
         );
       if (value === fallback) return;
-      out[name] = typeof value === 'number' ? String(value) : value;
+      out[name] = typeof value === 'string' ? value : String(value);
     }),
   );
   return out;
@@ -127,7 +140,9 @@ export async function flagHealth(env: {
         const d =
           spec.kind === 'number'
             ? await binding.getNumberDetails(spec.key, Number(spec.fallback), ctx)
-            : await binding.getStringDetails(spec.key, String(spec.fallback), ctx);
+            : spec.kind === 'boolean'
+              ? await binding.getBooleanDetails(spec.key, spec.fallback === true, ctx)
+              : await binding.getStringDetails(spec.key, String(spec.fallback), ctx);
         // Runtime reads are untyped and coerced (FlagshipFlags), so a flag made with another type (a number flag
         // made as a string, say) still works there: judge it by that read, and keep the error code visible.
         const mismatch = d.errorCode === 'TYPE_MISMATCH';

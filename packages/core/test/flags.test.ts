@@ -14,7 +14,8 @@ import {
 
 /**
  * The `mimic` app as the Flags workflow saw it on 2026-09-30: variations named by their labels, values as the code
- * spells them, a $2 cap, plus the provider flags and `vector-backend`, which no code reads since ADR-0052.
+ * spells them, a $2 cap, plus the provider flags and `vector-backend`, which no code reads since ADR-0052. Since then,
+ * `use-invite-code` as an on/off switch (ADR-0053).
  */
 const live = (): LiveFlag[] => [
   {
@@ -32,6 +33,13 @@ const live = (): LiveFlag[] => [
     variations: { '75': 0.75, '80': 0.8, '85': 0.85, '90': 0.9 },
     rules: [],
   },
+  {
+    key: 'use-invite-code',
+    enabled: true,
+    default_variation: 'on',
+    variations: { on: true, off: false },
+    rules: [],
+  },
   ...['search-provider', 'enrich-provider', 'embeddings-provider', 'vector-backend'].map((key) => ({
     key,
     enabled: true,
@@ -47,6 +55,7 @@ describe('flag registry (ADR-0051, ADR-0052)', () => {
       'budget-session-share',
       'budget-usd',
       'decisions-model',
+      'use-invite-code',
     ]);
     for (const spec of Object.values(FLAG_SPECS)) {
       expect(spec.parse(spec.fallback)).not.toBeNull();
@@ -95,6 +104,20 @@ describe('flag registry (ADR-0051, ADR-0052)', () => {
     expect(FLAG_SPECS.budgetSessionShare.parse('0.75')).toBe(0.75);
   });
 
+  it('use-invite-code takes a boolean, or a string flag with on/off values (ADR-0053)', () => {
+    const spec = FLAG_SPECS.useInviteCode;
+    expect(spec.fallback).toBe(true);
+    for (const v of [true, 'on', 'true', 'yes', 'enabled', '1', 1]) expect(spec.parse(v)).toBe(true);
+    for (const v of [false, 'off', 'false', 'no', 'disabled', '0', 0]) expect(spec.parse(v)).toBe(false);
+    for (const v of ['maybe', '', 2, null, undefined, {}]) expect(spec.parse(v)).toBeNull();
+    const r = checkFlags([
+      { key: spec.key, enabled: true, default_variation: 'x', variations: { x: 'sometimes', on: 'on' } },
+    ]);
+    expect(r.problems).toContain(
+      'use-invite-code: variation "x" = "sometimes" is not a value the code accepts',
+    );
+  });
+
   it('the spend-cap flags accept exactly the values the Workers read from their vars (ADR-0035)', () => {
     const values = [
       '1',
@@ -137,6 +160,10 @@ describe('flag registry (ADR-0051, ADR-0052)', () => {
     expect(flagCreateBody(FLAG_SPECS.budgetUsd)).toMatchObject({
       default_variation: 'standard',
       variations: { standard: 1 },
+    });
+    expect(flagCreateBody(FLAG_SPECS.useInviteCode)).toMatchObject({
+      default_variation: 'on',
+      variations: { on: true, off: false },
     });
     for (const spec of Object.values(FLAG_SPECS))
       expect(checkFlags([flagCreateBody(spec)], [spec]).problems).toEqual([]);

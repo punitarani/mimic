@@ -17,7 +17,7 @@ import { type FlagshipBinding, flaggedEnv, flagsFor, warnOnce } from './flags';
 import { d1Db } from './index';
 import { DrizzleStore } from './store';
 
-export { flaggedEnv, flagHealth } from './flags';
+export { flaggedEnv, flagHealth, inviteRequired } from './flags';
 
 /** Bindings shared by apps/web and apps/worker (PLAN §6.5). */
 export interface MimicBindings extends ProviderEnv {

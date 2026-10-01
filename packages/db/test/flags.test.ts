@@ -1,6 +1,13 @@
 import { FLAG_KEYS, JEV_MODEL, NO_FLAGS, SPAN_MODEL } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
-import { type FlagshipBinding, FlagshipFlags, flaggedEnv, flagHealth, flagsFor } from '../src/flags';
+import {
+  type FlagshipBinding,
+  FlagshipFlags,
+  flaggedEnv,
+  flagHealth,
+  flagsFor,
+  inviteRequired,
+} from '../src/flags';
 import { engineDeps, type MimicBindings, runtimeEngineDeps } from '../src/runtime';
 
 /**
@@ -24,6 +31,7 @@ function flagship(values: Record<string, unknown>, opts: { throws?: boolean } = 
     },
     getStringDetails: async (key: string, fallback: string) => details(key, fallback),
     getNumberDetails: async (key: string, fallback: number) => details(key, fallback),
+    getBooleanDetails: async (key: string, fallback: boolean) => details(key, fallback),
   };
 }
 
@@ -57,6 +65,31 @@ describe('Flagship flags (ADR-0051)', () => {
     const down = new FlagshipFlags(flagship({ on: true }, { throws: true }));
     expect(await down.boolean('on', false)).toBe(false);
     expect(flagsFor({})).toBe(NO_FLAGS);
+  });
+
+  it('use-invite-code: on unless the flag says off, for the whole environment (ADR-0053)', async () => {
+    expect(await inviteRequired({})).toBe(true);
+    expect(await inviteRequired({ FLAGS: flagship({}) })).toBe(true);
+    expect(await inviteRequired({ FLAGS: flagship({ 'use-invite-code': true }) })).toBe(true);
+    expect(await inviteRequired({ FLAGS: flagship({ 'use-invite-code': false }) })).toBe(false);
+    // Made in the dashboard as a string flag, it reads the same.
+    expect(await inviteRequired({ FLAGS: flagship({ 'use-invite-code': 'off' }) })).toBe(false);
+    expect(await inviteRequired({ FLAGS: flagship({ 'use-invite-code': 'maybe' }) })).toBe(true);
+    expect(await inviteRequired({ FLAGS: flagship({ 'use-invite-code': false }, { throws: true }) })).toBe(
+      true,
+    );
+    const seen: unknown[] = [];
+    const binding = flagship({ 'use-invite-code': false });
+    await inviteRequired({
+      FLAGS: {
+        ...binding,
+        get: async (k, d, ctx) => {
+          seen.push(ctx);
+          return binding.get(k, d, ctx);
+        },
+      },
+    });
+    expect(seen).toEqual([{ targetingKey: 'environment' }]);
   });
 
   it('without FLAGS the environment and deps are exactly today’s', async () => {
@@ -140,7 +173,12 @@ describe('Flagship flags (ADR-0051)', () => {
 
   it('flagHealth reports every registry flag as the binding resolves it', async () => {
     expect(await flagHealth({})).toEqual({ bound: false, ok: true, flags: {} });
-    const all = { 'decisions-model': 'jev', 'budget-usd': 1, 'budget-session-share': 0.8 };
+    const all = {
+      'decisions-model': 'jev',
+      'budget-usd': 1,
+      'budget-session-share': 0.8,
+      'use-invite-code': true,
+    };
     const good = await flagHealth({ FLAGS: flagship(all) });
     expect(good.ok).toBe(true);
     expect(Object.keys(good.flags).sort()).toEqual(Object.values(FLAG_KEYS).sort());
