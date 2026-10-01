@@ -69,14 +69,13 @@ try {
   assert.equal(await page.getByLabel('Ask about health and body').isChecked(), false);
   assert.equal(await page.getByLabel('Ask about religion and worldview').isChecked(), true);
   await page.getByLabel(/Use my answers, without my name/).check();
-  const research = page.getByRole('group', { name: 'Research use of sensitive answers' });
-  await research.waitFor();
+  await page.getByText(/including answers on the sensitive topics above/).waitFor();
   assert.equal(
-    await research.getByRole('checkbox').count(),
-    2,
-    'one research box per consented special area',
+    await page.getByRole('group', { name: 'Research use of sensitive answers' }).count(),
+    0,
+    'research consent covers sensitive topics, with no box per area (ADR-0067)',
   );
-  log('research use shows only with research consent, one box per consented special area');
+  log('research consent covers the sensitive topics left on, with no box per area');
   await topics.scrollIntoViewIfNeeded();
   await shot(page, 'intake-scope', { fullPage: true });
 
@@ -114,6 +113,8 @@ try {
     0,
     'the intake default line is not shown in the dialog',
   );
+  await dialog.getByText(/You agreed to research use/).waitFor();
+  log('dialog: with research consent, one line says sensitive topics turned on are included (ADR-0067)');
   assert.equal(
     await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
     true,

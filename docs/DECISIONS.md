@@ -2395,3 +2395,36 @@ at least 25 such people show lower log loss with an upper bound below 0 and accu
 **Consequences.** One more Jev call per scored question as a shadow, about $0.00001. Trait estimation keeps the score
 primitive (it is not a prediction of an answer).
 
+## ADR-0067 — Research consent covers sensitive answers (2026-10-01)
+
+**Context.** Since ADR-0043, ticking research consent at intake opened "Research use of sensitive answers": one box
+per consented special-category area (politics, religion, sexuality, health) and a line saying money follows the
+research choice. That made six lines under one checkbox, the longest part of intake, and each box repeated two
+choices the person had just made: to be asked about the area, and to share their answers for research.
+
+**Decision.** The research checkbox covers it. Its hint now reads "Only answers from people who check this are used to
+compare methods, including answers on the sensitive topics above." The per-area boxes are gone from intake and from
+Topics and consent. For someone with research consent, the dialog says instead that the sensitive topics they turn
+on there are included.
+
+- **The stored model is unchanged.** `researchConsents` still records research use per area, and `researchAllowed`,
+  the export scrub and `item_stats` still read it. What changes is who sets it. `withResearchUse`
+  (`packages/core/src/scope.ts`) gives research use to every special-category area the person newly consents to. The
+  intake route (`POST /api/mimics`) applies it with no previous scope, so research consent covers every area left
+  on. The scope route (`PATCH /api/mimics/:id/scope`) applies it against the stored scope, so an area turned on later
+  joins research use. `normalizeScope` still drops all of it without research consent overall.
+- **No retroactive widening.** An area already consented keeps the research use stored with it, whatever the
+  request sends. People who signed up under the per-area boxes and left one unticked keep that area out of research.
+  Only turning the area off, saving, and turning it on again, with the dialog's line in view, includes it; turning it
+  off and on before a single save keeps what is stored. Confirming an area in the session and declining a question
+  change nothing here.
+- **Still an affirmative act.** The research checkbox starts unticked at intake, so special-category answers enter
+  research only after the person ticks a box whose hint names them. ADR-0049's trade-off concerns the topic boxes,
+  which start ticked, not this one.
+- **The engine stores what it is given.** `createMimic` and `setScope` take research use as sent, so scripted
+  sessions can still build a person who signed up before this change (`packages/eval/test/leakage.test.ts`).
+
+**Consequences.** Intake is six lines shorter. A new person who gives research consent shares their answers on every
+sensitive area they are asked about. Keeping one area out of research while still being asked about it is no longer
+possible: the person turns that area off, or leaves research unticked. `scripts/browser/scope.mjs` checks that the
+per-area group is gone.

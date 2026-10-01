@@ -112,7 +112,11 @@ is consented and, for a special-category area, confirmed.
 
 - **Defaults.** Every category, no sensitive area, no special-category research use (`DEFAULT_SCOPE`). Mimics created
   before ADR-0040, and API calls that send no scope, read as this default. The intake form starts from `INTAKE_SCOPE`
-  instead: every category and every sensitive area ticked, research use still off (ADR-0049).
+  instead: every category and every sensitive area ticked, research consent unticked (ADR-0049).
+- **Research use** (`withResearchUse`, ADR-0067). Research consent covers the special-category areas the person
+  agrees to be asked about; there is no separate box per area. Intake gives research use to every consented area,
+  and a scope change gives it to each area newly turned on. An area already consented keeps the research use stored
+  with it, so a choice made under the per-area boxes of ADR-0043 is never widened.
 - **Normalisation** (`normalizeScope`). Categories are kept in canonical order; only `true` flags are stored; a
   consent whose category is deselected is dropped (reselecting the category asks again); a research consent is
   kept only with the area's consent and research consent overall; a confirmation only with the area's consent.

@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { type FormEvent, Suspense, useEffect, useRef, useState } from 'react';
 import { AutocompleteInput } from '@/components/autocomplete';
 import { CreditsLink, TopBar } from '@/components/brand';
-import { ScopeResearch, ScopeTopics } from '@/components/scope-form';
+import { ScopeTopics } from '@/components/scope-form';
 import { Button, Checkbox, ErrorText, Field, fieldLabelId, Input } from '@/components/ui';
 import { ApiError, api } from '@/lib/api';
 import { loadOccupations, loadPlaces } from '@/lib/autocomplete';
@@ -207,11 +207,8 @@ function IntakeForm({ invite }: { invite: string | null }) {
           checked={research}
           onChange={setResearch}
           label="Use my answers, without my name or location, for research"
-          hint="Only answers from people who check this are used to compare methods."
+          hint="Only answers from people who check this are used to compare methods, including answers on the sensitive topics above."
         />
-        {research && (
-          <ScopeResearch value={scope} onChange={setScope} className="ml-[30px] border-l border-line pl-4" />
-        )}
       </div>
       <ErrorText>{error}</ErrorText>
       <Button

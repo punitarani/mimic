@@ -46,8 +46,9 @@ export const SENSITIVE_AREAS: readonly SensitiveArea[] = SensitiveArea.options;
 
 /**
  * Special-category areas (political opinion, religion, sexual orientation and sex life, health): excluded from research
- * exports unless the person separately consents to research on them, and never taken from web search. `money` is
- * sensitive but not special-category, so plain research consent covers it.
+ * exports unless the person has research use recorded for the area (research consent given while consenting to it,
+ * ADR-0067), and never taken from web search. `money` is sensitive but not special-category, so plain research consent
+ * covers it.
  */
 export const SpecialArea = z.enum(['politics', 'religion', 'sexuality', 'health']);
 export type SpecialArea = z.infer<typeof SpecialArea>;

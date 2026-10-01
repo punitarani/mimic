@@ -4,6 +4,7 @@ import {
   type MimicScope,
   normalizeScope,
   SENSITIVE_AREAS,
+  withResearchUse,
 } from '@mimic/core/scope';
 import { describe, expect, it } from 'vitest';
 import {
@@ -15,7 +16,6 @@ import {
   sameScope,
   setCategory,
   setConsent,
-  setResearch,
   unconfirmed,
 } from './scope-form';
 
@@ -43,14 +43,9 @@ describe('scope form (ADR-0043)', () => {
     expect(back.consents.politics).toBeUndefined();
   });
 
-  it('withdrawing a consent withdraws its research use; research needs the consent', () => {
+  it('withdrawing a consent withdraws its research use; turning one on leaves research use to the server', () => {
     expect(setConsent(all, 'health', false).researchConsents).toEqual({ politics: true });
-    expect(setResearch(DEFAULT_SCOPE, 'religion', true).researchConsents).toEqual({});
-    expect(
-      setResearch(setConsent(DEFAULT_SCOPE, 'religion', true), 'religion', true).researchConsents,
-    ).toEqual({
-      religion: true,
-    });
+    expect(setConsent(DEFAULT_SCOPE, 'religion', true).researchConsents).toEqual({});
   });
 
   it('keeps one category, names what is off, and knows when a change narrows', () => {
@@ -63,17 +58,35 @@ describe('scope form (ADR-0043)', () => {
     expect(narrows(DEFAULT_SCOPE, s)).toBe(true);
     expect(narrows(s, DEFAULT_SCOPE)).toBe(false);
     expect(narrows(all, setConsent(all, 'money', false))).toBe(true);
-    expect(narrows(all, setResearch(all, 'health', false))).toBe(false);
+    expect(narrows(all, { ...all, researchConsents: { politics: true } })).toBe(false);
   });
 
   it('matches what the server stores', () => {
-    const drafted = setResearch(
-      setConsent(setCategory(all, 'work', false), 'religion', true),
-      'religion',
-      true,
-    );
+    const drafted = setConsent(setCategory(all, 'work', false), 'religion', true);
     expect(sameScope(drafted, normalizeScope(drafted, true))).toBe(true);
     expect(sameScope(all, setConsent(all, 'money', false))).toBe(false);
+    // The server gives research use to the area turned on (ADR-0067) and keeps it on the ones already consented.
+    expect(normalizeScope(withResearchUse(drafted, all), true).researchConsents).toEqual({
+      politics: true,
+      religion: true,
+      health: true,
+    });
+  });
+
+  it('an area turned off and on again before saving keeps its research use (ADR-0067)', () => {
+    const toggled = setConsent(setConsent(all, 'health', false), 'health', true);
+    expect(toggled.researchConsents).toEqual({ politics: true });
+    expect(normalizeScope(withResearchUse(toggled, all), true).researchConsents).toEqual(
+      all.researchConsents,
+    );
+    const recategorized = setConsent(
+      setCategory(setCategory(all, 'life', false), 'life', true),
+      'health',
+      true,
+    );
+    expect(normalizeScope(withResearchUse(recategorized, all), true).researchConsents).toEqual(
+      all.researchConsents,
+    );
   });
 
   it("ticking a special-category area confirms it; leaving intake's pre-ticked box does not (ADR-0050)", () => {

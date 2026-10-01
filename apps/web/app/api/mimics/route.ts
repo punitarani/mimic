@@ -1,4 +1,4 @@
-import { createMimic, IntakeInput } from '@mimic/core';
+import { createMimic, DEFAULT_SCOPE, IntakeInput, withResearchUse } from '@mimic/core';
 import { inviteRequired, type MimicBindings } from '@mimic/db/runtime';
 import { z } from 'zod';
 import { body, deps, fail, handle, inviteOk, ok, participant, rateLimited } from '@/lib/server';
@@ -7,7 +7,8 @@ const CreateBody = IntakeInput.extend({ inviteCode: z.string().trim().max(100).o
 
 /**
  * POST /api/mimics — intake → { mimicId }. Enqueues identity.search only if the person consented. The invite code is
- * checked only while `use-invite-code` is on (ADR-0055); off, any code sent is ignored.
+ * checked only while `use-invite-code` is on (ADR-0055); off, any code sent is ignored. Research consent covers the
+ * sensitive areas the person left on (ADR-0067).
  */
 export const POST = handle(async (req: Request) => {
   const { deps: d, env } = await deps();
@@ -16,7 +17,11 @@ export const POST = handle(async (req: Request) => {
   const [input, required] = await Promise.all([body(req, CreateBody), inviteRequired(env as MimicBindings)]);
   if (required && !inviteOk(env, input.inviteCode)) return fail(403, 'That invite code is not valid.');
   const { inviteCode: _code, ...intake } = input;
-  const m = await createMimic(d, intake, pid);
+  const m = await createMimic(
+    d,
+    { ...intake, scope: withResearchUse(intake.scope ?? DEFAULT_SCOPE, null) },
+    pid,
+  );
   return ok({ mimicId: m.id, identity: m.consentSearch }, { status: 201 });
 });
 
