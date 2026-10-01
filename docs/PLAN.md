@@ -994,7 +994,10 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   each also from the context alone. Primary metric: paired Δ log loss against Jev after a temperature per model fitted
   leaving each person out; then item accuracy, lift over context, latency, errors and cost. `MODELS_RULE` decides
   whether a challenger earns a shadow. Run it from Actions → Decision models (`pnpm eval -- models`); readout
-  `docs/reports/e8-models.md`.
+  `docs/reports/e8-models.md`. Result (2026-10-01): keep Jev. On 9 real people (462 served questions) no challenger
+  is better: span-01 is `worse`, and clef, clef-flash and the decider are `level`, each about 4 points less accurate.
+  On Twin, clef, the decider and clef-flash beat Jev, so the survey ranking does not carry over. Every challenger
+  fails the latency check.
 
 ---
 

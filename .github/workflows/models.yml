@@ -3,8 +3,8 @@
 # predict the same sealed instances from the same state, in the same requests, and from the context alone. The step
 # summary and /lab hold the readout: quality after a temperature per model fitted leaving each person out, each model
 # against Jev, what the answers add, a pairwise table, by question type, latency, cost and errors, and MODELS_RULE's
-# verdict. A canary request per model runs first and stops the run, before anything else is spent, if a key or a
-# permission is missing.
+# verdict. A canary request per model runs first; a model whose canary fails (a missing key or permission) is left out
+# and named in the report, and the run goes on with the others.
 #
 # Data: the prod export (consented mimics only, scrubbed of names, locations and links; ADR-0018; real people's served
 # questions only) and Twin-2K-500 people (public survey answers from real people; wave 4 held out, k = 30). Only
@@ -106,7 +106,8 @@ jobs:
         run: |
           data=""
           for f in data/prod.sqlite data/twin.sqlite; do [ -f "$f" ] && data="${data:+$data,}$f"; done
-          args=(--data "$data" --max-usd "$MAX_USD" --out data/models/run --summary "$GITHUB_STEP_SUMMARY")
+          args=(--data "$data" --max-usd "$MAX_USD" --drop-failed-canary --out data/models/run
+            --summary "$GITHUB_STEP_SUMMARY")
           [ -n "$PREDICTORS" ] && args+=(--predictors "$PREDICTORS")
           [ "$PUBLISH" = true ] && args+=(--publish prod)
           pnpm eval -- models "${args[@]}"

@@ -647,8 +647,7 @@ Scripted sessions on offline fakes: a check of the machinery, not a result. Noth
 
 ## E8: decision models compared (ADR-0068)
 
-Nothing below comes from real people or a live call. The run is Actions → Decision models, after merge
-(`docs/MODELS.md` §8).
+Everything but the last item is offline. The run is Actions → Decision models (`docs/MODELS.md` §8).
 
 - **Adapters (offline, `packages/adapters/test/contract.test.ts`).**
   - Clef calls `/accounts/{id}/ai/run/@cf/cloudflare/clef` with the bare model name and exactly the request asked.
@@ -667,8 +666,9 @@ Nothing below comes from real people or a live call. The run is Actions → Deci
     - each model goes to its vendor, and each row names the vendor;
     - clef bypasses the egress relay;
     - no token, key or account ID appears in a row or trace.
-  - The fixtures: Perplexity's is the response its docs publish as returned by a real call; clef's are built from
-    Cloudflare's published schemas (`packages/adapters/fixtures/README.md`).
+  - The fixtures are the first live run's canary requests and responses for clef, clef-flash and the decider
+    (`packages/adapters/fixtures/README.md`). Clef echoes the bare model name, and both vendors report input tokens and
+    no cost.
 - **Core (offline).**
   - `packages/core/test/flags.test.ts`: the limits are 64 questions for clef and 128 for the decider. A clef request
     passes through untouched, and one over 64 questions is refused.
@@ -698,4 +698,8 @@ Nothing below comes from real people or a live call. The run is Actions → Deci
   - The verdict is `insufficient`, and the report renders as offline.
   - Served requests carry one question each.
   - A second run gives the same numbers.
+- **Run on real people (2026-10-01).** Actions → Decision models run `36926382050`, eval run
+  `01M3WP08Q7MSSY0772PRNCQE27`, $2.00 of $5. All five canaries passed. 9 real people (462 served questions) and 200
+  Twin-2K-500 people (4,000 items at k = 30); 44,620 predictions, 3 failed (the decider's, on served questions).
+  Verdict: keep Jev (`docs/reports/e8-models.md`).
   - By default the scripted people's served questions are left out.

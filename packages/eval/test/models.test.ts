@@ -14,6 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FakeDecisions, FakeLlm } from '../src/fakes';
 import { openLocalEngine } from '../src/local';
 import {
+  afterCanary,
   analyzeModels,
   canary,
   canaryHint,
@@ -292,6 +293,33 @@ describe('arms and chunks', () => {
     expect(() => modelArms(`${JEV},${JEV}`)).toThrow(/repeats/);
     expect(() => modelArms(`${JEV},llm:deepseek/deepseek-v4.1-flash`)).toThrow(/decision predictors only/);
     expect(() => modelArms(`${JEV}@jev-predict.v2,${CLEF}`)).toThrow(/one prompt version/);
+  });
+
+  it('leaves out models whose canary failed only when asked, and never the reference', () => {
+    const result = (predictor: string, ok: boolean) => ({
+      predictor,
+      label: predictor,
+      ok,
+      error: ok ? null : 'HTTP 401',
+      modelSnapshot: null,
+      latencyMs: null,
+      costUsd: null,
+    });
+    const all = [JEV, CLEF, PPLX];
+    const clefDown = [result(JEV, true), result(CLEF, false), result(PPLX, true)];
+    expect(
+      afterCanary(
+        all,
+        all.map((p) => result(p, true)),
+        false,
+      ),
+    ).toEqual(all);
+    expect(() => afterCanary(all, clefDown, false)).toThrow(/canary failed for .*HTTP 401/);
+    expect(afterCanary(all, clefDown, true)).toEqual([JEV, PPLX]);
+    expect(() =>
+      afterCanary(all, [result(JEV, false), result(CLEF, true), result(PPLX, true)], true),
+    ).toThrow();
+    expect(() => afterCanary([JEV, CLEF], clefDown.slice(0, 2), true)).toThrow();
   });
 
   it('names the fix for the failures a first run meets', () => {

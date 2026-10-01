@@ -1,1 +1,42 @@
-{"model":"pplx-decider-v1-27b","answers":{"defect":{"type":"noul","noul":0.9424522889347015},"sentiment":{"type":"choice","choice":"mixed","confidence":0.9255246944002182,"probabilities":{"positive":0.020649883775315993,"mixed":0.9503497962668123,"negative":0.02900031995787183}},"severity":{"type":"score","score":1.7838686319784252,"confidence":0.7838686319784252,"legend":{"0":"Cosmetic","1":"Inconvenient","2":"Product unusable"},"probabilities":{"0":0.008423954913615923,"1":0.199283458194343,"2":0.7922925868920411}}},"usage":{"input_tokens":367,"output_tokens":3}}
+{
+  "model": "pplx-decider-v1-27b",
+  "answers": {
+    "q_canary_noul": {
+      "type": "noul",
+      "noul": 0.9910192511294047
+    },
+    "q_canary_choice": {
+      "type": "choice",
+      "choice": "a",
+      "confidence": 0.9734115475699139,
+      "probabilities": {
+        "a": 0.9822743650466094,
+        "b": 0.010555061884579577,
+        "c": 0.007170573068811095
+      }
+    },
+    "q_canary_score": {
+      "type": "score",
+      "score": 2.2740044727288993,
+      "confidence": 0.5358958488949377,
+      "legend": {
+        "0": "Not at all",
+        "1": "A little",
+        "2": "Somewhat",
+        "3": "Very",
+        "4": "Extremely"
+      },
+      "probabilities": {
+        "0": 0.010546437051925714,
+        "1": 0.12036738019473646,
+        "2": 0.4992580757542048,
+        "3": 0.3241914869707794,
+        "4": 0.04563662002835376
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 408,
+    "output_tokens": 3
+  }
+}

@@ -1,7 +1,7 @@
 # E8: decision models compared
 
-v1 · 2026-10-01 · Status: designed, not run. ADR-0068. Run from Actions → Decision models; the readout goes to
-`docs/reports/e8-models.md`. The rule in §5 was fixed before the first run.
+v1 · 2026-10-01 · Status: run on 2026-10-01 (Actions run `36926382050`, eval run `01M3WP08Q7MSSY0772PRNCQE27`, $2.00).
+Verdict: keep Jev. Readout: `docs/reports/e8-models.md`. ADR-0068. The rule in §5 was fixed before the first run.
 
 E8 asks which decision model predicts a person best. Jev is Mimic's primary. span-01 is the challenger behind the
 `decisions-model` flag (ADR-0051). Cloudflare's clef and clef-flash, and Perplexity's decider, were released this week
@@ -52,8 +52,9 @@ experiment that needs no new people. It costs a few dollars and runs in one work
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | clef, clef-flash | The deploy token, with **Account · Workers AI · Read** added (`docs/DEPLOY.md`). |
 | `PERPLEXITY_API_KEY` | Perplexity's decider | Any Perplexity API key; the same secret the optional people-search adapter reads. |
 
-A canary request per model runs first. If a key or permission is missing, it stops the run before anything else is
-spent and names the fix.
+A canary request per model runs first, and names the fix when a key or permission is missing. By default a failed
+canary stops the run before anything else is spent. With `--drop-failed-canary` (the workflow's setting) only that
+model is left out.
 
 ## 3. Questions and hypotheses
 
@@ -179,8 +180,10 @@ Each is reported per dataset × model × view:
 **In CI (the usual way, after merge):** Actions → **Decision models** → Run workflow.
 - **Inputs:** `data` (prod, twin or both; the verdict needs both), `twin_people` (200), `predictors` (empty means all
   five), `max_usd` (5), `publish` (to `/lab`).
-- **Outputs:** the readout lands in the step summary and in `/lab`. The artifact holds `report.md` and `canary.json`.
-  Per-question records stay on the runner.
+- **Outputs:** the readout lands in the step summary and in `/lab`. The artifact holds `report.md` and `canary.json`,
+  and the log prints the canary. Per-question records stay on the runner.
+- **A failed canary.** The workflow passes `--drop-failed-canary`, so a model whose canary fails is left out and named
+  in the report, and the others still run. The reference (Jev) must pass, and at least one challenger must remain.
 
 **Locally:**
 
@@ -195,7 +198,6 @@ pnpm eval -- models --data data/twin.sqlite --offline --population all --k 8   #
 `--predictors` takes any decision predictors that share a prompt version, the reference first. For example,
 `decision:typesafe/jev-1.13,decision:cloudflare/clef` runs a two-model run.
 
-**After the first live run:**
-1. Replace the schema-built clef fixtures and the documented Perplexity fixture with the recorded responses in
-   `canary.json` (`packages/adapters/fixtures/README.md`).
-2. Write `docs/reports/e8-models.md`.
+**After a live run:** re-record the adapter fixtures from `canary.json` if a vendor's response shape changed
+(`packages/adapters/fixtures/README.md`), and update `docs/reports/e8-models.md`. The first run's canary is the current
+fixture set.

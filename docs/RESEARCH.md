@@ -348,7 +348,7 @@ benchmark either way.
 | Step | Needs | Decides |
 | --- | --- | --- |
 | E7 probe set (`docs/PROBE.md`): built as `cfg.e7.probes` and the `e7` preset; start it in `/lab` | people to read it | §10.1, E3b's yardstick |
-| E8 decision models (`docs/MODELS.md`): Jev, span-01, clef, clef-flash and Perplexity's decider on the same sealed states; run from Actions → Decision models | the keys (ADR-0068), ~$2 | which model a shadow tries next |
+| E8 decision models (`docs/MODELS.md`): Jev, span-01, clef, clef-flash and Perplexity's decider on the same sealed states. Run 2026-10-01: keep Jev; re-run with the decider when E7 has more people (`docs/reports/e8-models.md`) | the keys (ADR-0068), ~$2 | which model a shadow tries next: none yet |
 | Evidence hash for the reproduction check; temperature by evidence count | nothing | §10.4, §10.5 |
 | View shadows in `cfg.default.v9` (Jev on derived data, DeepSeek's context prior), backfilled; read by ADR-0065's rule | people to read them | §10.3 |
 | Retrieval by meaning and `fill` where the budget binds (long-lived mimics, agents' cards) | nothing | §10.2 |

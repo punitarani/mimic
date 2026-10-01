@@ -2501,3 +2501,16 @@ unmetered infrastructure, not a model under comparison.
   - The first run's `canary.json` holds recorded responses to replace both, as ADR-0009 did for Parallel.
 - **Costs move with list prices.** A vendor that changes its price without Mimic's rate changing is mis-costed until
   someone edits the rate; the source link and date make that checkable.
+
+**Result (2026-10-01; `docs/reports/e8-models.md`).** Actions run `36926382050`, eval run `01M3WP08Q7MSSY0772PRNCQE27`:
+9 real people (462 served questions) and 200 Twin-2K-500 people at k = 30, $2.00. Verdict: keep Jev.
+- On served questions no challenger is better. span-01 is `worse` (Δ log loss +0.058 [+0.028, +0.086]). Clef
+  (+0.022), clef-flash (+0.018) and the decider (+0.008) are `level`, each about 4 points less accurate.
+- On Twin, clef (−0.033), the decider (−0.025) and clef-flash (−0.014) beat Jev with intervals clear of 0.
+- On raw probabilities every challenger beat Jev on served questions by 0.30 to 0.51 nats. Jev is the most
+  overconfident (T ≈ 5.8), and one temperature per model reverses the served comparison.
+- Every challenger fails the latency check (Jev 189 / 277 ms p50 / p95; clef's p95 is 5.9 s).
+- The decider costs 8.7× Jev per prediction on 20-question batches, though its list rate is lower. Its token counts
+  suggest it counts the state once per question.
+- The canary's recorded requests and responses replaced the fixtures. Clef echoes the bare model name; both vendors
+  report input tokens and no cost, as the adapters assumed.
