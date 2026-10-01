@@ -2345,9 +2345,10 @@ on there are included.
   intake route (`POST /api/mimics`) applies it with no previous scope, so research consent covers every area left
   on. The scope route (`PATCH /api/mimics/:id/scope`) applies it against the stored scope, so an area turned on later
   joins research use. `normalizeScope` still drops all of it without research consent overall.
-- **No retroactive widening.** An area already consented keeps the research use stored with it. People who signed up
-  under the per-area boxes and left one unticked keep that area out of research. Only turning the area off and on
-  again, with the dialog's line in view, includes it. Confirming an area in the session and declining a question
+- **No retroactive widening.** An area already consented keeps the research use stored with it, whatever the
+  request sends. People who signed up under the per-area boxes and left one unticked keep that area out of research.
+  Only turning the area off, saving, and turning it on again, with the dialog's line in view, includes it; turning it
+  off and on before a single save keeps what is stored. Confirming an area in the session and declining a question
   change nothing here.
 - **Still an affirmative act.** The research checkbox starts unticked at intake, so special-category answers enter
   research only after the person ticks a box whose hint names them. ADR-0049's trade-off concerns the topic boxes,

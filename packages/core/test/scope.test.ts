@@ -121,6 +121,10 @@ describe('scope model (ADR-0040)', () => {
     const saved = withResearchUse({ ...before, consents: { ...before.consents, religion: true } }, before);
     expect(normalizeScope(saved, true).researchConsents).toEqual({ health: true, religion: true });
     expect(withResearchUse(before, before)).toEqual(before);
+    // An area already consented keeps what is stored, whatever the request sends: no widening, and a draft that
+    // turned it off and on again (clearing its research use) doesn't narrow it.
+    const sent = { ...before, researchConsents: { politics: true } };
+    expect(withResearchUse(sent, before).researchConsents).toEqual({ health: true });
     // Withdrawing an area withdraws its research use, as before.
     const withdrawn = withResearchUse({ ...before, consents: { politics: true } }, before);
     expect(normalizeScope(withdrawn, true).researchConsents).toEqual({});

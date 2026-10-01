@@ -4,6 +4,7 @@ import {
   type MimicScope,
   normalizeScope,
   SENSITIVE_AREAS,
+  withResearchUse,
 } from '@mimic/core/scope';
 import { describe, expect, it } from 'vitest';
 import {
@@ -64,6 +65,28 @@ describe('scope form (ADR-0043)', () => {
     const drafted = setConsent(setCategory(all, 'work', false), 'religion', true);
     expect(sameScope(drafted, normalizeScope(drafted, true))).toBe(true);
     expect(sameScope(all, setConsent(all, 'money', false))).toBe(false);
+    // The server gives research use to the area turned on (ADR-0065) and keeps it on the ones already consented.
+    expect(normalizeScope(withResearchUse(drafted, all), true).researchConsents).toEqual({
+      politics: true,
+      religion: true,
+      health: true,
+    });
+  });
+
+  it('an area turned off and on again before saving keeps its research use (ADR-0065)', () => {
+    const toggled = setConsent(setConsent(all, 'health', false), 'health', true);
+    expect(toggled.researchConsents).toEqual({ politics: true });
+    expect(normalizeScope(withResearchUse(toggled, all), true).researchConsents).toEqual(
+      all.researchConsents,
+    );
+    const recategorized = setConsent(
+      setCategory(setCategory(all, 'life', false), 'life', true),
+      'health',
+      true,
+    );
+    expect(normalizeScope(withResearchUse(recategorized, all), true).researchConsents).toEqual(
+      all.researchConsents,
+    );
   });
 
   it("ticking a special-category area confirms it; leaving intake's pre-ticked box does not (ADR-0050)", () => {

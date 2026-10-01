@@ -113,6 +113,8 @@ try {
     0,
     'the intake default line is not shown in the dialog',
   );
+  await dialog.getByText(/You agreed to research use/).waitFor();
+  log('dialog: with research consent, one line says sensitive topics turned on are included (ADR-0065)');
   assert.equal(
     await page.evaluate(() => !!document.activeElement?.closest('[role="dialog"]')),
     true,

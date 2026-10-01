@@ -1,4 +1,4 @@
-import { createMimic, IntakeInput, withResearchUse } from '@mimic/core';
+import { createMimic, DEFAULT_SCOPE, IntakeInput, withResearchUse } from '@mimic/core';
 import { inviteRequired, type MimicBindings } from '@mimic/db/runtime';
 import { z } from 'zod';
 import { body, deps, fail, handle, inviteOk, ok, participant, rateLimited } from '@/lib/server';
@@ -19,7 +19,7 @@ export const POST = handle(async (req: Request) => {
   const { inviteCode: _code, ...intake } = input;
   const m = await createMimic(
     d,
-    { ...intake, ...(intake.scope ? { scope: withResearchUse(intake.scope, null) } : {}) },
+    { ...intake, scope: withResearchUse(intake.scope ?? DEFAULT_SCOPE, null) },
     pid,
   );
   return ok({ mimicId: m.id, identity: m.consentSearch }, { status: 201 });

@@ -115,7 +115,7 @@ export interface AreaInfo {
   /** Why we ask, in one line. */
   why: string;
   category: Category;
-  /** Special-category data: research use needs its own consent. */
+  /** Special-category data: research use is recorded per area (`researchConsents`, ADR-0065). */
   special: boolean;
 }
 
@@ -187,13 +187,17 @@ export function normalizeScope(scope: MimicScope, consentResearch: boolean): Mim
 /**
  * Research use follows research consent (ADR-0065): a special-category area the person newly agrees to be asked about
  * joins research use, so at intake (`prev` null) research consent covers every consented area. An area already
- * consented in `prev` keeps the research use sent with it, so saving never widens a choice made under the per-area
- * boxes that came before. `normalizeScope` then drops it all without research consent overall.
+ * consented in `prev` keeps the research use stored with it, whatever the request sends: saving never widens a choice
+ * made under the per-area boxes that came before, and a form that turned an area off and on again before saving
+ * (which clears its research use in the draft) doesn't narrow it either. `normalizeScope` then drops it all without
+ * research consent overall.
  */
 export function withResearchUse(scope: MimicScope, prev: MimicScope | null): MimicScope {
-  const researchConsents = { ...scope.researchConsents };
-  for (const a of SPECIAL_AREAS)
-    if (scope.consents[a] === true && prev?.consents[a] !== true) researchConsents[a] = true;
+  const researchConsents: MimicScope['researchConsents'] = {};
+  for (const a of SPECIAL_AREAS) {
+    if (scope.consents[a] !== true) continue;
+    if (prev?.consents[a] !== true || prev.researchConsents[a] === true) researchConsents[a] = true;
+  }
   return { ...scope, researchConsents };
 }
 
