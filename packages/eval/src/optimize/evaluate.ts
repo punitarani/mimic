@@ -1145,8 +1145,21 @@ export interface ResidualReport {
   /** The item mean's own scores on those questions. */
   itemMean: { logLoss: number; itemAcc: number };
   /** Each predictor against the item mean on the same questions: negative log loss is skill beyond the population. */
-  rows: Array<{ predictor: string; role: string; logLoss: PersonDelta; itemAcc: PersonDelta }>;
+  rows: Array<{
+    predictor: string;
+    role: string;
+    logLoss: PersonDelta;
+    itemAcc: PersonDelta;
+    /**
+     * The predictor pooled with the item mean (p ∝ predictor^w · mean^(1−w)), w fitted on dev people, against the item
+     * mean on test people; null without both.
+     */
+    pooled: { w: number; logLoss: PersonDelta } | null;
+  }>;
 }
+
+/** Weights tried when pooling a predictor with the item mean. */
+const POOL_GRID = Array.from({ length: 21 }, (_, i) => i / 20);
 
 /**
  * Residual fidelity (RESEARCH §1.2): on items asked of many people (anchors, reserve items, E7's shared probes, an
@@ -1190,6 +1203,33 @@ export function residualReport(
     );
   }
   const covered = new Set(means.map((r) => r.instanceId));
+  const meanOf = new Map(means.map((r) => [r.instanceId, r]));
+  const instOf = new Map(instances.map((i) => [i.id, i]));
+  const pooledAt = (xs: EvalRecord[], w: number) =>
+    xs.map((r) =>
+      toRecord(instOf.get(r.instanceId)!, 'pooled|population', 'pooled', {
+        dist: pool(r.dist, meanOf.get(r.instanceId)!.dist, w),
+        ok: true,
+        costUsd: 0,
+        latencyMs: 0,
+        modelSnapshot: 'pooled',
+      }),
+    );
+  const pooledRow = (xs: EvalRecord[], seed: string) => {
+    const ok = xs.filter((r) => r.ok);
+    const dev = ok.filter((r) => r.split === 'dev');
+    const test = ok.filter((r) => r.split === 'test');
+    if (!dev.length || !test.length) return null;
+    const devLl = (w: number) =>
+      mean(
+        dev.map(
+          (r) => -Math.log(Math.max(pool(r.dist, meanOf.get(r.instanceId)!.dist, w)[r.answer] ?? 0, P_FLOOR)),
+        ),
+      );
+    const scored = POOL_GRID.map((x) => ({ x, ll: devLl(x) }));
+    const w = scored.reduce((best, c) => (c.ll < best.ll - 1e-12 ? c : best)).x;
+    return { w, logLoss: pairedByPerson(means, pooledAt(test, w), 'logLoss', seed) };
+  };
   const role = (r: EvalRecord) => r.candidate.split('|')[1]!;
   const rows = [
     ...groupBy(
@@ -1205,6 +1245,7 @@ export function residualReport(
         role: r,
         logLoss: pairedByPerson(means, xs, 'logLoss', `residual>${candidate}`),
         itemAcc: pairedByPerson(means, xs, 'itemAcc', `residual>${candidate}:acc`),
+        pooled: pooledRow(xs, `residual>${candidate}:pooled`),
       };
     });
   return {

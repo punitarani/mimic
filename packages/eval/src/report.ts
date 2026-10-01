@@ -383,11 +383,15 @@ function renderEvaluate(m: M): string[] {
       '',
       `On ${String(res.items)} items asked of at least ${String(Number(res.minOthers) + 1)} people (${String(res.instances)} questions, ${String(res.people)} people), the population's answers, leaving the person's own out, score log loss ${f4(im.logLoss)} and item accuracy ${pct(im.itemAcc)}. A negative Δ log loss is skill beyond the population.`,
       '',
-      '| Predictor (role) | n | Δ log loss [90% CI] | Δ item accuracy, points [90% CI] | Better / worse (log loss) |',
-      '| --- | --- | --- | --- | --- |',
+      'The last column pools each predictor with the item mean, the weight fitted on dev people, and scores test people.',
+      '',
+      '| Predictor (role) | n | Δ log loss [90% CI] | Δ item accuracy, points [90% CI] | Better / worse (log loss) | Pooled, test: Δ log loss vs item mean [90% CI] |',
+      '| --- | --- | --- | --- | --- | --- |',
       ...(res.rows as Array<M>).map((x) => {
         const ll = x.logLoss as M;
-        return `| \`${String(x.predictor)}\` (${String(x.role)}) | ${String(ll.n)} | ${byPerson(ll, 1, 3)} | ${byPerson(x.itemAcc as M, 100, 1)} | ${String(ll.better)} / ${String(ll.worse)} |`;
+        const pooled = x.pooled as M | null;
+        const p = pooled ? `${byPerson(pooled.logLoss as M, 1, 3)} (w = ${f3(pooled.w)})` : '—';
+        return `| \`${String(x.predictor)}\` (${String(x.role)}) | ${String(ll.n)} | ${byPerson(ll, 1, 3)} | ${byPerson(x.itemAcc as M, 100, 1)} | ${String(ll.better)} / ${String(ll.worse)} | ${p} |`;
       }),
       '',
     );

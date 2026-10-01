@@ -49,8 +49,13 @@ Report lift over an item-mean predictor beside lift over the context baseline, a
 reduction. `item_stats` already holds per-item answer entropy and baseline error; a population-mode predictor is a
 derived row per stable item. **Built:** `evaluate --from stored` (and its `/lab` report) scores every predictor
 against a leave-one-out item mean on items asked of at least six people (anchors, reserve items, E7's shared probes,
-an import's held-out items), with intervals over people. **Next:** read it on E7's shared probes; selection weight
-`pop(q)` becomes primary once it shows residual skill on served people.
+an import's held-out items), with intervals over people. **Found** on 120 Twin people
+(`docs/reports/twin-benchmark.md`): with 30 answers Jev is only level with the leave-one-out item mean (−0.005
+[−0.025, +0.015]) and DeepSeek passes it (−0.030 [−0.058, −0.001]); a context-only prior loses to it; and either model
+pooled with the item mean beats both on test people (−0.024 for Jev's state, −0.042 for DeepSeek's). **Next:** read it
+on E7's shared probes; a population prior pooled with the primary on shared items, as a flagged experiment (invariant
+8: `item_stats` aggregates, never in a prompt or a state); selection weight `pop(q)` becomes primary once residual
+skill shows on served people.
 
 ### 1.3 Decision coverage, not trait coverage — open
 

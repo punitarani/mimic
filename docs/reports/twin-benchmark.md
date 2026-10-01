@@ -16,9 +16,10 @@ held-out items. Nothing here is a result about a Mimic user, and nothing comes f
 | Replay matrix | `full` (the served state: every answer until the §9.9 budget, then anchors + retrieved + recent), `raw`, and `card` (identity + traits + capped answers) under `mixed`, `recent`, `similar` and `surprise` at a cap of 12, and under `surprise` and `recent` at a cap of 6; two passes each, the second with per-question rows for paired comparisons |
 | Transfer | `pnpm eval -- transfer` at k = 30, 20 held-out targets per person, six views, with sealed `soul.v1` drafts written by DeepSeek V4.1 Flash; a DeepSeek reader (`predict.v2` settings) on 10 people, a Jev reader on 60, raw and calibrated |
 | Calibrated | The card and `surprise` cells again with `decision:typesafe/jev-1.13@jev-predict.v2`, one pass with rows |
+| Residual | `evaluate` on all 120 people, 20 held-out items each, Jev and DeepSeek on the state and on the context alone, scored against the leave-one-out item mean |
 | Per target | `replay --per-target`, one state per held-out question, retrieved by word overlap or embeddings, and the `fill` policy; calibrated primary, 20 targets per person |
 | E6 | `pnpm eval -- evidence` on the same import at k = 10, 30 and 100 (ADR-0053), Jev calibrated, 20 targets per person |
-| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 each for the raw and calibrated Jev ones, $0.73 for E6, $3.35 for the per-target runs; about $8 in all |
+| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 each for the raw and calibrated Jev ones, $0.73 for E6, $3.35 for the per-target runs, $1.65 for the residual runs; about $10 in all |
 | Intervals | Paired by question, bootstrapped over people (2,000 resamples, 5th–95th percentile), so that correlated questions within a person do not narrow them |
 
 The commands are in `docs/VALIDATION.md` under this report's heading; report files, rows and traces stay in `data/`
@@ -84,6 +85,10 @@ The commands are in `docs/VALIDATION.md` under this report's heading; report fil
     budget by recency (`fill`) reaches 67.8% accuracy and 0.814 log loss with the calibrated primary: +2.7 [+0.8, +4.6]
     points and −0.053 [−0.082, −0.024] over the served state, from policy items (retrieval) and product items (more
     answers). See "Retrieval per target", below.
+11. **Against the population, 30 answers make Jev only as good as the item mean.** The leave-one-out answers of the
+    other respondents predict a held-out item as well as Jev with 30 answers (−0.005 [−0.025, +0.015]); DeepSeek
+    passes them (−0.030 [−0.058, −0.001]). Pooling either model with the item mean beats both on test people, and more
+    with the answers than without. See "Against the population", below.
 
 ## Replay matrix, second pass (60 people, 3,932 predictions per cell)
 
@@ -164,6 +169,10 @@ Intervals by question instead of by person are about half as wide and reach the 
 The first and second pass of each spec are independent runs of the same calls. Over the 18 cells (six specs × three
 checkpoints) accuracy differs by 0.25 points on average and 0.43 at most; log loss by 0.008 on average and 0.025 at
 most. A difference under half a point between two single runs is noise.
+
+Per question, Jev is not deterministic: the same request sent twice returned the same distribution for about a quarter
+of 1,200 questions, and the per-question difference has an SD of 0.09 nats. Aggregates over 1,200 questions moved by
+0.002 nats between passes, so the noise averages out, but a single question's prediction is a sample.
 
 ## Transfer loss at k = 30 (ADR-0057)
 
@@ -359,6 +368,45 @@ Production retrieves for a batch centroid, not for one question, so per-target r
 retrieval can do online. The change to test on served questions is `fill` as a new config, first as a shadow
 (ADR-0024); docs/DECISIONS.md records it.
 
+## Against the population: residual skill (RESEARCH §1.2)
+
+Lift over the context baseline counts a model learning what people in general answer as learning the person. The
+population's own answers are the fairer yardstick: for each held-out item, the answers of every other imported person
+who was asked it (leave-one-out, half an answer of smoothing per option). `pnpm eval -- evaluate` on all 120 imported
+people, 20 held-out items each (2,400 questions, 82 items asked of at least six people), calibrated Jev and DeepSeek V4.1
+Flash (`predict.v2`), each on the whole state and on the context alone. Intervals over people. The pooled column is
+p ∝ model^w · item mean^(1−w), with w fitted on the 97 dev people and scored on the 23 test people.
+
+| Predictor | k | Log loss | Accuracy | Δ log loss vs item mean [90% CI] | Δ accuracy vs item mean, points [90% CI] | Pooled with the item mean, test people: Δ log loss vs item mean [90% CI] |
+| --- | --- | --- | --- | --- | --- | --- |
+| item mean (the population) | – | 0.813 | 61.8% | — | — | — |
+| Jev, context only | – | 0.856 | 59.4% | +0.044 [+0.023, +0.065] | −2.4 [−5.0, +0.1] | −0.010 [−0.020, −0.001] (w = 0.30) |
+| Jev, state | 30 | 0.808 | 62.5% | −0.005 [−0.025, +0.015] | +0.7 [−1.3, +2.8] | −0.024 [−0.047, −0.002] (w = 0.55) |
+| Jev, state | 100 | 0.854 | 66.0% | +0.042 [+0.020, +0.063] | +4.2 [+2.5, +6.1] | −0.013 [−0.025, −0.001] (w = 0.35) |
+| DeepSeek, context only | – | 0.836 | 61.4% | +0.023 [−0.003, +0.049] | −0.4 [−3.0, +2.2] | −0.019 [−0.042, +0.006] (w = 0.40) |
+| DeepSeek, state | 30 | 0.783 | 66.5% | −0.030 [−0.058, −0.001] | +4.8 [+2.5, +7.0] | −0.042 [−0.076, −0.007] (w = 0.55) |
+
+- **An identity-only prior is worse than the population.** Both models on the context alone lose to the item mean on
+  log loss: they know less about what people answer to these items than the other respondents' answers say.
+- **Thirty answers bring Jev level with the population, and DeepSeek past it.** Jev on the state is −0.005
+  [−0.025, +0.015] against the item mean; DeepSeek is −0.030 [−0.058, −0.001] and 4.8 points more accurate, with 77 of
+  120 people better. On these people DeepSeek also beats Jev outright (0.783 against 0.808), at about 25 times the
+  cost ($0.33 against $0.014 per 1,000 predictions).
+- **Pooled with the item mean, every model beats both its parts, and the answers add to that.** The weight fitted on
+  dev people holds on test people. Pooling the context-only prior gains −0.010; pooling the 30-answer state gains
+  −0.024 for Jev and −0.042 for DeepSeek. So the answers carry person-specific information the population lacks, and
+  the population carries item knowledge the models lack.
+- **Jev's deficit is on policy items.** By domain at k = 30, Jev beats the item mean on product choices even from the
+  context alone (0.675 and 0.665 against 0.699) and loses on policy support (1.453 against 1.368, and 1.700 from the
+  context alone); pooling brings policy to 1.298. At k = 100, with the demographics out of the state, policy falls to
+  1.752 and the pooled gain shrinks.
+
+What it means for Mimic: lift over context overstates learning, and residual lift is the yardstick wherever an item is
+shared (anchors, reserve items, E7's shared probes; `evaluate --from stored` now reports it). A population prior pooled
+with the primary is the largest gain measured in this benchmark that costs no model call, but it crosses people.
+Invariant 8 allows it only as a flagged experiment, from `item_stats` aggregates with a minimum group size, and never
+in a prompt or a state.
+
 ## E6 on the same import (ADR-0053)
 
 The pre-registered rule gives `insufficient` because the import holds no served Mimic questions; the Twin rows stand
@@ -409,3 +457,5 @@ What this changes in the agenda is written up in `docs/RESEARCH.md` §10 and in 
 6. A card for agents chosen by meaning for the task at hand, not by surprise: eight answers retrieved by embeddings
    keep twice the dispersion of eight recent ones. Lead SOUL.md with the evidence block for LLM readers and with the
    narrative for Jev.
+7. A population prior pooled with the primary on shared items, as a flagged experiment (invariant 8): `item_stats`
+   aggregates with a minimum group size, outside every prompt and state, judged on E7's shared probes.

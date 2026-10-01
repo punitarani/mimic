@@ -229,6 +229,14 @@ describe('evaluate', () => {
     expect(primary.logLoss.n).toBe(r.instances);
     expect(r.rows.some((x) => x.role === 'baseline')).toBe(true);
     expect(r.rows.some((x) => x.predictor === 'item-mean')).toBe(false);
+    // Pooling with the item mean is fitted on dev people and scored on test people, when there are both.
+    const people = new Set(instances.map((i) => `${i.mimicId}:${i.split}`));
+    const splits = new Set([...people].map((p) => p.split(':')[1]));
+    if (splits.size === 2) {
+      expect(primary.pooled!.w).toBeGreaterThanOrEqual(0);
+      expect(primary.pooled!.w).toBeLessThanOrEqual(1);
+      expect(primary.pooled!.logLoss.n).toBeGreaterThan(0);
+    } else expect(primary.pooled).toBeNull();
   });
 
   it("fits a person's temperature only from their earlier questions, shrunk toward the global one (RESEARCH §2.4)", () => {
