@@ -779,7 +779,12 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
     // A calibrated predictor's fitted temperature is on top of its own (ADR-0048).
     const own = calibrationTemperatureOf(k.replace(/ \(primary\)$/, ''));
     const method = own === 1 ? 'temperature' : `temperature (on top of its own ${own})`;
-    rows.push(fitParam(k, method, temps, dev, test, (p, t) => temperatureScale(p.dist, t), 1));
+    // A fit on the grid's first or last value only bounds the best temperature.
+    const edged = (r: FitRow) =>
+      r.param === temps[0] || r.param === temps.at(-1)
+        ? { ...r, method: `${r.method}; at the grid's edge` }
+        : r;
+    rows.push(edged(fitParam(k, method, temps, dev, test, (p, t) => temperatureScale(p.dist, t), 1)));
     if (k.endsWith('(primary)')) {
       // One temperature does not hold across state sizes (Twin: ECE 0.036 at 30 answers, 0.111 at 100), so the
       // primary also gets one fit per size band: the numbers a temperature by evidence count would start from.
@@ -790,14 +795,16 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
         const [bd, bt] = split(band);
         if (bd.length >= 10)
           rows.push(
-            fitParam(
-              k,
-              `${method}, ${label} answers in the state`,
-              temps,
-              bd,
-              bt,
-              (p, t) => temperatureScale(p.dist, t),
-              1,
+            edged(
+              fitParam(
+                k,
+                `${method}, ${label} answers in the state`,
+                temps,
+                bd,
+                bt,
+                (p, t) => temperatureScale(p.dist, t),
+                1,
+              ),
             ),
           );
       }
@@ -1077,6 +1084,9 @@ export function pairedByPerson(
  * people who joined after E6's export, it is more accurate than the primary and no worse on log loss.
  */
 export const VIEW_RULE = { minPeople: 25, maxLogLossWorse: 0.01 } as const;
+
+/** Fewer people than this and a resampled interval is just the spread of the few people, so reports show the mean only. */
+export const MIN_INTERVAL_PEOPLE = 5;
 export type ViewVerdict = 'insufficient' | 'passes' | 'fails';
 
 export interface AgainstPrimaryRow {
