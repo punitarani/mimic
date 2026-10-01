@@ -4,6 +4,7 @@ import {
   BACKFILL_PER_MINUTE,
   backfillLimit,
   type ChatRequest,
+  DEFAULT_PROMPT_VERSION,
   EngineError,
   type Job,
   type LlmClient,
@@ -400,5 +401,93 @@ describe('failed calls vs. the model failing (ADR-0037)', () => {
     expect((await store.getJob(`backfill.shadow:${private_}:${q!.id}:${PRICED}`))!.lastError).toMatch(
       /^budget:/,
     );
+  });
+});
+
+describe('a decision predictor under either spelling (ADR-0054)', () => {
+  // span-01 as a backfilled shadow, stored before ADR-0054 as `jev:` (until `pnpm relabel:predictors` runs).
+  const DECISION = 'decision:respan/span-01-20260925';
+  const LEGACY = 'jev:respan/span-01-20260925';
+
+  it('counts rows and jobs under either spelling as the same predictor', async () => {
+    const { store } = engine.deps;
+    expect(cli.INCUMBENT).toEqual(DEFAULT_PROMPT_VERSION);
+    const all = (await served(consented)).length;
+    expect(await cliMissing(DECISION, { mimics: [consented] })).toBe(all);
+    expect((await runBackfillMimic(engine.deps, { mimicId: consented, predictorId: LEGACY })).enqueued).toBe(
+      all,
+    );
+    // The jobs are keyed canonically, whichever spelling the operator used.
+    expect(backfillShadows().every((p) => 'predictorId' in p.job && p.job.predictorId === DECISION)).toBe(
+      true,
+    );
+    await engine.drain();
+    const raw = async () =>
+      (
+        await engine.client.execute({
+          sql: 'SELECT predictor_id AS id, COUNT(*) AS n FROM predictions WHERE mimic_id = ?1 AND predictor_id IN (?2, ?3) GROUP BY 1',
+          args: [consented, DECISION, LEGACY],
+        })
+      ).rows.map((r) => [r.id, Number(r.n)]);
+    expect(await raw()).toEqual([[DECISION, all]]);
+
+    // As the code before ADR-0054 stored them.
+    await engine.client.execute({
+      sql: 'UPDATE predictions SET predictor_id = ?1 WHERE predictor_id = ?2',
+      args: [LEGACY, DECISION],
+    });
+    expect(await raw()).toEqual([[LEGACY, all]]);
+    // Read canonically, and present under either name: nothing to backfill.
+    expect(await predictionsBy(consented, DECISION)).toHaveLength(all);
+    expect(await cliMissing(DECISION, { mimics: [consented] })).toBe(0);
+    expect(await cliMissing(LEGACY, { mimics: [consented] })).toBe(0);
+    expect(Number((await cliRow(cli.statsQuery(DECISION))).n)).toBe(all);
+    for (const id of [DECISION, LEGACY])
+      expect((await runBackfillMimic(engine.deps, { mimicId: consented, predictorId: id })).enqueued).toBe(0);
+
+    // A job from before the deploy (keyed `jev:`) is in flight for a question whose row is gone: neither the CLI nor
+    // the worker enqueues a second one, and when it runs it stores `decision:` and closes its own ledger row.
+    const [q] = await served(consented);
+    const gone = (await store.listPredictions({ questionId: q!.id })).find(
+      (p) => p.predictorId === DECISION,
+    )!;
+    await store.deletePredictions([gone.id]);
+    const key = `backfill.shadow:${consented}:${q!.id}:${LEGACY}`;
+    await store.putJobs([
+      {
+        key,
+        type: 'backfill.shadow',
+        status: 'queued',
+        attempts: 0,
+        lastError: null,
+        updatedAt: engine.deps.clock(),
+      },
+    ]);
+    expect(Number((await cliRow(cli.inFlightQuery(DECISION, engine.deps.clock()))).n)).toBe(1);
+    expect(await cliMissing(DECISION, { mimics: [consented] })).toBe(0);
+    expect(
+      (await runBackfillMimic(engine.deps, { mimicId: consented, predictorId: DECISION })).enqueued,
+    ).toBe(0);
+    await runJob(engine.deps, {
+      type: 'backfill.shadow',
+      mimicId: consented,
+      questionId: q!.id,
+      predictorId: LEGACY,
+    });
+    expect(await store.getJob(key)).toMatchObject({ status: 'done' });
+    const redone = (await store.listPredictions({ questionId: q!.id })).filter(
+      (p) => p.predictorId === DECISION,
+    );
+    expect(redone).toHaveLength(1);
+    expect(await raw()).toEqual([
+      [DECISION, 1],
+      [LEGACY, all - 1],
+    ]);
+    // An old live-shadow job for a question that has its row is a no-op.
+    await runShadow(engine.deps, consented, q!.id, LEGACY, undefined, { backfill: true });
+    expect(await raw()).toEqual([
+      [DECISION, 1],
+      [LEGACY, all - 1],
+    ]);
   });
 });

@@ -298,7 +298,7 @@ export interface PredictionResult {
   dist: Distribution; confidence?: number; costUsd: number; latencyMs: number; modelSnapshot: string;
 }
 export interface Predictor {
-  id: string;                                               // 'jev:typesafe/jev-1.13', 'llm:openai/gpt-6-luna', …
+  id: string;                                               // 'decision:typesafe/jev-1.13', 'llm:openai/gpt-6-luna', …
   predict(state: PersonState, qs: Question[]): Promise<PredictionResult[]>;
 }
 export interface CandidateGenerator { generate(ctx: GenContext, n: number): Promise<Question[]> }
@@ -359,7 +359,7 @@ export const PipelineConfig = z.object({
 | Anchors | `anchors.v1`, 10 items |
 | Generator | GPT-6 Luna, low reasoning effort, batch of 12, domain mix core 10 / casual 45 / professional 45 |
 | Selector | `entropy` with λ = 0.3, μ = 0.5 (v1–v3); `voi` since v4: K 4, λ 0.3, μ 0.5, β 0.25, γ 0.25, π 0.15, ν 0.2, exposure cap 0.35 (ADR-0027) |
-| Predictors | Primary `jev:typesafe/jev-1.13`; shadows are the three LLMs |
+| Predictors | Primary `jev:typesafe/jev-1.13` (read as `decision:`, ADR-0054); shadows are the three LLMs |
 | State builder | `full`, 8,000 tokens, retrievalK 12, recentN 6 |
 | Trait reader | Jev, after every answer |
 | Reflector | GPT-6 Luna, every 5 answers |
@@ -893,7 +893,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 
 ```
 mimic-eval export --env prod --out data/2026-10-01.sqlite      # wrangler d1 export → SQLite; consented only; PII scrubbed
-mimic-eval replay --data … --predictor jev:typesafe/jev-1.13 --state full --checkpoints 10,20,30 --split dev
+mimic-eval replay --data … --predictor decision:typesafe/jev-1.13 --state full --checkpoints 10,20,30 --split dev
 mimic-eval select --data … --selector bald --budget 5,10,20                  # pool-restricted simulation
 mimic-eval import twin2k500 --path …                                         # external dataset adapter
 mimic-eval report --run <id>                                                 # markdown + JSON → R2 and /lab

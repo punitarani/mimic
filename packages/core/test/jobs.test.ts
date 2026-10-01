@@ -23,6 +23,33 @@ describe('job keys', () => {
         consentedOnly: true,
       },
       { type: 'backfill.predictor', runId: 'R', predictorId: 'jev:typesafe/jev-1.13', consentedOnly: false },
+      // ADR-0054: decision IDs, and keys from before it (`jev:`) round-trip verbatim, so the ledger row still closes.
+      {
+        type: 'backfill.predictor',
+        runId: 'R',
+        predictorId: 'decision:typesafe/jev-1.13@jev-predict.v2',
+        consentedOnly: false,
+        perMinute: 30,
+      },
+      {
+        type: 'predict.shadow',
+        mimicId: 'M',
+        questionId: 'Q',
+        predictorId: 'decision:respan/span-01-20260925',
+      },
+      {
+        type: 'backfill.shadow',
+        mimicId: 'M',
+        questionId: 'Q',
+        predictorId: 'jev:typesafe/jev-1.13@jev-predict.v2',
+      },
+      {
+        type: 'backfill.mimic',
+        runId: 'R',
+        mimicId: 'M',
+        predictorId: 'decision:typesafe/jev-1.13',
+        retryFailed: true,
+      },
       { type: 'backfill.mimic', runId: 'R', mimicId: 'M', predictorId: 'llm:xiaomi/mimo-v2.6-pro' },
       { type: 'backfill.shadow', mimicId: 'M', questionId: 'Q', predictorId: 'llm:qwen/qwen3.8-flash:free' },
       {

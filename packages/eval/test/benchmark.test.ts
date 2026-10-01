@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DEFAULT_CONFIG, SPAN_MODEL } from '@mimic/core';
+import { canonicalPredictorId, DEFAULT_CONFIG, SPAN_MODEL, servedPredictorId } from '@mimic/core';
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   type BenchmarkRow,
@@ -66,9 +66,12 @@ const failed = (v: ReturnType<typeof decide>) => v.checks.filter((c) => !c.pass)
 
 describe('benchmark (ADR-0051)', () => {
   it('compares the production primary with the same predictor on span-01', () => {
-    expect(INCUMBENT).toBe(DEFAULT_CONFIG.predictor.primary);
-    expect(CHALLENGER).toBe(`jev:${SPAN_MODEL}@jev-predict.v2`);
-    expect(challengerOf('jev:typesafe/jev-1.13')).toBe(`jev:${SPAN_MODEL}`);
+    expect(INCUMBENT).toBe(canonicalPredictorId(DEFAULT_CONFIG.predictor.primary));
+    expect(INCUMBENT).toBe('decision:typesafe/jev-1.13@jev-predict.v2');
+    // The ID span-01's served rows are stored under (ADR-0054), so the benchmark and /lab name it alike.
+    expect(CHALLENGER).toBe(`decision:${SPAN_MODEL}@jev-predict.v2`);
+    expect(CHALLENGER).toBe(servedPredictorId(DEFAULT_CONFIG.predictor.primary, SPAN_MODEL));
+    expect(challengerOf('jev:typesafe/jev-1.13')).toBe(`decision:${SPAN_MODEL}`);
     expect(() => challengerOf('llm:qwen/qwen3.8-flash')).toThrow();
   });
 
@@ -121,7 +124,7 @@ describe('benchmark (ADR-0051)', () => {
     const [header, a, b] = renderCsv([inc, ch]).trim().split('\n');
     expect(header).toContain('log_loss,item_acc');
     expect(header).toContain('p50_latency_ms,p95_latency_ms,cost_per_request_usd');
-    expect(a!.startsWith('incumbent,jev:typesafe/jev-1.13@jev-predict.v2')).toBe(true);
+    expect(a!.startsWith('incumbent,decision:typesafe/jev-1.13@jev-predict.v2')).toBe(true);
     expect(b).toContain('0.4000');
   });
 

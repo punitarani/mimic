@@ -1,7 +1,16 @@
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { DEFAULT_CONFIG, JEV_MODEL, parsePredictorId, quantile, SPAN_MODEL, ulid } from '@mimic/core';
+import {
+  canonicalPredictorId,
+  DEFAULT_CONFIG,
+  JEV_MODEL,
+  parsePredictorId,
+  quantile,
+  SPAN_MODEL,
+  servedPredictorId,
+  ulid,
+} from '@mimic/core';
 import { openLocalEngine } from './local';
 import { loadData, loadOptsOf, positive } from './optimize/commands';
 import {
@@ -25,14 +34,18 @@ import type { EvalInstance } from './optimize/instances';
  * are measured. The verdict applies DECISION_RULE.
  */
 
-/** The production primary, and the same predictor on span-01: exactly what `decisions-model: span-01` serves. */
-export const INCUMBENT = DEFAULT_CONFIG.predictor.primary;
+/**
+ * The production primary, and the same predictor on span-01: exactly what `decisions-model: span-01` serves, under
+ * the ID its served rows are stored with (ADR-0054).
+ */
+export const INCUMBENT = canonicalPredictorId(DEFAULT_CONFIG.predictor.primary);
 export const CHALLENGER = challengerOf(INCUMBENT);
 
 export function challengerOf(incumbent: string, model: string = SPAN_MODEL): string {
   const spec = parsePredictorId(incumbent);
-  if (spec.model !== JEV_MODEL) throw new Error(`${incumbent} is not a Jev predictor`);
-  return `${spec.kind}:${model}${spec.promptVersion ? `@${spec.promptVersion}` : ''}`;
+  if (spec.kind !== 'decision' || spec.model !== JEV_MODEL)
+    throw new Error(`${incumbent} is not a Jev predictor`);
+  return servedPredictorId(incumbent, model);
 }
 
 /**
@@ -82,7 +95,7 @@ export interface BenchmarkRow {
 
 /** One Decisions request: the instances that shared a state (as production batches them). */
 export function requestsOf(c: Candidate, instances: EvalInstance[]): string[][] {
-  return (c.kind === 'jev' ? jevRequests(c, instances) : instances.map((i) => [i])).map((g) =>
+  return (c.kind === 'decision' ? jevRequests(c, instances) : instances.map((i) => [i])).map((g) =>
     g.map((i) => i.id),
   );
 }
@@ -313,7 +326,8 @@ export async function benchmarkCmd(argv: string[]): Promise<void> {
     },
   });
   if (!values.data) throw new Error('--data is required');
-  const challenger = values.challenger ?? challengerOf(values.incumbent);
+  const incumbent = canonicalPredictorId(values.incumbent);
+  const challenger = canonicalPredictorId(values.challenger ?? challengerOf(incumbent));
   const loaded = await loadData(values.data, loadOptsOf(values));
   const people = new Set(loaded.instances.map((i) => i.mimicId)).size;
   if (!loaded.instances.length) throw new Error(`no instances in ${values.data} (split ${values.split})`);
@@ -333,7 +347,7 @@ export async function benchmarkCmd(argv: string[]): Promise<void> {
   const cands = [
     {
       role: 'incumbent' as const,
-      c: resolveCandidate({ predictor: values.incumbent, label: values.incumbent }),
+      c: resolveCandidate({ predictor: incumbent, label: incumbent }),
     },
     { role: 'challenger' as const, c: resolveCandidate({ predictor: challenger, label: challenger }) },
   ];
