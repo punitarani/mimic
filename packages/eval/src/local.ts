@@ -45,6 +45,8 @@ export interface LocalOptions {
   seed?: string;
   /** Spend limits (ADR-0035); defaults to `BUDGET_*` from the environment for live runs, and none offline. */
   spend?: SpendLimits;
+  /** One timeout for every decision vendor (`makeProviders`), for evals that compare them. */
+  decisionTimeoutMs?: number;
 }
 
 /** Engine deps for Node: libSQL with the D1 schema and migrations, filesystem blobs, SQL vectors, inline queue. */
@@ -58,6 +60,7 @@ export async function openLocalEngine(opts: LocalOptions): Promise<LocalEngine> 
           { ...process.env, EMBEDDINGS_PROVIDER: process.env.EMBEDDINGS_PROVIDER ?? 'openrouter' },
           {
             embeddingModel: EMBEDDING_MODEL,
+            ...(opts.decisionTimeoutMs ? { decisionTimeoutMs: opts.decisionTimeoutMs } : {}),
           },
         )
       : {

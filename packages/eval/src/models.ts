@@ -34,6 +34,7 @@ import {
   looTemperatures,
   Meter,
   metricsOf,
+  pairedDelta,
   rescaled,
   resolveCandidate,
 } from './optimize/evaluate';
@@ -68,6 +69,11 @@ export const DEFAULT_PREDICTORS = [
 export const OPT_IN_PREDICTORS = [`decision:${GLIDE_MODEL}`];
 /** `full` first, so `context` reuses its prediction where a state holds no answers yet. */
 export const MODELS_VIEWS: StateView[] = E8_SETTINGS.map((s) => s.view);
+/**
+ * Every vendor gets the same timeout, the longest any recommends (Fastino's 300 s), so a slow answer is measured as
+ * slow rather than failed (ADR-0069).
+ */
+export const DECISION_TIMEOUT_MS = 300_000;
 export const SERVED = 'served';
 export const TWIN = 'twin';
 const DATASETS = [SERVED, TWIN] as const;
@@ -505,6 +511,11 @@ export interface TuningReport {
    * chosen setting (its own ADR). Null without both datasets.
    */
   productionBetter: boolean | null;
+  /**
+   * Each tuned challenger's served interval against the tuned reference at the rule's one-sided 5% split across the
+   * challengers (Bonferroni): reported beside the verdict, never gating it (docs/MODELS.md §9).
+   */
+  familyWise: Array<{ predictor: string; tail: number; mean: number; low: number; high: number }>;
   /** Over the requests of each model's chosen settings, both datasets. */
   ops: Record<string, OpStats>;
   verdict: ModelsVerdict;
@@ -882,6 +893,20 @@ export function analyzeTuning(
     return delta;
   };
   const challengers = o.predictors.filter((p) => p !== o.reference);
+  const tail = 0.05 / Math.max(1, challengers.length);
+  const familyWise = challengers
+    .filter((p) => recs(SERVED, p).length && recs(SERVED, o.reference).length)
+    .map((p) => {
+      const d = pairedDelta(
+        recs(SERVED, o.reference),
+        recs(SERVED, p),
+        'logLoss',
+        `${pairSeed(SERVED, o.reference, p)}:tuned:family`,
+        2000,
+        tail,
+      );
+      return { predictor: p, tail, mean: d.mean, low: d.ciLow, high: d.ciHigh };
+    });
   const deltas = datasets.flatMap((d) =>
     challengers
       .filter((p) => recs(d, p).length && recs(d, o.reference).length)
@@ -933,7 +958,7 @@ export function analyzeTuning(
     ops,
     delta: pair,
   });
-  return { settings: o.settings, models, deltas, production, productionBetter, ops, verdict };
+  return { settings: o.settings, models, deltas, production, productionBetter, familyWise, ops, verdict };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -994,6 +1019,17 @@ export function renderTuning(t: TuningReport): string[] {
     `Every model was also asked in ${t.settings.length} settings (the table at the end), each with one temperature or one per question type. A person is scored at the configuration chosen on everyone else (nested leave-one-person-out), so tuned numbers carry no selection optimism; "in sample" is the chosen configuration scored on everyone, which does. The rule is MODELS_RULE again, tuned challenger against tuned ${label(t.verdict.reference)} (docs/MODELS.md §9).`,
     '',
     ...verdictLines(t.verdict, '### E8b verdict'),
+    ...(t.familyWise.length
+      ? [
+          `Family-wise served intervals (the rule's one-sided 5% split across ${t.familyWise.length} challengers, a ${((1 - 2 * t.familyWise[0]!.tail) * 100).toFixed(1)}% interval by question), reported and not gating: ${t.familyWise
+            .map(
+              (x) =>
+                `${label(x.predictor)} ${sgn(x.mean)} [${sgn(x.low)}, ${sgn(x.high)}]${x.high < 0 ? ' (better)' : x.low > 0 ? ' (worse)' : ''}`,
+            )
+            .join('; ')}.`,
+          '',
+        ]
+      : []),
     '### What tuning chose',
     '',
     '| Model | Data | Chosen | Folds agreeing | Log loss: E8 → tuned (in sample) | Tuning gain | Δ item accuracy, points |',
@@ -1293,6 +1329,7 @@ export async function modelsCmd(argv: string[]): Promise<void> {
     db: join(runDir, 'calls.sqlite'),
     blobsDir: join(runDir, 'traces'),
     providers: values.offline ? 'offline' : 'live',
+    decisionTimeoutMs: DECISION_TIMEOUT_MS,
   });
   const meter = new Meter(maxUsd);
   const arms = new Map<string, Arm>();

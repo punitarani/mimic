@@ -609,6 +609,8 @@ export function pairedDelta(
   metric: 'value' | 'itemAcc' | 'logLoss' = 'value',
   seed = 'paired',
   resamples = 1000,
+  /** Each tail of the interval: 0.05 is the 90% interval; a smaller tail widens it (a family-wise interval). */
+  tail = 0.05,
 ): PairedDelta {
   const bi = new Map(b.map((r) => [r.instanceId, r]));
   const d = a.filter((r) => bi.has(r.instanceId)).map((r) => bi.get(r.instanceId)![metric] - r[metric]);
@@ -620,7 +622,7 @@ export function pairedDelta(
     for (let i = 0; i < d.length; i++) sum += d[Math.floor(rng() * d.length)]!;
     samples.push(sum / d.length);
   }
-  return { n: d.length, mean: mean(d), ciLow: quantile(samples, 0.05), ciHigh: quantile(samples, 0.95) };
+  return { n: d.length, mean: mean(d), ciLow: quantile(samples, tail), ciHigh: quantile(samples, 1 - tail) };
 }
 
 /** SD of the per-instance difference between two passes of the same candidate: the noise floor. */

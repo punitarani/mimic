@@ -51,6 +51,12 @@ export function makeProviders(
     embeddingModel: string;
     ai?: { run(model: string, input: { text: string[] }): Promise<unknown> };
     fetch?: FetchLike;
+    /**
+     * One timeout for every decision vendor, for evals that compare them (E8, ADR-0069): a vendor's own shorter timeout
+     * would turn its slow answers into failures and drop its slow attempts from latency. Unset in production, where
+     * each adapter keeps its own.
+     */
+    decisionTimeoutMs?: number;
   },
 ): Providers {
   const http = {
@@ -58,6 +64,7 @@ export function makeProviders(
     ...(opts.fetch ? { fetch: opts.fetch } : {}),
   };
   const or = { ...http, ...(env.OPENROUTER_API_KEY ? { apiKey: env.OPENROUTER_API_KEY } : {}) };
+  const timeout = opts.decisionTimeoutMs ? { timeoutMs: opts.decisionTimeoutMs } : {};
 
   const embProvider = env.EMBEDDINGS_PROVIDER ?? (opts.ai && !env.EGRESS_RELAY ? 'workers-ai' : 'openrouter');
   let embedder: Embedder;
@@ -68,7 +75,7 @@ export function makeProviders(
   // Jev and span-01 on OpenRouter; clef on Workers AI; Perplexity's decider on Perplexity (ADR-0068); GLiDE on Fastino
   // (ADR-0070). The router is always built, so a model whose credentials are missing fails naming them rather than as
   // an OpenRouter 400.
-  const decisions = new RoutedDecisions(new JevDecisions(or), [
+  const decisions = new RoutedDecisions(new JevDecisions({ ...or, ...timeout }), [
     [
       WORKERS_AI_DECISION_PREFIX,
       // Never through the egress relay: it doesn't forward the Cloudflare account API, and only the CLI calls clef.
@@ -76,6 +83,7 @@ export function makeProviders(
         ...(opts.fetch ? { fetch: opts.fetch } : {}),
         ...(env.CLOUDFLARE_ACCOUNT_ID ? { accountId: env.CLOUDFLARE_ACCOUNT_ID } : {}),
         ...(env.CLOUDFLARE_API_TOKEN ? { apiToken: env.CLOUDFLARE_API_TOKEN } : {}),
+        ...timeout,
       }),
     ],
     [
@@ -83,11 +91,16 @@ export function makeProviders(
       new PerplexityDecisions({
         ...http,
         ...(env.PERPLEXITY_API_KEY ? { apiKey: env.PERPLEXITY_API_KEY } : {}),
+        ...timeout,
       }),
     ],
     [
       FASTINO_DECISION_PREFIX,
-      new FastinoDecisions({ ...http, ...(env.FASTINO_API_KEY ? { apiKey: env.FASTINO_API_KEY } : {}) }),
+      new FastinoDecisions({
+        ...http,
+        ...(env.FASTINO_API_KEY ? { apiKey: env.FASTINO_API_KEY } : {}),
+        ...timeout,
+      }),
     ],
   ]);
   const p: Providers = { decisions, llm: new OpenRouterChat(or), embedder };

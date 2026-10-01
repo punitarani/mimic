@@ -2554,7 +2554,21 @@ served people that risk is large.
 - A tuned setting never reaches the primary directly: a recommendation goes to a shadow on new people first
   (ADR-0024).
 
-## ADR-0070 — Fastino's GLiDE joins E8 and E8b (2026-10-01)
+**Amendment (2026-10-01, before the first E8b run).** An audit of the harness found three biases the tuning didn't
+remove. Each is fixed or reported before any tuned data exists (`docs/MODELS.md` §9, "Bias controls"):
+- **Uneven timeouts.** Jev, span-01, clef and the decider had 15 s and GLiDE 300 s. A slow answer was retried, could
+  end as a uniform prediction, and its timed-out attempts left latency. Every vendor now gets
+  `DECISION_TIMEOUT_MS` (300 s) in E8 and E8b, through `makeProviders`' `decisionTimeoutMs`. Production keeps each
+  adapter's own timeout.
+- **Twin people seen before.** The grid was designed after E8's first run on Twin people 1–200. The Decision models
+  workflow gains `twin_offset`, and E8b's first run reads people 201–300 (100 people, about $6 for the five default
+  models).
+- **Several challengers.** The family-wise served interval (the rule's one-sided 5% split across challengers) is
+  reported beside the verdict. `MODELS_RULE` is unchanged and still gates.
+
+The served people can't be fresh, and that stays a stated limit. GLiDE is supported (ADR-0070) but not in this run.
+
+## ADR-0070 — Fastino's GLiDE in E8 and E8b, opt-in (2026-10-01)
 
 **Context.** Fastino released GLiDE on 1 October: a decision model that takes Jev's request on its own API
 (`POST https://api.fastino.ai/v1/systemone`, model `fastino/GLiDE`) and "thinks" further on a question it isn't

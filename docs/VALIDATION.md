@@ -724,4 +724,11 @@ Everything but the last item is offline. The run is Actions → Decision models 
     - an offline `--tune` run reports E8's tables as before, a tuned row per model and dataset, the verdict, Jev
       against Jev as served, and the per-setting table.
   - The nested selection takes about 5 s per model at 200 Twin people and 10 settings.
+  - Bias controls (ADR-0069's amendment):
+    - `packages/adapters/test/contract.test.ts`: with an eval's `decisionTimeoutMs`, Jev, clef, the decider and GLiDE
+      all give up on a hanging request after three attempts of that timeout, not their own 15 s or 300 s;
+    - `packages/eval/test/tuning.test.ts`: a smaller tail widens the paired interval around the same mean;
+    - `packages/eval/test/models.test.ts`: the E8b report carries a family-wise interval per challenger;
+    - the workflow's Twin slice (`range(offset, offset + n)`, clipped to the dataset) was checked on offsets 0, 200
+      and past the end.
   - By default the scripted people's served questions are left out.

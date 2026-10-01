@@ -437,6 +437,29 @@ describe('decisions outside OpenRouter (ADR-0068)', () => {
     expect((await new PerplexityDecisions({ fetch }).decide(pplxAsked)).usage.costUsd).toBe(0.5);
   });
 
+  it('gives every decision vendor the same timeout when an eval asks for one (ADR-0069)', async () => {
+    let calls = 0;
+    // Never answers; gives up only when the request's own timeout aborts it.
+    const hanging: FetchLike = (_url, init) => {
+      calls++;
+      return new Promise((_, reject) =>
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)),
+      );
+    };
+    const { decisions } = makeProviders(
+      { CLOUDFLARE_ACCOUNT_ID: 'acct', EMBEDDINGS_PROVIDER: 'hash' },
+      { embeddingModel: 'baai/bge-base-en-v1.5', fetch: hanging, decisionTimeoutMs: 20 },
+    );
+    for (const model of ['typesafe/jev-1.13', CLEF_MODEL, PPLX_DECIDER_MODEL, GLIDE_MODEL]) {
+      const before = calls;
+      const started = Date.now();
+      await expect(decisions.decide({ ...pplxAsked, model }), model).rejects.toThrow(/timeout|abort/i);
+      // Three attempts of 20 ms plus the backoff between them, not three of the adapter's own 15 s or 300 s.
+      expect(calls - before, model).toBe(3);
+      expect(Date.now() - started, model).toBeLessThan(5_000);
+    }
+  }, 30_000);
+
   it('has a list rate for every model it routes outside OpenRouter, from a named source', () => {
     for (const model of [CLEF_MODEL, CLEF_FLASH_MODEL, PPLX_DECIDER_MODEL, GLIDE_MODEL]) {
       const rate = DECISION_LIST_RATES[model];
