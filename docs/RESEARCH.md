@@ -49,8 +49,13 @@ Report lift over an item-mean predictor beside lift over the context baseline, a
 reduction. `item_stats` already holds per-item answer entropy and baseline error; a population-mode predictor is a
 derived row per stable item. **Built:** `evaluate --from stored` (and its `/lab` report) scores every predictor
 against a leave-one-out item mean on items asked of at least six people (anchors, reserve items, E7's shared probes,
-an import's held-out items), with intervals over people. **Next:** read it on E7's shared probes; selection weight
-`pop(q)` becomes primary once it shows residual skill on served people.
+an import's held-out items), with intervals over people. **Found** on 120 Twin people
+(`docs/reports/twin-benchmark.md`): with 30 answers Jev is only level with the leave-one-out item mean (−0.005
+[−0.025, +0.015]) and DeepSeek passes it (−0.030 [−0.058, −0.001]); a context-only prior loses to it; and either model
+pooled with the item mean beats both on test people (−0.024 for Jev's state, −0.042 for DeepSeek's). **Next:** read it
+on E7's shared probes; a population prior pooled with the primary on shared items, as a flagged experiment (invariant
+8: `item_stats` aggregates, never in a prompt or a state); selection weight `pop(q)` becomes primary once residual
+skill shows on served people.
 
 ### 1.3 Decision coverage, not trait coverage — open
 
@@ -120,17 +125,20 @@ TypeSafe's own guidance: criteria as `{what, not_for, examples}` objects, dotted
 span-01 (ADR-0051). **Experiment:** `jev-predict.v3` with structured criteria and one `noul` per option, against the
 `choice` primitive, on sealed instances via `evaluate`; it also cancels option-position effects (arXiv 2506.14092).
 
-### 2.4 Per-person empirical-Bayes temperature — designed
+### 2.4 Per-person empirical-Bayes temperature — built
 
 ADR-0048 fitted one temperature. People differ in how predictable they are; the many-small-problems regime wants a
-per-person *T* shrunk toward the global one (Prediction-Powered Adaptive Shrinkage, arXiv 2502.14166). Derived from
-stored rows at zero cost; `evaluate --from stored` is the place.
+per-person *T* shrunk toward the global one (Prediction-Powered Adaptive Shrinkage, arXiv 2502.14166). **Built:**
+`evaluate --from stored` fits the primary's global temperature and a shrinkage strength on dev people, then scores
+test people prequentially, each question at the temperature their earlier answers allowed (weight n / (n + n0) on the
+person's own fit, on the log scale). **Next:** a registered variant only if test people gain beyond the global
+temperature, with enough of them to say so.
 
-### 2.5 Audit the shadows' probabilities — designed
+### 2.5 Audit the shadows' probabilities — built
 
 Verbalised probabilities are sparse (one model emits eight distinct values, half of them "95%"; arXiv 2608.04899), so
-ECE differences between shadows can be binning artefacts. Report the number of distinct values per shadow in `/lab`
-and judge shadows on log loss; for scale items try semantic similarity rating (a one-sentence answer mapped to the
+ECE differences between shadows can be binning artefacts. The stored report (and `/lab`) counts distinct top
+probabilities per predictor and the share of the most common one; judge shadows on log loss; for scale items try semantic similarity rating (a one-sentence answer mapped to the
 five labels by embedding, arXiv 2510.08338).
 
 ### 2.6 Order for the cache — designed
@@ -342,7 +350,8 @@ benchmark either way.
 | Retrieval by meaning and `fill` where the budget binds (long-lived mimics, agents' cards) | nothing | §10.2 |
 | Run `transfer`, `ensemble`, `replay --evidence` on the consented cohort | people, ~$1 | §3.1, §2.1, §6.1 |
 | Residual metric in `evaluate` and `/lab` (built; read it on E7's shared probes) | people | §1.2 |
-| `jev-predict.v3` structured criteria; per-person temperature | nothing | §2.3, §2.4 |
+| `jev-predict.v3` structured criteria | nothing | §2.3 |
+| Per-person temperature and the probability audit (built; read them on the stored report) | people | §2.4, §2.5 |
 | Footprint proposals with consenting people | people, ~$0.05 each | §4.1 |
 | Host-sized views and the host-condition matrix | §3.1 | §3.3 |
 | Opening block, generate-to-split, VoI stopping, latency terms | exports | §1.1, §1.4, §1.5, §1.6 |

@@ -207,6 +207,12 @@ export const INCUMBENT_HARNESS: PredictHarness = {
   labelKeys: false,
 };
 
+/** Every harness setting, the optional ones included: what a diff between two harnesses must walk. */
+export const HARNESS_KEYS: ReadonlyArray<keyof PredictHarness> = [
+  ...(Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>),
+  'stateView',
+];
+
 export type PerModelHarness = Partial<Pick<PredictHarness, (typeof PER_MODEL_HARNESS_KEYS)[number]>>;
 
 export interface PredictPromptVariant {

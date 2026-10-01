@@ -259,6 +259,11 @@ what the first run's numbers rest on. Each point names what E7 (`docs/PROBE.md`)
    correlation and dispersion on every person, and the Twin run shows dispersion is where state policies differ
    (0.201 for the served state at k = 30 and 0.127–0.141 for 12-answer cards, but 0.231 for 8 answers retrieved by
    embeddings for the question).
+10. **Lift over context is not learning the person.** On 120 Twin people the other respondents' answers to an item
+    (the leave-one-out item mean) predict it as well as Jev with 30 answers (−0.005 [−0.025, +0.015]), and better than
+    any context-only prior. DeepSeek with 30 answers passes the item mean (−0.030), and either model pooled with it
+    beats both. So `full` against `context` measures some of what the population already knows; residual rows
+    (`evaluate --from stored`, RESEARCH §1.2) measure the rest, and E7's shared probes give them on served people.
 
 ## References
 
