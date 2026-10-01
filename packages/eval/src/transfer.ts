@@ -10,6 +10,7 @@ import {
   type EvidenceItem,
   type EvidencePolicy,
   facetsFor,
+  formatPredictorId,
   type Gateway,
   INCUMBENT_COMPONENTS,
   isPredictedKind,
@@ -54,7 +55,7 @@ import {
 import { HELDOUT_PREFIX } from './replay';
 
 /**
- * Transfer-loss eval (ADR-0055): how much of a mimic survives being exported. For each person and checkpoint k, every
+ * Transfer-loss eval (ADR-0057): how much of a mimic survives being exported. For each person and checkpoint k, every
  * export view is rendered from the first k answers alone, a reader that knows nothing about Mimic predicts the later
  * answers from that view and nothing else, and the scores are set against the full in-context state the mimic itself
  * uses. The loss per view, at its size in tokens, is what an agent elsewhere gives up for reading the file.
@@ -77,7 +78,7 @@ export interface TransferSpec {
   targets: 'later' | 'heldout';
   /** Write a sealed `soul.v1` draft per person and checkpoint (one LLM call each); else use a stored sealed draft. */
   draft: boolean;
-  /** The card view's cap and policy (ADR-0054). */
+  /** The card view's cap and policy (ADR-0056). */
   cardMaxEvidence: number;
   cardPolicy: EvidencePolicy;
   limitPeople?: number;
@@ -106,6 +107,8 @@ export interface TransferResult {
   checkpoints: TransferCheckpoint[];
   costUsd: number;
   draftsWritten: number;
+  /** Drafts a model call failed to write (a timeout, a provider error): the person's soul views go without one. */
+  draftsFailed: number;
   /** Rendered views for the first person at the first checkpoint, so a report can show what the reader saw. */
   samples: Partial<Record<TransferView, string>>;
 }
@@ -202,7 +205,7 @@ class JevViewReader implements ViewReader {
     private readonly model: string,
     private readonly purpose: string,
   ) {
-    this.id = `jev:${model}`;
+    this.id = formatPredictorId({ kind: 'decision', model });
   }
 
   async predict(view: string, qs: Question[]): Promise<PredictionResult[]> {
@@ -328,6 +331,7 @@ export async function transfer(
   const samples: Partial<Record<TransferView, string>> = {};
   let cost = 0;
   let draftsWritten = 0;
+  let draftsFailed = 0;
 
   for (const m of mimics) {
     const cfg = await loadConfig(deps, m.configHash);
@@ -342,7 +346,7 @@ export async function transfer(
     const fid = await deps.store.listFidelity(m.id);
     const storedDraft = await deps.store.latestSoulDraft(m.id);
 
-    // The card ranks answers by the baseline's surprise (ADR-0054): stored online, computed here for an import.
+    // The card ranks answers by the baseline's surprise (ADR-0056): stored online, computed here for an import.
     const surpriseBySeq = new Map<number, number>();
     if (spec.views.includes('card') && spec.cardPolicy === 'surprise') {
       const missing = train.filter((e) => e.surprise === undefined);
@@ -405,27 +409,31 @@ export async function transfer(
       if (spec.views.some((v) => v.startsWith('soul'))) {
         if (spec.draft && source.evidence.length >= 5) {
           const model = cfg.reflector.model ?? cfg.generator.model;
-          const r = await writeSoulDraft(
-            deps.gateway,
-            { purpose: 'eval.transfer.draft', mimicId: m.id },
-            {
+          try {
+            const r = await writeSoulDraft(
+              deps.gateway,
+              { purpose: 'eval.transfer.draft', mimicId: m.id },
+              { model, source, facets },
+            );
+            draftsWritten++;
+            draft = {
+              id: ulid(),
+              mimicId: m.id,
+              seqUpTo: beforeSeq - 1,
+              configHash: m.configHash,
+              promptVersion: 'soul.v1',
               model,
-              source,
-              facets,
-            },
-          );
-          draftsWritten++;
-          draft = {
-            id: ulid(),
-            mimicId: m.id,
-            seqUpTo: beforeSeq - 1,
-            configHash: m.configHash,
-            promptVersion: 'soul.v1',
-            model,
-            modelSnapshot: r.modelSnapshot,
-            draft: r.draft,
-            createdAt: deps.clock(),
-          };
+              modelSnapshot: r.modelSnapshot,
+              draft: r.draft,
+              createdAt: deps.clock(),
+            };
+          } catch (e) {
+            // One failed draft (a timeout, a provider error) costs that person's narrative, not the run: the soul
+            // views fall back to the stored draft when it is sealed, else to the facts and traits alone.
+            draftsFailed++;
+            console.warn(`transfer: draft failed for ${m.id} at k=${String(k)}: ${String(e)}`);
+            if (storedDraft && storedDraft.seqUpTo < beforeSeq) draft = storedDraft;
+          }
         } else if (storedDraft && storedDraft.seqUpTo < beforeSeq) draft = storedDraft;
       }
 
@@ -569,12 +577,12 @@ export async function transfer(
     spec: { ...spec, kind: 'transfer' },
     datasetHash,
     status: 'done',
-    metrics: { checkpoints, costUsd: cost, people: mimics.length, draftsWritten, samples },
+    metrics: { checkpoints, costUsd: cost, people: mimics.length, draftsWritten, draftsFailed, samples },
     r2ReportKey: null,
     createdAt: deps.clock(),
   };
   await deps.store.putEvalRun(run);
-  return { run, checkpoints, costUsd: cost, draftsWritten, samples };
+  return { run, checkpoints, costUsd: cost, draftsWritten, draftsFailed, samples };
 }
 
 /** Markdown for a transfer run (`renderReport`). */
@@ -583,7 +591,7 @@ export function renderTransfer(m: Record<string, unknown>): string[] {
   const f3 = (x: unknown) => (typeof x === 'number' ? x.toFixed(3) : '—');
   const pts = (x: unknown) => (typeof x === 'number' ? `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}` : '—');
   const lines = [
-    `People: ${String(m.people)} · cost: $${Number(m.costUsd ?? 0).toFixed(4)} · drafts written: ${String(m.draftsWritten ?? 0)}`,
+    `People: ${String(m.people)} · cost: $${Number(m.costUsd ?? 0).toFixed(4)} · drafts written: ${String(m.draftsWritten ?? 0)} (failed: ${String(m.draftsFailed ?? 0)})`,
     '',
     "Transfer loss is the `state` view's accuracy with the same reader minus the view's: what reading the export instead of",
     'the live state costs. Lift is against the `context` view (identity only) with the same reader.',
