@@ -1,0 +1,126 @@
+# E6: what the mimic learns from (docs/EVIDENCE.md, ADR-0052), from the Actions tab: Actions → Evidence → Run workflow.
+# Jev (the production primary) and an LLM each predict the same sealed questions from one view of the state: the
+# context alone, the state as served, the answers without derived traits and insights, the derived data without the
+# answers, and the answers most related to the question. The step summary and /lab hold the readout: lift over
+# context, each view against the state as served, dose and response, individuation, reproduction checks, and
+# EVIDENCE_RULE's verdict.
+#
+# Data: the prod export (consented mimics only, scrubbed of names, locations and links; ADR-0018) and Twin-2K-500
+# people (public survey answers from real people). Only aggregates leave the runner: the step summary, /lab and the
+# artifact. Per-question records, traces and the export are discarded with the runner. Models are live, capped at
+# max_usd; cells run in priority order, so a cap cuts the least important last.
+
+name: Evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      data:
+        description: prod (served questions), twin (Twin-2K-500 people) or both
+        type: choice
+        options: [prod, twin, both]
+        default: both
+      twin_people:
+        description: Twin-2K-500 people to include (with twin or both)
+        type: string
+        default: '100'
+      k:
+        description: Twin checkpoints, comma-separated (answers in the state); the verdict reads k = 30
+        type: string
+        default: '10,30,100'
+      llm:
+        description: LLM predictor to compare with Jev (none to skip)
+        type: string
+        default: llm:deepseek/deepseek-v4.1-flash@predict.v2
+      llm_people:
+        description: Twin people the LLM predicts for (it costs about 10× Jev per question)
+        type: string
+        default: '40'
+      max_usd:
+        description: Spend cap in USD for every model together
+        type: string
+        default: '4'
+      publish:
+        description: Publish the readout to /lab
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: evidence-production
+  cancel-in-progress: false
+
+jobs:
+  evidence:
+    name: E6 evidence (${{ inputs.data }})
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # The export and publishing to /lab both need the prod resource config.
+      - name: Prod config
+        if: inputs.data != 'twin' || inputs.publish
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm deploy:config --env prod
+
+      - name: Export prod (consented, scrubbed)
+        if: inputs.data != 'twin'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm eval -- export --env prod --out data/prod.sqlite
+
+      - name: Twin-2K-500
+        if: inputs.data != 'prod'
+        env:
+          TWIN_PEOPLE: ${{ inputs.twin_people }}
+        run: |
+          python -m pip install --quiet datasets
+          python - <<'EOF'
+          import os
+          import datasets
+          n = int(os.environ["TWIN_PEOPLE"])
+          ds = datasets.load_dataset("LLM-Digital-Twin/Twin-2K-500", "wave_split")["data"]
+          ds.select(range(min(n, len(ds)))).to_json("data/twin.jsonl")
+          EOF
+          pnpm eval -- import twin2k500 --path data/twin.jsonl --out data/twin.sqlite
+
+      - name: Evidence
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          K: ${{ inputs.k }}
+          LLM: ${{ inputs.llm }}
+          LLM_PEOPLE: ${{ inputs.llm_people }}
+          MAX_USD: ${{ inputs.max_usd }}
+          PUBLISH: ${{ inputs.publish }}
+        # Inputs reach the script as environment variables, never interpolated into the shell.
+        run: |
+          data=""
+          for f in data/prod.sqlite data/twin.sqlite; do [ -f "$f" ] && data="${data:+$data,}$f"; done
+          args=(--data "$data" --k "$K" --llm "$LLM" --llm-people "$LLM_PEOPLE" --max-usd "$MAX_USD"
+            --concurrency 12 --out data/evidence/run --summary "$GITHUB_STEP_SUMMARY")
+          [ "$PUBLISH" = true ] && args+=(--publish prod)
+          pnpm eval -- evidence "${args[@]}"
+
+      # The readout only: aggregates, no question text or answers.
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-result
+          if-no-files-found: ignore
+          retention-days: 30
+          path: data/reports/*/report.md

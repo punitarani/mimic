@@ -491,3 +491,32 @@ Nothing below comes from real people.
   it counts real people only).
 - **Not measured:** efficiency on real people (R6). The arm is ready as a draft in `/lab`, and starting it is the
   owner's decision (sample size in ADR-0045).
+
+## E6: what the mimic learns from (ADR-0052)
+
+Nothing below comes from real people. The run on real people is Actions → Evidence, after merge
+(`docs/EVIDENCE.md` §7).
+
+- **Views (offline, `packages/core/test/state.test.ts`).**
+  - Every view is a subset of the sealed state, with `evidenceSeqMax` never above the state's or the question's seq.
+  - `context` equals the context-only baseline state, state hash included.
+  - `answers` drops traits and insights; `derived` drops answers.
+  - `relevant` keeps the 8 most similar answers in seq order, ties to the latest.
+  - Views are deterministic.
+- **Analysis and rule (offline, `packages/eval/test/evidence.test.ts`).**
+  - Deltas are paired by question, with intervals that resample people.
+  - The rule ships a view only with served and (where Twin can test it) Twin support. It refuses a view that costs
+    accuracy, helps too few people or has too little data, and otherwise names the bottleneck: `learns`, `model`,
+    `questions`, `none` or `insufficient`.
+  - Cells run in priority order.
+- **End to end, offline** (3 scripted people and the Twin sample, fake providers).
+  - Every arm of a dataset scores the same questions.
+  - The `context` arm's state matches the stored baseline's and the `full` arm's matches the stored primary's
+    (100%).
+  - Twin's `answers` and `full`, and `derived` and `context`, are flagged as identical states and served from the
+    cache.
+  - The report renders, and is labelled as offline.
+- **Live smoke** (one scripted person, 16 questions; real Jev and DeepSeek; $0.011): Jev took every view, including
+  `context` and `relevant`, and DeepSeek took `context` and `full`, with no failures. Scripted, so a check of the
+  requests, not a result.
+
