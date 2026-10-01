@@ -403,9 +403,9 @@ holds on test people, a registered variant with a temperature by evidence count,
 - **State-insensitive items.** On Twin's probability tasks the primary's distribution is the same for every view.
   Such items are ties in any view comparison and dilute every effect by their share (12% there). Count them, report
   them apart, and let E7 estimate their share on Mimic's questions.
-- **An evidence hash beside the state hash.** The reproduction check cannot match state hashes on a scrubbed
-  export. A hash over the answers alone (seqs, values, reasons) is scrub-invariant and would let the workflow check
-  reproduction every run.
+- **An evidence hash beside the state hash (built).** Every prediction stores `evidenceHash`, the hash of its
+  state's evidence alone, which an export's scrub does not touch. E6's reproduction check compares it wherever the
+  stored row carries one, so the workflow checks reproduction on every run without `--keep-identity`.
 - **Power, stated.** Six people decide nothing under five points; a Twin-sized effect needs about 25 consented
   people at 55 questions each. Readouts say "unknown" until then, as EVIDENCE_RULE does.
 - **Where the LLM shadows' lift came from.** DeepSeek's context-only prior beats every Jev view on served questions.

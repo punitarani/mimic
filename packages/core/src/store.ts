@@ -82,6 +82,8 @@ export interface PredictionRecord {
   dist: Distribution;
   confidence: number | null;
   stateHash: string;
+  /** The state's `meta.evidenceHash`: checks reproduction on a scrubbed export. Null on older rows. */
+  evidenceHash?: string | null;
   evidenceSeqMax: number;
   configHash: string;
   promptVersion: string;

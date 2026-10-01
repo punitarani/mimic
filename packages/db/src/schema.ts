@@ -138,6 +138,7 @@ export const predictions = sqliteTable(
     distJson: text('dist_json').notNull(),
     confidence: real('confidence'),
     stateHash: text('state_hash').notNull(),
+    evidenceHash: text('evidence_hash'),
     evidenceSeqMax: integer('evidence_seq_max').notNull(),
     configHash: text('config_hash').notNull(),
     promptVersion: text('prompt_version').notNull(),
