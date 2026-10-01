@@ -21,6 +21,7 @@ export * from './ontology';
 export * from './participants';
 export * from './population';
 export * from './predictors';
+export * from './probes';
 export * from './prompts';
 export * from './repeats';
 export * from './scope';

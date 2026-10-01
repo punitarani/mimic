@@ -2272,3 +2272,13 @@ person. E3b starts when the T2+T3 lift at 30 answers gives it a detectable effec
 before. Twin stays a benchmark for ranking states, policies and readers on the same predictor and questions; it is
 not read as evidence about Mimic's people.
 
+**Implementation (2026-10-01).** Built as `cfg.e7.probes` (cfg.default.v8 plus `probes: probe.v1`, session target 44,
+budget $0.75) and the `e7` preset in `/lab`, read with `pnpm eval -- probes` (no model calls). Four departures from
+the design, each in `docs/PROBE.md` §9: no flag, because flags are runtime levers only (ADR-0052) and the probes are
+part of what a person is asked, so they belong in the versioned config; no new question kind, because a probe as an
+`adaptive` question marked by its generator goes through sealing, shadows, scoring, exports and undo unchanged; the
+bank is the reserve set and the shared items are three reserve items, with item means from the cohort; and distance is
+measured when a probe is served (answers on its facets: near, mid, far) instead of from a template map. The clock
+counts every other session answer, so the last slot opens where a v8 session ends. Scripted cohorts check the
+machinery (`packages/eval/test/probes.test.ts`); nothing has run on people.
+

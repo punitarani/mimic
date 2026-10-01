@@ -5,9 +5,10 @@ import { canonicalPredictorId, type PipelineConfig, servedPredictorId } from '..
 import { argmax } from '../distribution';
 import { computeFidelity, type FidelityResult } from '../fidelity';
 import { seededRng } from '../hash';
-import { allOntologyFacets, getReserveSet, type ItemTemplate, reserveSetId } from '../ontology';
+import { allOntologyFacets, getOntology, getReserveSet, type ItemTemplate, reserveSetId } from '../ontology';
 import { type ItemStatRecord, populationScore } from '../population';
 import { LlmPredictor, makePredictor, promptVersionOf, rawScale, selectionView } from '../predictors';
+import { dueProbe, isProbe, PROBE_GENERATOR, type ProbeConfig, type ProbeMeta, pickProbe } from '../probes';
 import { pickRepeat } from '../repeats';
 import { questionAllowed } from '../scope';
 import { repeatAgreement, scorePrediction } from '../scoring';
@@ -231,6 +232,34 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
   // questions are skipped here even if a scope change raced the discard in setScope.
   const inScope = (q: QuestionRecord) => !loaded.scope.hiddenQuestionIds.has(q.id);
 
+  // 0) E7's probes (ADR-0062): owed at fixed points, predicted like any question, never chosen by the selector.
+  if (cfg.probes) {
+    const probe = await insertDueProbe(deps, m, cfg, cfg.probes, loaded);
+    if (probe) {
+      try {
+        const r = await serveWithPredictions(
+          deps,
+          m,
+          cfg,
+          loaded,
+          stateAt,
+          seq,
+          probe,
+          [probe],
+          progress,
+          rng,
+        );
+        // Another serve won the race: this probe is owed again next time, so the unserved copy goes.
+        if (r.status === 'question' && r.question.id !== probe.id)
+          await deps.store.updateQuestionStatus(probe.id, 'discarded');
+        return r;
+      } catch (e) {
+        if (e instanceof StaleEvidenceError) await deps.store.updateQuestionStatus(probe.id, 'discarded');
+        throw e;
+      }
+    }
+  }
+
   // 1) Anchors first, in the per-person order fixed at intake.
   const anchor = questions
     .filter((q) => q.kind === 'anchor' && q.status === 'pooled' && inScope(q))
@@ -293,6 +322,7 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
     (q) =>
       q.kind === 'adaptive' &&
       q.status === 'pooled' &&
+      !isProbe(q) &&
       inScope(q) &&
       ramp(q) &&
       !(q.itemKey && askedKeys.has(q.itemKey)),
@@ -427,7 +457,8 @@ function reserveItems(
   allow: (q: { facetIds: string[] }) => boolean,
 ): ItemTemplate[] {
   const setId = reserveSetId(cfg);
-  const used = new Set(questions.map((q) => q.itemKey).filter(Boolean));
+  // E7's shared items wait for their slot, so the selector never asks one earlier (ADR-0062).
+  const used = new Set([...questions.map((q) => q.itemKey).filter(Boolean), ...(cfg.probes?.shared ?? [])]);
   // Without "Work and money", no workplace scenes either (ADR-0042).
   const professional = m.scope.categories.includes('work');
   const items = getReserveSet(setId).filter(
@@ -446,6 +477,68 @@ function reserveItems(
     .map((r, i) => ({ r, i, l: load(r) }))
     .sort((a, b) => a.l - b.l || a.i - b.i)
     .map((x) => x.r);
+}
+
+/**
+ * The probe the schedule owes, written as a question (ADR-0062), or null when none is due or nothing can fill it.
+ * Probes never touch a sensitive facet or anything outside the person's scope.
+ */
+async function insertDueProbe(
+  deps: EngineDeps,
+  m: MimicRecord,
+  cfg: PipelineConfig,
+  probes: ProbeConfig,
+  loaded: LoadedMimic,
+): Promise<QuestionRecord | null> {
+  const due = dueProbe(probes, loaded.questions);
+  if (!due) return null;
+  const sensitive = new Set(
+    getOntology(cfg.ontologyVersion)
+      .filter((f) => f.sensitive)
+      .map((f) => f.id),
+  );
+  const professional = m.scope.categories.includes('work');
+  const picked = pickProbe({
+    probes,
+    bank: reserveSetId(cfg),
+    mimicId: m.id,
+    questions: loaded.questions,
+    due,
+    allow: (r) =>
+      questionAllowed(r, loaded.scope.blocked) &&
+      !r.facetIds.some((f) => sensitive.has(f)) &&
+      (professional || r.domain !== 'professional'),
+  });
+  if (!picked) return null;
+  const meta: ProbeMeta = {
+    set: probes.set,
+    slot: due.slot,
+    index: due.index,
+    planned: due.planned,
+    tier: picked.tier,
+    load: picked.load,
+    ...(picked.sourceId ? { sourceId: picked.sourceId } : {}),
+  };
+  const rec: QuestionRecord = {
+    id: deps.newId(),
+    mimicId: m.id,
+    seq: null,
+    kind: 'adaptive',
+    type: picked.item.type,
+    domain: picked.item.domain,
+    prompt: picked.item.prompt,
+    options: picked.item.options,
+    facetIds: picked.item.facetIds,
+    itemKey: picked.item.itemKey,
+    provenance: { generator: PROBE_GENERATOR, configHash: m.configHash, promptVersion: probes.set },
+    status: 'pooled',
+    quality: { probe: meta },
+    createdAt: deps.clock(),
+    servedAt: null,
+    stateAt: null,
+  };
+  await deps.store.insertQuestions([rec]);
+  return rec;
 }
 
 async function insertReserve(

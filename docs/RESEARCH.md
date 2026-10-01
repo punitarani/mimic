@@ -334,7 +334,7 @@ benchmark either way.
 
 | Step | Needs | Decides |
 | --- | --- | --- |
-| E7 probe set (`docs/PROBE.md`): bank, schedule, `probe` kind, readout | nothing; people to read it | §10.1, E3b's yardstick |
+| E7 probe set (`docs/PROBE.md`): built as `cfg.e7.probes` and the `e7` preset; start it in `/lab` | people to read it | §10.1, E3b's yardstick |
 | Evidence hash for the reproduction check; temperature by evidence count | nothing | §10.4, §10.5 |
 | Retrieval by meaning and the LLM-written state for Jev, as shadows on served questions | nothing | §10.2, §10.3 |
 | Run `transfer`, `ensemble`, `replay --evidence` on the consented cohort | people, ~$1 | §3.1, §2.1, §6.1 |

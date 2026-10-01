@@ -977,7 +977,8 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   from the sealed state before they are shown. Primary metric: paired Δ log loss against the context baseline per
   tier and position; residual lift, across-person correlation and dispersion on the shared items; test-retest
   consistency as the per-person ceiling. `PROBE_RULE` decides when answers help at each distance and when E3b may
-  start. Behind the `probe-set` flag; readout `docs/reports/e7-probes.md`.
+  start. Set up from the `e7` preset in `/lab` (`cfg.e7.probes`, draft) and read with `pnpm eval -- probes`; readout
+  `docs/reports/e7-probes.md`.
 
 ---
 
