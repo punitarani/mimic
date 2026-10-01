@@ -22,9 +22,9 @@ on:
         options: [report, optimize]
         default: report
       predictor:
-        description: Seed predictor, e.g. jev:typesafe/jev-1.13@jev-predict.v2 (calibrated) or llm:deepseek/deepseek-v4.1-flash@predict.v2
+        description: Seed predictor, e.g. decision:typesafe/jev-1.13@jev-predict.v2 (calibrated) or llm:deepseek/deepseek-v4.1-flash@predict.v2
         type: string
-        default: jev:typesafe/jev-1.13@jev-predict.v2
+        default: decision:typesafe/jev-1.13@jev-predict.v2
       components:
         description: Components to rewrite, comma-separated (empty uses the defaults for the predictor kind)
         type: string

@@ -23,6 +23,7 @@
     "flags:check": "NODE_USE_ENV_PROXY=1 node scripts/deploy/flags.mjs --env prod",
     "eval": "NODE_USE_ENV_PROXY=1 tsx packages/eval/src/cli.ts",
     "backfill": "NODE_USE_ENV_PROXY=1 node scripts/backfill.mjs",
+    "relabel:predictors": "NODE_USE_ENV_PROXY=1 node scripts/relabel-predictors.mjs",
     "check": "pnpm lint && pnpm typecheck && pnpm test"
   },
   "devDependencies": {

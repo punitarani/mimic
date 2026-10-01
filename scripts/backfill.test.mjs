@@ -59,9 +59,22 @@ describe('backfill arguments', () => {
     assert.equal(o.rate, 12);
     assert.equal(o.retryFailed, true);
     // Prompt variants (ADR-0028) are accepted; anything that could break out of the inlined SQL is not.
-    assert.deepEqual(parseBackfillArgs(['--predictor', 'jev:typesafe/jev-1.13@jev-predict.v2']).predictors, [
-      'jev:typesafe/jev-1.13@jev-predict.v2',
-    ]);
+    assert.deepEqual(
+      parseBackfillArgs(['--predictor', 'decision:typesafe/jev-1.13@jev-predict.v2']).predictors,
+      ['decision:typesafe/jev-1.13@jev-predict.v2'],
+    );
+    // `jev:` (before ADR-0052) is the same predictor, named canonically.
+    assert.deepEqual(
+      parseBackfillArgs([
+        '--predictor',
+        'jev:typesafe/jev-1.13@jev-predict.v2,decision:typesafe/jev-1.13@jev-predict.v2',
+      ]).predictors,
+      ['decision:typesafe/jev-1.13@jev-predict.v2'],
+    );
+    assert.throws(
+      () => parseBackfillArgs(['--predictor', 'JEV:typesafe/jev-1.13']),
+      /--predictor must look like/,
+    );
     assert.throws(
       () => parseBackfillArgs(['--predictor', `${MIMO}@v2'; drop`]),
       /--predictor must look like/,
@@ -93,17 +106,24 @@ describe('backfill plan', () => {
     const q = missingQuery({ predictor: MIMO, consented: true, mimics: [M1], retryFailed: false }, NOW);
     assert.match(q.sql, /q\.kind IN \('anchor', 'adaptive'\)/);
     assert.match(q.sql, /p\.role = 'primary'/);
-    assert.match(q.sql, /p\.predictor_id = \?1 AND p\.role != 'hypothesis' \)/);
+    // Either spelling of the predictor counts as present (ADR-0052), as does a job keyed by either.
+    assert.match(q.sql, /p\.predictor_id IN \(\?1, \?4\) AND p\.role != 'hypothesis' \)/);
+    assert.match(q.sql, /'predict\.shadow:' \|\| q\.mimic_id \|\| ':' \|\| q\.id \|\| ':' \|\| \?4/);
     assert.match(q.sql, /q\.served_at < \?2/);
     assert.match(q.sql, /AND NOT EXISTS \(SELECT 1 FROM jobs j WHERE j\.key IN/);
     assert.match(q.sql, /j\.updated_at >= \?3/);
     assert.match(q.sql, /m\.consent_research = 1/);
-    assert.match(q.sql, /q\.mimic_id IN \(\?4\)/);
-    // Strings only: the D1 HTTP API's params are strings.
-    assert.deepEqual(q.params, [MIMO, String(NOW - PENDING_WINDOW_MS), String(NOW - 15 * 60_000), M1]);
+    assert.match(q.sql, /q\.mimic_id IN \(\?5\)/);
+    // Strings only: the D1 HTTP API's params are strings. An LLM ID has one spelling.
+    assert.deepEqual(q.params, [MIMO, String(NOW - PENDING_WINDOW_MS), String(NOW - 15 * 60_000), MIMO, M1]);
+    const jev = missingQuery(
+      { predictor: 'decision:typesafe/jev-1.13', consented: false, mimics: [], retryFailed: false },
+      NOW,
+    );
+    assert.equal(jev.params[3], 'jev:typesafe/jev-1.13');
     assert.doesNotMatch(
       missingQuery({ predictor: MIMO, consented: false, mimics: [], retryFailed: false }, NOW).sql,
-      /consent|IN \(\?/,
+      /consent|q\.mimic_id IN/,
     );
   });
 
@@ -118,7 +138,12 @@ describe('backfill plan', () => {
       /AS unusable,.*AS timeouts,.*AS failed_calls,.*AS redoable,.*AS avg_cost/s,
     );
     assert.match(errorsQuery(MIMO).sql, /GROUP BY 1, 2 ORDER BY n DESC/);
-    assert.deepEqual(inFlightQuery(MIMO, NOW).params, [MIMO, String(NOW - 15 * 60_000)]);
+    assert.deepEqual(inFlightQuery(MIMO, NOW).params, [MIMO, String(NOW - 15 * 60_000), MIMO]);
+    assert.deepEqual(statsQuery('decision:typesafe/jev-1.13').params, [
+      'decision:typesafe/jev-1.13',
+      'jev:typesafe/jev-1.13',
+    ]);
+    assert.match(errorsQuery(MIMO).sql, /p\.predictor_id IN \(\?1, \?2\)/);
   });
 
   it('inlines parameters for wrangler, quoting strings', () => {
@@ -153,7 +178,8 @@ describe('backfill plan', () => {
     assert.match(await checkModel(MIMO, openRouter), /MiMo-V2\.6-Pro on OpenRouter/);
     await assert.rejects(checkModel('llm:acme/typo', openRouter), /not an OpenRouter model/);
     await assert.rejects(checkModel('llm:acme/plain', openRouter), /structured outputs/);
-    assert.match(await checkModel('jev:typesafe/jev-1.13', openRouter), /Jev/);
+    assert.match(await checkModel('decision:typesafe/jev-1.13', openRouter), /Decisions API/);
+    assert.match(await checkModel('decision:respan/span-01-20260925', openRouter), /Decisions API/);
     // A prompt variant must be registered (mirrored to docs/prompts/variants/) and not the incumbent.
     await assert.rejects(checkModel(`${MIMO}@predict.v9`, openRouter), /not a registered prompt variant/);
     await assert.rejects(checkModel(`${MIMO}@predict.v1`, openRouter), /names the incumbent prompt/);
@@ -164,7 +190,18 @@ describe('backfill plan', () => {
     assert.equal(checkPromptVersion(`${MIMO}@predict.v2`, dir), 'predict.v2');
     assert.throws(
       () => checkPromptVersion('jev:typesafe/jev-1.13@predict.v2', dir),
-      /not a jev prompt variant/,
+      /not a decision prompt variant/,
+    );
+    // The generated docs name the decision kind (ADR-0052); a `jev:` ID reads them as such.
+    writeFileSync(
+      join(dir, 'docs/prompts/variants/jev-predict.v2.md'),
+      '- Predictor kind: `decision` (use as …)\n',
+    );
+    assert.equal(checkPromptVersion('jev:typesafe/jev-1.13@jev-predict.v2', dir), 'jev-predict.v2');
+    assert.equal(checkPromptVersion('decision:typesafe/jev-1.13@jev-predict.v2', dir), 'jev-predict.v2');
+    assert.throws(
+      () => checkPromptVersion('jev:typesafe/jev-1.13@jev-predict.v1', dir),
+      /use decision:typesafe/,
     );
   });
 });
@@ -373,7 +410,7 @@ describe('backfill run', () => {
     const opts = parseBackfillArgs(['--predictor', MIMO, '--mimic', M1, '--yes']);
     await backfill(opts, localTarget({ fetchImpl, exec }), { fetchImpl, log: quiet, runId: 'R', now: NOW });
     const missing = calls.find((s) => s.startsWith('SELECT q.mimic_id'));
-    assert.ok(missing.includes(`p.predictor_id = '${MIMO}'`), 'parameters are inlined');
+    assert.ok(missing.includes(`p.predictor_id IN ('${MIMO}', '${MIMO}')`), 'parameters are inlined');
     assert.ok(missing.includes(`q.served_at < '${NOW - PENDING_WINDOW_MS}'`), 'numbers go as strings');
     assert.deepEqual(posted, [
       [

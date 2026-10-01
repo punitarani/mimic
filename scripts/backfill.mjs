@@ -24,14 +24,16 @@ import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { cloudflareFromEnv, envBlock, ROOT, readConfig, WORKER_CONFIG } from './deploy/lib.mjs';
+import { canonicalPredictorId, predictorIdSpellings } from './predictor-ids.mjs';
 
 const ENVS = ['local', 'preview', 'prod'];
 /**
- * `llm:<vendor>/<model>` or `jev:<vendor>/<model>`, optionally `@<promptVersion>` for a registered prediction prompt
- * variant (ADR-0028; the worker rejects an unregistered one). Strict, since the local path inlines it into SQL.
+ * `llm:<vendor>/<model>` or `decision:<vendor>/<model>` (`jev:` before ADR-0052, still accepted), optionally
+ * `@<promptVersion>` for a registered prediction prompt variant (ADR-0028; the worker rejects an unregistered one).
+ * Strict, since the local path inlines it into SQL. The kind is lower case, as core requires.
  */
 export const PREDICTOR_ID =
-  /^(llm|jev):[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._:-]*(@[a-z0-9][a-z0-9._-]*)?$/i;
+  /^(llm|decision|jev):[a-zA-Z0-9][a-zA-Z0-9._-]*\/[a-zA-Z0-9][a-zA-Z0-9._:-]*(@[a-zA-Z0-9][a-zA-Z0-9._-]*)?$/;
 const MIMIC_ID = /^[0-9A-HJKMNP-TV-Z]{26}$/;
 const LOCAL_WORKER = 'http://127.0.0.1:8787';
 // Mirrors of packages/core (engine/jobs.ts, engine/lab.ts); packages/eval/test/backfill.test.ts checks them.
@@ -70,9 +72,10 @@ export function parseBackfillArgs(argv) {
   }
   if (!out.predictors.length || !out.predictors.every((p) => PREDICTOR_ID.test(p)))
     throw new Error(
-      '--predictor must look like llm:<vendor>/<model> or jev:<vendor>/<model>, optionally @<promptVersion>',
+      '--predictor must look like llm:<vendor>/<model> or decision:<vendor>/<model>, optionally @<promptVersion>',
     );
-  out.predictors = [...new Set(out.predictors)];
+  // Named canonically (ADR-0052): `jev:X` and `decision:X` are one predictor.
+  out.predictors = [...new Set(out.predictors.map(canonicalPredictorId))];
   if (!ENVS.includes(out.env)) throw new Error(`--env must be one of ${ENVS.join(', ')}`);
   for (const m of out.mimics) if (!MIMIC_ID.test(m ?? '')) throw new Error(`--mimic ${m} is not a mimic ID`);
   out.mimics = [...new Set(out.mimics)];
@@ -89,12 +92,25 @@ export function runLimit(rate) {
 /** A failed shadow whose call failed before the model answered (isFailedCall in packages/core). */
 const FAILED_CALL = "(p.role = 'shadow' AND p.ok = 0 AND p.error_kind = 'transport')";
 
-/** A shadow job for (question q, predictor ?1) that is queued, running or being retried, and not stale (?3). */
+/**
+ * A shadow job for (question q, predictor ?1, or its other spelling ?4) that is queued, running or being retried, and
+ * not stale (?3). Jobs keep the key they were enqueued under, so one from before ADR-0052 still says `jev:`.
+ */
 const IN_FLIGHT = [
   'EXISTS (SELECT 1 FROM jobs j WHERE j.key IN',
-  "('predict.shadow:' || q.mimic_id || ':' || q.id || ':' || ?1, 'backfill.shadow:' || q.mimic_id || ':' || q.id || ':' || ?1)",
+  "('predict.shadow:' || q.mimic_id || ':' || q.id || ':' || ?1, 'backfill.shadow:' || q.mimic_id || ':' || q.id || ':' || ?1,",
+  "'predict.shadow:' || q.mimic_id || ':' || q.id || ':' || ?4, 'backfill.shadow:' || q.mimic_id || ':' || q.id || ':' || ?4)",
   `AND j.status != 'done' AND NOT (j.status = 'failed' AND j.attempts >= ${MAX_ATTEMPTS}) AND j.updated_at >= ?3)`,
 ].join(' ');
+
+/**
+ * The predictor as rows may store it: canonical, and its other spelling (`jev:` for a decision ID, until the relabel
+ * has run), or the canonical ID twice.
+ */
+const spellings = (predictor) => {
+  const [canonical, other = canonical] = predictorIdSpellings(predictor);
+  return [canonical, other];
+};
 
 /**
  * Served anchor and adaptive questions with a primary (so a sealed state), no prediction from this predictor (a
@@ -104,17 +120,18 @@ const IN_FLIGHT = [
  * them with the integer columns as numbers.
  */
 export function missingQuery({ predictor, consented, mimics, retryFailed }, now = Date.now()) {
-  const params = [predictor, String(now - PENDING_WINDOW_MS), String(now - STALE_JOB_MS), ...mimics];
+  const [canonical, other] = spellings(predictor);
+  const params = [canonical, String(now - PENDING_WINDOW_MS), String(now - STALE_JOB_MS), other, ...mimics];
   const sql = [
     'SELECT q.mimic_id AS mimic, COUNT(*) AS missing FROM questions q JOIN mimics m ON m.id = q.mimic_id',
     "WHERE q.seq IS NOT NULL AND q.served_at IS NOT NULL AND q.served_at < ?2 AND q.kind IN ('anchor', 'adaptive')",
     "AND EXISTS (SELECT 1 FROM predictions p WHERE p.question_id = q.id AND p.role = 'primary')",
-    'AND NOT EXISTS (SELECT 1 FROM predictions p WHERE p.question_id = q.id AND p.predictor_id = ?1',
+    'AND NOT EXISTS (SELECT 1 FROM predictions p WHERE p.question_id = q.id AND p.predictor_id IN (?1, ?4)',
     "AND p.role != 'hypothesis'",
     retryFailed ? `AND NOT ${FAILED_CALL})` : ')',
     `AND NOT ${IN_FLIGHT}`,
     consented ? 'AND m.consent_research = 1' : '',
-    mimics.length ? `AND q.mimic_id IN (${mimics.map((_, i) => `?${i + 4}`).join(', ')})` : '',
+    mimics.length ? `AND q.mimic_id IN (${mimics.map((_, i) => `?${i + 5}`).join(', ')})` : '',
     'GROUP BY q.mimic_id ORDER BY q.mimic_id',
   ]
     .filter(Boolean)
@@ -138,9 +155,9 @@ export function statsQuery(predictor) {
       `${count(FAILED_CALL)} AS redoable,`,
       `${count("p.ok = 1 OR p.error_kind = 'output'")} AS charged,`,
       "AVG(CASE WHEN p.ok = 1 OR p.error_kind = 'output' THEN p.cost_usd END) AS avg_cost",
-      "FROM predictions p WHERE p.predictor_id = ?1 AND p.role != 'hypothesis'",
+      "FROM predictions p WHERE p.predictor_id IN (?1, ?2) AND p.role != 'hypothesis'",
     ].join(' '),
-    params: [predictor],
+    params: spellings(predictor),
   };
 }
 
@@ -149,23 +166,26 @@ export function errorsQuery(predictor) {
   return {
     sql: [
       "SELECT COALESCE(p.error_kind, 'transport') AS kind, substr(COALESCE(p.error, '(none)'), 1, 60) AS error,",
-      "COUNT(*) AS n FROM predictions p WHERE p.predictor_id = ?1 AND p.ok = 0 AND p.role != 'hypothesis'",
+      "COUNT(*) AS n FROM predictions p WHERE p.predictor_id IN (?1, ?2) AND p.ok = 0 AND p.role != 'hypothesis'",
       'GROUP BY 1, 2 ORDER BY n DESC LIMIT 4',
     ].join(' '),
-    params: [predictor],
+    params: spellings(predictor),
   };
 }
 
-/** Backfill predictions of this predictor queued or being retried (not stale, ?2): a re-run skips them. */
+/**
+ * Backfill predictions of this predictor (?1, or its other spelling ?3) queued or being retried (not stale, ?2): a
+ * re-run skips them.
+ */
 export function inFlightQuery(predictor, now = Date.now()) {
   return {
     sql: [
       'SELECT COUNT(*) AS n, MAX(j.updated_at) AS last FROM jobs j',
       "WHERE j.key >= 'backfill.shadow:' AND j.key < 'backfill.shadow;'",
-      "AND substr(j.key, length(j.key) - length(?1)) = ':' || ?1",
+      "AND (substr(j.key, length(j.key) - length(?1)) = ':' || ?1 OR substr(j.key, length(j.key) - length(?3)) = ':' || ?3)",
       `AND j.status != 'done' AND NOT (j.status = 'failed' AND j.attempts >= ${MAX_ATTEMPTS}) AND j.updated_at >= ?2`,
     ].join(' '),
-    params: [predictor, String(now - STALE_JOB_MS)],
+    params: [spellings(predictor)[0], String(now - STALE_JOB_MS), spellings(predictor)[1]],
   };
 }
 
@@ -205,7 +225,8 @@ export function backfillJobs({ predictor, consented, mimics, rate, retryFailed }
   return jobs;
 }
 
-const INCUMBENT = { llm: 'predict.v1', jev: 'jev-predict.v1' };
+/** DEFAULT_PROMPT_VERSION in packages/core/src/components.ts, by predictor kind. */
+export const INCUMBENT = { llm: 'predict.v1', decision: 'jev-predict.v1' };
 
 /**
  * A `@<version>` must be a registered prompt variant of the right kind, and not the incumbent (which would store a
@@ -213,12 +234,13 @@ const INCUMBENT = { llm: 'predict.v1', jev: 'jev-predict.v1' };
  * docs/prompts/variants/ (checked by a test), which this dependency-free script can read. Throws, or returns a label.
  */
 export function checkPromptVersion(predictor, root = ROOT) {
-  const kind = predictor.slice(0, predictor.indexOf(':'));
-  const at = predictor.lastIndexOf('@');
+  const id = canonicalPredictorId(predictor);
+  const kind = id.slice(0, id.indexOf(':'));
+  const at = id.lastIndexOf('@');
   if (at < 0) return null;
-  const version = predictor.slice(at + 1);
-  const bare = predictor.slice(0, at);
-  if (version === INCUMBENT[kind]) throw new Error(`${predictor} names the incumbent prompt; use ${bare}`);
+  const version = id.slice(at + 1);
+  const bare = id.slice(0, at);
+  if (version === INCUMBENT[kind]) throw new Error(`${id} names the incumbent prompt; use ${bare}`);
   let doc;
   try {
     doc = readFileSync(join(root, 'docs/prompts/variants', `${version}.md`), 'utf8');
@@ -241,7 +263,7 @@ export async function checkModel(predictor, fetchImpl = fetch) {
     predictor.slice(predictor.indexOf(':') + 1).replace(/@[^@]*$/, ''),
   ];
   const suffix = version ? `, prompt ${version}` : '';
-  if (kind !== 'llm') return `${model} (Jev decisions API${suffix})`;
+  if (kind !== 'llm') return `${model} (Decisions API${suffix})`;
   const res = await fetchImpl('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`OpenRouter model list: ${res.status}`);
   const found = ((await res.json()).data ?? []).find((m) => m.id === model);
