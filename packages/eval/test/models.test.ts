@@ -679,10 +679,13 @@ describe('runs on the Twin sample, offline', () => {
     expect(t.deltas.map((d) => d.predictor)).toEqual([CLEF, CLEF]);
     expect(t.production.map((p) => p.t)).toEqual([4, 4]);
     expect(typeof t.productionBetter).toBe('boolean');
+    // One challenger: the family-wise tail is the rule's own 5%.
+    expect(t.familyWise.map((x) => [x.predictor, x.tail])).toEqual([[CLEF, 0.05]]);
     expect(t.verdict.challengers.map((c) => c.outcome)).toEqual(['insufficient']);
     expect(md).toContain('## E8 verdict, every model asked as E8 asked it');
     expect(md).toContain('## E8b: each model at its best');
     expect(md).toContain('### E8b verdict: insufficient data; keep Jev');
     expect(md).toContain('### Every setting, served');
+    expect(md).toContain('Family-wise served intervals');
   }, 240_000);
 });

@@ -1,6 +1,6 @@
 import { scorePrediction } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
-import { type EvalRecord, looTemperatures, metricsOf, rescaled } from '../src/optimize/evaluate';
+import { type EvalRecord, looTemperatures, metricsOf, pairedDelta, rescaled } from '../src/optimize/evaluate';
 import { E8_SETTINGS, TUNE_SETTINGS, tune } from '../src/tuning';
 
 /** A two-option prediction: `p` on `a`; the person answered `answer`. `candidate` marks the setting it came from. */
@@ -127,6 +127,16 @@ describe('E8b tuning: nested leave-one-person-out (docs/MODELS.md §9)', () => {
         ['A', 'B'],
       ),
     ).toThrow(/other instances/);
+  });
+
+  it('widens the interval as its tail shrinks, for the family-wise check', () => {
+    const a = ['m0', 'm1', 'm2'].flatMap((m) => person('A', m, 30, 0.6));
+    const b = a.map((r, i) => rec('B', r.instanceId, r.mimicId, i % 3 ? 0.7 : 0.4));
+    const ninety = pairedDelta(a, b, 'logLoss', 's', 2000);
+    const family = pairedDelta(a, b, 'logLoss', 's', 2000, 0.05 / 4);
+    expect(family.mean).toBe(ninety.mean);
+    expect(family.ciLow).toBeLessThan(ninety.ciLow);
+    expect(family.ciHigh).toBeGreaterThan(ninety.ciHigh);
   });
 
   it('pre-registers E8 first, and a grid with no duplicates', () => {

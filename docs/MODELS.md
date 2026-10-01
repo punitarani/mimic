@@ -190,9 +190,9 @@ Each is reported per dataset × model × view:
 ## 8. Running it
 
 **In CI (the usual way, after merge):** Actions → **Decision models** → Run workflow.
-- **Inputs:** `data` (prod, twin or both; the verdict needs both), `twin_people` (200), `predictors` (empty means all
-  five defaults; add `decision:fastino/glide` for GLiDE), `tune` (also run E8b, §9), `max_usd` (empty means $5, or $15
-  with `tune`; raise it to name GLiDE), `publish` (to `/lab`).
+- **Inputs:** `data` (prod, twin or both; the verdict needs both), `twin_people` (200), `twin_offset` (0; people to skip
+  first), `predictors` (empty means all five defaults; add `decision:fastino/glide` for GLiDE), `tune` (also run E8b,
+  §9), `max_usd` (empty means $5, or $15 with `tune`; raise it to name GLiDE), `publish` (to `/lab`).
 - **Outputs:** the readout lands in the step summary and in `/lab`. The artifact holds `report.md` and `canary.json`,
   and the log prints the canary. Per-question records stay on the runner.
 - **A failed canary.** The workflow passes `--drop-failed-canary`, so a model whose canary fails is left out and named
@@ -281,9 +281,30 @@ another at E8's concurrency, so latency stays comparable.
   about $3.65 per full-state setting on Twin's 4,000 predictions. Raise `max_usd` to about $40.
 - **`twin_people` 100** roughly halves the Twin part.
 
+**Bias controls** (amended 2026-10-01, before the first E8b run; ADR-0069). The first run is set up as
+`twin_people=100`, `twin_offset=200`, for about $6.
+- **The grid is fixed and searched whole.** It holds twenty configurations per model, and each model's is chosen by
+  nested leave-one-person-out cross-validation. No person's answers choose their own setting or temperature, and the
+  in-sample score beside the nested one shows what a naive pick would have claimed.
+- **Jev is tuned too.** The comparison is tuned against tuned; Jev as served is reported beside it.
+- **One timeout for every vendor** (`DECISION_TIMEOUT_MS`, 300 s, the longest any recommends). The vendors' own
+  timeouts were 15 s, and 300 s for GLiDE. Under a short timeout a slow answer is retried and can end as a uniform
+  prediction, which judges speed through quality. Its timed-out attempts also drop out of latency, which hides the
+  tail. With one long timeout, quality is judged on answers and speed on latency. Production keeps each adapter's own
+  timeout.
+- **Fresh Twin people.** The grid was designed after E8's first run on Twin people 1–200, so E8b reads people
+  201–300 (`twin_offset`). The run then also replicates E8's Twin result on people it never saw.
+- **Several challengers, one interval each.** `MODELS_RULE` stays the gate. Beside the verdict, each challenger's
+  served interval is also shown at the rule's one-sided 5% split across the challengers (Bonferroni: 97.5% for four
+  challengers). A "better" that only the per-challenger interval supports is reported as such. Either way it only
+  earns a shadow on new people.
+
 **What it can't show.**
-- **Nine served people make noisy folds.** The fold agreement says how stable a choice is. Twin's 200 people steady
-  the direction, not the served verdict.
+- **Nine served people make noisy folds.** The fold agreement says how stable a choice is. Twin's people steady the
+  direction, not the served verdict.
+- **The served people aren't fresh.** They are the people E8's first run read, and part of the grid (the `context`
+  view) was suggested by them. Nested selection keeps each person out of their own choice, but not out of the grid's
+  design. The fresh Twin people are the check on that.
 - **The grid is small and hand-written, on purpose.** Twenty configurations is deliberately few for nine people.
   Free-text prompt search per model (GEPA) would fit the served people, so it waits for more of them.
 - **One run date.** Clef and the decider have no snapshots, as in §7.

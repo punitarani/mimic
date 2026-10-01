@@ -30,6 +30,10 @@ on:
         description: Twin-2K-500 people to include (with twin or both)
         type: string
         default: '200'
+      twin_offset:
+        description: Twin-2K-500 people to skip first; 200 gives people E8's first run never saw (docs/MODELS.md §9)
+        type: string
+        default: '0'
       predictors:
         description: Decision predictors, comma-separated, the reference first (empty is the five defaults; add decision:fastino/glide for GLiDE)
         type: string
@@ -87,14 +91,16 @@ jobs:
         if: inputs.data != 'prod'
         env:
           TWIN_PEOPLE: ${{ inputs.twin_people }}
+          TWIN_OFFSET: ${{ inputs.twin_offset }}
         run: |
           python -m pip install --quiet datasets
           python - <<'EOF'
           import os
           import datasets
           n = int(os.environ["TWIN_PEOPLE"])
+          skip = int(os.environ["TWIN_OFFSET"] or 0)
           ds = datasets.load_dataset("LLM-Digital-Twin/Twin-2K-500", "wave_split")["data"]
-          ds.select(range(min(n, len(ds)))).to_json("data/twin.jsonl")
+          ds.select(range(min(skip, len(ds)), min(skip + n, len(ds)))).to_json("data/twin.jsonl")
           EOF
           pnpm eval -- import twin2k500 --path data/twin.jsonl --out data/twin.sqlite
 
