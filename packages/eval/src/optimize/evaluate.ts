@@ -12,6 +12,7 @@ import {
   expectedIndex,
   formatPredictorId,
   type Gateway,
+  HARNESS_KEYS,
   HARNESS_STATE_VIEWS,
   type HarnessStateView,
   harnessProblems,
@@ -130,7 +131,7 @@ export function changedComponents(
 export function changedHarness(c: Candidate, against: string = c.baseVersion): Partial<PredictHarness> {
   const base = resolvePredictPrompt(against, c.kind, c.model).harness;
   const out: Partial<PredictHarness> = {};
-  for (const k of Object.keys(INCUMBENT_HARNESS) as Array<keyof PredictHarness>)
+  for (const k of HARNESS_KEYS)
     if (c.prompt.harness[k] !== base[k]) Object.assign(out, { [k]: c.prompt.harness[k] });
   return out;
 }

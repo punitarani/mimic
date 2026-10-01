@@ -330,6 +330,10 @@ export async function evaluateCmd(argv: string[]) {
             vsFirst: i ? pairedDelta(results[0]!.recs, recs, 'value', `vs:${i}`) : null,
             modelSnapshots: [...new Set(recs.map((r) => r.modelSnapshot))].sort(),
           })),
+          residual: residualReport(
+            loaded.instances,
+            results.flatMap(({ c, recs }) => recs.map((r) => ({ ...r, candidate: `${c.label}|candidate` }))),
+          ),
         },
         r2ReportKey: null,
         createdAt: Date.now(),

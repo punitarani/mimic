@@ -6,6 +6,7 @@ import {
   componentProblems,
   DEFAULT_CONFIG,
   type DecisionAnswer,
+  type DecisionPredictor,
   type DecisionProvider,
   type DecisionRequest,
   Gateway,
@@ -21,6 +22,7 @@ import {
   breakdown,
   calibrationFits,
   changedComponents,
+  changedHarness,
   derivedCalibrations,
   evaluateCandidate,
   feedbackFor,
@@ -373,6 +375,17 @@ describe('evaluate', () => {
     );
     expect(pairedComparisons(recs).some((p) => p.from === fallback || p.to === fallback)).toBe(false);
     expect(calibrationFits(failedOver).some((f) => f.predictor.includes('(primary)'))).toBe(false);
+  });
+
+  it('a candidate that only changes the view is a change: its predictor reads that view (ADR-0065)', () => {
+    const c = resolveCandidate({
+      predictor: 'decision:typesafe/jev-1.13@jev-predict.v2',
+      harness: { stateView: 'context' },
+    });
+    expect(changedHarness(c)).toEqual({ stateView: 'context' });
+    const p = predictorFor(gateway(), c, 't') as DecisionPredictor;
+    expect(p.prompt.harness.stateView).toBe('context');
+    expect(p.prompt.version.startsWith('cand-')).toBe(true);
   });
 
   it('refuses a candidate whose reasoning budget leaves no room for the answer, or a model a variant does not list', () => {
