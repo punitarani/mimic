@@ -1944,3 +1944,48 @@ changed those values in that time. This ADR gives every value one home, chosen b
 - **Leftover provider keys.** `wrangler deploy --secrets-file` adds secrets and never deletes them, so a key that
   ADR-0051 pushed for a provider not chosen (`PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`) stays on the worker, and is
   no longer rotated with Doppler. Delete each with `wrangler secret delete <NAME> --env prod` from `apps/worker`.
+
+## ADR-0053 — E6: what the mimic learns from, before E3b (2026-10-01)
+
+**Evidence.** The stored-predictions report of 2026-09-30 (6 consented people, 330 questions) shows the primary
+barely beating its own context-only baseline. Raw Jev gained +1.0 points of item accuracy (215 questions); calibrated
+Jev as served under v7 and v8 lost 4.7 (115 questions; −10.5 on choice questions). Every LLM shadow beat the same
+baseline by 2–7 points. A log-linear pool fitted against each of the ten LLM shadows put a weight of 0.000 on Jev.
+Fidelity was 69.9% at 20 questions and 63.6% at the end. The digital-twin literature finds the same pattern
+(docs/EVIDENCE.md §1): individual accuracy from rich profiles is often no better than demographics alone, while
+correlation across people improves.
+
+**Decision.** Run E6 before E3b.
+- **Why before E3b.** E3b's metric is the primary's fidelity, and selection pays off only through a predictor that
+  uses the answers. E3b also needs about 128 people; E6 needs none, because it reuses the sealed states already
+  stored.
+- **Design: within-person and paired.** Every arm predicts the same sealed questions from one view of the same state.
+  - `viewState` (`packages/core/src/state-builder.ts`) gives the views `context`, `full`, `answers`, `derived` and
+    `relevant`.
+  - A view is a subset of the sealed state, so sealing holds by construction. `context` has exactly the stored
+    baseline's state hash.
+  - Jev (the production primary) gets all five views, and DeepSeek V4.1 Flash `predict.v2` gets `context`, `full`
+    and `answers`.
+  - Data: served questions as served, plus Twin-2K-500 at k = 10, 30 and 100.
+  - One question per Jev request in every arm (`maxQuestionsPerRequest`), so no arm differs by batch.
+- **Rule fixed before the run** (`EVIDENCE_RULE`).
+  - A view replaces `full` only if, on served questions, its Δ log loss interval is below 0, at least two-thirds of
+    people improve and item accuracy drops by at most 1 point, on at least 200 questions from 5 people. Where Twin can
+    test the view (`relevant`), its log-loss interval by person must also be below 0.
+  - Otherwise the outcome names the bottleneck: the primary learns (start E3b), the model (E7: an LLM or pooled
+    primary), the questions, or nothing (check the harness). An outcome that rules a predictor out needs it measured
+    with the same minimum data; one cut short by the spend cap or not run is `insufficient`, not "doesn't learn".
+- **Reported beside the rule.**
+  - Reproduction checks: state-hash match and top-pick agreement with the stored baseline and primary.
+  - Lift by answers in the state (dose and response).
+  - Across-person correlation and dispersion.
+  - Cost and latency.
+- **Runs from Actions → Evidence** (`.github/workflows/evidence.yml`, `pnpm eval -- evidence`).
+  - It runs on `main` with the production environment, capped at `max_usd`, and publishes to /lab.
+  - Cells run in priority order, so a spend cap cuts the least important first.
+  - Only aggregates leave the runner.
+- **Unchanged.** No config, prompt version, prediction or stored row changes. A `ship` outcome adds a `stateView`
+  harness setting and a new Jev prompt version, backfilled as a shadow before any config uses it.
+- **E3b stays a draft** until E6's verdict is `learns`, or a shipped view makes it so.
+
+**Spend so far.** A live smoke on one scripted person: $0.011. The full run is expected to cost about $2.
