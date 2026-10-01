@@ -15,6 +15,7 @@ import { armsRun } from './arms';
 import { benchmarkCmd } from './benchmark';
 import { runCohort } from './cohort';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
+import { evidenceCmd } from './evidence';
 import { datasetHash, exportData } from './export';
 import { calibrateGates, sampleDrafts } from './gates';
 import { openLocalEngine } from './local';
@@ -76,6 +77,12 @@ Commands
             --data <a.sqlite>[,<b.sqlite>] [--split test] [--seed benchmark] [--limit N] [--max-targets 40]
             [--incumbent decision:typesafe/jev-1.13@jev-predict.v2] [--challenger <id>] [--max-usd 1] [--offline]
             [--summary <file>]   also appends the Markdown there (GitHub's step summary)
+  evidence  E6 (docs/EVIDENCE.md): what the mimic learns from. Jev and an LLM each predict the same sealed questions
+            from one view of the state (context, full, answers, derived, relevant); lift over context, against full,
+            dose and response, individuation, reproduction checks and EVIDENCE_RULE's verdict
+            --data <a.sqlite>[,<b.sqlite>] [--split all] [--k 10,30,100] [--max-targets 20] [--limit N]
+            [--jev <id>] [--llm <id>|none] [--views a,b] [--llm-views a,b] [--llm-people 40] [--llm-k 30]
+            [--max-usd 4] [--concurrency 8] [--publish local|preview|prod] [--summary <file>] [--offline]
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
             --data … --predictor decision:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
             [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]
@@ -516,6 +523,8 @@ async function main() {
       return diagnoseCmd(rest);
     case 'benchmark':
       return benchmarkCmd(rest);
+    case 'evidence':
+      return evidenceCmd(rest);
     case 'optimize':
       return optimizeCmd(rest);
     default:

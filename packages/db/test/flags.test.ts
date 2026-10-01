@@ -1,4 +1,4 @@
-import { FLAG_KEYS, JEV_MODEL, NO_FLAGS, providerValue, SPAN_MODEL } from '@mimic/core';
+import { FLAG_KEYS, JEV_MODEL, NO_FLAGS, SPAN_MODEL } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import { type FlagshipBinding, FlagshipFlags, flaggedEnv, flagHealth, flagsFor } from '../src/flags';
 import { engineDeps, type MimicBindings, runtimeEngineDeps } from '../src/runtime';
@@ -59,16 +59,6 @@ describe('Flagship flags (ADR-0051)', () => {
     expect(flagsFor({})).toBe(NO_FLAGS);
   });
 
-  it('accepts dashboard labels for providers', () => {
-    const embed = ['workers-ai', 'openrouter'];
-    expect(providerValue('OpenRouter', embed)).toBe('openrouter');
-    expect(providerValue('Cloudflare-Workers-AI', embed)).toBe('workers-ai');
-    expect(providerValue('Workers AI', embed)).toBe('workers-ai');
-    expect(providerValue('Exa', ['exa', 'none'])).toBe('exa');
-    expect(providerValue('Off', ['exa', 'none'])).toBe('none');
-    expect(providerValue('Cloudflare-Vectorize', embed)).toBeNull();
-  });
-
   it('without FLAGS the environment and deps are exactly today’s', async () => {
     const e = env({ BUDGET_USD: '2' });
     expect(await flaggedEnv(e)).toBe(e);
@@ -81,33 +71,32 @@ describe('Flagship flags (ADR-0051)', () => {
   it('flags matching the vars change nothing', async () => {
     const e = env({
       BUDGET_USD: '1',
+      BUDGET_SESSION_SHARE: 0.8,
+      FLAGS: flagship({ [FLAG_KEYS.budgetUsd]: 1, [FLAG_KEYS.budgetSessionShare]: '0.8' }),
+    });
+    const out = await flaggedEnv(e);
+    expect(out.BUDGET_USD).toBe('1');
+    expect(out.BUDGET_SESSION_SHARE).toBe(0.8);
+  });
+
+  it('provider and infrastructure choices are vars, whatever the app holds (ADR-0052)', async () => {
+    const e = env({
       FLAGS: flagship({
-        [FLAG_KEYS.searchProvider]: 'Exa',
-        [FLAG_KEYS.enrichProvider]: 'exa',
-        [FLAG_KEYS.embeddingsProvider]: 'Workers-AI',
-        [FLAG_KEYS.budgetUsd]: 1,
+        'search-provider': 'perplexity',
+        'enrich-provider': 'parallel',
+        'embeddings-provider': 'openrouter',
+        'vector-backend': 'sql',
       }),
     });
     const out = await flaggedEnv(e);
-    for (const k of ['SEARCH_PROVIDER', 'ENRICH_PROVIDER', 'EMBEDDINGS_PROVIDER', 'BUDGET_USD'] as const)
+    for (const k of ['SEARCH_PROVIDER', 'ENRICH_PROVIDER', 'EMBEDDINGS_PROVIDER', 'VECTOR_BACKEND'] as const)
       expect(out[k]).toBe(e[k]);
   });
 
   it('flags override the vars when valid, and leave them when not', async () => {
     const out = await flaggedEnv(
-      env({
-        BUDGET_SESSION_SHARE: '0.5',
-        FLAGS: flagship({
-          [FLAG_KEYS.embeddingsProvider]: 'OpenRouter',
-          [FLAG_KEYS.searchProvider]: 'Perplexity', // no PERPLEXITY_API_KEY deployed
-          [FLAG_KEYS.enrichProvider]: 'Carrier pigeon',
-          [FLAG_KEYS.budgetUsd]: '5',
-        }),
-      }),
+      env({ BUDGET_SESSION_SHARE: '0.5', FLAGS: flagship({ [FLAG_KEYS.budgetUsd]: '5' }) }),
     );
-    expect(out.EMBEDDINGS_PROVIDER).toBe('openrouter');
-    expect(out.SEARCH_PROVIDER).toBe('exa');
-    expect(out.ENRICH_PROVIDER).toBe('exa');
     expect(out.BUDGET_USD).toBe('5');
     // No budget-session-share flag in this app: the session share stays the var.
     expect(out.BUDGET_SESSION_SHARE).toBe('0.5');
@@ -151,29 +140,22 @@ describe('Flagship flags (ADR-0051)', () => {
 
   it('flagHealth reports every registry flag as the binding resolves it', async () => {
     expect(await flagHealth({})).toEqual({ bound: false, ok: true, flags: {} });
-    const all = {
-      'decisions-model': 'jev',
-      'budget-usd': 1,
-      'budget-session-share': 0.8,
-      'search-provider': 'exa',
-      'enrich-provider': 'exa',
-      'embeddings-provider': 'workers-ai',
-    };
+    const all = { 'decisions-model': 'jev', 'budget-usd': 1, 'budget-session-share': 0.8 };
     const good = await flagHealth({ FLAGS: flagship(all) });
     expect(good.ok).toBe(true);
     expect(Object.keys(good.flags).sort()).toEqual(Object.values(FLAG_KEYS).sort());
     expect(good.flags['decisions-model']).toEqual({ reason: 'DEFAULT', ok: true });
     // The endpoint is public: it says whether each flag evaluates, never what it serves.
-    expect(JSON.stringify(good)).not.toMatch(/"value"|"jev"|"exa"/);
+    expect(JSON.stringify(good)).not.toMatch(/"value"|"jev"/);
 
     const { 'budget-usd': _, ...missing } = all;
     const bad = await flagHealth({
-      FLAGS: flagship({ ...missing, 'decisions-model': 'not a model', 'search-provider': 7 }),
+      FLAGS: flagship({ ...missing, 'decisions-model': 'not a model', 'budget-session-share': '1.5' }),
     });
     expect(bad.ok).toBe(false);
     expect(bad.flags['budget-usd']).toMatchObject({ errorCode: 'FLAG_NOT_FOUND', ok: false });
     expect(bad.flags['decisions-model']).toMatchObject({ ok: false });
-    expect(bad.flags['search-provider']).toMatchObject({ errorCode: 'TYPE_MISMATCH', ok: false });
+    expect(bad.flags['budget-session-share']).toMatchObject({ errorCode: 'TYPE_MISMATCH', ok: false });
     expect((await flagHealth({ FLAGS: flagship(all, { throws: true }) })).ok).toBe(false);
 
     // A number flag made as a string in the dashboard: the runtime reads it (coerced), so health agrees.

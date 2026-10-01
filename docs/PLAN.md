@@ -365,7 +365,7 @@ export const PipelineConfig = z.object({
 | Reflector | GPT-6 Luna, every 5 answers |
 | Repeats | Every 8 questions, minimum gap 6 |
 | Reveal | `after_answer` |
-| Session | Target 30 questions; budget $0.50 in the config, which marks the standard budget that `BUDGET_USD` sets ($1 by default); the session spends 80% of it (ADR-0035) |
+| Session | Target 30 questions; budget $0.50 in the config, which marks the standard budget that the `budget-usd` flag sets ($1 by default; `BUDGET_USD` in local dev); the session spends 80% of it (ADR-0035, ADR-0052) |
 
 ---
 
@@ -868,7 +868,7 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 
 **Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and hides the field, and shows it only if the server rejects the code (ADR-0026, ADR-0047). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
-**Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: `BUDGET_USD` (default $1) for configs on the standard budget, else the config's own `session.budgetUsd`. Session work (serving, shadows, refills, hypotheses) stops at `BUDGET_SESSION_SHARE` of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and SOUL.md (ADR-0035).
+**Limits.** Rate limit per participant and per IP. The budget guard refuses model calls for a mimic once `spend_usd` reaches its cap: the `budget-usd` flag (default $1) for configs on the standard budget, else the config's own `session.budgetUsd`. Session work (serving, shadows, refills, hypotheses) stops at the `budget-session-share` flag's share of the cap (default 0.8), keeping the rest for the mimic page: asking, teaching and SOUL.md (ADR-0035). The flags are Flagship flags in prod; without Flagship (preview, local dev) the caps are their defaults, or `BUDGET_USD` and `BUDGET_SESSION_SHARE` in `.dev.vars` (ADR-0052).
 
 ---
 
@@ -945,6 +945,12 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   sweep), 1:1. Primary metric: fidelity at 20; then questions to sustain 0.75, and R2/R4/R7 per arm. About 64 real
   people per arm; read with `pnpm eval -- arms` (95% bootstrap intervals). Set up from the preset in `/lab`.
 - **E5 Generator LLM** (arms). Luna vs. DeepSeek vs. GLM, with the same selector.
+- **E6 Evidence use** (paired, offline on sealed states; ADR-0053, `docs/EVIDENCE.md`). Does the mimic learn from a
+  person's answers, and from what form of them? Jev and DeepSeek predict the same sealed questions from one view of the
+  state each: `context`, `full`, `answers`, `derived` and `relevant` (`viewState`). It runs on served questions and on
+  Twin-2K-500 at k = 10, 30 and 100. Primary metric: paired Δ log loss against `context` and against `full`.
+  `EVIDENCE_RULE` decides whether a view replaces `full` for the primary. E6 runs before E3b: selection can pay off
+  only through a predictor that learns from answers. Run it from Actions → Evidence (`pnpm eval -- evidence`).
 
 ---
 

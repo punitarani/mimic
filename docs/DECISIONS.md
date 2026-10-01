@@ -1902,6 +1902,94 @@ $0.042/M. It is added as a challenger behind the Flagship string flag `decisions
     1 point lower, errors no more than 1 point higher, and latency and cost within 1.5×, on at least 200 predictions
     from at least 5 people.
 
+## ADR-0052 — Flags for runtime levers only; provider choices back to Worker vars (2026-10-01)
+
+ADR-0051 put six settings behind Flagship. Five of them were also Doppler settings and `wrangler.jsonc` vars, so one
+value could live in three places, and `flags:check` warned whenever they disagreed. A day in prod showed the cost:
+about 5,000 evaluations, mostly the five setting flags read on every request and queue batch, with p90 65 ms. Nobody
+changed those values in that time. This ADR gives every value one home, chosen by how it changes.
+
+- **Flagship: runtime levers.** A flag must be worth changing without a deploy (a rollout, a kill switch, a spend
+  cap). It must be safe at its default, and its values must need nothing deployed beyond what every value already
+  has. Three flags pass:
+  - `decisions-model`: rollouts by mimic, and the kill switch back to Jev;
+  - `budget-usd` and `budget-session-share`: the spend caps (ADR-0035).
+- **Spend caps.** In prod the flag is the only source. The deploy no longer reads `BUDGET_USD` or
+  `BUDGET_SESSION_SHARE`, and preflight warns if they are set. Without Flagship (preview, local dev) the caps are
+  the code defaults, or those vars in `.dev.vars`.
+  - In prod a failed read now falls to the code default ($1) rather than a deployed var.
+  - That is the conservative side for a cap: a mimic past $1 is refused until the read works again. It never
+    overspends.
+  - The deployed var it replaces wasn't the flag's $2 either (preflight reported the flag serving 2 over it), so
+    this is no looser than before.
+  - Flagship evaluates from the last propagated configuration when its control plane is down, so only a failing
+    binding reaches the default.
+  - Moving the default itself is a code change to `DEFAULT_BUDGET_USD`, reviewed like any other.
+- **Worker vars in `wrangler.jsonc`: deploy-time choices.** `SEARCH_PROVIDER`, `ENRICH_PROVIDER`,
+  `EMBEDDINGS_PROVIDER` and `VECTOR_BACKEND` are checked-in settings. Doppler may override one; preflight warns
+  when an override equals the checked-in value, so a redundant one can be deleted. They are not flags because:
+  - A provider needs its key deployed. As flags, every provider key had to be pushed just in case, and a flag
+    naming a provider without one was skipped at runtime.
+  - Parallel enrichment also changes which queue runs the job (ADR-0034).
+  - The vector backend is infrastructure (ADR-0051).
+  - Removed with the provider flags: dashboard-label parsing, the key-presence checks, pushing unused provider
+    keys, and comparing flags with settings in `flags:check`.
+- **Prod behaviour is unchanged.**
+  - Prod's embeddings were served from OpenRouter by both the flag and Doppler, so `EMBEDDINGS_PROVIDER` for prod
+    is now `openrouter` in `wrangler.jsonc`.
+  - Search and enrichment stay Exa.
+  - The `budget-usd` flag's $2 still applies.
+- **Retiring the dashboard flags.** `search-provider`, `enrich-provider`, `embeddings-provider` and `vector-backend`
+  are warnings in `flags:check` (no code reads them), never failures. They can be deleted once this deploy is live.
+- **Leftover provider keys.** `wrangler deploy --secrets-file` adds secrets and never deletes them, so a key that
+  ADR-0051 pushed for a provider not chosen (`PARALLEL_API_KEY`, `PERPLEXITY_API_KEY`) stays on the worker, and is
+  no longer rotated with Doppler. Delete each with `wrangler secret delete <NAME> --env prod` from `apps/worker`.
+
+## ADR-0053 — E6: what the mimic learns from, before E3b (2026-10-01)
+
+**Evidence.** The stored-predictions report of 2026-09-30 (6 consented people, 330 questions) shows the primary
+barely beating its own context-only baseline. Raw Jev gained +1.0 points of item accuracy (215 questions); calibrated
+Jev as served under v7 and v8 lost 4.7 (115 questions; −10.5 on choice questions). Every LLM shadow beat the same
+baseline by 2–7 points. A log-linear pool fitted against each of the ten LLM shadows put a weight of 0.000 on Jev.
+Fidelity was 69.9% at 20 questions and 63.6% at the end. The digital-twin literature finds the same pattern
+(docs/EVIDENCE.md §1): individual accuracy from rich profiles is often no better than demographics alone, while
+correlation across people improves.
+
+**Decision.** Run E6 before E3b.
+- **Why before E3b.** E3b's metric is the primary's fidelity, and selection pays off only through a predictor that
+  uses the answers. E3b also needs about 128 people; E6 needs none, because it reuses the sealed states already
+  stored.
+- **Design: within-person and paired.** Every arm predicts the same sealed questions from one view of the same state.
+  - `viewState` (`packages/core/src/state-builder.ts`) gives the views `context`, `full`, `answers`, `derived` and
+    `relevant`.
+  - A view is a subset of the sealed state, so sealing holds by construction. `context` has exactly the stored
+    baseline's state hash.
+  - Jev (the production primary) gets all five views, and DeepSeek V4.1 Flash `predict.v2` gets `context`, `full`
+    and `answers`.
+  - Data: served questions as served, plus Twin-2K-500 at k = 10, 30 and 100.
+  - One question per Jev request in every arm (`maxQuestionsPerRequest`), so no arm differs by batch.
+- **Rule fixed before the run** (`EVIDENCE_RULE`).
+  - A view replaces `full` only if, on served questions, its Δ log loss interval is below 0, at least two-thirds of
+    people improve and item accuracy drops by at most 1 point, on at least 200 questions from 5 people. Where Twin can
+    test the view (`relevant`), its log-loss interval by person must also be below 0.
+  - Otherwise the outcome names the bottleneck: the primary learns (start E3b), the model (E7: an LLM or pooled
+    primary), the questions, or nothing (check the harness). An outcome that rules a predictor out needs it measured
+    with the same minimum data; one cut short by the spend cap or not run is `insufficient`, not "doesn't learn".
+- **Reported beside the rule.**
+  - Reproduction checks: state-hash match and top-pick agreement with the stored baseline and primary.
+  - Lift by answers in the state (dose and response).
+  - Across-person correlation and dispersion.
+  - Cost and latency.
+- **Runs from Actions → Evidence** (`.github/workflows/evidence.yml`, `pnpm eval -- evidence`).
+  - It runs on `main` with the production environment, capped at `max_usd`, and publishes to /lab.
+  - Cells run in priority order, so a spend cap cuts the least important first.
+  - Only aggregates leave the runner.
+- **Unchanged.** No config, prompt version, prediction or stored row changes. A `ship` outcome adds a `stateView`
+  harness setting and a new Jev prompt version, backfilled as a shadow before any config uses it.
+- **E3b stays a draft** until E6's verdict is `learns`, or a shipped view makes it so.
+
+**Spend so far.** A live smoke on one scripted person: $0.011. The full run is expected to cost about $2.
+
 ## ADR-0054 — `decision:` predictor IDs, and rerouted predictions stored under the model that answered (2026-10-01)
 
 A predictor ID's prefix names how the predictor is called, not a model: `llm:` is a chat completion that returns JSON

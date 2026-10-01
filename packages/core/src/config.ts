@@ -358,8 +358,8 @@ export function spendCaps(cfg: PipelineConfig, limits: SpendLimits = {}): SpendC
 }
 
 /**
- * The same ranges deploy preflight checks (scripts/deploy/settings.mjs); a test keeps the two in step. The budget
- * flags (`FLAG_SPECS`, ADR-0051) parse with these too.
+ * The ranges the spend caps take, from a var or from the budget flags (`FLAG_SPECS`, ADR-0051, ADR-0052); a test
+ * keeps the two parsers in step.
  */
 export const SpendEnv = z.object({
   BUDGET_USD: z.coerce.number().positive(),
@@ -368,8 +368,8 @@ export const SpendEnv = z.object({
 
 /**
  * `BUDGET_USD` and `BUDGET_SESSION_SHARE` from a Worker's vars, which may be strings or JSON numbers. An unset value
- * keeps its default; an invalid one does too and is named in `problems` so the caller can log it (preflight refuses
- * invalid values before a deploy, so this is for hand-set vars).
+ * keeps its default; an invalid one does too and is named in `problems` so the caller can log it. Deploys set no such
+ * vars (ADR-0052), so this reads `.dev.vars` and the flag-overridden environment (`flaggedEnv`).
  */
 export function parseSpendLimits(env: { BUDGET_USD?: unknown; BUDGET_SESSION_SHARE?: unknown }): {
   limits: SpendLimits;

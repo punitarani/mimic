@@ -1,16 +1,14 @@
 #!/usr/bin/env node
-// `pnpm flags:check [--env prod] [--optional] [--create-missing]` (ADR-0051): holds the environment's Flagship app to
+// `pnpm flags:check [--env prod] [--optional] [--create-missing]` (ADR-0051, ADR-0052): holds the environment's Flagship app to
 // the flag registry in packages/core. It checks that every flag the code reads is defined with values the code
 // accepts, and that each one evaluates. It runs in CI (the Flags job), in deploy preflight, and by hand.
 //
-// This wrapper finds what the check needs from the checked-in config: the app the Workers bind as FLAGS, and the
-// environment's resolved settings (so a flag that overrides one is called out). The check itself is TypeScript
+// This wrapper finds the app the Workers bind as FLAGS in the checked-in config. The check itself is TypeScript
 // (packages/db/src/flags-check.ts), so it uses the registry's own parsers. The app ID is pinned in both
 // wrangler.jsonc files, since the token needs no permission to find it; an environment that binds no app has
 // nothing to check.
 import { join } from 'node:path';
 import { envBlock, parseArgs, ROOT, readConfig, run, WEB_CONFIG, WORKER_CONFIG } from './lib.mjs';
-import { resolveSettings } from './settings.mjs';
 
 /** The Flagship app an environment's Worker binds as FLAGS, or null. */
 export function flagsAppId(config, env) {
@@ -28,27 +26,23 @@ export function environmentFlagsApp(env, web = readConfig(WEB_CONFIG), worker = 
 }
 
 /** The checker's command line for an environment, or null when it binds no app. */
-export function flagsCheckArgs(env, source, { optional = false, createMissing = false } = {}) {
-  const worker = readConfig(WORKER_CONFIG);
-  const app = environmentFlagsApp(env, readConfig(WEB_CONFIG), worker);
+export function flagsCheckArgs(env, { optional = false, createMissing = false } = {}) {
+  const app = environmentFlagsApp(env);
   if (!app) return null;
-  const { vars } = resolveSettings(worker, env, source);
   return [
     'exec',
     'tsx',
     join(ROOT, 'packages/db/src/flags-check.cli.ts'),
     '--app',
     app,
-    '--settings',
-    JSON.stringify(vars),
     ...(optional ? ['--optional'] : []),
     ...(createMissing ? ['--create-missing'] : []),
   ];
 }
 
 /** Runs the check for `env`; throws when it finds a problem. */
-export async function checkFlags(env, source = process.env, opts = {}) {
-  const args = flagsCheckArgs(env, source, opts);
+export async function checkFlags(env, opts = {}) {
+  const args = flagsCheckArgs(env, opts);
   if (!args) {
     console.log(`  env.${env} binds no Flagship app: every flag reads its code default`);
     return;
@@ -58,7 +52,7 @@ export async function checkFlags(env, source = process.env, opts = {}) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const argv = process.argv.slice(2);
-  checkFlags(parseArgs(argv).env, process.env, {
+  checkFlags(parseArgs(argv).env, {
     optional: argv.includes('--optional'),
     createMissing: argv.includes('--create-missing'),
   }).catch((e) => {

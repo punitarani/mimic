@@ -59,30 +59,16 @@ export function warnOnce(key: string, message: string = key): void {
   console.warn(message);
 }
 
-/** The vars the flags override (ADR-0051), and what a provider needs deployed before a flag may pick it. */
-export type FlaggedVars = Partial<Record<FlaggedSetting, string | number>> & {
-  EXA_API_KEY?: string;
-  PERPLEXITY_API_KEY?: string;
-  PARALLEL_API_KEY?: string;
-  OPENROUTER_API_KEY?: string;
-  AI?: unknown;
-  FLAGS?: FlagshipBinding;
-};
-
-const NEEDS: Record<string, (env: FlaggedVars) => boolean> = {
-  exa: (e) => !!e.EXA_API_KEY,
-  perplexity: (e) => !!e.PERPLEXITY_API_KEY,
-  parallel: (e) => !!e.PARALLEL_API_KEY,
-  'workers-ai': (e) => !!e.AI,
-  openrouter: (e) => !!e.OPENROUTER_API_KEY,
-};
+/** The vars the flags override (ADR-0051, ADR-0052), as Worker vars come: strings or JSON numbers. */
+export type FlaggedVars = Partial<Record<FlaggedSetting, string | number>> & { FLAGS?: FlagshipBinding };
 
 const SETTING_SPECS: FlagSpec[] = ALL_FLAGS.filter((s) => s.setting);
 
 /**
- * The environment with each flag's value over its var (ADR-0051). A flag overrides only when its value parses, differs
- * from the var, and (for a provider) names one whose key or binding is deployed; otherwise the var stands and the
- * reason is logged once. Without FLAGS the environment is returned as is.
+ * The environment with each flag's value over its var (ADR-0051). Where FLAGS is bound (prod) the flag is the source
+ * of truth (ADR-0052): deploys set no such var, so a failed read falls back to the code default. A flag overrides when
+ * its value parses and differs; otherwise the var stands and the reason is logged once. Without FLAGS (preview, local
+ * dev) the environment, `.dev.vars` included, is returned as is.
  */
 export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
   if (!env.FLAGS) return env;
@@ -107,10 +93,6 @@ export async function flaggedEnv<E extends FlaggedVars>(env: E): Promise<E> {
           `flag ${spec.key} is ${JSON.stringify(read)}, which the code can't use; using ${name}`,
         );
       if (value === fallback) return;
-      if (typeof value === 'string' && NEEDS[value] && !NEEDS[value](env))
-        return warnOnce(
-          `flag ${spec.key} picks ${value}, whose key or binding isn't deployed; using ${name}`,
-        );
       out[name] = typeof value === 'number' ? String(value) : value;
     }),
   );

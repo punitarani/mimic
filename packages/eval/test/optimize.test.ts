@@ -412,6 +412,9 @@ describe('outages, batching and splits', () => {
     const big = same.map((i) => ({ ...i, question: { ...i.question, prompt: 'x '.repeat(4000) } }));
     expect(jevRequests(c, big).length).toBeGreaterThan(1);
     expect(jevRequests(c, big).flat()).toHaveLength(60);
+    // E6 asks one question per request, so no arm differs by what else was in its batch.
+    expect(jevRequests(c, same, 1)).toHaveLength(60);
+    expect(jevRequests(c, same, 25).map((g) => g.length)).toEqual([25, 25, 10]);
   });
 
   it('splits six or more dev people into balanced train and val halves', () => {

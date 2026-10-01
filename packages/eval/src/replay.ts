@@ -69,14 +69,18 @@ async function predictAll(predictor: ReturnType<typeof makePredictor>, state: Pe
 }
 
 /** Numeric value of an answer for across-person metrics: score index, yes = 1, or 2-option choice index. */
-function itemValue(q: QuestionRecord, key: string): number | null {
+export function itemValue(q: Pick<QuestionRecord, 'type' | 'options'>, key: string): number | null {
   if (q.type === 'score') return Number(key);
   if (q.type === 'noul') return key === 'yes' ? 1 : 0;
   if (q.options.length === 2) return q.options.findIndex((o) => o.key === key);
   return null;
 }
 
-function predictedValue(q: QuestionRecord, dist: Record<string, number>): number | null {
+/** A prediction on the same scale as `itemValue`; null for a choice of three or more options. */
+export function predictedValue(
+  q: Pick<QuestionRecord, 'type' | 'options'>,
+  dist: Record<string, number>,
+): number | null {
   if (q.type === 'score') return expectedIndex(dist);
   if (q.type === 'noul') return dist.yes ?? null;
   if (q.options.length === 2) return dist[q.options[1]!.key] ?? null;
