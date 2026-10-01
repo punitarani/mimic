@@ -154,6 +154,10 @@ again (every count 0). Locally, `pnpm relabel:predictors [--env local|preview|pr
 
 ## Run the benchmark
 
+The benchmark decides the flag between Jev and span-01. To compare more decision models at once (Jev, span-01,
+Cloudflare's clef and clef-flash, Perplexity's decider), with calibration per model and lift over context, run E8
+instead: Actions → Decision models, `pnpm eval -- models` (`docs/MODELS.md`, ADR-0068).
+
 The benchmark runs the production primary and the same predictor on span-01 over the same sealed instances, with no
 flag and no fallback, so each model's own numbers are measured.
 

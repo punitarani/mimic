@@ -10,7 +10,9 @@ import {
   type MimicRecord,
   needsScores,
   type PersonState,
+  type Population,
   type PredictionRole,
+  populationOf,
   type QuestionRecord,
   repeatAgreement,
   seededRng,
@@ -45,6 +47,8 @@ export interface EvalInstance {
   mimicId: string;
   split: 'dev' | 'test';
   mode: 'online' | 'heldout';
+  /** Whose answers these are (`populationOf`): only `real` people's served answers are ever reported as results. */
+  population: Population;
   questionId: string;
   seq: number;
   /** Heldout mode: number of evidence items in the state. */
@@ -157,6 +161,7 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
           mimicId: m.id,
           split: m.split,
           mode: 'heldout',
+          population: populationOf(m.participantId),
           questionId: q.id,
           seq: q.seq!,
           k: opts.k,
@@ -209,6 +214,7 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
         mimicId: m.id,
         split: m.split,
         mode: 'online',
+        population: populationOf(m.participantId),
         questionId: q.id,
         seq: q.seq!,
         question: q,

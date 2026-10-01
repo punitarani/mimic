@@ -1,6 +1,8 @@
 // Live smoke tests: one real call per provider. Run with `pnpm test:live` (LIVE=1). Each call costs a fraction of
 // a cent. Keys come from the environment; in the Claude Code remote env the outbound proxy injects them.
 import {
+  CLEF_FLASH_MODEL,
+  CLEF_MODEL,
   DEFAULT_CONFIG,
   decisionChallenger,
   FLAG_KEYS,
@@ -8,6 +10,7 @@ import {
   LlmPredictor,
   makePredictor,
   type PersonState,
+  PPLX_DECIDER_MODEL,
   parsePredictorId,
   type Question,
   SPAN_MODEL,
@@ -22,6 +25,8 @@ import {
   OpenRouterChat,
   OpenRouterEmbedder,
   ParallelEnricher,
+  PerplexityDecisions,
+  WorkersAiDecisions,
 } from '../../src';
 
 const LIVE = process.env.LIVE === '1';
@@ -54,6 +59,60 @@ describe.skipIf(!LIVE)('live providers', () => {
     expect(r.answers.s?.type).toBe('score');
     expect(r.usage.costUsd).toBeGreaterThan(0);
   }, 30_000);
+
+  // ADR-0068: the decision models served outside OpenRouter. Each runs only with its credentials; its response is the
+  // one to replace the schema-built (clef) or documented (Perplexity) fixture with.
+  const sameAsJev = {
+    state: { identity: { occupation: 'Teacher' }, evidence: [] },
+    questions: {
+      n: {
+        type: 'noul' as const,
+        instructions: 'Is the person a teacher?',
+        criteria: { true: 'Yes', false: 'No' },
+      },
+      c: {
+        type: 'choice' as const,
+        instructions: 'Which fits best?',
+        criteria: { a: 'Teacher', b: 'Pilot' },
+      },
+      s: {
+        type: 'score' as const,
+        instructions: 'How likely to enjoy reading?',
+        criteria: ['Low', 'Mid', 'High'],
+      },
+    },
+  };
+  for (const model of [CLEF_MODEL, CLEF_FLASH_MODEL])
+    it.skipIf(!env.CLOUDFLARE_ACCOUNT_ID)(
+      `${model} answers the same request on Workers AI`,
+      async () => {
+        const r = await new WorkersAiDecisions({
+          accountId: env.CLOUDFLARE_ACCOUNT_ID,
+          ...(env.CLOUDFLARE_API_TOKEN ? { apiToken: env.CLOUDFLARE_API_TOKEN } : {}),
+        }).decide({ model, ...sameAsJev });
+        console.log(JSON.stringify(r.raw));
+        expect(r.answers.n?.type).toBe('noul');
+        expect(r.answers.c?.type).toBe('choice');
+        expect(r.answers.s?.type).toBe('score');
+        expect(r.usage.costUsd).toBeGreaterThan(0);
+      },
+      30_000,
+    );
+
+  it.skipIf(!env.PERPLEXITY_API_KEY)(
+    "Perplexity's decider answers the same request",
+    async () => {
+      const r = await new PerplexityDecisions({ apiKey: env.PERPLEXITY_API_KEY }).decide({
+        model: PPLX_DECIDER_MODEL,
+        ...sameAsJev,
+      });
+      console.log(JSON.stringify(r.raw));
+      expect(r.modelSnapshot).toBe('pplx-decider-v1-27b');
+      expect(r.answers.s?.type).toBe('score');
+      expect(r.usage.costUsd).toBeGreaterThan(0);
+    },
+    30_000,
+  );
 
   it('OpenRouter chat returns schema-valid JSON with cost', async () => {
     const r = await new OpenRouterChat(or).chat({

@@ -42,6 +42,8 @@ These are the only manual steps.
      - Flagship App · Read and Evaluate on the app `mimic` (ADR-0051). The flags check in preflight and in the Flags
        workflow uses them. Edit is not needed: flags are made in the dashboard, or with `pnpm flags:check
        --create-missing` from a token that has it.
+     - Workers AI: Read (ADR-0068). Only Actions → Decision models (E8) uses it, to call clef and clef-flash over
+       Workers AI's REST API; the deploy doesn't. Without it, E8's canary stops the run and names this permission.
    - Zone `punitarani.com` (or all zones):
      - Workers Routes: Edit. A Custom Domain needs only this and Workers Scripts; Cloudflare creates the DNS record
        and certificate itself.
@@ -61,6 +63,9 @@ Required:
 | `SESSION_SECRET` | `openssl rand -base64 32` |
 | `INVITE_CODES` | Comma-separated invite codes for the cohort |
 | `ADMIN_EMAILS` | Comma-separated emails allowed into `/lab` (the Access policy and the in-app check both use it) |
+
+Optional: `PERPLEXITY_API_KEY`, any Perplexity API key. Actions → Decision models (E8) needs it for Perplexity's
+decider (ADR-0068), and `SEARCH_PROVIDER=perplexity` needs it for people search.
 
 Settings live in each environment's `vars` in `apps/worker/wrangler.jsonc` (and `apps/web/wrangler.jsonc`), checked
 in. A Doppler value with the same name overrides one; preflight warns when an override equals the checked-in value,
@@ -108,6 +113,11 @@ doppler run -- pnpm flags:check                  # the Flagship app against the 
 To backfill a new predictor on prod without local credentials, open Actions → Backfill → Run workflow. It runs the
 same script with the repository secrets and is a dry run unless "enqueue" is checked. Predictions run at "rate" a
 minute (default 30), and "retry failed" also redoes failed calls, such as rate limits and provider errors (ADR-0037).
+
+Actions → Decision models runs E8 (`pnpm eval -- models`, `docs/MODELS.md`, ADR-0068). Jev, span-01, clef,
+clef-flash and Perplexity's decider predict the same sealed states on a prod export and on Twin-2K-500 people, capped
+at `max_usd`. It needs `OPENROUTER_API_KEY`, the Cloudflare token with Workers AI: Read, and `PERPLEXITY_API_KEY`. A
+canary request per model checks all three before anything else is spent.
 
 Actions → Readout runs the free readouts on a prod export (no model calls): E7's probe readout (`pnpm eval -- probes`)
 and the stored-prediction report on people who joined since a date (`evaluate --from stored --since`), which reads

@@ -242,6 +242,8 @@ export interface DecisionResponse {
 
 export interface DecisionProvider {
   readonly provider: string;
+  /** The vendor that serves `model`, when one provider routes models to several (ADR-0068); else `provider`. */
+  providerFor?(model: string): string;
   decide(req: DecisionRequest): Promise<DecisionResponse>;
 }
 

@@ -8,6 +8,7 @@ import {
   DEFAULT_PROMPT_VERSION,
   DecisionPredictor,
   type Distribution,
+  decisionModelLimits,
   expectedCalibrationError,
   expectedIndex,
   formatPredictorId,
@@ -361,8 +362,13 @@ export const JEV_REQUEST_TOKENS = 28_000;
 export function jevRequests(
   c: Candidate,
   instances: EvalInstance[],
-  maxQuestions = Number.POSITIVE_INFINITY,
+  maxQuestionsPerRequest = Number.POSITIVE_INFINITY,
 ): EvalInstance[][] {
+  // A model's own limit (clef takes 64 questions a request, ADR-0068) holds whatever the caller asked for.
+  const maxQuestions = Math.min(
+    maxQuestionsPerRequest,
+    decisionModelLimits(c.model).maxQuestions ?? Number.POSITIVE_INFINITY,
+  );
   const out: EvalInstance[][] = [];
   const tokens = (x: unknown) => Math.ceil(JSON.stringify(x).length / 4);
   for (const g of groupBy(instances, (i) => i.state.meta.stateHash).values()) {
@@ -660,6 +666,63 @@ export function shrink(p: Distribution, base: Distribution, alpha: number): Dist
   );
 }
 
+/** 0.25 to 16: the first prod report put Jev's best temperature at the old top of 4 (ADR-0041). */
+export const TEMPERATURE_GRID: readonly number[] = Array.from(
+  { length: 46 },
+  (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000,
+);
+
+/** A record rescored at temperature `t`. T = 1 and failed predictions (uniform at any T) come back unchanged. */
+export function rescaled(rec: EvalRecord, t: number): EvalRecord {
+  if (t === 1 || !rec.ok) return rec;
+  const dist = temperatureScale(rec.dist, t);
+  const s = scorePrediction(rec.type, dist, rec.answer);
+  return { ...rec, dist, ...s, confidence: dist[argmax(dist)] ?? 0, value: -s.logLoss };
+}
+
+/**
+ * A temperature per person, fitted on everyone else's answered predictions (leave one person out) by mean log loss
+ * over the grid plus 1: each person is scored by a temperature their own answers didn't choose, with no split or seed.
+ * One person alone keeps 1. `all` is the fit on everyone, to report.
+ */
+export function looTemperatures(
+  recs: EvalRecord[],
+  grid: readonly number[] = TEMPERATURE_GRID,
+): { byPerson: Map<string, number>; all: number } {
+  const temps = [1, ...grid.filter((t) => t !== 1)];
+  const logLossAt = (r: EvalRecord, t: number) =>
+    t === 1 ? r.logLoss : -Math.log(Math.max(temperatureScale(r.dist, t)[r.answer] ?? 0, P_FLOOR));
+  const sums = new Map<string, { n: number; ll: number[] }>();
+  for (const r of recs) {
+    if (!r.ok) continue;
+    const s = sums.get(r.mimicId) ?? { n: 0, ll: temps.map(() => 0) };
+    s.n++;
+    temps.forEach((t, i) => {
+      s.ll[i]! += logLossAt(r, t);
+    });
+    sums.set(r.mimicId, s);
+  }
+  const total = { n: 0, ll: temps.map(() => 0) };
+  for (const s of sums.values()) {
+    total.n += s.n;
+    s.ll.forEach((x, i) => {
+      total.ll[i]! += x;
+    });
+  }
+  const best = (ll: number[]): number => {
+    let at = 0;
+    ll.forEach((x, i) => {
+      if (x < ll[at]! - 1e-9) at = i;
+    });
+    return temps[at]!;
+  };
+  const byPerson = new Map<string, number>();
+  for (const [id, s] of sums)
+    byPerson.set(id, total.n - s.n > 0 ? best(total.ll.map((x, i) => x - s.ll[i]!)) : 1);
+  for (const r of recs) if (!byPerson.has(r.mimicId)) byPerson.set(r.mimicId, 1);
+  return { byPerson, all: total.n ? best(total.ll) : 1 };
+}
+
 export interface FitRow {
   predictor: string;
   method: string;
@@ -748,8 +811,7 @@ const EVIDENCE_BANDS: Array<[string, number, number]> = [
 
 export function calibrationFits(instances: EvalInstance[]): FitRow[] {
   const rows: FitRow[] = [];
-  // 0.25 to 16: the first prod report put Jev's best temperature at the old top of 4 (ADR-0041).
-  const temps = Array.from({ length: 46 }, (_, i) => Math.round(0.25 * 2 ** (i / 7.5) * 1000) / 1000);
+  const temps = [...TEMPERATURE_GRID];
   const unit = Array.from({ length: 21 }, (_, i) => i / 20);
   const byPredictor = new Map<string, Pair[]>();
   // Primaries by predictor: each config's own scale (a v7 primary is calibrated, a v6 one is not). A primary the LLM

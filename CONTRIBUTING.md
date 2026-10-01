@@ -45,6 +45,11 @@ Local values live in `apps/web/.dev.vars` and `apps/worker/.dev.vars`. Both file
 To run an offline identity demo with fictional people, set `SEARCH_PROVIDER=fixture` and `ENRICH_PROVIDER=fixture` in
 both files.
 
+The eval CLI and `pnpm test:live` read their keys from the shell, not `.dev.vars`. Beyond `OPENROUTER_API_KEY`, E8
+(`pnpm eval -- models`, [docs/MODELS.md](docs/MODELS.md)) calls clef and clef-flash on Workers AI with
+`CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (the token needs Workers AI: Read). It calls Perplexity's decider
+with `PERPLEXITY_API_KEY` (ADR-0068). Without them, those models' canary fails and names the variable.
+
 <details>
 <summary>Deployed settings (Doppler)</summary>
 

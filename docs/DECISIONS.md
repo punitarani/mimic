@@ -2428,3 +2428,76 @@ on there are included.
 sensitive area they are asked about. Keeping one area out of research while still being asked about it is no longer
 possible: the person turns that area off, or leaves research unticked. `scripts/browser/scope.mjs` checks that the
 per-area group is gone.
+
+## ADR-0068 — Decision models outside OpenRouter, priced at list rate, and E8 to compare them (2026-10-01)
+
+**Context.** Three decision models arrived that take Jev's request and return Jev's answers: Cloudflare's clef (27B)
+and clef-flash (9B), served only by Workers AI, and Perplexity's `pplx-decider-v1-27b`, served only by Perplexity's
+API. Mimic reached decision models through one provider, OpenRouter's Decisions API, wired once in `makeProviders`.
+Neither new vendor returns a cost: each response carries `usage.input_tokens` and `output_tokens` only. That conflicts
+with the rule that money is the provider's `usage.cost` (PLAN §5). Logged at $0, their calls would bypass the budget
+guard and every eval's `--max-usd`. Mimic's own Workers AI embeddings already log $0 (ADR-0005), but they are
+unmetered infrastructure, not a model under comparison.
+
+**Decision.**
+- **One router, three vendors.**
+  - `RoutedDecisions` (`packages/adapters/src/decisions.ts`) is the Gateway's decision provider. It sends `cloudflare/`
+    models to `WorkersAiDecisions` (REST: `/accounts/{id}/ai/run/@cf/cloudflare/<name>`, since the eval CLI runs in
+    Node without the `AI` binding) and `perplexity/` models to `PerplexityDecisions` (`/v1/decisions`). Everything
+    else goes to `JevDecisions`, unchanged.
+  - The router is always built, so a missing credential fails with the variable's name.
+  - `DecisionProvider.providerFor` lets the Gateway log the vendor that served each call.
+  - Workers AI calls never go through the local egress relay, which doesn't forward the Cloudflare API.
+- **Provider-neutral IDs.** The models are `cloudflare/clef`, `cloudflare/clef-flash` and
+  `perplexity/pplx-decider-v1-27b`. `@` separates a predictor's prompt version, so `@cf/…` can't be an ID, and the
+  adapter adds it (as `WorkersAiEmbedder` does).
+  - They are not flag variants: `DECISION_MODELS` holds only models the flag may serve, and `cloudflare/clef` is a
+    prefix of `-flash`, which the relabel forbids there.
+  - Neither vendor has a dated snapshot. The recorded snapshot is the model run (`@cf/cloudflare/clef`) or the name the
+    decider echoes.
+- **Limits.** `decisionModelLimits` gains `maxQuestions`: 64 a request for clef, 128 for the decider. `planDecision`
+  refuses a larger request before sending it, and the eval's batching splits at the limit.
+- **Answers checked, not trusted.** Read silently, a malformed answer would score as near-uniform and still count as
+  answered.
+  - The new adapters reject a whole response from a model not asked for, or one that can't be read. Usage is read
+    first, so the rejection keeps the cost.
+  - `DecisionPredictor` records a rejection as the model's failure (`output`): it keeps its cost share and is not
+    retried.
+  - A single malformed answer (wrong type, a choice outside the options, score levels not keyed `0..n-1`) is dropped,
+    so only its question fails.
+  - Jev's schema now accepts any `legend` (never read), since clef's allows any JSON per level.
+  - Missing setup (no account ID, no list rate) is a `DecisionSetupError`, refused before any request and never
+    retried. A Workers AI envelope carrying Cloudflare's authentication error (10000) is a 401.
+- **List rate, the one exception to `usage.cost`.**
+  - `DECISION_LIST_RATES` registers each model's published rate with its source and the day it was read: clef $0.24/M
+    input, clef-flash $0.09/M, the decider $0.04/M, output free.
+  - Cost is the response's `usage.cost` if a vendor ever sends one, else tokens × rate. A model routed to these vendors
+    without a rate is refused before any call.
+  - A price change is an edit there, reviewed like any other. Everywhere else, cost still comes from responses.
+- **E8 (`pnpm eval -- models`, Actions → Decision models, `docs/MODELS.md`).**
+  - Five raw-scale arms on the same sealed instances, states and requests, each from `full` and from `context`.
+    Served questions go one per request (their states are per question); Twin's go in batches of 20, never above any
+    model's own limit.
+  - Served questions from real people (`EvalInstance.population`), plus Twin-2K-500 at k = 30.
+  - A canary request per model first; people in chunks, all models per chunk, a chunk cut by the cap dropped for every
+    model.
+  - Probabilities compared after a temperature per model fitted leaving each person out (`looTemperatures`). Jev's
+    T = 4 was fitted on Jev.
+  - `MODELS_RULE`, fixed before the first run, calls each challenger `better`, `level`, `worse` or `insufficient`
+    against Jev. Operational checks gate the recommendation on errors and latency; cost is reported, not gated.
+- **Scope.** Offline only. No served config, shadow or flag variant names the new models; a `better` verdict leads to
+  a shadow config and a backfill in their own ADR.
+
+**Consequences.**
+- **Configuration.**
+  - The Cloudflare token used by the workflow needs Account · Workers AI · Read (`docs/DEPLOY.md`).
+  - `PERPLEXITY_API_KEY`, until now optional for people search, also serves the decider.
+  - The deployed Workers set no Cloudflare credentials, so serving is unchanged.
+- **Fixtures.**
+  - The Perplexity fixture is the response Perplexity documents as returned by a real call.
+  - The clef fixtures are built from Cloudflare's published schemas. Neither vendor's API was reachable from the
+    environment that wrote them: `api.perplexity.ai` is blocked by its egress policy, and it has no Cloudflare
+    credentials.
+  - The first run's `canary.json` holds recorded responses to replace both, as ADR-0009 did for Parallel.
+- **Costs move with list prices.** A vendor that changes its price without Mimic's rate changing is mis-costed until
+  someone edits the rate; the source link and date make that checkable.

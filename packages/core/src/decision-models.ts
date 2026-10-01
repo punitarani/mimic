@@ -11,11 +11,16 @@ export interface DecisionModelLimits {
   stringState: boolean;
   /** Only `noul` questions: `choice` and `score` are asked one option at a time and recomposed. */
   noulOnly: boolean;
+  /** Most questions a request may ask, counted as asked (before any yes/no split); none when undocumented. */
+  maxQuestions?: number;
 }
 
 const NONE: DecisionModelLimits = { stringState: false, noulOnly: false };
+/** From the published schemas (2026-10-01, ADR-0068): clef takes 64 questions a request, Perplexity's decider 128. */
 const LIMITS: ReadonlyArray<[prefix: string, limits: DecisionModelLimits]> = [
   ['respan/', { stringState: true, noulOnly: true }],
+  ['cloudflare/', { stringState: false, noulOnly: false, maxQuestions: 64 }],
+  ['perplexity/', { stringState: false, noulOnly: false, maxQuestions: 128 }],
 ];
 
 export function decisionModelLimits(model: string): DecisionModelLimits {
@@ -106,6 +111,10 @@ function combined(q: Exclude<DecisionQuestion, { type: 'noul' }>, probs: number[
  */
 export function planDecision(req: DecisionRequest): DecisionPlan {
   const limits = decisionModelLimits(req.model);
+  const asked = Object.keys(req.questions).length;
+  // Refused here rather than as the vendor's 400; the eval splits its batches by the same limit (`jevRequests`).
+  if (limits.maxQuestions !== undefined && asked > limits.maxQuestions)
+    throw new Error(`${req.model} takes at most ${limits.maxQuestions} questions a request (asked ${asked})`);
   if (!limits.stringState && !limits.noulOnly) return { request: req, answer: (res) => res };
   const state =
     limits.stringState && typeof req.state !== 'string' ? JSON.stringify(req.state ?? null) : req.state;

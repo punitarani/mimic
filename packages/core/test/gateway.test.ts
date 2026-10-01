@@ -107,6 +107,23 @@ describe('withModelCall (PLAN §3.5)', () => {
     expect(log.traces[0]).toMatchObject({ request: req, response: { ok: true } });
   });
 
+  it('logs the vendor that serves each model when the provider routes by model (ADR-0068)', async () => {
+    const log = new MemLog();
+    const routed: DecisionProvider = {
+      ...decisions(),
+      provider: 'decisions',
+      providerFor: (model) =>
+        model.startsWith('cloudflare/') ? 'workers-ai-decisions' : 'openrouter-decisions',
+    };
+    const g = new Gateway({ decisions: routed, llm, log, clock: () => 1, newId: () => 'id' });
+    await g.decide({ purpose: 'eval.models' }, { ...req, model: 'cloudflare/clef' });
+    await g.decide({ purpose: 'eval.models' }, req);
+    expect(log.rows.map((r) => [r.provider, r.model])).toEqual([
+      ['workers-ai-decisions', 'cloudflare/clef'],
+      ['openrouter-decisions', 'typesafe/jev-1.13'],
+    ]);
+  });
+
   it('logs failures with ok = false and rethrows', async () => {
     const { g, log } = gateway({ fail: true });
     await expect(g.decide({ purpose: 'x' }, req)).rejects.toThrow('boom');

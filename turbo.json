@@ -10,7 +10,16 @@
     "test": { "outputs": [], "env": ["LIVE"] },
     "test:live": {
       "cache": false,
-      "env": ["LIVE", "EGRESS_RELAY", "OPENROUTER_API_KEY", "EXA_API_KEY", "PARALLEL_API_KEY"]
+      "env": [
+        "LIVE",
+        "EGRESS_RELAY",
+        "OPENROUTER_API_KEY",
+        "EXA_API_KEY",
+        "PARALLEL_API_KEY",
+        "PERPLEXITY_API_KEY",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN"
+      ]
     },
     "dev": { "cache": false, "persistent": true }
   }

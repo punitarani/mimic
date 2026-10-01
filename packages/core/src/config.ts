@@ -158,6 +158,17 @@ export const DECISION_MODELS: Readonly<Record<string, string>> = {
   jev: JEV_MODEL,
   'span-01': SPAN_MODEL,
 };
+
+/**
+ * Decision models that speak the same API as Jev but are served outside OpenRouter (ADR-0068): Cloudflare's clef and
+ * clef-flash on Workers AI, and Perplexity's decider on its own API. The IDs are provider-neutral, with the vendor as
+ * a prefix, because `@` separates a predictor's prompt version (the adapter adds Workers AI's `@cf/`). None of them
+ * has a dated snapshot. They are compared offline by E8 (`pnpm eval -- models`, docs/MODELS.md) and are no flag
+ * variant: `DECISION_MODELS` holds only models the flag may serve.
+ */
+export const CLEF_MODEL = 'cloudflare/clef';
+export const CLEF_FLASH_MODEL = 'cloudflare/clef-flash';
+export const PPLX_DECIDER_MODEL = 'perplexity/pplx-decider-v1-27b';
 export const LLM = {
   luna: 'openai/gpt-6-luna',
   deepseek: 'deepseek/deepseek-v4.1-flash',

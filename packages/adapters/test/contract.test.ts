@@ -2,15 +2,24 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   answerToDistribution,
+  CLEF_FLASH_MODEL,
+  CLEF_MODEL,
   type DecisionRequest,
+  Gateway,
   isTimeoutError,
   isTransientError,
+  type ModelCallRecord,
+  type ModelCallTrace,
+  PPLX_DECIDER_MODEL,
   type ProviderCallRunner,
   planDecision,
   predictionQuestion,
+  RejectedResponseError,
 } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
+  answerProblems,
+  DECISION_LIST_RATES,
   ENRICH_EXCLUSIONS,
   ENRICH_OUTPUT_SCHEMA,
   ExaEnricher,
@@ -19,13 +28,17 @@ import {
   type FetchLike,
   HttpError,
   JevDecisions,
+  makeProviders,
   OpenAiDecisionsStub,
   OpenRouterChat,
   OpenRouterEmbedder,
   ParallelEnricher,
+  PerplexityDecisions,
+  RoutedDecisions,
   relayUrl,
   requestJson,
   schemaFacts,
+  WorkersAiDecisions,
 } from '../src';
 
 const argmaxKey = (d: Record<string, number>) => Object.entries(d).sort((a, b) => b[1] - a[1])[0]![0];
@@ -217,6 +230,233 @@ describe('Jev decisions (PLAN §5.1)', () => {
         'Predict how the person described in the state would answer this question, based only on the state: "Coffee or tea?"',
       criteria: { a: 'The person would choose: Coffee', b: 'The person would choose: Tea' },
     });
+  });
+});
+
+describe('decisions outside OpenRouter (ADR-0068)', () => {
+  const clefAsked = fixture('clef-decisions.request.json') as DecisionRequest;
+  const pplxAsked = fixture('pplx-decisions.request.json') as DecisionRequest;
+
+  it('runs clef on Workers AI: the @cf model, the bare name in the body, the envelope unwrapped, priced at list rate', async () => {
+    const { fetch, calls } = replay({ json: fixture('clef-decisions.json') });
+    const clef = new WorkersAiDecisions({ fetch, accountId: 'acct', apiToken: 't' });
+    const res = await clef.decide(clefAsked);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toBe(
+      'https://api.cloudflare.com/client/v4/accounts/acct/ai/run/@cf/cloudflare/clef',
+    );
+    expect(calls[0]!.headers.authorization).toBe('Bearer t');
+    // The request as asked, with the model the API expects: nothing else.
+    expect(calls[0]!.body).toEqual({ model: 'clef', state: clefAsked.state, questions: clefAsked.questions });
+    expect(res.modelSnapshot).toBe('@cf/cloudflare/clef');
+    expect(res.usage).toEqual({ inputTokens: 412, outputTokens: 3, costUsd: (412 * 0.24) / 1e6 });
+    expect(res.answers.urgent).toEqual({ type: 'noul', p: 0.97 });
+    expect(res.answers.team).toMatchObject({ type: 'choice', choice: 'technical', confidence: 0.88 });
+    expect(res.answers.severity).toMatchObject({ type: 'score', score: 2.62 });
+    expect(res.raw).toEqual(fixture('clef-decisions.json'));
+    // Read as Jev's answers are: score levels by index.
+    const dist = answerToDistribution(
+      { type: 'score', options: ['0', '1', '2', '3'].map((key) => ({ key, label: key })) },
+      res.answers.severity!,
+    );
+    expect(argmaxKey(dist)).toBe('3');
+  });
+
+  it('prices clef-flash at its own rate and calls its own model', async () => {
+    const env = fixture('clef-decisions.json') as { result: Record<string, unknown> };
+    const { fetch, calls } = replay({ json: { ...env, result: { ...env.result, model: 'clef-flash' } } });
+    const res = await new WorkersAiDecisions({ fetch, accountId: 'acct' }).decide({
+      ...clefAsked,
+      model: CLEF_FLASH_MODEL,
+    });
+    expect(calls[0]!.url).toMatch(/\/ai\/run\/@cf\/cloudflare\/clef-flash$/);
+    expect(calls[0]!.body?.model).toBe('clef-flash');
+    expect(res.usage.costUsd).toBeCloseTo((412 * 0.09) / 1e6, 12);
+  });
+
+  it("rejects a Workers AI error envelope, and doesn't retry a refused token", async () => {
+    const refused = replay({ status: 401, json: fixture('clef-decisions-auth-error.json') });
+    await expect(
+      new WorkersAiDecisions({ fetch: refused.fetch, accountId: 'acct', apiToken: 'bad' }).decide(clefAsked),
+    ).rejects.toMatchObject({ name: 'HttpError', status: 401 });
+    expect(refused.calls).toHaveLength(1);
+    // The same refusal in a 200 envelope is still a 401, so nothing retries it.
+    const unsuccessful = replay({ json: fixture('clef-decisions-auth-error.json') });
+    await expect(
+      new WorkersAiDecisions({ fetch: unsuccessful.fetch, accountId: 'acct' }).decide(clefAsked),
+    ).rejects.toMatchObject({ status: 401, message: expect.stringMatching(/Authentication error/) });
+    expect(unsuccessful.calls).toHaveLength(1);
+  });
+
+  it('refuses before any call without an account ID, or for a model with no list rate', async () => {
+    const { fetch, calls } = replay({ json: fixture('clef-decisions.json') });
+    const missing = await new WorkersAiDecisions({ fetch }).decide(clefAsked).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(missing).toMatchObject({
+      name: 'DecisionSetupError',
+      status: 400,
+      message: 'cloudflare/clef needs CLOUDFLARE_ACCOUNT_ID (and CLOUDFLARE_API_TOKEN)',
+    });
+    expect(isTransientError(missing)).toBe(false);
+    await expect(
+      new WorkersAiDecisions({ fetch, accountId: 'acct' }).decide({
+        ...clefAsked,
+        model: 'cloudflare/other',
+      }),
+    ).rejects.toThrow(/no list rate/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("runs Perplexity's decider with exactly model, state and questions, priced at list rate", async () => {
+    const { fetch, calls } = replay({ json: fixture('pplx-decisions.json') });
+    const res = await new PerplexityDecisions({ fetch, apiKey: 'p' }).decide(pplxAsked);
+    expect(calls[0]!.url).toBe('https://api.perplexity.ai/v1/decisions');
+    expect(calls[0]!.headers.authorization).toBe('Bearer p');
+    // Unknown top-level fields are a 400 there.
+    expect(Object.keys(calls[0]!.body ?? {}).sort()).toEqual(['model', 'questions', 'state']);
+    expect(calls[0]!.body?.model).toBe('pplx-decider-v1-27b');
+    expect(res.modelSnapshot).toBe('pplx-decider-v1-27b');
+    expect(res.usage).toEqual({ inputTokens: 367, outputTokens: 3, costUsd: (367 * 0.04) / 1e6 });
+    expect(res.answers.defect).toEqual({ type: 'noul', p: 0.9424522889347015 });
+    expect(res.answers.sentiment).toMatchObject({ type: 'choice', choice: 'mixed' });
+    expect(res.answers.severity).toMatchObject({ type: 'score', score: 1.7838686319784252 });
+  });
+
+  it('retries a rate limit but not a bad request', async () => {
+    const limited = replay({ status: 429, json: {} }, { json: fixture('pplx-decisions.json') });
+    const res = await new PerplexityDecisions({ fetch: limited.fetch }).decide(pplxAsked);
+    expect(limited.calls).toHaveLength(2);
+    expect(res.attempts).toBe(2);
+    const bad = replay({ status: 400, json: fixture('pplx-decisions-400.json') });
+    await expect(new PerplexityDecisions({ fetch: bad.fetch }).decide(pplxAsked)).rejects.toThrow(
+      /HTTP 400 .*Noul question must have criteria/,
+    );
+    expect(bad.calls).toHaveLength(1);
+  });
+
+  it('rejects a response from another model or one it cannot read, keeping what the call cost', async () => {
+    const good = fixture('pplx-decisions.json') as { model: string; answers: Record<string, unknown> };
+    const variants: Array<[unknown, RegExp]> = [
+      [{ ...good, model: 'pplx-decider-v2' }, /answered as pplx-decider-v2/],
+      [{ ...good, answers: { defect: { type: 'multi' } } }, /unreadable response/],
+    ];
+    for (const [json, message] of variants) {
+      const { fetch, calls } = replay({ json });
+      const err = await new PerplexityDecisions({ fetch })
+        .decide(pplxAsked)
+        .catch((e: unknown) => e as RejectedResponseError);
+      expect(err).toBeInstanceOf(RejectedResponseError);
+      expect((err as RejectedResponseError).message).toMatch(message);
+      expect((err as RejectedResponseError).outcome.usage.costUsd).toBe((367 * 0.04) / 1e6);
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it('drops only the answers that would be misread, so only their questions fail', async () => {
+    const good = fixture('pplx-decisions.json') as {
+      answers: Record<string, Record<string, unknown>>;
+    };
+    const json = {
+      ...good,
+      answers: {
+        defect: good.answers.defect,
+        // Score levels keyed from 1, a choice outside the options, an answer to no question.
+        severity: { ...good.answers.severity, probabilities: { 1: 0.1, 2: 0.2, 3: 0.7 } },
+        sentiment: { ...good.answers.sentiment, choice: 'neutral' },
+        extra: { type: 'noul', noul: 0.5 },
+      },
+    };
+    const { fetch } = replay({ json });
+    const res = await new PerplexityDecisions({ fetch }).decide(pplxAsked);
+    expect(Object.keys(res.answers)).toEqual(['defect']);
+    expect(res.usage.costUsd).toBeGreaterThan(0);
+    expect(
+      answerProblems(pplxAsked, {
+        severity: { type: 'score', score: 2, probabilities: { 1: 0.1, 2: 0.2, 3: 0.7 } },
+      }),
+    ).toEqual(['severity: probabilities for 3 not in the question']);
+  });
+
+  it("prices from the vendor's usage.cost when it sends one", async () => {
+    const good = fixture('pplx-decisions.json') as { usage: Record<string, number> };
+    const { fetch } = replay({ json: { ...good, usage: { ...good.usage, cost: 0.5 } } });
+    expect((await new PerplexityDecisions({ fetch }).decide(pplxAsked)).usage.costUsd).toBe(0.5);
+  });
+
+  it('has a list rate for every model it routes outside OpenRouter, from a named source', () => {
+    for (const model of [CLEF_MODEL, CLEF_FLASH_MODEL, PPLX_DECIDER_MODEL]) {
+      const rate = DECISION_LIST_RATES[model];
+      expect(rate, model).toBeDefined();
+      expect(rate!.inputUsdPerMTok).toBeGreaterThan(0);
+      expect(rate!.source).toMatch(/^https:\/\//);
+    }
+  });
+
+  it('routes each model to its vendor, names it per call, and keeps credentials out of traces', async () => {
+    const urls: string[] = [];
+    const fetch: FetchLike = async (url) => {
+      urls.push(url);
+      const name = url.includes('cloudflare')
+        ? 'clef-decisions.json'
+        : url.includes('perplexity')
+          ? 'pplx-decisions.json'
+          : 'jev-decisions.json';
+      return new Response(JSON.stringify(fixture(name)), { status: 200 });
+    };
+    const { decisions } = makeProviders(
+      {
+        CLOUDFLARE_ACCOUNT_ID: 'acct-1234',
+        CLOUDFLARE_API_TOKEN: 'cf-token-secret',
+        PERPLEXITY_API_KEY: 'pplx-key-secret',
+        OPENROUTER_API_KEY: 'sk-or-v1-secret',
+        // Clef never goes through the local relay, which doesn't forward the Cloudflare API.
+        EGRESS_RELAY: 'http://127.0.0.1:8790',
+        EMBEDDINGS_PROVIDER: 'hash',
+      },
+      { embeddingModel: 'baai/bge-base-en-v1.5', fetch },
+    );
+    expect(decisions.providerFor?.(CLEF_MODEL)).toBe('workers-ai-decisions');
+    expect(decisions.providerFor?.(PPLX_DECIDER_MODEL)).toBe('perplexity-decisions');
+    expect(decisions.providerFor?.('typesafe/jev-1.13')).toBe('openrouter-decisions');
+    expect(decisions.provider).toBe('openrouter-decisions');
+
+    const rows: ModelCallRecord[] = [];
+    const traces: ModelCallTrace[] = [];
+    const g = new Gateway({
+      decisions,
+      llm: new OpenRouterChat({ fetch }),
+      log: {
+        write: async (r, t) => {
+          rows.push(r);
+          traces.push(t);
+        },
+      },
+      clock: () => 1,
+      newId: () => 'id',
+    });
+    await g.decide({ purpose: 'eval.models' }, clefAsked);
+    await g.decide({ purpose: 'eval.models' }, pplxAsked);
+    await g
+      .decide({ purpose: 'eval.models' }, { ...pplxAsked, model: 'typesafe/jev-1.13' })
+      .catch(() => null);
+    expect(urls[0]).toBe(
+      'https://api.cloudflare.com/client/v4/accounts/acct-1234/ai/run/@cf/cloudflare/clef',
+    );
+    expect(urls[1]).toBe('http://127.0.0.1:8790/api.perplexity.ai/v1/decisions');
+    expect(urls[2]).toBe('http://127.0.0.1:8790/openrouter.ai/api/alpha/decisions');
+    expect(rows.slice(0, 2).map((r) => [r.provider, r.model, r.ok])).toEqual([
+      ['workers-ai-decisions', CLEF_MODEL, true],
+      ['perplexity-decisions', PPLX_DECIDER_MODEL, true],
+    ]);
+    expect(rows[0]!.costUsd).toBeGreaterThan(0);
+    // A router inside a router still names the vendor.
+    const nested = new RoutedDecisions(new JevDecisions({ fetch }), [['cloudflare/', decisions]]);
+    expect(nested.providerFor(CLEF_MODEL)).toBe('workers-ai-decisions');
+    const logged = JSON.stringify({ rows, traces });
+    for (const secret of ['acct-1234', 'cf-token-secret', 'pplx-key-secret', 'sk-or-v1-secret'])
+      expect(logged).not.toContain(secret);
   });
 });
 

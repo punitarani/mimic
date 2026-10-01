@@ -779,17 +779,27 @@ export function planCells(
   return cells;
 }
 
+/**
+ * Each instance with its state replaced by one view of it (`viewState`). The view's hash is in the ID, so arms that
+ * show the same state (e.g. `answers` and `full` for a person with no traits or insights) share one cached prediction
+ * instead of paying twice.
+ */
+export function viewInstances(
+  instances: EvalInstance[],
+  view: StateView,
+): Array<{ inst: EvalInstance; v: EvalInstance }> {
+  return instances.map((inst) => {
+    const state = viewState(inst.state, view, inst.question);
+    return { inst, v: { ...inst, id: `${inst.id}~${state.meta.stateHash.slice(0, 16)}`, state } };
+  });
+}
+
 async function runCell(
   cell: Cell,
   c: Candidate,
   opts: { gateway: Gateway; meter: Meter; cache: Map<string, EvalRecord>; concurrency: number },
 ): Promise<{ records: EvalRecord[]; stop: BudgetStop | null }> {
-  const viewed = cell.instances.map((inst) => {
-    const state = viewState(inst.state, cell.view, inst.question);
-    // The view's hash is in the ID, so arms that show the same state (e.g. `answers` and `full` for a person with no
-    // traits or insights) share one cached prediction instead of paying twice.
-    return { inst, v: { ...inst, id: `${inst.id}~${state.meta.stateHash.slice(0, 16)}`, state } };
-  });
+  const viewed = viewInstances(cell.instances, cell.view);
   const key = (id: string) => `${c.hash}|${id}`;
   // A prediction an earlier arm paid for (the same state) costs this arm nothing, so the arms' $ add up to the spend.
   const reused = new Set(viewed.filter((x) => opts.cache.has(key(x.v.id))).map((x) => x.v.id));
