@@ -25,7 +25,7 @@ import {
   predictorIdSpellings,
   servedPredictorId,
 } from '../src/config';
-import { temperatureScale } from '../src/distribution';
+import { argmax, temperatureScale } from '../src/distribution';
 import { Gateway } from '../src/gateway';
 import { predictionQuestion } from '../src/jev';
 import {
@@ -593,9 +593,65 @@ describe('view variants (ADR-0065)', () => {
     expect(predictorIdProblem('llm:acme/other@predict.v2-context')).not.toBeNull();
   });
 
+  it('the scale variant asks a score question as a choice of its labels and reads the answer back (ADR-0066)', async () => {
+    const decided: DecisionRequest[] = [];
+    const gw = new Gateway({
+      decisions: {
+        provider: 'x',
+        decide: async (req) => {
+          decided.push(req);
+          return {
+            modelSnapshot: 'jev-snap',
+            answers: Object.fromEntries(
+              Object.entries(req.questions).map(([k, dq]) => [
+                k,
+                {
+                  type: 'choice' as const,
+                  choice: '3',
+                  probabilities: Object.fromEntries(
+                    Object.keys(dq.criteria).map((c) => [c, c === '3' ? 0.6 : 0.1]),
+                  ),
+                },
+              ]),
+            ),
+            usage: { inputTokens: 1, outputTokens: 0, costUsd: 0 },
+            latencyMs: 1,
+            raw: {},
+          };
+        },
+      },
+      llm: { provider: 'x', chat: async () => Promise.reject(new Error('unused')) },
+      log: { write: async () => {} },
+      clock: () => 0,
+      newId: () => 'id',
+    });
+    const scale: Question = {
+      ...q('choice'),
+      type: 'score',
+      options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Always'].map((label, i) => ({
+        key: String(i),
+        label,
+      })),
+    };
+    const p = makePredictor(gw, 'decision:typesafe/jev-1.13@jev-scales.v1', { purpose: 't' });
+    const [r] = await p.predict(state, [scale]);
+    const sent = Object.values(decided[0]!.questions)[0]!;
+    expect(sent.type).toBe('choice');
+    expect(Object.keys(sent.criteria)).toEqual(['0', '1', '2', '3', '4']);
+    expect(r!.ok).toBe(true);
+    expect(argmax(r!.dist)).toBe('3');
+    expect(Object.keys(r!.dist).sort()).toEqual(['0', '1', '2', '3', '4']);
+    // The incumbent still uses the score primitive.
+    await makePredictor(gw, 'decision:typesafe/jev-1.13@jev-predict.v2', { purpose: 't' })
+      .predict(state, [scale])
+      .catch(() => undefined);
+    expect(Object.values(decided[1]!.questions)[0]!.type).toBe('score');
+  });
+
   it('a view is not a calibration: only text- and view-identical variants count as one', () => {
     expect(isCalibrationOnly('jev-predict.v2')).toBe(true);
     expect(isCalibrationOnly('jev-derived.v1')).toBe(false);
+    expect(isCalibrationOnly('jev-scales.v1')).toBe(false);
     expect(isCalibrationOnly('predict.v2')).toBe(false);
     expect(isCalibrationOnly('nope')).toBe(false);
     // The incumbents' resolved harness has no view, so their prompt hashes are unchanged by the option.

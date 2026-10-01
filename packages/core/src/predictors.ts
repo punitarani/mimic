@@ -81,7 +81,7 @@ export class DecisionPredictor implements Predictor {
     const state = seenState(sealed, this.prompt);
     const questions: Record<string, DecisionQuestion> = {};
     const c = this.prompt.components;
-    for (const q of qs) questions[jevKey(q)] = predictionQuestion(q, c);
+    for (const q of qs) questions[jevKey(q)] = predictionQuestion(q, c, this.prompt.harness.scoreAs);
     try {
       const res = await this.gateway.decide(this.ctx, {
         model: this.model,

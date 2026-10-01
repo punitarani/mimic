@@ -16,10 +16,11 @@ held-out items. Nothing here is a result about a Mimic user, and nothing comes f
 | Replay matrix | `full` (the served state: every answer until the §9.9 budget, then anchors + retrieved + recent), `raw`, and `card` (identity + traits + capped answers) under `mixed`, `recent`, `similar` and `surprise` at a cap of 12, and under `surprise` and `recent` at a cap of 6; two passes each, the second with per-question rows for paired comparisons |
 | Transfer | `pnpm eval -- transfer` at k = 30, 20 held-out targets per person, six views, with sealed `soul.v1` drafts written by DeepSeek V4.1 Flash; a DeepSeek reader (`predict.v2` settings) on 10 people, a Jev reader on 60, raw and calibrated |
 | Calibrated | The card and `surprise` cells again with `decision:typesafe/jev-1.13@jev-predict.v2`, one pass with rows |
+| Scales | `evaluate` on all 120 people, the calibrated primary with scale questions asked by the `score` primitive and as choices, k = 30 and 100 |
 | Residual | `evaluate` on all 120 people, 20 held-out items each, Jev and DeepSeek on the state and on the context alone, scored against the leave-one-out item mean |
 | Per target | `replay --per-target`, one state per held-out question, retrieved by word overlap or embeddings, and the `fill` policy; calibrated primary, 20 targets per person |
 | E6 | `pnpm eval -- evidence` on the same import at k = 10, 30 and 100 (ADR-0053), Jev calibrated, 20 targets per person |
-| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 each for the raw and calibrated Jev ones, $0.73 for E6, $3.35 for the per-target runs, $1.65 for the residual runs; about $10 in all |
+| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 each for the raw and calibrated Jev ones, $0.73 for E6, $3.35 for the per-target runs, $1.65 for the residual runs, $0.20 for the scale runs; about $10 in all |
 | Intervals | Paired by question, bootstrapped over people (2,000 resamples, 5th–95th percentile), so that correlated questions within a person do not narrow them |
 
 The commands are in `docs/VALIDATION.md` under this report's heading; report files, rows and traces stay in `data/`
@@ -89,6 +90,9 @@ The commands are in `docs/VALIDATION.md` under this report's heading; report fil
     other respondents predict a held-out item as well as Jev with 30 answers (−0.005 [−0.025, +0.015]); DeepSeek
     passes them (−0.030 [−0.058, −0.001]). Pooling either model with the item mean beats both on test people, and more
     with the answers than without. See "Against the population", below.
+12. **Jev reads scales better as choices.** Asking the five-point items as unordered choices instead of with the
+    `score` primitive lowers their log loss by −0.059 [−0.084, −0.034] at k = 30 and −0.082 at k = 100. See "Scale
+    questions asked as choices", below.
 
 ## Replay matrix, second pass (60 people, 3,932 predictions per cell)
 
@@ -407,6 +411,21 @@ shared (anchors, reserve items, E7's shared probes; `evaluate --from stored` now
 with the primary is the largest gain measured in this benchmark that costs no model call, but it crosses people.
 Invariant 8 allows it only as a flagged experiment, from `item_stats` aggregates with a minimum group size, and never
 in a prompt or a state.
+
+## Scale questions asked as choices (ADR-0066)
+
+Jev's weakest items are the five-point policy questions, asked with the Decisions API's `score` primitive. `evaluate`
+on all 120 people, 20 held-out items each, with the same calibrated primary asked those items as unordered choices
+(`harness.scoreAs: 'choice'`); intervals over the 118 people who had policy items.
+
+| k | Scale questions | Log loss, `score` primitive | Log loss, as choices | Δ [90% CI] | Top-1, primitive → choices |
+| --- | --- | --- | --- | --- | --- |
+| 30 | 389 | 1.435 | 1.376 | −0.059 [−0.084, −0.034] | 43.2% → 45.8% |
+| 100 | 389 | 1.744 | 1.661 | −0.082 [−0.111, −0.052] | 15.2% → 16.7% |
+
+With each format at its own temperature fitted on dev people (4.07 for the primitive, 3.54 for choices) the gain at
+k = 30 is −0.067 [−0.101, −0.034]. Choice and yes/no questions are untouched (0.684 against 0.683). The variant is a
+shadow in `cfg.default.v10` (`jev-scales.v1`); served scale questions decide whether it serves.
 
 ## E6 on the same import (ADR-0053)
 

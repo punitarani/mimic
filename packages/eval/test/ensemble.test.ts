@@ -81,8 +81,8 @@ describe('ensembles of stored predictions (ADR-0058)', () => {
       since: joined[1]!.createdAt,
     });
     expect(new Set(later.map((i) => i.mimicId))).toEqual(new Set([joined[1]!.id]));
-    // The default config's primary and seven shadows (five LLMs and two view shadows, ADR-0065).
-    expect(r.members.length).toBe(8);
+    // The default config's primary and eight shadows (five LLMs, two view shadows and the scale shadow).
+    expect(r.members.length).toBe(9);
     expect(r.members).toContain('decision:typesafe/jev-1.13@jev-predict.v2');
     expect(r.methods.map((m) => m.method)).toEqual([
       'primary',
