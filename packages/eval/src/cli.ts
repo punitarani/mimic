@@ -62,6 +62,7 @@ Commands
                             which answers a state keeps once over budget or cap (ADR-0054)
             [--views full,raw,structured,summary]   also predict from each of these views of the same evidence and
                             pool them log-linearly at equal weight: the evidence-view ensemble (ADR-0056)
+            [--rows]   also write every scored prediction to rows.json beside the report, for paired comparisons
             --mode online   rebuild each online primary's state and re-predict (needs --keep-identity export)
   footprint   Parse the person's own exports into clean documents (ADR-0059; no model calls): tweets.js (X archive),
             Profile/Positions/Education/Skills/Shares.csv (LinkedIn), posts.csv and comments.csv (Reddit),
@@ -83,7 +84,8 @@ Commands
             in-context state; per view: accuracy, log loss, lift, tokens, cost
             --data <file.sqlite> [--readers llm:deepseek/deepseek-v4.1-flash[,jev:typesafe/jev-1.13]]
             [--views context,state,card,soul-core,soul-full,mimic-json] [--checkpoints 10,20] [--split dev]
-            [--targets later|heldout] [--draft] [--card-max 12] [--card-policy surprise] [--limit N] [--offline]
+            [--targets later|heldout] [--draft] [--card-max 12] [--card-policy surprise] [--limit N]
+            [--max-targets N] [--offline]
   select    Pool-restricted selection simulation (biased; iteration only)
             --data <file.sqlite> --selector random|coverage|entropy|bald|voi|voi-v8[,…] --budget 5,10,20
             [--split dev] [--limit N] [--no-population]   several selectors run on the same people, side by side
@@ -270,6 +272,7 @@ async function replayCmd(argv: string[]) {
       'max-evidence': { type: 'string' },
       budget: { type: 'string' },
       views: { type: 'string' },
+      rows: { type: 'boolean', default: false },
       checkpoints: { type: 'string', default: '10,20,30' },
       split: { type: 'string', default: 'dev' },
       targets: { type: 'string', default: 'later' },
@@ -317,6 +320,9 @@ async function replayCmd(argv: string[]) {
       hash,
     );
     run = r.run;
+    // Every scored row beside the report, so two runs can be compared pairwise by question (data/bench/compare.py).
+    if (values.rows)
+      writeFileSync(resolve(writeReport(run).md, '..', 'rows.json'), `${JSON.stringify(r.rows)}\n`);
   }
   const files = writeReport(run);
   console.log(renderReport(run));
@@ -451,6 +457,7 @@ async function transferCmd(argv: string[]) {
       'card-max': { type: 'string', default: '12' },
       'card-policy': { type: 'string', default: 'surprise' },
       limit: { type: 'string' },
+      'max-targets': { type: 'string' },
       seed: { type: 'string', default: 'transfer' },
       name: { type: 'string' },
       offline: { type: 'boolean', default: false },
@@ -479,6 +486,7 @@ async function transferCmd(argv: string[]) {
       cardPolicy: parsePolicy(values['card-policy']),
       seed: values.seed,
       ...(values.limit ? { limitPeople: Number(values.limit) } : {}),
+      ...(values['max-targets'] ? { maxTargets: Number(values['max-targets']) } : {}),
     },
     await datasetHash(engine.client),
   );

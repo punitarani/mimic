@@ -73,6 +73,8 @@ export interface ReplayResult {
   checkpoints: CheckpointMetrics[];
   costPerPersonUsd: number;
   modelSnapshots: string[];
+  /** Every scored prediction (question ids carry `@k`), so two runs can be compared pairwise by question. */
+  rows: ScoredRow[];
 }
 
 export const HELDOUT_PREFIX = 'twin2k/w4/';
@@ -348,7 +350,13 @@ export async function replay(deps: EngineDeps, spec: ReplaySpec, datasetHash: st
     createdAt: deps.clock(),
   };
   await deps.store.putEvalRun(run);
-  return { run, checkpoints, costPerPersonUsd: cost / people, modelSnapshots: [...snapshots].sort() };
+  return {
+    run,
+    checkpoints,
+    costPerPersonUsd: cost / people,
+    modelSnapshots: [...snapshots].sort(),
+    rows: [...rowsByK.values()].flat(),
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------------------

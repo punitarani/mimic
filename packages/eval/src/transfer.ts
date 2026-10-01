@@ -3,6 +3,7 @@ import {
   argmax,
   buildSoul,
   buildState,
+  DEFAULT_PROMPT_VERSION,
   EMPTY_CURATION,
   type EngineDeps,
   type EvalRunRecord,
@@ -11,7 +12,6 @@ import {
   facetsFor,
   type Gateway,
   INCUMBENT_COMPONENTS,
-  INCUMBENT_HARNESS,
   isPredictedKind,
   isScoredKind,
   keyedByLabel,
@@ -25,7 +25,9 @@ import {
   mimicDocParts,
   normalizeDist,
   optionKeys,
+  PREDICT_PROMPTS,
   PROMPTS,
+  type PredictHarness,
   type PredictionResult,
   type PredictorMetrics,
   parseJsonLoose,
@@ -35,7 +37,9 @@ import {
   probsSchema,
   type Question,
   type QuestionRecord,
+  reasoningOf,
   renderStateText,
+  resolvePredictPrompt,
   type ScoredRow,
   type SoulDraftRecord,
   type SoulSource,
@@ -77,6 +81,8 @@ export interface TransferSpec {
   cardMaxEvidence: number;
   cardPolicy: EvidencePolicy;
   limitPeople?: number;
+  /** At most this many target answers per person and checkpoint, sampled by seed (an LLM reader pays per call). */
+  maxTargets?: number;
   seed: string;
 }
 
@@ -121,12 +127,17 @@ const CHUNK = 40;
 
 class LlmViewReader implements ViewReader {
   readonly id: string;
+  private readonly harness: Pick<PredictHarness, 'reasoningEffort' | 'reasoningMaxTokens' | 'maxTokens'>;
   constructor(
     private readonly gateway: Gateway,
     private readonly model: string,
     private readonly purpose: string,
   ) {
     this.id = `llm:${model}`;
+    const measured = PREDICT_PROMPTS['predict.v2']?.modelHarness?.[model];
+    this.harness = measured
+      ? resolvePredictPrompt('predict.v2', 'llm', model).harness
+      : resolvePredictPrompt(DEFAULT_PROMPT_VERSION.llm, 'llm', model).harness;
   }
 
   predict(view: string, qs: Question[]): Promise<PredictionResult[]> {
@@ -149,8 +160,10 @@ class LlmViewReader implements ViewReader {
             },
           ],
           jsonSchema: { name: 'probs', schema: probsSchema({ schema: 'probs', keyEnum: true }, keys) },
-          reasoningEffort: 'low',
-          maxTokens: INCUMBENT_HARNESS.maxTokens,
+          // The model's measured reasoning control and cap (`predict.v2`, ADR-0041) when it has them; else the
+          // incumbent's low effort and cap. The file is long, so a cap sized for the model keeps the answer intact.
+          ...reasoningOf(this.harness),
+          maxTokens: this.harness.maxTokens,
         },
       );
       const base = { costUsd: res.usage.costUsd, latencyMs: res.latencyMs, modelSnapshot: res.modelSnapshot };
@@ -359,7 +372,9 @@ export async function transfer(
 
     for (const k of spec.checkpoints) {
       if (k > train.length) continue;
-      const targets = spec.targets === 'heldout' ? heldout : items.slice(k);
+      let targets = spec.targets === 'heldout' ? heldout : items.slice(k);
+      if (spec.maxTargets !== undefined)
+        targets = shuffle(targets, seededRng(`targets:${spec.seed}:${m.id}:${k}`)).slice(0, spec.maxTargets);
       if (!targets.length) continue;
       const beforeSeq = train[k - 1]!.seq + 1;
       const trainSeqs = new Set(train.slice(0, k).map((e) => e.seq));
