@@ -606,3 +606,22 @@ Intervals are paired by question and bootstrapped over people.
 - **Not run:** `ensemble` and `population` need stored shadows and trait estimates, which an import has neither of.
 - **Fixed on the way:** a soul-draft timeout aborted the first Jev transfer run; the eval now counts a failed draft
   (`draftsFailed`) and continues without that person's narrative.
+
+## E7: held-out probes (ADR-0062)
+
+Scripted sessions on offline fakes: a check of the machinery, not a result. Nothing has run on people.
+
+- `packages/core/test/probes.test.ts`: slot 0 is owed at once and later slots wait for the session's other answers
+  (repeats count, probes don't); a discarded probe is owed again and a repeat of a probe is not one; distance reads
+  near at two answers on a facet, mid at one, far at none; the scheduled shared item is the same for everyone; a near
+  probe with nothing near is served far and says so; repeats ask the earliest answered anchor once; cfg.e7.probes is
+  cfg.default.v8 plus the probes and a longer session, and no older config hash moved.
+- `packages/eval/test/probes.test.ts`: three scripted people under the `e7` preset each get all fourteen probes in
+  slot order, opening with the first shared item; the selector never asks a shared item early; no probe touches a
+  sensitive facet; every probe has a primary and a baseline sealed below its seq, with the state blob to match;
+  repeats re-ask anchors. `pnpm eval -- probes` sees no one by default (scripted people are not people) and, with
+  `--population all`, reads 42 probes from three people with tiers, slots, shadows, repeat consistency and a verdict of
+  `insufficient`. `pnpm eval -- evidence --probes-only` scores every served arm on exactly the probes.
+- `packages/eval/test/optimize.test.ts`: `calibrationFits` adds a temperature per band of answers in the state for
+  the primary (RESEARCH §10.4).
+

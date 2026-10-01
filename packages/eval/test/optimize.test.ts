@@ -170,6 +170,10 @@ describe('evaluate', () => {
     expect(Object.keys(b.byType).length).toBeGreaterThan(1);
     const fits = calibrationFits(instances);
     expect(fits.some((f) => f.method === 'temperature')).toBe(true);
+    // The primary also gets a temperature per band of answers in the state.
+    expect(
+      fits.some((f) => f.predictor.endsWith('(primary)') && f.method.endsWith('answers in the state')),
+    ).toBe(true);
     for (const f of fits) expect(f.fitAfter).toBeLessThanOrEqual(f.fitBefore + 1e-9);
     const t = temperatureScale({ a: 0.9, b: 0.1 }, 2);
     expect(t.a).toBeLessThan(0.9);

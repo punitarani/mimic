@@ -28,6 +28,7 @@ import { parseFootprintDir } from './footprint';
 import { calibrateGates, sampleDrafts } from './gates';
 import { openLocalEngine } from './local';
 import { diagnoseCmd, evaluateCmd, loadData, loadOptsOf, optimizeCmd } from './optimize/commands';
+import { probeReadout } from './probes';
 import { replay, reproduceOnline } from './replay';
 import { publishReport, renderReport, writeReport } from './report';
 import { POPULATIONS, type Population, rubricRun } from './rubric';
@@ -75,6 +76,10 @@ Commands
             Smallville renderings; writes population.json next to the report
             --data <file.sqlite> [--agents 100] [--k 5] [--kappa 10] [--min-people 5] [--split dev]
             [--population real|all] [--seed population]
+  probes    E7's readout (ADR-0062, docs/PROBE.md; no model calls): what the stored predictions on served probes
+            say the mimic learned, per distance tier and slot against the context-only baseline, shared-item
+            residual and individuation, repeat consistency, and PROBE_RULE's verdict
+            --data <file.sqlite> [--population real|all] [--seed probes]
   ensemble  Prequential ensembles of the stored primary and shadows (ADR-0058; no model calls): equal-weight pools,
             Hedge/BMA weights learned from each person's earlier questions, and a hindsight oracle, paired against
             the primary with bootstrap intervals
@@ -119,7 +124,8 @@ Commands
             dose and response, individuation, reproduction checks and EVIDENCE_RULE's verdict
             --data <a.sqlite>[,<b.sqlite>] [--split all] [--k 10,30,100] [--max-targets 20] [--limit N]
             [--jev <id>] [--llm <id>|none] [--views a,b] [--llm-views a,b] [--llm-people 40] [--llm-k 30]
-            [--max-usd 4] [--concurrency 8] [--publish local|preview|prod] [--summary <file>] [--offline]
+            [--max-usd 4] [--concurrency 8] [--probes-only] [--publish local|preview|prod] [--summary <file>]
+            [--offline]
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
             --data … --predictor decision:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
             [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]
@@ -410,6 +416,33 @@ async function populationCmd(argv: string[]) {
   writeFileSync(out, `${JSON.stringify(doc, null, 2)}\n`);
   console.log(renderReport(run));
   console.log(`\nrun ${run.id} → ${files.md}\npopulation → ${out}`);
+  engine.close();
+}
+
+async function probesCmd(argv: string[]) {
+  const { values } = parseArgs({
+    args: argv,
+    options: {
+      data: { type: 'string' },
+      population: { type: 'string', default: 'real' },
+      seed: { type: 'string', default: 'probes' },
+      name: { type: 'string' },
+    },
+  });
+  if (!values.data) throw new Error('--data is required');
+  if (values.population !== 'real' && values.population !== 'all')
+    throw new Error('--population must be real or all');
+  const engine = await openLocalEngine({ db: resolve(values.data), providers: 'offline' });
+  const { run } = await probeReadout(
+    engine.deps,
+    { name: values.name ?? 'E7 probes', population: values.population, seed: values.seed },
+    await datasetHash(engine.client),
+  );
+  if (values.population === 'all')
+    console.warn('⚠ Includes scripted or imported people: a check of the machinery, not a result.');
+  const files = writeReport(run);
+  console.log(renderReport(run));
+  console.log(`\nrun ${run.id} → ${files.md}`);
   engine.close();
 }
 
@@ -747,6 +780,8 @@ async function main() {
       return selectCmd(rest);
     case 'transfer':
       return transferCmd(rest);
+    case 'probes':
+      return probesCmd(rest);
     case 'ensemble':
       return ensembleCmd(rest);
     case 'population':

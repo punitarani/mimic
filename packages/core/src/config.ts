@@ -8,6 +8,7 @@ import {
   resolvePredictPrompt,
 } from './components';
 import { canonicalJson, sha256Hex } from './hash';
+import { ProbeConfig } from './probes';
 
 /**
  * Why a predictor ID can't be served, or null. A config naming an unregistered prompt version would otherwise throw on
@@ -137,6 +138,8 @@ export const PipelineConfig = z.object({
   session: z.object({ target: z.number().int(), budgetUsd: z.number() }),
   /** ADR-0005: the embedding model is part of the config because it drives dedupe and retrieval. */
   embedding: z.object({ model: z.string() }),
+  /** E7's held-out probes (ADR-0062, docs/PROBE.md). Optional and undefaulted, so older hashes hold. */
+  probes: ProbeConfig.optional(),
 });
 export type PipelineConfig = z.infer<typeof PipelineConfig>;
 
@@ -332,6 +335,33 @@ export const E3B_CONTROL_CONFIG: PipelineConfig = {
   },
 };
 export const E3B_CONTROL_LABEL = 'cfg.e3b.control';
+
+/**
+ * E7's schedule (ADR-0062): fourteen probes per person. Shared items are three plainly worded reserve.v2 items on
+ * non-sensitive facets in three categories; the distance tiers draw from the rest of the reserve bank.
+ */
+export const PROBE_V1: ProbeConfig = {
+  set: 'probe.v1',
+  shared: ['reserve.v2/need_for_cognition_1', 'reserve.v2/norm_compliance_1', 'reserve.v2/forgiveness_1'],
+  slots: [
+    { after: 0, tiers: ['shared', 'far'] },
+    { after: 10, tiers: ['near', 'mid', 'shared'] },
+    { after: 20, tiers: ['near', 'mid', 'far'] },
+    { after: 30, tiers: ['repeat', 'repeat', 'near', 'mid', 'far', 'shared'] },
+  ],
+};
+const PROBES_V1 = PROBE_V1.slots.reduce((a, s) => a + s.tiers.length, 0);
+
+/**
+ * `cfg.e7.probes` (ADR-0062): cfg.default.v8 with the probes. The session target grows by the fourteen probes, so a
+ * person who reaches it has answered v8's 30 and every probe; the session budget grows by about the same share.
+ */
+export const E7_PROBES_CONFIG: PipelineConfig = {
+  ...DEFAULT_CONFIG,
+  probes: PROBE_V1,
+  session: { target: DEFAULT_CONFIG.session.target + PROBES_V1, budgetUsd: 0.75 },
+};
+export const E7_PROBES_LABEL = 'cfg.e7.probes';
 
 /**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never

@@ -728,11 +728,19 @@ function fitParam(
 }
 
 /**
- * Fits on dev people and checks on test people: a temperature per predictor, shrinkage of the primary toward its
- * baseline, and a log-linear pool of the primary with each LLM shadow. With one or two people these are
+ * Fits on dev people and checks on test people: a temperature per predictor (and, for the primary, per band of
+ * answers in the state), shrinkage of the primary toward its baseline, and a log-linear pool of the primary with each
+ * LLM shadow. With one or two people these are
  * descriptive; the test columns are the honest ones. "Before" is the stored distribution as served (a temperature of
  * 1 leaves it untouched); other temperatures floor it at P_FLOOR first, a difference under 1e-4 nats.
  */
+const EVIDENCE_BANDS: Array<[string, number, number]> = [
+  ['0', 0, 0],
+  ['1–9', 1, 9],
+  ['10–29', 10, 29],
+  ['30+', 30, Number.POSITIVE_INFINITY],
+];
+
 export function calibrationFits(instances: EvalInstance[]): FitRow[] {
   const rows: FitRow[] = [];
   // 0.25 to 16: the first prod report put Jev's best temperature at the old top of 4 (ADR-0041).
@@ -768,6 +776,26 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
     const method = own === 1 ? 'temperature' : `temperature (on top of its own ${own})`;
     rows.push(fitParam(k, method, temps, dev, test, (p, t) => temperatureScale(p.dist, t), 1));
     if (k.endsWith('(primary)')) {
+      // One temperature does not hold across state sizes (Twin: ECE 0.036 at 30 answers, 0.111 at 100), so the
+      // primary also gets one fit per size band: the numbers a temperature by evidence count would start from.
+      for (const [label, lo, hi] of EVIDENCE_BANDS) {
+        const band = ps.filter(
+          (p) => p.inst.state.evidence.length >= lo && p.inst.state.evidence.length <= hi,
+        );
+        const [bd, bt] = split(band);
+        if (bd.length >= 10)
+          rows.push(
+            fitParam(
+              k,
+              `${method}, ${label} answers in the state`,
+              temps,
+              bd,
+              bt,
+              (p, t) => temperatureScale(p.dist, t),
+              1,
+            ),
+          );
+      }
       const withBase = ps.filter((p) => p.inst.baseline);
       const [d2, t2] = split(withBase);
       if (d2.length >= 10)

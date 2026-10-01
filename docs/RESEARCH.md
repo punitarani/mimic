@@ -334,7 +334,7 @@ benchmark either way.
 
 | Step | Needs | Decides |
 | --- | --- | --- |
-| E7 probe set (`docs/PROBE.md`): bank, schedule, `probe` kind, readout | nothing; people to read it | §10.1, E3b's yardstick |
+| E7 probe set (`docs/PROBE.md`): built as `cfg.e7.probes` and the `e7` preset; start it in `/lab` | people to read it | §10.1, E3b's yardstick |
 | Evidence hash for the reproduction check; temperature by evidence count | nothing | §10.4, §10.5 |
 | Retrieval by meaning and the LLM-written state for Jev, as shadows on served questions | nothing | §10.2, §10.3 |
 | Run `transfer`, `ensemble`, `replay --evidence` on the consented cohort | people, ~$1 | §3.1, §2.1, §6.1 |
@@ -393,9 +393,10 @@ and preserved dispersion (0.197 against 0.127 for recency at k = 30) at the same
 ### 10.4 Calibration by state size
 
 One temperature holds at 30 answers (ECE 0.036) and not at 100 (0.111). A view that changes the state's size changes
-its calibration, so every log-loss comparison between views mixes two effects. **Build:** T as a function of evidence
-count (or tokens), fitted prequentially on stored predictions as ADR-0048 fitted the constant; report ECE by k on
-every readout. Cheap and decisive; it goes before any view is judged on log loss again.
+its calibration, so every log-loss comparison between views mixes two effects. **Built:** `pnpm eval -- evaluate
+--from stored` fits the primary's temperature per band of answers in the state (0, 1–9, 10–29, 30+) on dev people and
+checks it on test people, beside the single temperature; E7's readout reports ECE per slot. **Next:** once a fit
+holds on test people, a registered variant with a temperature by evidence count, shadowed before it serves.
 
 ### 10.5 The yardsticks themselves
 

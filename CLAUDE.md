@@ -21,7 +21,7 @@ pnpm db:migrate:local       # remote migrations run as part of each deploy
 pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Workers (CI's build job)
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
-pnpm eval -- <export|replay|select|import|report|session|rubric|arms|cohort|evaluate|diagnose|optimize|benchmark|evidence|drafts|gates|transfer|ensemble|population|footprint> ...
+pnpm eval -- <export|replay|select|import|report|session|rubric|arms|cohort|evaluate|diagnose|optimize|benchmark|evidence|probes|drafts|gates|transfer|ensemble|population|footprint> ...
 pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--rate n] [--retry-failed] [--yes]   # new predictors on served questions (ADR-0024, ADR-0037)
 pnpm relabel:predictors [--env local|preview|prod] [--reverse] [--yes]   # stored jev: IDs → decision:, rerouted rows → the model that answered (ADR-0054)
 pnpm flags:check [--create-missing]   # Flagship app `mimic` vs the flag registry; needs CLOUDFLARE_API_TOKEN/ACCOUNT_ID (ADR-0051)
@@ -86,7 +86,8 @@ If a task seems to require breaking one of these, stop and ask.
   questions and Twin-2K-500. Run it from Actions → Evidence (`pnpm eval -- evidence`). `EVIDENCE_RULE` decides, and
   was fixed before the first run. The first run's verdict is `questions` (`docs/reports/e6-evidence.md`): predictors learn
   from Twin's survey answers but not from Mimic's served ones. E3b therefore waits for a held-out probe set (E7,
-  ADR-0062, designed in `docs/PROBE.md`): fourteen fixed probes per person at four transfer distances, since the Twin
+  ADR-0062, `docs/PROBE.md`; the `e7` preset in `/lab`, read with `pnpm eval -- probes`): fourteen probes per person at
+  fixed points, three shared, two repeats and the rest at a measured distance (answers on their facets), since the Twin
   benchmark (`docs/reports/twin-benchmark.md`) showed that Twin's lift is transfer from demographics and scales to
   product choices and that what the state keeps beyond the budget decides which domains transfer (`docs/EVIDENCE.md`
   §8, `docs/RESEARCH.md` §10).
