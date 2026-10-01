@@ -20,7 +20,7 @@ held-out items. Nothing here is a result about a Mimic user, and nothing comes f
 | Residual | `evaluate` on all 120 people, 20 held-out items each, Jev and DeepSeek on the state and on the context alone, scored against the leave-one-out item mean |
 | Per target | `replay --per-target`, one state per held-out question, retrieved by word overlap or embeddings, and the `fill` policy; calibrated primary, 20 targets per person |
 | E6 | `pnpm eval -- evidence` on the same import at k = 10, 30 and 100 (ADR-0053), Jev calibrated, 20 targets per person |
-| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 each for the raw and calibrated Jev ones, $0.73 for E6, $3.35 for the per-target runs, $1.65 for the residual runs, $0.20 for the scale runs; about $10 in all |
+| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 each for the raw and calibrated Jev ones, $0.73 for E6, $3.35 for the per-target runs, $2.40 for the residual runs, $0.20 for the scale runs; about $11 in all |
 | Intervals | Paired by question, bootstrapped over people (2,000 resamples, 5th–95th percentile), so that correlated questions within a person do not narrow them |
 
 The commands are in `docs/VALIDATION.md` under this report's heading; report files, rows and traces stay in `data/`
@@ -389,13 +389,15 @@ p ∝ model^w · item mean^(1−w), with w fitted on the 97 dev people and score
 | Jev, state | 100 | 0.854 | 66.0% | +0.042 [+0.020, +0.063] | +4.2 [+2.5, +6.1] | −0.013 [−0.025, −0.001] (w = 0.35) |
 | DeepSeek, context only | – | 0.836 | 61.4% | +0.023 [−0.003, +0.049] | −0.4 [−3.0, +2.2] | −0.019 [−0.042, +0.006] (w = 0.40) |
 | DeepSeek, state | 30 | 0.783 | 66.5% | −0.030 [−0.058, −0.001] | +4.8 [+2.5, +7.0] | −0.042 [−0.076, −0.007] (w = 0.55) |
+| DeepSeek, state | 100 | 0.811 | 59.1% | −0.002 [−0.022, +0.019] | −2.7 [−5.5, +0.1] | −0.006 [−0.035, +0.023] (w = 0.55) |
 
 - **An identity-only prior is worse than the population.** Both models on the context alone lose to the item mean on
   log loss: they know less about what people answer to these items than the other respondents' answers say.
 - **Thirty answers bring Jev level with the population, and DeepSeek past it.** Jev on the state is −0.005
   [−0.025, +0.015] against the item mean; DeepSeek is −0.030 [−0.058, −0.001] and 4.8 points more accurate, with 77 of
   120 people better. On these people DeepSeek also beats Jev outright (0.783 against 0.808), at about 25 times the
-  cost ($0.33 against $0.014 per 1,000 predictions).
+  cost ($0.33 against $0.014 per 1,000 predictions). At 100 answers, with the demographics out of the state, both fall
+  back to the population (DeepSeek −0.002, Jev +0.042).
 - **Pooled with the item mean, every model beats both its parts, and the answers add to that.** The weight fitted on
   dev people holds on test people. Pooling the context-only prior gains −0.010; pooling the 30-answer state gains
   −0.024 for Jev and −0.042 for DeepSeek. So the answers carry person-specific information the population lacks, and
