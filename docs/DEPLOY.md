@@ -62,22 +62,22 @@ Required:
 | `INVITE_CODES` | Comma-separated invite codes for the cohort |
 | `ADMIN_EMAILS` | Comma-separated emails allowed into `/lab` (the Access policy and the in-app check both use it) |
 
-Settings (optional; each unset one keeps its default: the provider settings in `apps/worker/wrangler.jsonc`, the
-`BUDGET_*` ones in code, `packages/core/src/config.ts`), and the key each choice needs:
+Settings live in each environment's `vars` in `apps/worker/wrangler.jsonc` (and `apps/web/wrangler.jsonc`), checked
+in. A Doppler value with the same name overrides one; preflight warns when an override equals the checked-in value,
+since it can then be deleted. The key each choice needs:
 
-| Name | Allowed | Default | Needs |
+| Name | Allowed | Prod value | Needs |
 | --- | --- | --- | --- |
 | `SEARCH_PROVIDER` | `exa`, `perplexity`, `none` | `exa` | `EXA_API_KEY` for `exa`; `PERPLEXITY_API_KEY` for `perplexity` |
 | `ENRICH_PROVIDER` | `exa`, `parallel`, `none` | `exa` | `EXA_API_KEY` for `exa`, `PARALLEL_API_KEY` for `parallel` |
-| `EMBEDDINGS_PROVIDER` | `workers-ai`, `openrouter` | `workers-ai` | — (the same 768-d bge-base model either way) |
+| `EMBEDDINGS_PROVIDER` | `workers-ai`, `openrouter` | `openrouter` | — (the same 768-d bge-base model either way) |
 | `VECTOR_BACKEND` | `vectorize`, `sql` | `vectorize` | — |
-| `BUDGET_USD` | A number of US dollars above 0 | `1` | — (the spend cap per mimic on the standard budget; ADR-0035) |
-| `BUDGET_SESSION_SHARE` | A number above 0, at most 1 | `0.8` | — (the session's share of the cap; the rest is for the mimic page) |
 
-In prod, the Flagship flags `search-provider`, `enrich-provider`, `embeddings-provider`, `budget-usd` and
-`budget-session-share` override these at runtime, with no redeploy (ADR-0051, docs/CHALLENGER.md). The settings stay
-as the fallback. A provider flag takes effect only if that provider's key was deployed, so every provider key set in
-Doppler is pushed, chosen or not. `VECTOR_BACKEND` has no flag: it picks where the vectors are stored.
+Only the chosen providers' keys are required and pushed. Runtime levers are Flagship flags in the app `mimic` instead,
+and change without a redeploy (ADR-0052, docs/CHALLENGER.md): `decisions-model`, and the spend caps `budget-usd` (USD
+per mimic on the standard budget, default 1; ADR-0035) and `budget-session-share` (the session's share of it, default
+0.8). Where Flagship is unbound (preview, local dev) the caps are their code defaults, or `BUDGET_USD` and
+`BUDGET_SESSION_SHARE` in `.dev.vars`. A deploy no longer reads those two names; preflight warns if they are set.
 
 Fixtures and the hash embedder are for tests only, so preflight refuses them. Doppler's own metadata
 (`DOPPLER_CONFIG`, `DOPPLER_ENVIRONMENT`, `DOPPLER_PROJECT`) and any other synced names are ignored. A value moves

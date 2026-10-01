@@ -1901,3 +1901,35 @@ $0.042/M. It is added as a challenger behind the Flagship string flag `decisions
   - It applies `DECISION_RULE`: switch only if the paired log-loss interval is below 0, with accuracy no more than
     1 point lower, errors no more than 1 point higher, and latency and cost within 1.5×, on at least 200 predictions
     from at least 5 people.
+
+## ADR-0052 — Flags for runtime levers only; provider choices back to Worker vars (2026-10-01)
+
+ADR-0051 put six settings behind Flagship. Five of them were also Doppler settings and `wrangler.jsonc` vars, so one
+value could live in three places, and `flags:check` warned whenever they disagreed. A day in prod showed the cost:
+about 5,000 evaluations, mostly the five setting flags read on every request and queue batch, with p90 65 ms. Nobody
+changed those values in that time. This ADR gives every value one home, chosen by how it changes.
+
+- **Flagship: runtime levers.** A flag must be worth changing without a deploy (a rollout, a kill switch, a spend
+  cap). It must be safe at its default, and its values must need nothing deployed beyond what every value already
+  has. Three flags pass:
+  - `decisions-model`: rollouts by mimic, and the kill switch back to Jev;
+  - `budget-usd` and `budget-session-share`: the spend caps (ADR-0035).
+- **Spend caps.** In prod the flag is the only source. The deploy no longer reads `BUDGET_USD` or
+  `BUDGET_SESSION_SHARE`, and preflight warns if they are set. Without Flagship (preview, local dev) the caps are
+  the code defaults, or those vars in `.dev.vars`.
+- **Worker vars in `wrangler.jsonc`: deploy-time choices.** `SEARCH_PROVIDER`, `ENRICH_PROVIDER`,
+  `EMBEDDINGS_PROVIDER` and `VECTOR_BACKEND` are checked-in settings. Doppler may override one; preflight warns
+  when an override equals the checked-in value, so a redundant one can be deleted. They are not flags because:
+  - A provider needs its key deployed. As flags, every provider key had to be pushed just in case, and a flag
+    naming a provider without one was skipped at runtime.
+  - Parallel enrichment also changes which queue runs the job (ADR-0034).
+  - The vector backend is infrastructure (ADR-0051).
+  - Removed with the provider flags: dashboard-label parsing, the key-presence checks, pushing unused provider
+    keys, and comparing flags with settings in `flags:check`.
+- **Prod behaviour is unchanged.**
+  - Prod's embeddings were served from OpenRouter by both the flag and Doppler, so `EMBEDDINGS_PROVIDER` for prod
+    is now `openrouter` in `wrangler.jsonc`.
+  - Search and enrichment stay Exa.
+  - The `budget-usd` flag's $2 still applies.
+- **Retiring the dashboard flags.** `search-provider`, `enrich-provider`, `embeddings-provider` and `vector-backend`
+  are warnings in `flags:check` (no code reads them), never failures. They can be deleted once this deploy is live.

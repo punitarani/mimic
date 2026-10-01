@@ -1,9 +1,9 @@
 import { DECISION_MODELS, DEFAULT_BUDGET_USD, DEFAULT_SESSION_SHARE, SpendEnv } from './config';
 
 /**
- * Runtime feature flags and tunables (ADR-0051). The host evaluates them (Cloudflare Flagship in deployed envs,
- * `packages/db/src/flags.ts`); core sees only this interface, so it never imports Cloudflare. Every read names its
- * default, and a read that fails returns it: a missing flag, an unbound flag service or an outage all mean the
+ * Runtime feature flags and tunables (ADR-0051, ADR-0052). The host evaluates them (Cloudflare Flagship in deployed
+ * envs, `packages/db/src/flags.ts`); core sees only this interface, so it never imports Cloudflare. Every read names
+ * its default, and a read that fails returns it: a missing flag, an unbound flag service or an outage all mean the
  * behaviour the code had before the flag existed.
  */
 export type FlagContext = Record<string, string | number | boolean>;
@@ -75,13 +75,8 @@ export class StaticFlags implements FlagReader {
 // The registry: every flag the code reads, defined once
 // ---------------------------------------------------------------------------------------------------------------
 
-/** The Worker vars a flag overrides (`flaggedEnv`); the var stays the fallback. */
-export type FlaggedSetting =
-  | 'SEARCH_PROVIDER'
-  | 'ENRICH_PROVIDER'
-  | 'EMBEDDINGS_PROVIDER'
-  | 'BUDGET_USD'
-  | 'BUDGET_SESSION_SHARE';
+/** The Worker vars a flag overrides (`flaggedEnv`); the var, where one is set (local dev), stays the fallback. */
+export type FlaggedSetting = 'BUDGET_USD' | 'BUDGET_SESSION_SHARE';
 
 export interface FlagSpec {
   key: string;
@@ -89,7 +84,7 @@ export interface FlagSpec {
   description: string;
   /**
    * What a read returns when the flag is missing or can't be read, which is the behaviour from before the flag. For
-   * a flag over a setting, the setting's current value takes this place.
+   * a flag over a setting, the setting's value takes this place where one is set.
    */
   fallback: string | number;
   setting?: FlaggedSetting;
@@ -111,23 +106,6 @@ export function decisionModelOf(value: string): string | null {
   return Object.values(DECISION_MODELS).includes(v) ? v : null;
 }
 
-const norm = (s: string) =>
-  s
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '')
-    .replace(/^cloudflare/, '');
-
-/**
- * A provider flag's value as the var spells it, accepting a dashboard label ("Exa", "Cloudflare-Workers-AI",
- * "OpenRouter") as well as the value itself; "off" means none. Null when it names no allowed provider.
- */
-export function providerValue(value: string, allowed: readonly string[]): string | null {
-  const n = norm(value);
-  if (!n) return null;
-  if ((n === 'off' || n === 'disabled') && allowed.includes('none')) return 'none';
-  return allowed.find((v) => norm(v) === n) ?? null;
-}
-
 /** A spend-limit flag's value: a number, or a numeric string, in the range its var takes (`SpendEnv`). */
 function spendValue(k: keyof typeof SpendEnv.shape) {
   return (raw: unknown): number | null => {
@@ -137,25 +115,14 @@ function spendValue(k: keyof typeof SpendEnv.shape) {
   };
 }
 
-function provider(
-  key: string,
-  setting: FlaggedSetting,
-  values: readonly string[],
-  fallback: string,
-  description: string,
-): FlagSpec {
-  return {
-    key,
-    kind: 'string',
-    description,
-    fallback,
-    setting,
-    parse: (raw) => (typeof raw === 'string' ? providerValue(raw, values) : null),
-    variations: Object.fromEntries(values.map((v) => [v, v])),
-  };
-}
-
-/** Every flag the code reads, keyed for use in code. `pnpm flags:check` holds the live Flagship app to this. */
+/**
+ * Every flag the code reads, keyed for use in code. `pnpm flags:check` holds the live Flagship app to this.
+ *
+ * A flag is for a runtime lever (ADR-0052): something worth changing without a deploy (a rollout, a kill switch, a
+ * spend cap), safe at its default, and needing nothing deployed beyond what every value already has. Provider
+ * choices need their key deployed, and infrastructure is fixed per environment, so those stay Worker vars in
+ * wrangler.jsonc; secrets stay secrets.
+ */
 export const FLAG_SPECS = {
   decisionsModel: {
     key: 'decisions-model',
@@ -169,7 +136,7 @@ export const FLAG_SPECS = {
   budgetUsd: {
     key: 'budget-usd',
     kind: 'number',
-    description: 'Spend cap per mimic in USD on the standard budget (ADR-0035). Over the BUDGET_USD var.',
+    description: 'Spend cap per mimic in USD on the standard budget (ADR-0035).',
     fallback: DEFAULT_BUDGET_USD,
     setting: 'BUDGET_USD',
     parse: spendValue('BUDGET_USD'),
@@ -179,33 +146,12 @@ export const FLAG_SPECS = {
     key: 'budget-session-share',
     kind: 'number',
     description:
-      'Share of the cap the learning session may spend, above 0 and at most 1; the rest is kept for the mimic page (ADR-0035). Over the BUDGET_SESSION_SHARE var.',
+      'Share of the cap the learning session may spend, above 0 and at most 1; the rest is kept for the mimic page (ADR-0035).',
     fallback: DEFAULT_SESSION_SHARE,
     setting: 'BUDGET_SESSION_SHARE',
     parse: spendValue('BUDGET_SESSION_SHARE'),
     variations: { standard: DEFAULT_SESSION_SHARE },
   },
-  searchProvider: provider(
-    'search-provider',
-    'SEARCH_PROVIDER',
-    ['exa', 'perplexity', 'none'],
-    'exa',
-    'People search provider. Over the SEARCH_PROVIDER var.',
-  ),
-  enrichProvider: provider(
-    'enrich-provider',
-    'ENRICH_PROVIDER',
-    ['exa', 'parallel', 'none'],
-    'exa',
-    'Enrichment provider. Over the ENRICH_PROVIDER var.',
-  ),
-  embeddingsProvider: provider(
-    'embeddings-provider',
-    'EMBEDDINGS_PROVIDER',
-    ['workers-ai', 'openrouter'],
-    'workers-ai',
-    'Embeddings provider (the same bge-base model either way). Over the EMBEDDINGS_PROVIDER var.',
-  ),
 } as const satisfies Record<string, FlagSpec>;
 
 /** Every flag in the registry, as plain specs. */
@@ -231,7 +177,7 @@ export interface LiveFlag {
 export interface FlagCheck {
   /** The app can't serve the code: a missing flag, or a value the code can't use. */
   problems: string[];
-  /** Worth a look: a flag nothing reads, or a flag that overrides its setting. */
+  /** Worth a look: a flag nothing reads, a disabled flag, or active targeting rules. */
   warnings: string[];
 }
 
@@ -239,14 +185,10 @@ const show = (v: unknown) => JSON.stringify(v);
 
 /**
  * The live flags against the registry. Every variation must parse (a rule or a rollout can serve any of them), and
- * the default and every rule must name one that exists. `settings` are the environment's vars, so a flag that would
- * change a setting is called out.
+ * the default and every rule must name one that exists. A flag is the source of truth for its value wherever
+ * Flagship is bound (ADR-0052), so what it serves is not compared with anything else.
  */
-export function checkFlags(
-  live: readonly LiveFlag[],
-  settings: Partial<Record<FlaggedSetting, string>> = {},
-  specs: readonly FlagSpec[] = ALL_FLAGS,
-): FlagCheck {
+export function checkFlags(live: readonly LiveFlag[], specs: readonly FlagSpec[] = ALL_FLAGS): FlagCheck {
   const problems: string[] = [];
   const warnings: string[] = [];
   const byKey = new Map(live.map((f) => [f.key, f]));
@@ -254,7 +196,7 @@ export function checkFlags(
     const f = byKey.get(spec.key);
     if (!f) {
       problems.push(
-        `${spec.key}: missing (create it as a ${spec.kind} flag with variations ${show(spec.variations)}; until then every read uses ${show(spec.fallback)}${spec.setting ? ` or ${spec.setting}` : ''})`,
+        `${spec.key}: missing (create it as a ${spec.kind} flag with variations ${show(spec.variations)}; until then every read uses ${show(spec.fallback)})`,
       );
       continue;
     }
@@ -265,25 +207,13 @@ export function checkFlags(
       if (spec.parse(value) !== null) continue;
       const what = `${spec.key}: variation "${name}" = ${show(value)} is not a value the code accepts`;
       if (served.has(name)) problems.push(what);
-      else warnings.push(`${what}; serving it would fall back to ${spec.setting ?? show(spec.fallback)}`);
+      else warnings.push(`${what}; serving it would fall back to ${show(spec.fallback)}`);
     }
     if (!Object.hasOwn(f.variations, f.default_variation))
       problems.push(`${spec.key}: default variation "${f.default_variation}" does not exist`);
     for (const r of f.rules ?? [])
       if (r.serve_variation !== undefined && !Object.hasOwn(f.variations, r.serve_variation))
         problems.push(`${spec.key}: a rule serves "${r.serve_variation}", which does not exist`);
-    // What the code would do without the flag: the setting, or (unset here) the code default.
-    const serving = spec.parse(f.variations[f.default_variation]);
-    if (spec.setting && serving !== null) {
-      const set = settings[spec.setting];
-      const current = set !== undefined ? spec.parse(set) : spec.fallback;
-      if (current !== null && current !== serving)
-        warnings.push(
-          set !== undefined
-            ? `${spec.key}: serves ${show(serving)} over ${spec.setting}=${show(current)}`
-            : `${spec.key}: serves ${show(serving)} over the code default ${show(current)} (${spec.setting} is unset here)`,
-        );
-    }
     if (!f.enabled) warnings.push(`${spec.key}: disabled, so it always serves its default variation`);
     if (f.rules?.length) warnings.push(`${spec.key}: ${f.rules.length} targeting rule(s) active`);
   }
@@ -292,15 +222,13 @@ export function checkFlags(
   return { problems, warnings };
 }
 
-/** The Flagship create body for a missing flag, at its fallback (or the setting's value when it has one). */
-export function flagCreateBody(spec: FlagSpec, settingValue?: string): LiveFlag & { description: string } {
-  const seeded = settingValue !== undefined ? spec.parse(settingValue) : null;
-  const value = seeded ?? spec.fallback;
+/** The Flagship create body for a missing flag, serving its fallback. */
+export function flagCreateBody(spec: FlagSpec): LiveFlag & { description: string } {
   const variations: Record<string, string | number> = { ...spec.variations };
-  let def = Object.entries(variations).find(([, v]) => v === value)?.[0];
+  let def = Object.entries(variations).find(([, v]) => v === spec.fallback)?.[0];
   if (!def) {
-    def = String(value);
-    variations[def] = value;
+    def = String(spec.fallback);
+    variations[def] = spec.fallback;
   }
   return {
     key: spec.key,

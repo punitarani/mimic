@@ -68,10 +68,9 @@ jobs:
           EXA_API_KEY: ${{ secrets.EXA_API_KEY }}
           PARALLEL_API_KEY: ${{ secrets.PARALLEL_API_KEY }}
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
-          # Settings (Worker vars): unset keeps the default in wrangler.jsonc.
+          # Optional overrides of the settings in wrangler.jsonc: unset keeps the checked-in value, and preflight warns
+          # about one that equals it. Spend caps and the decision model are Flagship flags (ADR-0052).
           VECTOR_BACKEND: ${{ secrets.VECTOR_BACKEND }}
           EMBEDDINGS_PROVIDER: ${{ secrets.EMBEDDINGS_PROVIDER }}
           SEARCH_PROVIDER: ${{ secrets.SEARCH_PROVIDER }}
           ENRICH_PROVIDER: ${{ secrets.ENRICH_PROVIDER }}
-          BUDGET_USD: ${{ secrets.BUDGET_USD }}
-          BUDGET_SESSION_SHARE: ${{ secrets.BUDGET_SESSION_SHARE }}

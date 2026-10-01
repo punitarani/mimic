@@ -92,7 +92,7 @@
         ]
       },
       "ratelimits": [{ "name": "RL", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } }],
-      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "workers-ai" },
+      "vars": { "VECTOR_BACKEND": "vectorize", "EMBEDDINGS_PROVIDER": "openrouter" },
       "secrets": { "required": ["OPENROUTER_API_KEY", "SESSION_SECRET", "INVITE_CODES", "ADMIN_EMAILS"] }
     }
   }

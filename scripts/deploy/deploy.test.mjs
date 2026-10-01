@@ -24,7 +24,7 @@ import {
   workerSecrets,
 } from './preflight.mjs';
 import { deployConfig, ensureResources, resourceSpec } from './resources.mjs';
-import { presentProviderSecrets, resolveSettings } from './settings.mjs';
+import { redundantSettings, resolveSettings } from './settings.mjs';
 import { smoke } from './smoke.mjs';
 
 const web = readConfig(WEB_CONFIG);
@@ -190,11 +190,11 @@ describe('config', () => {
     const src = {
       SEARCH_PROVIDER: 'perplexity',
       ENRICH_PROVIDER: 'none',
-      EMBEDDINGS_PROVIDER: ' openrouter ',
+      EMBEDDINGS_PROVIDER: ' workers-ai ',
     };
     const { vars, problems } = resolveSettings(worker, 'prod', src);
     assert.deepEqual(problems, []);
-    assert.equal(vars.EMBEDDINGS_PROVIDER, 'openrouter');
+    assert.equal(vars.EMBEDDINGS_PROVIDER, 'workers-ai');
     assert.equal(vars.VECTOR_BACKEND, 'vectorize', 'unset settings keep the config default');
     assert.deepEqual(workerSecrets(worker, 'prod', src), ['OPENROUTER_API_KEY', 'PERPLEXITY_API_KEY']);
     assert.deepEqual(workerSecrets(worker, 'prod', { SEARCH_PROVIDER: 'none', ENRICH_PROVIDER: 'none' }), [
@@ -213,20 +213,30 @@ describe('config', () => {
     ]);
   });
 
-  it('passes spend caps to both Workers only when set, and refuses caps that are not numbers in range', () => {
+  it('never deploys spend caps as vars: they are Flagship flags (ADR-0052)', () => {
     for (const c of [web, worker]) {
-      // Unset, the code defaults apply (packages/core/src/config.ts), so both Workers agree without a var.
-      assert.equal(resolveSettings(c, 'prod', {}).vars.BUDGET_USD, undefined);
-      const ok = resolveSettings(c, 'prod', { BUDGET_USD: ' 1.5 ', BUDGET_SESSION_SHARE: '0.75' });
-      assert.deepEqual(ok.problems, []);
-      assert.equal(ok.vars.BUDGET_USD, '1.5');
-      assert.equal(ok.vars.BUDGET_SESSION_SHARE, '0.75');
+      const { vars, problems } = resolveSettings(c, 'prod', { BUDGET_USD: '5', BUDGET_SESSION_SHARE: '80%' });
+      assert.deepEqual(problems, []);
+      assert.equal(vars.BUDGET_USD, undefined);
+      assert.equal(vars.BUDGET_SESSION_SHARE, undefined);
     }
-    const { problems } = resolveSettings(worker, 'prod', { BUDGET_USD: '0', BUDGET_SESSION_SHARE: '80%' });
-    assert.deepEqual(problems, [
-      'BUDGET_USD must be a number of US dollars above 0',
-      'BUDGET_SESSION_SHARE must be a number above 0 and at most 1',
-    ]);
+  });
+
+  it('names Doppler values worth deleting: overrides equal to wrangler.jsonc, and retired names', () => {
+    assert.deepEqual(redundantSettings(worker, 'prod', {}), []);
+    assert.deepEqual(
+      redundantSettings(worker, 'prod', {
+        VECTOR_BACKEND: 'vectorize',
+        EMBEDDINGS_PROVIDER: ' openrouter ',
+        SEARCH_PROVIDER: 'perplexity', // a real override: kept
+        BUDGET_USD: '2',
+      }),
+      [
+        'VECTOR_BACKEND equals its value in wrangler.jsonc; delete it from Doppler',
+        'EMBEDDINGS_PROVIDER equals its value in wrangler.jsonc; delete it from Doppler',
+        'BUDGET_USD is no longer read (it lives in the budget-usd flag (ADR-0052)); delete it from Doppler',
+      ],
+    );
   });
 
   it('keeps logs and traces on for both Workers, in every environment', () => {
@@ -539,20 +549,13 @@ describe('flags (ADR-0051)', () => {
     assert.deepEqual(out.env.prod.flagship, [{ binding: 'FLAGS', app_id: APP }]);
   });
 
-  it('checks prod with the resolved settings, and has nothing to check in preview', () => {
-    const args = flagsCheckArgs('prod', { EMBEDDINGS_PROVIDER: 'openrouter' }, { optional: true });
+  it('checks the app prod binds, and has nothing to check in preview', () => {
+    const args = flagsCheckArgs('prod', { optional: true });
     assert.ok(args[2].endsWith('packages/db/src/flags-check.cli.ts'));
     assert.equal(args[args.indexOf('--app') + 1], APP);
-    assert.equal(JSON.parse(args[args.indexOf('--settings') + 1]).EMBEDDINGS_PROVIDER, 'openrouter');
+    assert.ok(!args.includes('--settings'));
     assert.ok(args.includes('--optional'));
     assert.ok(!args.includes('--create-missing'));
-    assert.equal(flagsCheckArgs('preview', {}), null);
-  });
-
-  it('pushes every provider key that is set, so a provider flag can switch at runtime', () => {
-    assert.deepEqual(
-      presentProviderSecrets({ EXA_API_KEY: 'x', PARALLEL_API_KEY: ' ', PERPLEXITY_API_KEY: 'p' }),
-      ['EXA_API_KEY', 'PERPLEXITY_API_KEY'],
-    );
+    assert.equal(flagsCheckArgs('preview'), null);
   });
 });

@@ -1,33 +1,31 @@
-// Runtime settings (plain Worker vars, not secrets) and the provider keys they imply.
+// Deploy-time settings (plain Worker vars, not secrets) and the provider keys they imply.
 //
-// Defaults are the `vars` in each env of wrangler.jsonc. A value set in the deploy environment (a GitHub secret
-// synced from Doppler) overrides the default and is written into the generated deploy config, so switching a
-// provider needs no code change. Only production-grade choices are allowed: fixtures and the hash embedder are
-// for tests.
+// Each environment's settings are the `vars` in its block of wrangler.jsonc, checked in. A value set in the deploy
+// environment (a GitHub secret synced from Doppler) overrides one and is written into the generated deploy config;
+// an override equal to the checked-in value is redundant, and preflight says so. Only production-grade choices are
+// allowed: fixtures and the hash embedder are for tests.
+//
+// Runtime levers are Flagship flags instead (ADR-0052): the decision model and the spend caps change without a
+// deploy. Provider choices stay here because each needs its key deployed with it, and the vector backend is
+// infrastructure.
 import { envBlock } from './lib.mjs';
 
-/** A check for a numeric setting: returns what is wrong with the value, or null. */
-const number = (describe, ok) => (value) => {
-  const n = Number(value);
-  return value.trim() !== '' && Number.isFinite(n) && ok(n) ? null : `must be ${describe}`;
-};
-
-/** Each setting's allowed values, or a check returning what is wrong with a value. */
+/** Each setting's allowed values. */
 export const SETTINGS = {
   VECTOR_BACKEND: ['vectorize', 'sql'],
   EMBEDDINGS_PROVIDER: ['workers-ai', 'openrouter'],
   SEARCH_PROVIDER: ['exa', 'perplexity', 'none'],
   ENRICH_PROVIDER: ['exa', 'parallel', 'none'],
-  // Spend caps (ADR-0035): the total per mimic in USD, and the share of it the learning session may spend. Defaults
-  // live in code; the ranges match `parseSpendLimits` in packages/core/src/config.ts (a test keeps them in step).
-  BUDGET_USD: number('a number of US dollars above 0', (n) => n > 0),
-  BUDGET_SESSION_SHARE: number('a number above 0 and at most 1', (n) => n > 0 && n <= 1),
 };
 
-function settingProblem(allowed, value) {
-  if (typeof allowed === 'function') return allowed(value);
-  return allowed.includes(value) ? null : `must be one of ${allowed.join(', ')}`;
-}
+/**
+ * Names a deploy no longer reads, and where each value lives now. Set in the deploy environment, they are ignored,
+ * and preflight says so.
+ */
+export const RETIRED = {
+  BUDGET_USD: 'the budget-usd flag (ADR-0052)',
+  BUDGET_SESSION_SHARE: 'the budget-session-share flag (ADR-0052)',
+};
 
 /** The key each provider choice needs (packages/adapters/src/factory.ts). */
 const PROVIDER_KEYS = {
@@ -45,8 +43,8 @@ export function resolveSettings(config, env, source) {
   for (const [name, allowed] of Object.entries(SETTINGS)) {
     const value = source[name]?.trim();
     if (value) vars[name] = value;
-    const problem = vars[name] === undefined ? null : settingProblem(allowed, String(vars[name]));
-    if (problem) problems.push(`${name} ${problem}`);
+    if (vars[name] !== undefined && !allowed.includes(String(vars[name])))
+      problems.push(`${name} must be one of ${allowed.join(', ')}`);
   }
   return { vars, problems };
 }
@@ -59,10 +57,19 @@ export function providerSecrets(vars) {
 }
 
 /**
- * Every provider key that is set in `source`, chosen or not. They are pushed with the worker as well, so a provider
- * flag (ADR-0051) can switch to any provider whose key exists without a redeploy; they are never required.
+ * Deploy-environment values worth deleting (names only, never values): overrides equal to the checked-in setting, and
+ * retired names. `config` is the worker's, whose vars are the superset.
  */
-export function presentProviderSecrets(source) {
-  const keys = new Set(Object.values(PROVIDER_KEYS).flatMap((k) => Object.values(k)));
-  return [...keys].filter((k) => source[k]?.trim());
+export function redundantSettings(config, env, source) {
+  const defaults = envBlock(config, env).vars ?? {};
+  const out = [];
+  for (const name of Object.keys(SETTINGS)) {
+    const value = source[name]?.trim();
+    if (value && defaults[name] !== undefined && String(defaults[name]) === value)
+      out.push(`${name} equals its value in wrangler.jsonc; delete it from Doppler`);
+  }
+  for (const [name, home] of Object.entries(RETIRED))
+    if (source[name]?.trim())
+      out.push(`${name} is no longer read (it lives in ${home}); delete it from Doppler`);
+  return out;
 }
