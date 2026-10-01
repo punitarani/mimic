@@ -247,6 +247,50 @@ export function toStateEvidence(e: EvidenceItem, opts?: { medianLatencyMs: numbe
   return out;
 }
 
+/**
+ * What a predictor is shown of a sealed state (E6, docs/EVIDENCE.md). Each view is a subset of the state, never more,
+ * so sealing (invariant 1) holds by construction:
+ * - `full`: the state as served;
+ * - `context`: identity and sourced facts only, exactly what the context-only baseline sees (same stateHash);
+ * - `answers`: identity and the person's answers, without derived traits and insights;
+ * - `derived`: identity, traits and insights, without the answers they were derived from;
+ * - `relevant`: identity and the RELEVANT_K answers most similar to the question (lexical, ties to the latest).
+ */
+export const STATE_VIEWS = ['full', 'context', 'answers', 'derived', 'relevant'] as const;
+export type StateView = (typeof STATE_VIEWS)[number];
+export const RELEVANT_K = 8;
+
+export function viewState(
+  state: PersonState,
+  view: StateView,
+  question?: Pick<Question, 'prompt'>,
+): PersonState {
+  if (view === 'full') return state;
+  let evidence: StateEvidence[] = [];
+  if (view === 'answers') evidence = state.evidence;
+  if (view === 'relevant') {
+    if (!question) throw new Error('The relevant view needs the question it is for');
+    evidence = state.evidence
+      .map((e) => ({ e, s: lexicalSimilarity(question.prompt, e.q) }))
+      .sort((a, b) => b.s - a.s || b.e.seq - a.e.seq)
+      .slice(0, RELEVANT_K)
+      .map((x) => x.e)
+      .sort((a, b) => a.seq - b.seq);
+  }
+  const body: Omit<PersonState, 'meta'> = { identity: state.identity, evidence };
+  if (view === 'derived') {
+    if (state.traits) body.traits = state.traits;
+    if (state.insights) body.insights = state.insights;
+  }
+  // Traits carry no seq in a state, so a view that keeps derived data keeps the state's bound; otherwise it is the
+  // last answer the view kept. Either way it never exceeds the state's.
+  const seqMax =
+    view === 'derived'
+      ? state.meta.evidenceSeqMax
+      : Math.min(state.meta.evidenceSeqMax, Math.max(0, ...evidence.map((e) => e.seq)));
+  return finalize(body, view === 'context' ? 'context.v1' : `${state.meta.builder}>${view}`, seqMax);
+}
+
 /** What is sent to providers: the state without builder metadata. */
 export function stateForProvider(state: PersonState): Omit<PersonState, 'meta'> {
   const { meta: _meta, ...body } = state;

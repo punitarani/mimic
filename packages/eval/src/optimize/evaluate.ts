@@ -351,7 +351,11 @@ export async function mapLimit<T, R>(
  */
 export const JEV_REQUEST_TOKENS = 28_000;
 
-export function jevRequests(c: Candidate, instances: EvalInstance[]): EvalInstance[][] {
+export function jevRequests(
+  c: Candidate,
+  instances: EvalInstance[],
+  maxQuestions = Number.POSITIVE_INFINITY,
+): EvalInstance[][] {
   const out: EvalInstance[][] = [];
   const tokens = (x: unknown) => Math.ceil(JSON.stringify(x).length / 4);
   for (const g of groupBy(instances, (i) => i.state.meta.stateHash).values()) {
@@ -364,7 +368,7 @@ export function jevRequests(c: Candidate, instances: EvalInstance[]): EvalInstan
     let used = stateTokens;
     for (const i of g) {
       const t = tokens(predictionQuestion(i.question, c.prompt.components));
-      if (cur.length && used + t > JEV_REQUEST_TOKENS) {
+      if (cur.length && (used + t > JEV_REQUEST_TOKENS || cur.length >= maxQuestions)) {
         out.push(cur);
         cur = [];
         used = stateTokens;
@@ -386,6 +390,11 @@ export interface EvaluateOptions {
   cache?: Map<string, EvalRecord>;
   /** Ignore the cache and don't overwrite it, e.g. to measure the noise floor. */
   fresh?: boolean;
+  /**
+   * At most this many Jev questions per request (default: as many as share a state and fit). E6 asks one at a time,
+   * so the arms it compares never differ by what else was in the batch.
+   */
+  maxQuestionsPerRequest?: number;
 }
 
 /**
@@ -408,7 +417,7 @@ export async function evaluateCandidate(
     if (hit) out.set(i.id, hit);
     else todo.push(i);
   }
-  const groups = c.kind === 'jev' ? jevRequests(c, todo) : todo.map((i) => [i]);
+  const groups = c.kind === 'jev' ? jevRequests(c, todo, opts.maxQuestionsPerRequest) : todo.map((i) => [i]);
 
   await mapLimit(groups, opts.concurrency ?? 8, async (g) => {
     opts.meter.check();
@@ -575,19 +584,20 @@ export interface PairedDelta {
   ciHigh: number;
 }
 
-/** Paired bootstrap (1,000 resamples, seeded) of b − a over the instances both record sets share. */
+/** Paired bootstrap (1,000 resamples by default, seeded) of b − a over the instances both record sets share. */
 export function pairedDelta(
   a: EvalRecord[],
   b: EvalRecord[],
   metric: 'value' | 'itemAcc' | 'logLoss' = 'value',
   seed = 'paired',
+  resamples = 1000,
 ): PairedDelta {
   const bi = new Map(b.map((r) => [r.instanceId, r]));
   const d = a.filter((r) => bi.has(r.instanceId)).map((r) => bi.get(r.instanceId)![metric] - r[metric]);
   if (!d.length) return { n: 0, mean: 0, ciLow: 0, ciHigh: 0 };
   const rng = seededRng(seed);
   const samples: number[] = [];
-  for (let s = 0; s < 1000; s++) {
+  for (let s = 0; s < resamples; s++) {
     let sum = 0;
     for (let i = 0; i < d.length; i++) sum += d[Math.floor(rng() * d.length)]!;
     samples.push(sum / d.length);
