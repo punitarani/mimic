@@ -78,7 +78,6 @@ export interface ProbeDelta {
   /** People whose mean log loss improves, and worsens (ties count as neither). */
   better: number;
   worse: number;
-  /** b − a over the probes both scored; the interval resamples people. */
   itemAcc: Interval90;
   logLoss: Interval90;
   /** SD across people of each person's mean item-accuracy difference: E3b's power rests on it. */
@@ -170,7 +169,7 @@ export interface ProbeReport {
   rule: {
     verdict: ProbeVerdict;
     helps: Partial<Record<ProbeTier, boolean>>;
-    /** T2 + T3 (mid and far) at the last slot: the yardstick E3b would use. */
+    /** Mid and far probes at the last slot: the yardstick E3b would use. */
     yardstick: { people: number; personSd: number; detectable: number | null } | null;
     reason: string;
   };
@@ -354,7 +353,6 @@ export async function probeReadout(
     Object.keys(e.b!).every((k) => Math.abs((e.p![k] ?? 0) - (e.b![k] ?? 0)) < PROBE_RULE.insensitive),
   ).length;
 
-  // PROBE_RULE.
   const helps: Partial<Record<ProbeTier, boolean>> = {};
   for (const g of tiers)
     helps[g.group as ProbeTier] =

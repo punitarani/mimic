@@ -1,10 +1,10 @@
 import { join } from 'node:path';
-import { draftSoul } from '@mimic/core';
+import { draftSoul, type Question } from '@mimic/core';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type LocalEngine, openLocalEngine } from '../src/local';
 import { renderReport } from '../src/report';
 import { runSession, SessionScript } from '../src/session';
-import { TRANSFER_VIEWS, transfer, viewTokens } from '../src/transfer';
+import { makeViewReader, TRANSFER_VIEWS, transfer, viewTokens } from '../src/transfer';
 import { importTwin } from '../src/twin';
 
 let engine: LocalEngine;
@@ -17,6 +17,22 @@ const script = (name: string) =>
     seed: name,
     whys: { 'free afternoon': 'I always go for the long walk, no matter the weather' },
   });
+
+const QUESTION: Question = {
+  id: 'q1',
+  mimicId: 'm',
+  seq: 1,
+  kind: 'adaptive',
+  provenance: { generator: 'test', configHash: 'h', promptVersion: 'p' },
+  type: 'choice' as const,
+  domain: 'casual' as const,
+  prompt: 'On a free evening, which would you rather do?',
+  options: [
+    { key: 'a', label: 'Read' },
+    { key: 'b', label: 'Go out' },
+  ],
+  facetIds: [],
+};
 
 describe('transfer loss (ADR-0057)', () => {
   it('scores every view with every reader on the later answers, sealed, at its size', async () => {
@@ -77,6 +93,23 @@ describe('transfer loss (ADR-0057)', () => {
     const runs = await engine.deps.store.listEvalRuns();
     expect(runs.at(-1)!.id).toBe(r.run.id);
   }, 120_000);
+
+  it('takes a calibrated decision reader, and refuses any other prompt version', async () => {
+    engine = await openLocalEngine({ db: ':memory:', providers: 'offline' });
+    const g = engine.deps.gateway;
+    expect(makeViewReader(g, 'decision:typesafe/jev-1.13@jev-predict.v2', 'p').id).toBe(
+      'decision:typesafe/jev-1.13@jev-predict.v2',
+    );
+    const raw = await makeViewReader(g, 'decision:typesafe/jev-1.13', 'p').predict('file', [QUESTION]);
+    const cal = await makeViewReader(g, 'decision:typesafe/jev-1.13@jev-predict.v2', 'p').predict('file', [
+      QUESTION,
+    ]);
+    // Temperature 4 flattens the same answer.
+    expect(Math.max(...Object.values(cal[0]!.dist))).toBeLessThan(Math.max(...Object.values(raw[0]!.dist)));
+    expect(() => makeViewReader(g, 'llm:deepseek/deepseek-v4.1-flash@predict.v2', 'p')).toThrow(
+      /prompt version/,
+    );
+  });
 
   it('writes a sealed soul.v1 draft per person and checkpoint when asked', async () => {
     let t = Date.now();

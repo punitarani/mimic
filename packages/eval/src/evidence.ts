@@ -192,10 +192,7 @@ export interface Checks {
   context: { stateMatch: number; top1Agreement: number; n: number };
   /** The full arm sees exactly the stored primary's state, and picks what it picked. */
   full: { stateMatch: number; top1Agreement: number; n: number };
-  /**
-   * The full arm holds the answers the stored primary's state held: the check a scrubbed export can pass, over the
-   * stored rows that carry an evidence hash (null when none does).
-   */
+  /** Full-arm rows holding the same answers as the stored primary's state: the check a scrubbed export can pass. */
   evidence?: { match: number | null; n: number };
 }
 
