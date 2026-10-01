@@ -854,6 +854,8 @@ export function personTemperature(prev: Pair[], global: number, n0: number, temp
       bestLl = v;
     }
   }
+  // No shrinkage is the person's own fit exactly (the log-scale blend would round it off the grid).
+  if (n0 === 0) return own;
   const w = prev.length / (prev.length + n0);
   return Math.exp(w * Math.log(own) + (1 - w) * Math.log(global));
 }
