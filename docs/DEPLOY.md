@@ -116,10 +116,10 @@ same script with the repository secrets and is a dry run unless "enqueue" is che
 minute (default 30), and "retry failed" also redoes failed calls, such as rate limits and provider errors (ADR-0037).
 
 Actions → Decision models runs E8 (`pnpm eval -- models`, `docs/MODELS.md`, ADR-0068). Jev, span-01, clef,
-clef-flash, Perplexity's decider and Fastino's GLiDE predict the same sealed states on a prod export and on Twin-2K-500
-people, capped at `max_usd`. It needs `OPENROUTER_API_KEY`, the Cloudflare token with Workers AI: Read,
-`PERPLEXITY_API_KEY` and `FASTINO_API_KEY`. A canary request per model checks each before anything else is spent, and
-a model whose canary fails is left out and named.
+clef-flash and Perplexity's decider predict the same sealed states on a prod export and on Twin-2K-500 people, capped
+at `max_usd`; Fastino's GLiDE joins when named in `predictors` (ADR-0070). It needs `OPENROUTER_API_KEY`, the
+Cloudflare token with Workers AI: Read, `PERPLEXITY_API_KEY`, and `FASTINO_API_KEY` for GLiDE. A canary request per
+model checks each before anything else is spent, and a model whose canary fails is left out and named.
 
 Actions → Readout runs the free readouts on a prod export (no model calls): E7's probe readout (`pnpm eval -- probes`)
 and the stored-prediction report on people who joined since a date (`evaluate --from stored --since`), which reads

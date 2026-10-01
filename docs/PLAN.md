@@ -991,17 +991,18 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   start. Set up from the `e7` preset in `/lab` (`cfg.e7.probes`, draft) and read with `pnpm eval -- probes`; readout
   `docs/reports/e7-probes.md`.
 - **E8 Decision models** (paired, offline on sealed states; ADR-0068, `docs/MODELS.md`). Which decision model predicts a
-  person best? Jev, span-01, Cloudflare's clef and clef-flash, Perplexity's decider and Fastino's GLiDE (ADR-0070)
-  answer the same sealed instances from the same state, in the same requests, on served questions (real people) and
-  Twin-2K-500 at k = 30, each also from the context alone. Primary metric: paired Δ log loss against Jev after a
-  temperature per model fitted leaving each person out; then item accuracy, lift over context, latency, errors and cost.
-  `MODELS_RULE` decides whether a challenger earns a shadow. Run it from Actions → Decision models
-  (`pnpm eval -- models`); readout `docs/reports/e8-models.md`. Result (2026-10-01): keep Jev. On 9 real people (462 served questions)
-  no challenger is better: span-01 is `worse`, and clef, clef-flash and the decider are `level`, each about 4 points
-  less accurate. On Twin, clef, the decider and clef-flash beat Jev, so the survey ranking does not carry over. Every
-  challenger fails the latency check. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9) re-asks it with every model at its
-  best: a fixed grid of views, scale formats, state formats and wordings, each model's configuration chosen by nested
-  leave-one-person-out cross-validation, judged by the same rule.
+  person best? Jev, span-01, Cloudflare's clef and clef-flash, and Perplexity's decider (Fastino's GLiDE when named,
+  ADR-0070) answer the same sealed instances from the same state, in the same requests, on served questions (real
+  people) and Twin-2K-500 at k = 30, each also from the context alone. Primary metric: paired Δ log loss against Jev
+  after a temperature per model fitted leaving each person out; then item accuracy, lift over context, latency, errors
+  and cost. `MODELS_RULE` decides whether a challenger earns a shadow. Run it from Actions → Decision models
+  (`pnpm eval -- models`); readout `docs/reports/e8-models.md`. Result (2026-10-01): keep Jev. On 9 real people (462
+  served questions) no challenger is better: span-01 is `worse`, and clef, clef-flash and the decider are `level`, each
+  about 4 points less accurate. On Twin, clef, the decider and clef-flash beat Jev, so the survey ranking does not carry
+  over. Every challenger fails the latency check. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9) re-asks it with every
+  model at its best: a fixed grid of views, scale formats, state formats and wordings, each model's configuration chosen
+  by nested leave-one-person-out cross-validation, judged by the same rule.
+
 
 
 ---

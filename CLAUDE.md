@@ -96,15 +96,15 @@ If a task seems to require breaking one of these, stop and ask.
   benchmark (`docs/reports/twin-benchmark.md`) showed that Twin's lift is transfer from demographics and scales to
   product choices and that what the state keeps beyond the budget decides which domains transfer (`docs/EVIDENCE.md`
   §8, `docs/RESEARCH.md` §10).
-- E8 (ADR-0068, `docs/MODELS.md`) compares decision models: Jev, span-01, clef, clef-flash, Perplexity's decider and
-  Fastino's GLiDE (ADR-0070, added after the first run) on the same sealed states and requests, served questions (real
-  people) and Twin-2K-500 at k = 30, after a temperature per model fitted leaving each person out; `MODELS_RULE` decides
-  whether a challenger earns a shadow. Run it from Actions → Decision models (`pnpm eval -- models`); a canary request
-  per model runs first, and in the workflow a model that fails it is left out and named. The first run's verdict is keep
-  Jev (`docs/reports/e8-models.md`): the challengers win on Twin and lose on served questions, and each is slower;
-  Perplexity's decider came closest. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9) re-runs it with every model at its
-  best: a fixed grid of request settings, each chosen by nested leave-one-person-out cross-validation, so no person's
-  answers choose their own setting.
+- E8 (ADR-0068, `docs/MODELS.md`) compares decision models: Jev, span-01, clef, clef-flash and Perplexity's decider
+  (Fastino's GLiDE is supported and runs when named in `--predictors`, ADR-0070) on the same sealed states and requests,
+  served questions (real people) and Twin-2K-500 at k = 30, after a temperature per model fitted leaving each person
+  out; `MODELS_RULE` decides whether a challenger earns a shadow. Run it from Actions → Decision models
+  (`pnpm eval -- models`); a canary request per model runs first, and in the workflow a model that fails it is left out
+  and named. The first run's verdict is keep Jev (`docs/reports/e8-models.md`): the challengers win on Twin and lose on
+  served questions, and each is slower; Perplexity's decider came closest. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9)
+  re-runs it with every model at its best: a fixed grid of request settings, each chosen by nested leave-one-person-out
+  cross-validation, so no person's answers choose their own setting.
 - Scope and consent (ADR-0040, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and sensitive facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`), each behind its own consent (ticked by default at intake, ADR-0049); special-category areas also need a confirmation, and declined facets ("Prefer not to say") are blocked (ADR-0050, both enforced in `facetAllowed`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
 - Research directions and their experiments live in `docs/RESEARCH.md`. The evals behind them: `transfer` (what an
   export loses, ADR-0057), `ensemble` (pools of stored predictions, ADR-0058), `population` (a synthetic cohort,

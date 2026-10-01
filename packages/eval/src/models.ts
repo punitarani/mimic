@@ -63,8 +63,9 @@ export const DEFAULT_PREDICTORS = [
   CLEF_MODEL,
   CLEF_FLASH_MODEL,
   PPLX_DECIDER_MODEL,
-  GLIDE_MODEL,
 ].map((model) => `decision:${model}`);
+/** Supported, run only when named in `--predictors` (ADR-0070): it costs more than the five defaults together. */
+export const OPT_IN_PREDICTORS = [`decision:${GLIDE_MODEL}`];
 /** `full` first, so `context` reuses its prediction where a state holds no answers yet. */
 export const MODELS_VIEWS: StateView[] = E8_SETTINGS.map((s) => s.view);
 export const SERVED = 'served';
@@ -1259,8 +1260,9 @@ export async function modelsCmd(argv: string[]): Promise<void> {
   const predictors = modelArms(values.predictors);
   const reference = predictors[0]!;
   const k = positive('k', values.k);
-  // At 200 Twin people with all six models, E8 spends about $7 and E8b about $28 (docs/MODELS.md §8, §9).
-  const maxUsd = positive('max-usd', values['max-usd'] ?? (values.tune ? '40' : '10'), false);
+  // At 200 Twin people, the five defaults spend about $2 on E8 and $9 on E8b; naming GLiDE adds about $5 and $19
+  // (docs/MODELS.md §8, §9).
+  const maxUsd = positive('max-usd', values['max-usd'] ?? (values.tune ? '15' : '5'), false);
   const concurrency = positive('concurrency', values.concurrency);
   const chunkPeople = positive('chunk-people', values['chunk-people']);
   const settings = values.tune ? TUNE_SETTINGS : E8_SETTINGS;

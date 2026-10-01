@@ -2582,13 +2582,15 @@ Its contract differs from the other challengers in four ways (`docs.fastino.ai`,
   - Latency counts only the attempt that answered, as before.
 - **Limits.** No question limit is documented, only 40,000 tokens per question with the state, which Mimic's states
   fit. Twin keeps batches of 20.
-- **In both experiments.** GLiDE is in E8's and E8b's default arms. `MODELS_RULE` and E8b's grid are unchanged.
-- **Caps.** The default caps rise to $10 for E8 and $40 for E8b. They were $5 and $15. Expected spend at 200 Twin
-  people is about $7 and $28; GLiDE alone is about $5 and $19.
+- **Supported, opt-in.** GLiDE is not in E8's or E8b's default arms (`OPT_IN_PREDICTORS`); it runs when named in
+  `--predictors`, under the same `MODELS_RULE` and E8b grid. It would cost more than the five defaults together: about
+  $5 on E8 and $19 on E8b at 200 Twin people (the defaults: about $2 and $9). The default caps stay $5 and $15, so a
+  run that names it raises `max_usd`.
 
 **Consequences.**
-- The workflow passes `FASTINO_API_KEY` (a GitHub secret synced from Doppler). A missing or unfunded key fails GLiDE's
-  canary, and the run goes on without it, naming it.
+- The workflow passes `FASTINO_API_KEY` (a GitHub secret synced from Doppler). When GLiDE is named, a missing or
+  unfunded key fails its canary, and the run goes on without it, naming it.
 - `api.fastino.ai` is blocked from the environment that wrote the adapter. The fixtures are built from Fastino's
-  documented shapes, and the first live canary's `canary.json` replaces them (as ADR-0068 did for clef).
+  documented shapes, and the first run that names GLiDE replaces them from its `canary.json` (as ADR-0068 did for
+  clef).
 - GLiDE's adaptive thinking may widen its latency tail. E8's operational check reads p95 as it does for every model.

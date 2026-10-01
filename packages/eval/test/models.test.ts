@@ -28,6 +28,7 @@ import {
   type ModelsReport,
   modelArms,
   modelsCmd,
+  OPT_IN_PREDICTORS,
   type OpStats,
   planChunks,
   runChunk,
@@ -52,6 +53,7 @@ import { importTwin } from '../src/twin';
 const JEV = `decision:${JEV_MODEL}`;
 const CLEF = `decision:${CLEF_MODEL}`;
 const PPLX = `decision:${PPLX_DECIDER_MODEL}`;
+const GLIDE = `decision:${GLIDE_MODEL}`;
 
 /** A scored choice prediction: `p` on the option the person picked. */
 function rec(id: string, person: string, o: Partial<EvalRecord> & { p?: number } = {}): EvalRecord {
@@ -620,7 +622,6 @@ describe('runs on the Twin sample, offline', () => {
     expect(Object.keys(r.rates).sort()).toEqual([
       'cloudflare/clef',
       'cloudflare/clef-flash',
-      GLIDE_MODEL,
       PPLX_DECIDER_MODEL,
     ]);
     expect(r.verdict.challengers.every((c) => c.outcome === 'insufficient')).toBe(true);
@@ -638,6 +639,18 @@ describe('runs on the Twin sample, offline', () => {
     // By default only real people's served answers count: this cohort is scripted.
     const real = await runOnce([]);
     expect(real.report.datasets.map((d) => d.key)).toEqual([TWIN]);
+  }, 240_000);
+
+  it('runs GLiDE only when named (ADR-0070)', async () => {
+    expect(DEFAULT_PREDICTORS).not.toContain(GLIDE);
+    expect(OPT_IN_PREDICTORS).toEqual([GLIDE]);
+    const { report: r } = await runOnce(['--population', 'all', '--predictors', `${JEV},${GLIDE}`]);
+    expect(r.predictors).toEqual([JEV, GLIDE]);
+    expect(r.canary.map((c) => [c.label, c.ok])).toEqual([
+      ['Jev', true],
+      ['GLiDE', true],
+    ]);
+    expect(Object.keys(r.rates)).toEqual([GLIDE_MODEL]);
   }, 240_000);
 
   it('tunes every model on its own, and keeps E8 as run beside it (E8b)', async () => {
