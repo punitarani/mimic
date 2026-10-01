@@ -122,7 +122,7 @@ export const PipelineConfig = z.object({
      * recent + similar + anchors), `recent`, `similar`, `surprise` (what the context-only baseline got wrong) or
      * `novelty` (what the sealed primary got wrong at the time). Optional and undefaulted, so older hashes hold.
      */
-    evidencePolicy: z.enum(['mixed', 'recent', 'similar', 'surprise', 'novelty']).optional(),
+    evidencePolicy: z.enum(['mixed', 'recent', 'similar', 'surprise', 'novelty', 'fill']).optional(),
     /** At most this many answers in a state, whatever the budget (ADR-0056). Optional and undefaulted. */
     maxEvidence: z.number().int().min(1).optional(),
   }),

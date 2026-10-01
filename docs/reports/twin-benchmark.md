@@ -14,10 +14,11 @@ held-out items. Nothing here is a result about a Mimic user, and nothing comes f
 | Primary | `decision:typesafe/jev-1.13`, snapshot `typesafe/jev-1.13-20260917`, on its raw scale (no calibration temperature); log loss and Brier are on that scale, which is why they sit above E6's calibrated numbers |
 | Baseline | The same model on the context-only state (identity, no answers), as invariant 6 requires |
 | Replay matrix | `full` (the served state: every answer until the §9.9 budget, then anchors + retrieved + recent), `raw`, and `card` (identity + traits + capped answers) under `mixed`, `recent`, `similar` and `surprise` at a cap of 12, and under `surprise` and `recent` at a cap of 6; two passes each, the second with per-question rows for paired comparisons |
-| Transfer | `pnpm eval -- transfer` at k = 30, 20 held-out targets per person, six views, with sealed `soul.v1` drafts written by DeepSeek V4.1 Flash; a DeepSeek reader (`predict.v2` settings) on 10 people, a Jev reader on 60 |
+| Transfer | `pnpm eval -- transfer` at k = 30, 20 held-out targets per person, six views, with sealed `soul.v1` drafts written by DeepSeek V4.1 Flash; a DeepSeek reader (`predict.v2` settings) on 10 people, a Jev reader on 60, raw and calibrated |
 | Calibrated | The card and `surprise` cells again with `decision:typesafe/jev-1.13@jev-predict.v2`, one pass with rows |
+| Per target | `replay --per-target`, one state per held-out question, retrieved by word overlap or embeddings, and the `fill` policy; calibrated primary, 20 targets per person |
 | E6 | `pnpm eval -- evidence` on the same import at k = 10, 30 and 100 (ADR-0053), Jev calibrated, 20 targets per person |
-| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 for the Jev one, $0.73 for E6; about $4.50 in all |
+| Spend | $0.0019–0.0048 per person per replay run (a surprise card needs one baseline prediction per training answer, which is free online where the baseline is always stored), $0.46 for the DeepSeek transfer run, $0.25 each for the raw and calibrated Jev ones, $0.73 for E6, $3.35 for the per-target runs; about $8 in all |
 | Intervals | Paired by question, bootstrapped over people (2,000 resamples, 5th–95th percentile), so that correlated questions within a person do not narrow them |
 
 The commands are in `docs/VALIDATION.md` under this report's heading; report files, rows and traces stay in `data/`
@@ -34,25 +35,29 @@ The commands are in `docs/VALIDATION.md` under this report's heading; report fil
    it is 981 against 1,461 and loses −1.0 [−1.7, −0.3]. The served state at k = 100 is itself a subset: the §9.9 budget
    keeps 18 of the 100 answers. So the question is not "all answers or twelve" but "eighteen chosen by anchors,
    retrieval and recency, or twelve by a policy", and twelve costs about one point.
-3. **At the same cap, which answers the card keeps barely matters for accuracy.** `mixed`, `recent` and `similar`
-   are within 0.4 points of each other at every k, inside the run-to-run noise (the two passes of one spec differ by
-   0.25 points on average, at most 0.43). `similar` (the answers nearest the targets by lexical similarity) is the
-   best of the three at k = 100 (−0.5 [−1.2, +0.2] against `full`). E6's `relevant` view (the 8 answers most related
-   to the question, 774 tokens) is the same idea with a target-aware pick and is level with `full` at k = 30
-   (+1.1 [−0.8, +3.0]) and at k = 100 (−0.0 [−1.1, +1.2]).
+3. **In this matrix, `mixed`, `recent` and `similar` are the same policy.** They sit within 0.4 points of each other at
+   every k, inside the run-to-run noise (0.25 points on average between passes, at most 0.43), and for a reason found
+   later: replay built one state for all of a person's targets, with no target to rank against, so `similar` and the
+   retrieval half of `mixed` fell back to recency. The "card 12 · similar" rows below measure a recency card. What
+   retrieval does is measured per target in "Retrieval per target", below.
 4. **`surprise` trades accuracy for calibration.** Keeping the answers the baseline got most wrong costs −1.1 [−2.0,
    −0.4] points at k = 100 but improves raw log loss by −0.088 [−0.120, −0.056] (46 of 60 people better) and Brier
    (0.570 against 0.580). With a cap of 6 the same policy is −0.7 [−1.6, +0.1] points and −0.035 [−0.072, +0.001].
    Every other state gets worse on log loss as k grows (full: 1.128 → 1.281) while accuracy rises: on its raw scale
    Jev grows overconfident with evidence, and a state built from what the stereotype got wrong tempers that. The
-   calibrated primary (`@jev-predict.v2`) does the same job online with a temperature; rerun with it (below),
-   `surprise` keeps a fifth of the log-loss gain (−0.017 [−0.027, −0.007]) and most of its dispersion advantage.
+   calibrated primary (`@jev-predict.v2`) does most of that job with a temperature: rerun with it and with surprise
+   ranked on the raw scale as production ranks it, `surprise` keeps −0.010 [−0.016, −0.004] of log loss at k = 100
+   and is worse at k = 30 (+0.023). A first calibrated run ranked surprise on the calibrated scale and showed a large
+   dispersion advantage (0.197 against 0.127 at k = 30); with the production ranking it is 0.141. That advantage
+   belonged to the ranking, not to the policy.
 5. **Six answers are enough early, and the cheapest state is not the worst.** A 6-answer `recent` card is +1.3
    [+0.4, +2.2] points over the full 10-answer state at k = 10 (335 against 534 tokens) and +0.9 [−0.5, +2.3] at k = 30
    (626 against 2,568), then −0.8 [−1.6, +0.0] at k = 100. Its log loss is worse throughout (+0.172 at k = 10). Fewer
    answers make Jev more decisive, which pays on accuracy early and costs on calibration.
-6. **Smaller states individuate less.** Dispersion (SD of predictions over SD of answers, across people) is 0.42 for
-   the served state at k = 30 and 0.28 for every card; across-person correlation stays at 0.20–0.24 everywhere.
+6. **Smaller states individuate less, unless they are chosen for the question.** Dispersion (SD of predictions over
+   SD of answers, across people) is 0.42 for the served state at k = 30 and 0.28 for every card; across-person
+   correlation stays at 0.20–0.24 everywhere. The exception is a card retrieved per question by embeddings (below):
+   eight answers, and the highest dispersion of any state at k = 100.
    Accuracy did not move, so the card loses spread, not rank order. The mega-study of digital twins found that
    personal data shows up in dispersion before accuracy, which makes this the metric to watch when a compressed
    state looks "level".
@@ -65,14 +70,20 @@ The commands are in `docs/VALIDATION.md` under this report's heading; report fil
    intervals of roughly ±6 points, so only the ordering state > answers-bearing views > core > context is firm.
 8. **Jev reads a summary better than the answers it was written from.** The Jev reader on 60 people gets 61.9% from
    the state text and 65.6% from the core SOUL.md, which holds DeepSeek's narrative of the same 30 answers and no
-   answers at all, at a large log-loss cost (1.582 against 1.071). E6 saw the same on served questions (`derived`
-   +4.8 points for Jev, no log-loss gain). An LLM doing the inference and Jev reading its conclusion is a pipeline
-   worth testing as a served shadow, with its own calibration.
+   answers at all, at a large log-loss cost (1.582 against 1.071). With the calibrated primary the gain holds (+3.1
+   points for the core profile, +3.6 for the full one) and the full SOUL.md is level with the state on log loss
+   (0.832 against 0.828). E6 saw the same on served questions (`derived` +4.8 points for Jev, no log-loss gain). An
+   LLM doing the inference and Jev reading its conclusion is a pipeline worth testing as a served shadow, with its
+   own calibration.
 9. **The lift is transfer between domains, and what the state keeps decides which.** No held-out domain appears in
    the first 100 answers. Party and ideology carry the policy items while the state holds them (+4.4) and not once
    recency has dropped them (+1.2); materialism rows carry the product items (+11.5 at k = 100). Probability tasks
-   get the same prediction whatever the state. Lexical similarity does not find these links, so a similarity-based
-   state policy or retrieval cannot either.
+   get the same prediction whatever the state. Word overlap does not find these links, and embeddings do.
+10. **The budget is mostly unused, and filling it by meaning gives the best state measured.** At k = 100 the served
+    recipe keeps 18 answers in about 1,400 of 8,000 tokens. Retrieving per target by embeddings and then filling the
+    budget by recency (`fill`) reaches 67.8% accuracy and 0.814 log loss with the calibrated primary: +2.7 [+0.8, +4.6]
+    points and −0.053 [−0.082, −0.024] over the served state, from policy items (retrieval) and product items (more
+    answers). See "Retrieval per target", below.
 
 ## Replay matrix, second pass (60 people, 3,932 predictions per cell)
 
@@ -192,10 +203,28 @@ trusts a summary more than it should). The narrative is DeepSeek's reading of th
 was done by the LLM and Jev read its conclusion. This is the same shape as E6's exploratory lead on served questions
 (`derived` gave Jev +4.8 points of accuracy and no log-loss gain), now on 60 people and 1,200 questions.
 
+### Jev reader, calibrated (`@jev-predict.v2`), 60 people, 20 targets each
+
+| View | Tokens | Accuracy | Top-1 | Log loss | Brier | ECE | Lift | Transfer loss | $/1k |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| context | 13 | 56.4% | 48.3% | 0.870 | 0.546 | 0.081 | — | +5.6 | $0.007 |
+| state | 2,195 | 62.0% | 56.7% | 0.828 | 0.517 | 0.028 | +5.6 | — | $0.011 |
+| card (12, surprise) | 1,072 | 62.6% | 54.3% | 0.875 | 0.533 | 0.062 | +6.2 | −0.6 | $0.009 |
+| soul-core | 2,859 | 65.1% | 56.5% | 0.901 | 0.541 | 0.054 | +8.7 | −3.1 | $0.013 |
+| soul-full | 4,080 | 65.6% | 58.7% | 0.832 | 0.512 | 0.082 | +9.2 | −3.6 | $0.015 |
+| mimic-json | 3,942 | 62.3% | 56.3% | 0.839 | 0.521 | 0.050 | +5.9 | −0.3 | $0.017 |
+
+All 60 drafts were written and no prediction failed ($0.25). The narrative's accuracy gain survives calibration
+(+3.1 points for the core profile, +3.6 for the full one), and its log-loss cost shrinks: the full SOUL.md is level
+with the state on log loss (0.832 against 0.828) and better on Brier, while the core profile is still worse (0.901),
+because the temperature was fitted on states that carry answers, not on summaries. The state view is the
+best-calibrated (ECE 0.028). A narrative written by an LLM is the best input for Jev's accuracy found so far, and it
+needs its own calibration before it can serve.
+
 ## With the calibrated primary (`@jev-predict.v2`, the served config's)
 
-The same cells with the calibration temperature on, one pass, intervals over people. Log loss, Brier and ECE are now
-on the served scale.
+The same cells with the calibration temperature on, one pass, intervals over people. Log loss, Brier and ECE are on
+the served scale. Surprise is ranked on the raw scale, as production ranks it.
 
 | State | k | Accuracy | Log loss | ECE | Dispersion | Δ accuracy vs served [90% CI] | Δ log loss vs served [90% CI] | People better / worse |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -203,24 +232,21 @@ on the served scale.
 | full (served) | 10 | 59.4% | 0.832 | 0.036 | 0.176 | — | — | — |
 | full (served) | 30 | 62.2% | 0.823 | 0.036 | 0.201 | — | — | — |
 | full (served) | 100 | 66.5% | 0.851 | 0.111 | 0.124 | — | — | — |
-| card 12 · mixed | 10 | 59.7% | 0.835 | 0.041 | 0.174 | +0.3 [−0.1, +0.8] | +0.003 [+0.001, +0.006] | 22 / 38 |
-| card 12 · mixed | 30 | 63.0% | 0.847 | 0.066 | 0.127 | +0.7 [−0.5, +2.0] | +0.024 [+0.002, +0.047] | 26 / 34 |
-| card 12 · mixed | 100 | 65.6% | 0.850 | 0.106 | 0.101 | −0.9 [−1.5, −0.2] | −0.001 [−0.007, +0.004] | 29 / 31 |
-| card 12 · surprise | 10 | 59.6% | 0.833 | 0.036 | 0.175 | +0.2 [−0.2, +0.6] | +0.001 [−0.002, +0.003] | 28 / 32 |
-| card 12 · surprise | 30 | 62.9% | 0.827 | 0.054 | 0.197 | +0.7 [−0.3, +1.7] | +0.004 [−0.008, +0.018] | 30 / 30 |
-| card 12 · surprise | 100 | 65.5% | 0.834 | 0.092 | 0.162 | −0.9 [−2.3, +0.3] | −0.017 [−0.027, −0.007] | 42 / 18 |
-| card 6 · surprise | 10 | 60.2% | 0.827 | 0.034 | 0.190 | +0.8 [−0.1, +1.8] | −0.005 [−0.010, +0.001] | 34 / 26 |
-| card 6 · surprise | 30 | 62.4% | 0.838 | 0.054 | 0.166 | +0.1 [−1.4, +1.8] | +0.015 [−0.005, +0.034] | 26 / 34 |
-| card 6 · surprise | 100 | 64.9% | 0.836 | 0.092 | 0.138 | −1.5 [−2.4, −0.6] | −0.016 [−0.022, −0.009] | 39 / 21 |
+| card 12 · mixed (recency) | 10 | 59.7% | 0.835 | 0.041 | 0.174 | +0.3 [−0.1, +0.8] | +0.003 [+0.001, +0.006] | 22 / 38 |
+| card 12 · mixed (recency) | 30 | 63.0% | 0.847 | 0.066 | 0.127 | +0.7 [−0.5, +2.0] | +0.024 [+0.002, +0.047] | 26 / 34 |
+| card 12 · mixed (recency) | 100 | 65.6% | 0.850 | 0.106 | 0.101 | −0.9 [−1.5, −0.2] | −0.001 [−0.007, +0.004] | 29 / 31 |
+| card 12 · surprise | 10 | 59.5% | 0.831 | 0.037 | 0.172 | +0.1 [−0.3, +0.6] | −0.000 [−0.003, +0.002] | 34 / 26 |
+| card 12 · surprise | 30 | 62.2% | 0.846 | 0.051 | 0.141 | −0.1 [−1.3, +1.2] | +0.023 [+0.002, +0.043] | 23 / 37 |
+| card 12 · surprise | 100 | 65.8% | 0.842 | 0.107 | 0.128 | −0.7 [−1.4, +0.1] | −0.010 [−0.016, −0.004] | 33 / 27 |
+| card 6 · surprise | 10 | 60.5% | 0.828 | 0.036 | 0.202 | +1.1 [+0.3, +1.9] | −0.004 [−0.010, +0.002] | 36 / 24 |
+| card 6 · surprise | 30 | 63.1% | 0.844 | 0.056 | 0.127 | +0.9 [−0.6, +2.3] | +0.021 [−0.001, +0.044] | 28 / 32 |
+| card 6 · surprise | 100 | 65.7% | 0.846 | 0.110 | 0.121 | −0.8 [−1.5, +0.0] | −0.005 [−0.013, +0.002] | 34 / 26 |
 
-- The accuracy picture is unchanged: the 12-answer card is level at k = 30 and about a point behind at k = 100.
-- `surprise` keeps a log-loss advantage after calibration, now −0.017 [−0.027, −0.007] with 42 of 60 people better,
-  a fifth of its raw-scale size. Most of the raw effect was the temperature's job.
-- Calibration drifts with the state as E6 saw: ECE 0.036 at k = 10 and 30, 0.111 at k = 100 for the served state.
-  The `surprise` card drifts least (0.092).
-- Dispersion is where the policies differ. At k = 30 the served state is at 0.201, the `mixed` card at 0.127 and the
-  `surprise` card at 0.197; at k = 100, 0.124, 0.101 and 0.162. Keeping the answers the stereotype got wrong keeps
-  the person's deviations from it, which is what dispersion measures.
+- The accuracy picture is unchanged: a 12-answer card is level at k = 30 and about a point behind at k = 100.
+- After calibration, `surprise` is a small log-loss gain at k = 100 and a loss at k = 30; it is not a lever worth a
+  policy of its own.
+- Calibration drifts with the state: ECE 0.036 at k = 10 and 30, 0.111 at k = 100 for the served state.
+- Every 12- or 6-answer card halves dispersion at k = 30 and k = 100.
 
 ## Where the lift comes from
 
@@ -235,8 +261,8 @@ is transfer from demographics and personality scales to a decision in another do
 Beyond the §9.9 budget the replayed state is the 18 most recent answers: with no target questions to retrieve for,
 the similarity rank is empty and the builder falls back to recency, so at k = 100 the state holds answers 83–100
 (materialism and empathy rows) and none of the demographics. Production builds its state for the candidate batch and
-retrieves by lexical similarity to it, which this replay does not reproduce (nor does E6's Twin arm), and which would
-not find "party" for "a carbon tax" either.
+retrieves by similarity to it, which this replay does not reproduce (nor does E6's Twin arm); "Retrieval per target",
+below, does.
 
 Lift of the served state by target domain, paired by question, intervals over people:
 
@@ -264,8 +290,74 @@ Three things follow.
 - **Lexical similarity does not find what transfers.** Sorting the held-out items by the nearest evidence prompt's
   word overlap puts the product items in the middle tercile and the policy and probability items at the ends, so the
   terciles order by domain, not by relatedness; "party" shares no words with "carbon tax", and "my belongings are
-  mindfully selected" none with a soft-drink choice. That is why `similar` and E6's `relevant` cannot beat `recent`
-  here, and why target-aware retrieval needs meaning, not words.
+  mindfully selected" none with a soft-drink choice. That is why E6's `relevant` (word overlap) cannot beat `recent`
+  here. Embeddings can, on policy items (below).
+
+## Retrieval per target, and filling the budget
+
+Production builds a state for each batch of candidates and ranks evidence by similarity to the batch (embeddings
+through Vectorize in deployed environments, word overlap where no vectors exist). The shared replay above built one
+state for all of a person's targets and could not. `replay --per-target` builds one state per held-out question with
+that question as the retrieval target, ranked by word overlap or, with `--embed`, by embeddings. Calibrated primary,
+the same 60 people, 20 targets each, k = 30 and 100, one pass with rows.
+
+At k = 100 the served recipe (`mixed`: anchors, the 6 latest answers and the 12 nearest) keeps 18 answers in about
+1,400 of the 8,000 tokens §9.9 allows. Two arms use the rest. Recency fill (`full` under `recent`) keeps the latest 84
+answers. `fill`, a new policy, takes `mixed`'s 18 first and then every other answer by recency until the budget is
+spent. At k = 30 every answer fits, so the `full` arms there differ only in batching.
+
+| Arm | k | Answers | Accuracy | Log loss | ECE | Dispersion | Δ accuracy vs shared [90% CI] | Δ log loss vs shared [90% CI] |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| baseline (context only) | – | 0 | 59.0% | 0.867 | 0.083 | — | — | — |
+| shared served state (batched) | 30 | 30 | 61.8% | 0.838 | 0.032 | 0.196 | — | — |
+| per target · recent | 30 | 30 | 61.3% | 0.837 | 0.035 | 0.196 | −0.5 [−1.3, +0.3] | −0.001 [−0.004, +0.002] |
+| per target · word overlap | 30 | 30 | 61.2% | 0.834 | 0.041 | 0.197 | −0.6 [−1.5, +0.1] | −0.004 [−0.008, +0.000] |
+| per target · embeddings | 30 | 30 | 61.6% | 0.838 | 0.036 | 0.198 | −0.2 [−1.0, +0.5] | +0.000 [−0.003, +0.003] |
+| card 8 · recent | 30 | 8 | 63.5% | 0.864 | 0.066 | 0.117 | +1.6 [−0.4, +3.6] | +0.026 [−0.005, +0.057] |
+| card 8 · word overlap | 30 | 8 | 64.1% | 0.834 | 0.063 | 0.184 | +2.3 [+0.5, +4.1] | −0.004 [−0.013, +0.007] |
+| card 8 · embeddings | 30 | 8 | 62.5% | 0.839 | 0.042 | 0.231 | +0.7 [−1.0, +2.2] | +0.001 [−0.010, +0.014] |
+| shared served state (batched) | 100 | 18 | 65.0% | 0.866 | 0.079 | 0.117 | — | — |
+| per target · recency fill | 100 | 84 | 66.6% | 0.856 | 0.087 | 0.149 | +1.5 [−0.3, +3.5] | −0.011 [−0.026, +0.005] |
+| per target · word overlap | 100 | 18 | 64.4% | 0.821 | 0.055 | 0.183 | −0.6 [−2.4, +1.2] | −0.045 [−0.072, −0.017] |
+| per target · embeddings | 100 | 18 | 64.7% | 0.818 | 0.046 | 0.214 | −0.3 [−2.3, +1.6] | −0.048 [−0.080, −0.017] |
+| card 8 · recent | 100 | 8 | 65.1% | 0.875 | 0.081 | 0.107 | +0.1 [−1.4, +1.7] | +0.009 [−0.000, +0.018] |
+| card 8 · word overlap | 100 | 8 | 61.6% | 0.835 | 0.032 | 0.179 | −3.4 [−5.2, −1.6] | −0.032 [−0.058, −0.004] |
+| card 8 · embeddings | 100 | 8 | 64.3% | 0.832 | 0.045 | 0.216 | −0.7 [−2.8, +1.3] | −0.034 [−0.064, −0.004] |
+| **per target · `fill`, embeddings** | 100 | 84 | **67.8%** | **0.814** | 0.075 | 0.207 | **+2.7 [+0.8, +4.6]** | **−0.053 [−0.082, −0.024]** |
+
+Lift over the baseline by target domain at k = 100 (points; probability tasks are +0.0 in every arm):
+
+| Arm | Product choice (714) | Policy support (201) | Other (141) | All (1,200) |
+| --- | --- | --- | --- | --- |
+| shared served state | +8.7 | +1.6 | +3.7 | +6.0 |
+| recency fill | +9.8 | +1.0 | +11.6 | +6.8 |
+| per target · word overlap | +6.8 | +2.5 | +1.9 | +4.5 |
+| per target · embeddings | +8.1 | +4.4 | +4.3 | +5.8 |
+| card 8 · embeddings | +6.3 | +3.9 | +4.5 | +4.6 |
+| `fill`, embeddings | +10.8 | +4.3 | +8.9 | +7.8 |
+
+- **Embeddings find what transfers to policy items, and word overlap mostly does not.** Retrieved by meaning, the
+  served recipe brings party and ideology back for policy questions: +4.4 against +1.6 for the shared state
+  (+2.7 [+0.2, +5.3]). Word overlap gets +2.5. Both retrieval arms cut log loss on policy items by about a quarter of
+  a nat (−0.24 by word overlap, −0.26 by embeddings, both intervals clear of zero).
+- **Filling the budget helps product items.** Recency fill keeps 84 answers and lifts product choices +9.8, against
+  +8.7 for the 18-answer state, but it still drops the demographics, so policy items stay at +1.0.
+- **`fill` gets both and is the best state measured on this import.** Over recency fill it adds +1.2 [−0.2, +2.6]
+  points and −0.042 [−0.072, −0.013] of log loss, all of it from policy items (+3.5 [+1.1, +5.9]). Over the 18-answer
+  embedding state it adds +3.1 [+1.7, +4.4] points at the same log loss. Against the shared served state, 39 of 60
+  people are better on log loss. Correlation across people rises to 0.289, the highest of any arm.
+- **A small card chosen by meaning keeps the spread.** Eight answers retrieved by embeddings hold dispersion at
+  0.216–0.231, against 0.107–0.117 for the eight latest, at level accuracy (−0.8 [−3.1, +1.4] at k = 100) and better
+  log loss (−0.043 [−0.076, −0.011]). Eight answers by word overlap lose 3.4 points at k = 100, nearly all on products
+  (−5.2): word overlap picks answers that share a product question's wording, not its preference.
+- **Batching is not the difference.** Where the states are identical (k = 30, all answers fit), one target per call
+  against a batch moves accuracy by −0.5 [−1.3, +0.3]; the 8-latest card moves by 0.3 points or less.
+- **Cost.** A filled state is about 8,000 input tokens against 1,400 per batch. Per-target replay with embeddings cost
+  $0.0086 per person for 20 targets, against $0.0006 for the shared state.
+
+Production retrieves for a batch centroid, not for one question, so per-target retrieval is an upper bound on what
+retrieval can do online. The change to test on served questions is `fill` as a new config, first as a shadow
+(ADR-0024); docs/DECISIONS.md records it.
 
 ## E6 on the same import (ADR-0053)
 
@@ -289,18 +381,14 @@ too few to decide.
 - These are imported survey takers, not Mimic users, and E6's prod readout already showed that Twin's held-out items
   (repeated batteries) reward earlier answers in a way Mimic's next question does not. Numbers here rank states and
   policies for the same predictor on the same questions; they do not say what a Mimic session will gain.
-- Jev ran on its raw scale, so every log loss, Brier and ECE above is uncalibrated. Accuracy and top-1 are unaffected
-  by a temperature; calibration-sensitive conclusions (`surprise`, the small cards' log loss) need the calibrated
-  primary before they carry over.
+- The replay matrix and the first Jev transfer ran Jev on its raw scale, so their log loss, Brier and ECE are
+  uncalibrated; accuracy and top-1 are unaffected by a temperature. The calibrated, per-target and second Jev
+  transfer sections use the served temperature, which was fitted on served states, not on cards or summaries.
 - Transfer ran on 10 people for DeepSeek, and the soul drafts were written by the same model family that read them.
-- The calibrated `surprise` cells ranked training answers by the baseline's surprise on the calibrated scale. The
-  review of this work moved the annotation onto the raw scale, as stored signals are (ADR-0056), which can reorder
-  answers across questions with different numbers of options. The raw-Jev cells are unaffected. A re-run with the
-  fixed annotation was started and stopped: the OpenRouter account ran out of credit (HTTP 402 on every call), so
-  those two rows still carry the earlier ranking.
-- Beyond the budget the replayed state is recency-only (no target questions to retrieve for), where production
-  retrieves by lexical similarity to the candidate batch. At k = 100 "served state" here means the 18 most recent
-  answers; at k ≤ 30 nothing is dropped and the comparison is exact.
+- The replay matrix, transfer and E6 built one state per person (no target questions to retrieve for), so beyond the
+  budget their "served state" is the 18 most recent answers; at k ≤ 30 nothing is dropped and the comparison is
+  exact. The per-target section retrieves for one question at a time, which is an upper bound on production's
+  retrieval for a batch centroid, and was run once with 20 targets per person.
 - `ensemble` and `population` could not run on this import: it stores no shadow predictions and estimates no traits.
   Both wait for the consented cohort.
 
@@ -310,11 +398,13 @@ What this changes in the agenda is written up in `docs/RESEARCH.md` §10 and in 
 
 1. A probe set with items at known transfer distances (E7), so that "learns from answers" is measured per distance
    on served people, with shared items for item means and dispersion.
-2. Retrieval and compaction by meaning: an embedding or LLM-chosen "what matters for this question" step in place of
-   lexical similarity, and derived traits that keep party, income and materialism after the answers have left the
-   window. Test as `relevant`-style views on E7's probes.
-3. The LLM-written state for Jev: a reflector draft as the primary's state, calibrated on its own, shadowed on
+2. `fill` on served questions: a config whose state retrieves by embeddings and fills the §9.9 budget, as a shadow
+   on E7's probes, with its own calibration (a filled state is a larger state; item 5).
+3. Compaction by meaning for when the budget does run out: derived traits that keep party, income and materialism
+   after the answers have left the window.
+4. The LLM-written state for Jev: a reflector draft as the primary's state, calibrated on its own, shadowed on
    served questions.
-4. Calibration as a function of state size, since one temperature holds at 30 answers and not at 100.
-5. The `surprise` card as the export for agents: level on accuracy at 30 answers, best dispersion of the compressed
-   states, half the tokens. Lead SOUL.md with the evidence block for LLM readers and with the narrative for Jev.
+5. Calibration as a function of state size, since one temperature holds at 30 answers and not at 100.
+6. A card for agents chosen by meaning for the task at hand, not by surprise: eight answers retrieved by embeddings
+   keep twice the dispersion of eight recent ones. Lead SOUL.md with the evidence block for LLM readers and with the
+   narrative for Jev.

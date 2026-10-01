@@ -3,6 +3,8 @@ import {
   argmax,
   buildSoul,
   buildState,
+  calibratedResult,
+  calibrationTemperatureOf,
   DEFAULT_PROMPT_VERSION,
   EMPTY_CURATION,
   type EngineDeps,
@@ -201,14 +203,13 @@ class LlmViewReader implements ViewReader {
 }
 
 class JevViewReader implements ViewReader {
-  readonly id: string;
   constructor(
     private readonly gateway: Gateway,
     private readonly model: string,
     private readonly purpose: string,
-  ) {
-    this.id = formatPredictorId({ kind: 'decision', model });
-  }
+    readonly id: string,
+    private readonly temperature: number,
+  ) {}
 
   async predict(view: string, qs: Question[]): Promise<PredictionResult[]> {
     const out: PredictionResult[] = [];
@@ -232,7 +233,9 @@ class JevViewReader implements ViewReader {
             continue;
           }
           try {
-            out.push({ ...base, dist: answerToDistribution(q, a), ok: true });
+            out.push(
+              calibratedResult({ ...base, dist: answerToDistribution(q, a), ok: true }, q, this.temperature),
+            );
           } catch (e) {
             out.push({ ...base, dist: {}, ok: false, error: String(e), errorKind: 'output' });
           }
@@ -256,10 +259,27 @@ class JevViewReader implements ViewReader {
 
 export function makeViewReader(gateway: Gateway, id: string, purpose: string): ViewReader {
   const spec = parsePredictorId(id);
-  if (spec.promptVersion) throw new Error(`A reader takes no prompt version (${id}): it reads only the file`);
+  // A decision reader may carry a calibration (`@jev-predict.v2`); a variant that changes templates would not be
+  // reading the file the same way, so only calibration-only variants are taken.
+  const calibrationOnly =
+    spec.kind === 'decision' &&
+    spec.promptVersion !== undefined &&
+    !Object.keys(PREDICT_PROMPTS[spec.promptVersion]?.components ?? { x: 1 }).length;
+  if (spec.promptVersion && !calibrationOnly)
+    throw new Error(`A reader takes no prompt version but a calibration (${id}): it reads only the file`);
   return spec.kind === 'llm'
     ? new LlmViewReader(gateway, spec.model, purpose)
-    : new JevViewReader(gateway, spec.model, purpose);
+    : new JevViewReader(
+        gateway,
+        spec.model,
+        purpose,
+        formatPredictorId({
+          kind: 'decision',
+          model: spec.model,
+          ...(spec.promptVersion ? { promptVersion: spec.promptVersion } : {}),
+        }),
+        calibrationTemperatureOf(id),
+      );
 }
 
 /**
