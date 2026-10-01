@@ -31,6 +31,8 @@ export interface StoredPrediction {
   latencyMs: number;
   modelSnapshot: string;
   stateHash: string;
+  /** The served state's evidence hash, which survives an export's scrub; null on older rows. */
+  evidenceHash?: string | null;
 }
 
 /**
@@ -182,6 +184,7 @@ export async function loadInstances(deps: EngineDeps, opts: LoadOptions): Promis
         latencyMs: p.latencyMs,
         modelSnapshot: p.modelSnapshot,
         stateHash: p.stateHash,
+        evidenceHash: p.evidenceHash ?? null,
       });
       byQ.set(p.questionId, list);
     }

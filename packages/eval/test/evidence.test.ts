@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { canonicalPredictorId, DEFAULT_CONFIG } from '@mimic/core';
@@ -17,6 +17,7 @@ import {
   SERVED,
   twinKey,
 } from '../src/evidence';
+import { scrubExport } from '../src/export';
 import { openLocalEngine } from '../src/local';
 import type { EvalRecord } from '../src/optimize/evaluate';
 import type { EvalInstance } from '../src/optimize/instances';
@@ -272,6 +273,8 @@ describe('E6 end to end, offline', () => {
     expect(r.checks?.context.n).toBeGreaterThan(0);
     expect(r.checks?.context.stateMatch).toBe(1);
     expect(r.checks?.full.stateMatch).toBe(1);
+    expect(r.checks?.evidence).toMatchObject({ match: 1 });
+    expect(r.checks?.evidence?.n).toBe(r.checks?.full.n);
 
     // Twin people have no traits or insights: answers shows what full shows, derived what context shows.
     const twinFull = r.lift.find(
@@ -298,6 +301,34 @@ describe('E6 end to end, offline', () => {
     expect(md).toContain('### What the answers add');
     expect(md).toContain('identical states');
     expect(readFileSync(join('data/reports', run.id, 'report.md'), 'utf8')).toContain('E6 asks');
+    rmSync(join('data/reports', run.id), { recursive: true, force: true });
+  }, 120_000);
+
+  it('on a scrubbed export, states no longer match but the answers they hold do', async () => {
+    const scrubbed = join(dir, 'scrubbed.sqlite');
+    copyFileSync(served, scrubbed);
+    const s = await openLocalEngine({ db: scrubbed, providers: 'offline' });
+    await scrubExport(s.client, { keepIdentity: false });
+    s.close();
+    await evidenceCmd([
+      '--data',
+      scrubbed,
+      '--k',
+      '4',
+      '--llm',
+      'none',
+      '--offline',
+      '--out',
+      join(dir, 'scrubbed-run'),
+    ]);
+    const engine = await openLocalEngine({ db: scrubbed, providers: 'offline' });
+    const run = (await engine.deps.store.listEvalRuns()).find(
+      (x) => (x.spec as { kind?: string }).kind === 'evidence',
+    )!;
+    engine.close();
+    const r = (run.metrics as { report: EvidenceReport }).report;
+    expect(r.checks?.full.stateMatch).toBeLessThan(1);
+    expect(r.checks?.evidence).toMatchObject({ match: 1 });
     rmSync(join('data/reports', run.id), { recursive: true, force: true });
   }, 120_000);
 });

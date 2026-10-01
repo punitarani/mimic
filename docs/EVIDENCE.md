@@ -247,9 +247,10 @@ what the first run's numbers rest on. Each point names what E7 (`docs/PROBE.md`)
    gain; the core SOUL.md (a DeepSeek narrative of 30 answers, no answers) gave the Jev reader +3.7 over the state
    text on 60 Twin people at a large log-loss cost. One lead, seen twice. It needs its own calibration before it can
    be read in log loss, and a served shadow before it means anything.
-8. **The reproduction check needs an evidence hash.** State hashes cannot match on a scrubbed export. A hash over the
-   answers alone (seqs, values, reasons), which scrubbing does not touch, would let the workflow check reproduction
-   without `--keep-identity`; `stateHash` stays as it is.
+8. **The reproduction check needs an evidence hash (built).** State hashes cannot match on a scrubbed export. Every
+   prediction now stores `evidenceHash`, the hash of its state's evidence alone, which scrubbing does not touch, and
+   the report's reproduction checks compare it for the `full` arm. Rows written before it carry none and are left
+   out of that check; `stateHash` stays as it is.
 9. **Individuation was unreadable on served data** (6 shared anchors). E7's shared items give across-person
    correlation and dispersion on every person, and the Twin run shows dispersion is where state policies differ
    (0.201 for the served state at k = 30, 0.127 for a recency card, 0.197 for a `surprise` card).

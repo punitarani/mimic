@@ -174,7 +174,11 @@ export function buildState(m: MimicData, opts: BuildOptions): PersonState {
 
 function finalize(body: Omit<PersonState, 'meta'>, builder: string, evidenceSeqMax: number): PersonState {
   const stateHash = sha256Hex(canonicalJson(body));
-  return { ...body, meta: { evidenceSeqMax, stateHash, builder, tokens: estimateTokens(body) } };
+  const evidenceHash = sha256Hex(canonicalJson(body.evidence));
+  return {
+    ...body,
+    meta: { evidenceSeqMax, stateHash, evidenceHash, builder, tokens: estimateTokens(body) },
+  };
 }
 
 function buildIdentity(m: MimicData): Record<string, unknown> {

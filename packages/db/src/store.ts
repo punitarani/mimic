@@ -239,6 +239,7 @@ const toPrediction = (r: PRow): PredictionRecord => ({
   dist: parse(Dist, r.distJson, {}),
   confidence: r.confidence,
   stateHash: r.stateHash,
+  evidenceHash: r.evidenceHash,
   evidenceSeqMax: r.evidenceSeqMax,
   configHash: r.configHash,
   promptVersion: r.promptVersion,
@@ -253,8 +254,8 @@ const toPrediction = (r: PRow): PredictionRecord => ({
   createdAt: r.createdAt,
 });
 
-/** 21 columns per row (D1's 100-parameter limit bounds the batch size below). */
-const PREDICTION_COLS = 21;
+/** 22 columns per row (D1's 100-parameter limit bounds the batch size below). */
+const PREDICTION_COLS = 22;
 const fromPrediction = (p: PredictionRecord): typeof s.predictions.$inferInsert => ({
   ...p,
   predictorId: canonicalPredictorId(p.predictorId),
