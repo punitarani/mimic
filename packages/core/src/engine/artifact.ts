@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { factHidden } from '../scope';
-import type { FactRecord, FidelityRecord, MimicRecord } from '../store';
+import type { FactRecord, FidelityRecord, MimicRecord, QuestionRecord } from '../store';
 import { StaleEvidenceError } from '../store';
 import { QKind } from '../types';
 import { type LoadedMimic, loadMimicData, scopedKg, vectorId } from './data';
@@ -34,6 +34,12 @@ export const MimicJson = z.object({
       optionKeys: z.array(z.string()),
       answer: z.string(),
       why: z.string().nullable(),
+      /**
+       * Where the answer came from (ADR-0056): `session` (asked by Mimic), `person` (taught on the mimic page) or
+       * `agent` (an observation another agent appended), with the agent's name. Absent in files written before it.
+       */
+      source: z.enum(['session', 'person', 'agent']).optional(),
+      agent: z.string().optional(),
     }),
   ),
   traits: z.array(
@@ -70,6 +76,18 @@ export const MimicJson = z.object({
   }),
 });
 export type MimicJson = z.infer<typeof MimicJson>;
+
+/** The origin of an answer, from its question's provenance (ADR-0056). */
+export function evidenceOrigin(q: Pick<QuestionRecord, 'kind' | 'provenance'>): {
+  source: 'session' | 'person' | 'agent';
+  agent?: string;
+} {
+  if (q.kind !== 'feedback') return { source: 'session' };
+  const g = q.provenance.generator;
+  return g.startsWith('observation:')
+    ? { source: 'agent', agent: g.slice('observation:'.length) }
+    : { source: 'person' };
+}
 
 /**
  * Unique per write attempt: two writers racing for the same version can never overwrite a committed snapshot's
@@ -110,6 +128,7 @@ export function mimicDocParts(
       .filter((a) => !loaded.scope.hiddenQuestionIds.has(a.questionId))
       .map((a) => {
         const q = qById.get(a.questionId)!;
+        const origin = evidenceOrigin(q);
         return {
           seq: a.seq,
           kind: q.kind,
@@ -119,6 +138,8 @@ export function mimicDocParts(
           optionKeys: q.options.map((o) => o.key),
           answer: a.value,
           why: a.why,
+          source: origin.source,
+          ...(origin.agent ? { agent: origin.agent } : {}),
         };
       })
       .sort((a, b) => a.seq - b.seq),

@@ -315,8 +315,8 @@ export interface SoulItem {
     certainty: CertaintyTier;
     answers: number;
   };
-  /** Decision record: what was asked and chosen. */
-  answer?: { options: string[]; chosen: string; why: string | null };
+  /** Decision record: what was asked and chosen; `agent` names the agent that observed it (ADR-0056). */
+  answer?: { options: string[]; chosen: string; why: string | null; agent?: string };
 }
 
 export interface SoulSection {
@@ -549,7 +549,12 @@ export function buildSoul(input: SoulInput, profile: SoulProfile = 'full'): Soul
       detail: null,
       cites: [e.seq],
       editable: false,
-      answer: { options: e.options, chosen: chosenLabel(e), why: e.why ? oneLine(e.why) : null },
+      answer: {
+        options: e.options,
+        chosen: chosenLabel(e),
+        why: e.why ? oneLine(e.why) : null,
+        ...(e.agent ? { agent: oneLine(e.agent) } : {}),
+      },
     });
   }
 
@@ -788,7 +793,9 @@ function renderSoulMarkdown(args: {
 
   const answerLine = (i: SoulItem) => {
     const a = i.answer!;
-    return `- **#${i.cites[0]}** ${i.text} _(${a.options.join(' · ')})_ → **${a.chosen}**${a.why ? `. Why: “${a.why}”` : ''}`;
+    // An answer another agent observed is marked, so a reader can weigh it below what the person said to Mimic.
+    const observed = a.agent ? ` _(observed by ${a.agent})_` : '';
+    return `- **#${i.cites[0]}** ${i.text} _(${a.options.join(' · ')})_ → **${a.chosen}**${a.why ? `. Why: “${a.why}”` : ''}${observed}`;
   };
   if (keyItems.length)
     section(

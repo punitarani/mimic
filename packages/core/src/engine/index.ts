@@ -6,6 +6,7 @@ export * from './experiments';
 export * from './identity';
 export * from './jobs';
 export * from './lab';
+export * from './observations';
 export * from './playground';
 export * from './rewind';
 export * from './scope';

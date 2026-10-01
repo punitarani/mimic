@@ -212,10 +212,27 @@ const FEEDBACK_ATTEMPTS = 3;
  * past it (its predictions were sealed below it, so they stay sealed). Idempotent per key; a write that loses a
  * race for a seq is retried.
  */
+/**
+ * Where a feedback answer came from (ADR-0056): the person on the mimic page by default, or an agent's observation
+ * ledger, which names the agent and keeps the observation's own metadata on the question.
+ */
+export interface FeedbackOrigin {
+  generator: string;
+  promptVersion: string;
+  quality: Record<string, unknown> | null;
+}
+
+export const PERSON_FEEDBACK: FeedbackOrigin = {
+  generator: 'feedback',
+  promptVersion: 'feedback.v1',
+  quality: null,
+};
+
 export async function submitFeedback(
   deps: EngineDeps,
   mimicId: string,
   input: FeedbackInput,
+  origin: FeedbackOrigin = PERSON_FEEDBACK,
 ): Promise<FeedbackResult> {
   const m = await requireMimic(deps, mimicId);
   const cfg = await loadConfig(deps, m.configHash);
@@ -260,9 +277,13 @@ export async function submitFeedback(
       prompt: v.prompt,
       options: v.options,
       facetIds: [],
-      provenance: { generator: 'feedback', configHash: m.configHash, promptVersion: 'feedback.v1' },
+      provenance: {
+        generator: origin.generator,
+        configHash: m.configHash,
+        promptVersion: origin.promptVersion,
+      },
       status: 'answered',
-      quality: null,
+      quality: origin.quality,
       createdAt: now,
       servedAt: now,
       stateAt: null,
