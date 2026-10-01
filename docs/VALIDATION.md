@@ -520,4 +520,9 @@ Nothing below comes from real people. The run on real people is Actions → Evid
 - **Live smoke** (one scripted person, 16 questions; real Jev and DeepSeek; $0.011): Jev took every view, including
   `context` and `relevant`, and DeepSeek took `context` and `full`, with no failures. Scripted, so a check of the
   requests, not a result.
+- **Run on real people (2026-10-01).** Actions → Evidence run `36800696803`, eval run
+  `01M3TJAEA5H0GB75D8Z11Q4MMA`, $2.07, every cell complete. Verdict: `questions` (`docs/reports/e6-evidence.md`).
+  Reproduction: top-pick agreement 89.4% with the stored baseline and 95.5% with the stored primary. State hashes
+  matched 0%, as they must on the workflow's scrubbed export (ADR-0018). Only a `--keep-identity` export can match
+  them, and the report now says so.
 

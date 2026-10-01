@@ -1990,6 +1990,21 @@ correlation across people improves.
 
 **Spend so far.** A live smoke on one scripted person: $0.011. The full run is expected to cost about $2.
 
+**Result (2026-10-01; `docs/reports/e6-evidence.md`).** Run `01M3TJAEA5H0GB75D8Z11Q4MMA`: 6 served people (330
+questions) and 100 Twin-2K-500 people, $2.07. Verdict: `questions`.
+- On served questions neither model learns. Jev's `full` − `context` log loss was −0.024 [−0.065, +0.019], and
+  DeepSeek's +0.024 [−0.032, +0.081].
+- On Twin both learn. At k = 30, Jev's change was −0.039 [−0.058, −0.021] and DeepSeek's −0.056 [−0.097, −0.013].
+  Jev's accuracy gain grows from −0.2 points at k = 10 to +6.2 at k = 100.
+- No view replaced `full`.
+- DeepSeek's context-only prior already beats every Jev view on served questions, so the LLM shadows' lift in /lab
+  was mostly a better prior (exploratory).
+- The state-hash reproduction check needs a `--keep-identity` export; the workflow's scrubbed export can't match, and
+  top-pick agreement (89% against the baseline, 95% against the primary) stands in for it.
+- **Decision:** E3b stays a draft. Next is a held-out probe set (proposed as E7), so learning is measured apart from
+  what selection asks next, then selection that also exploits.
+
+
 ## ADR-0054 — `decision:` predictor IDs, and rerouted predictions stored under the model that answered (2026-10-01)
 
 A predictor ID's prefix names how the predictor is called, not a model: `llm:` is a chat completion that returns JSON

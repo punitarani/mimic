@@ -635,7 +635,7 @@ export function renderEvidence(r: EvidenceReport): string[] {
     out.push(
       '## Reproduction checks (served questions)',
       '',
-      'Whether the harness shows Jev what production showed it, and gets the same pick. Production asked each question in a batch with other candidates; here it is asked alone, so a pick can differ.',
+      "Whether the harness shows Jev what production showed it, and gets the same pick. States can match only on an internal `--keep-identity` export. A scrubbed export (the workflow's) replaces names and drops locations (ADR-0018), so its states never match, and top-pick agreement is the check. Production asked each question in a batch with other candidates; here it is asked alone, so a pick can differ.",
       '',
       '| Arm | Stored prediction | n | Same state | Same top pick |',
       '| --- | --- | --- | --- | --- |',
