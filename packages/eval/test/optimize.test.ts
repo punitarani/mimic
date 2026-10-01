@@ -26,10 +26,14 @@ import {
   feedbackFor,
   jevRequests,
   Meter,
+  type Pair,
   pairedByPerson,
   pairedComparisons,
   pairedDelta,
+  personTemperature,
   predictorFor,
+  prequentialTemperatures,
+  probabilityAudit,
   RESIDUAL_MIN_OTHERS,
   residualReport,
   resolveCandidate,
@@ -225,6 +229,46 @@ describe('evaluate', () => {
     expect(r.rows.some((x) => x.predictor === 'item-mean')).toBe(false);
   });
 
+  it("fits a person's temperature only from their earlier questions, shrunk toward the global one (RESEARCH §2.4)", () => {
+    const temps = [0.5, 1, 2, 4, 8];
+    const pairs: Pair[] = instances
+      .filter((i) => i.stored.some((p) => p.role === 'primary' && p.ok))
+      .map((inst) => ({ inst, dist: inst.stored.find((p) => p.role === 'primary' && p.ok)!.dist }));
+    const one = pairs.filter((p) => p.inst.mimicId === pairs[0]!.inst.mimicId);
+    expect(personTemperature([], 2, 0, temps)).toBe(2);
+    expect(personTemperature(one, 2, Number.POSITIVE_INFINITY, temps)).toBe(2);
+    // No shrinkage: the person's own best temperature on the grid.
+    expect(temps).toContain(personTemperature(one, 2, 0, temps));
+    const t = prequentialTemperatures(pairs, 2, 10, temps);
+    const first = new Map<string, Pair>();
+    for (const p of [...pairs].sort((a, b) => a.inst.seq - b.inst.seq))
+      if (!first.has(p.inst.mimicId)) first.set(p.inst.mimicId, p);
+    for (const p of first.values()) expect(t.get(p)).toBe(2);
+    // Changing a person's last answer leaves every earlier temperature where it was.
+    const last = [...one].sort((a, b) => b.inst.seq - a.inst.seq)[0]!;
+    const changed = pairs.map((p) =>
+      p === last ? { ...p, inst: { ...p.inst, answer: p.inst.question.options.at(-1)!.key } } : p,
+    );
+    const t2 = prequentialTemperatures(changed, 2, 10, temps);
+    for (const [i, p] of pairs.entries()) if (p !== last) expect(t2.get(changed[i]!)).toBe(t.get(p));
+  });
+
+  it('counts the distinct top probabilities each predictor says (RESEARCH §2.5)', () => {
+    const recs = storedRecords(instances);
+    const audit = probabilityAudit(recs);
+    const primary = audit.find((a) => a.candidate === `${PRIMARY}|primary`)!;
+    expect(primary.n).toBe(recs.filter((r) => r.candidate === `${PRIMARY}|primary` && r.ok).length);
+    expect(primary.distinct).toBeGreaterThan(0);
+    expect(primary.modeShare).toBeGreaterThan(0);
+    expect(primary.modeShare).toBeLessThanOrEqual(1);
+    const fake = recs
+      .slice(0, 4)
+      .map((r, i) => ({ ...r, candidate: 'x|shadow', confidence: i < 3 ? 0.95 : 0.6 }));
+    expect(probabilityAudit(fake)).toEqual([
+      { candidate: 'x|shadow', n: 4, distinct: 2, mode: 0.95, modeShare: 0.75 },
+    ]);
+  });
+
   it('derives calibrated Jev from the stored primary for free, and reports what calibration does to accuracy', () => {
     // Mimics made before cfg.default.v7 store an uncalibrated primary: this cohort's v7 rows on Jev's raw scale.
     const raw = (p: EvalInstance['stored'][number]) =>
@@ -277,14 +321,21 @@ describe('evaluate', () => {
     expect(baselines.length).toBeGreaterThan(0);
     expect(baselines.every((r) => r.predictorId === 'decision:typesafe/jev-1.13')).toBe(true);
     expect(pairedComparisons(recs.filter((r) => !baselines.includes(r)))).toEqual(pairedComparisons(recs));
-    // Fits report test accuracy before and after, and pool only LLM shadows with the primary.
+    // Fits report test accuracy before and after, and pool with the primary only predictors that see something else:
+    // LLM shadows and view shadows (ADR-0065).
     const fits = calibrationFits(instances);
     for (const f of fits.filter((x) => x.nTest > 0)) {
       expect(f.testAccBefore).toBeTypeOf('number');
       expect(f.testAccAfter).toBeTypeOf('number');
     }
-    for (const f of fits.filter((x) => x.method.startsWith('log-linear pool')))
-      expect(f.predictor.startsWith('llm:')).toBe(true);
+    const pools = fits.filter((x) => x.method.startsWith('log-linear pool'));
+    for (const f of pools)
+      expect(
+        f.predictor.startsWith('llm:') || f.predictor.startsWith('decision:typesafe/jev-1.13@jev-derived.v1'),
+      ).toBe(true);
+    expect(pools.some((f) => f.predictor.startsWith('decision:typesafe/jev-1.13@jev-derived.v1 ×'))).toBe(
+      true,
+    );
   });
 
   it('pairs versions of one model in numeric order, one row per question (ADR-0048)', () => {

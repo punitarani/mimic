@@ -392,6 +392,23 @@ function renderEvaluate(m: M): string[] {
       '',
     );
   }
+  const audit = m.probabilities as Array<M> | undefined;
+  if (audit?.length) {
+    out.push(
+      '## Probability audit (RESEARCH §2.5)',
+      '',
+      'Distinct top probabilities per predictor (to 0.001). A predictor that says a few values most of the time is binned',
+      'by them, so judge it on log loss rather than calibration error.',
+      '',
+      '| Predictor (role) | n | Distinct values | Most common | Its share |',
+      '| --- | --- | --- | --- | --- |',
+      ...audit.map((x) => {
+        const [id, role] = String(x.candidate).split('|');
+        return `| \`${id}\` (${role}) | ${String(x.n)} | ${String(x.distinct)} | ${f3(x.mode)} | ${pct(x.modeShare)} |`;
+      }),
+      '',
+    );
+  }
   const fits = m.fits as Array<M> | undefined;
   if (fits?.length) {
     out.push(

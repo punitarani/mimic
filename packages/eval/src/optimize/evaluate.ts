@@ -676,7 +676,7 @@ export interface FitRow {
   testAccAfter: number | null;
 }
 
-interface Pair {
+export interface Pair {
   inst: EvalInstance;
   dist: Distribution;
   other?: Distribution;
@@ -800,15 +800,17 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
             ),
           );
       }
+      const person = personTemperatureFit(k, method, temps, dev, test);
+      if (person) rows.push(person);
       const withBase = ps.filter((p) => p.inst.baseline);
       const [d2, t2] = split(withBase);
       if (d2.length >= 10)
         rows.push(
           fitParam(k, 'shrink to baseline', unit, d2, t2, (p, a) => shrink(p.dist, p.inst.baseline!, a), 0),
         );
-    } else if (k.startsWith('llm:')) {
-      // Pools with LLM shadows only (a decision shadow pooled with a decision primary is a temperature fit by another name),
-      // one fit per primary so a fit never mixes scales.
+    } else if (k.startsWith('llm:') || viewOf(k) !== null) {
+      // Pools with LLM shadows and view shadows only (a decision shadow reading the primary's state is a temperature
+      // fit by another name), one fit per primary so a fit never mixes scales.
       for (const [pid, primary] of [...primaries.entries()].sort(([a], [b]) => a.localeCompare(b))) {
         const paired = ps
           .filter((p) => primary.has(p.inst.id))
@@ -830,6 +832,120 @@ export function calibrationFits(instances: EvalInstance[]): FitRow[] {
     }
   }
   return rows;
+}
+
+/** Shrinkage toward the global temperature, in pseudo-questions; the last is the global temperature alone. */
+const PERSON_SHRINK = [0, 5, 10, 20, 40, 80, Number.POSITIVE_INFINITY];
+
+/**
+ * A person's temperature from their own earlier questions, shrunk toward the global one on the log scale: with n
+ * earlier questions and strength n0, the weight on the person's own fit is n / (n + n0) (RESEARCH §2.4).
+ */
+export function personTemperature(prev: Pair[], global: number, n0: number, temps: number[]): number {
+  if (!prev.length || n0 === Number.POSITIVE_INFINITY) return global;
+  let own = global;
+  let bestLl = Number.POSITIVE_INFINITY;
+  for (const t of temps) {
+    const v = ll(prev, (p) => temperatureScale(p.dist, t));
+    if (v < bestLl - 1e-12) {
+      own = t;
+      bestLl = v;
+    }
+  }
+  const w = prev.length / (prev.length + n0);
+  return Math.exp(w * Math.log(own) + (1 - w) * Math.log(global));
+}
+
+/** Each question at the temperature fitted on the same person's earlier questions only: no question sees itself. */
+export function prequentialTemperatures(
+  ps: Pair[],
+  global: number,
+  n0: number,
+  temps: number[],
+): Map<Pair, number> {
+  const out = new Map<Pair, number>();
+  for (const xs of groupBy(ps, (p) => p.inst.mimicId).values()) {
+    const ordered = [...xs].sort((a, b) => a.inst.seq - b.inst.seq);
+    ordered.forEach((p, i) => {
+      out.set(p, personTemperature(ordered.slice(0, i), global, n0, temps));
+    });
+  }
+  return out;
+}
+
+/**
+ * RESEARCH §2.4: a per-person temperature, scored prequentially. The global temperature and the shrinkage strength
+ * are chosen on dev people; test people are scored question by question with what their earlier answers allowed.
+ * "Before" is the global temperature, so the row shows only what personalising it adds.
+ */
+function personTemperatureFit(
+  predictor: string,
+  method: string,
+  temps: number[],
+  dev: Pair[],
+  test: Pair[],
+): FitRow | null {
+  if (new Set(dev.map((p) => p.inst.mimicId)).size < 2) return null;
+  const global = fitParam(predictor, method, temps, dev, [], (p, t) => temperatureScale(p.dist, t), 1).param;
+  const at = (ps: Pair[], n0: number) => {
+    const t = prequentialTemperatures(ps, global, n0, temps);
+    return (p: Pair) => temperatureScale(p.dist, t.get(p)!);
+  };
+  const flat = (p: Pair) => temperatureScale(p.dist, global);
+  let n0 = Number.POSITIVE_INFINITY;
+  let bestLl = ll(dev, flat);
+  for (const x of PERSON_SHRINK) {
+    const v = ll(dev, at(dev, x));
+    if (v < bestLl - 1e-9) {
+      n0 = x;
+      bestLl = v;
+    }
+  }
+  const has = test.length > 0;
+  const personal = has ? at(test, n0) : flat;
+  return {
+    predictor,
+    method: `${method}, per person (prequential; ${Number.isFinite(n0) ? `prior worth ${n0} questions` : 'no person fit beat the global one'})`,
+    // The global temperature the person's is shrunk toward; the method names the shrinkage.
+    param: global,
+    nFit: dev.length,
+    nTest: test.length,
+    fitBefore: ll(dev, flat),
+    fitAfter: bestLl,
+    testBefore: has ? ll(test, flat) : null,
+    testAfter: has ? ll(test, personal) : null,
+    testEceBefore: has ? ece(test, flat) : null,
+    testEceAfter: has ? ece(test, personal) : null,
+    testAccBefore: has ? acc(test, flat) : null,
+    testAccAfter: has ? acc(test, personal) : null,
+  };
+}
+
+const round3 = (x: number) => Math.round(x * 1000) / 1000;
+
+/**
+ * RESEARCH §2.5: how many distinct top probabilities each predictor emits. Verbalised probabilities cluster on a few
+ * values, so a calibration error measured in bins can be an artefact; log loss is the fair yardstick.
+ */
+export function probabilityAudit(
+  recs: EvalRecord[],
+): Array<{ candidate: string; n: number; distinct: number; mode: number; modeShare: number }> {
+  return [
+    ...groupBy(
+      recs.filter((r) => r.ok),
+      (r) => r.candidate,
+    ).entries(),
+  ]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([candidate, rs]) => {
+      const counts = new Map<number, number>();
+      for (const r of rs) {
+        const v = round3(r.confidence);
+        counts.set(v, (counts.get(v) ?? 0) + 1);
+      }
+      const [mode, top] = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]!;
+      return { candidate, n: rs.length, distinct: counts.size, mode, modeShare: top / rs.length };
+    });
 }
 
 export interface PairedRow {
