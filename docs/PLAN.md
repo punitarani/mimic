@@ -113,6 +113,7 @@ Intake ─► Identity (search → "Is one of these you?" → facts) ─► Anch
 | Decision | `respan/span-01-20260925` (pinned) | Same OpenRouter Decisions API; string state and yes/no questions only; the challenger behind the `decisions-model` flag (ADR-0051, `docs/CHALLENGER.md`). |
 | Decision | `cloudflare/clef`, `cloudflare/clef-flash` | Cloudflare Workers AI only: `POST https://api.cloudflare.com/client/v4/accounts/{id}/ai/run/@cf/cloudflare/clef[-flash]`, the Jev request and answers inside Workers AI's envelope. $0.24/M and $0.09/M input; 64K context; 64 questions a request; no dated snapshot. Compared offline by E8 (ADR-0068). |
 | Decision | `perplexity/pplx-decider-v1-27b` | Perplexity only: `POST https://api.perplexity.ai/v1/decisions`, the Jev request and answers. $0.04/M input, output free; 128 questions a request; no dated snapshot. Compared offline by E8 (ADR-0068). |
+| Decision | `fastino/glide` | Fastino only: `POST https://api.fastino.ai/v1/systemone` as `fastino/GLiDE`, the Jev request and answers (score answers carry the winning level as `score` beside `expected_level`). $0.30/M input, output free, the state counted once per question; 40,000 tokens per question; a cold model answers 425 for about a minute; no dated snapshot. Compared offline by E8 (ADR-0070). |
 | Decision | OpenAI Decisions API | Out of scope; `DecisionProvider` stub only. |
 | Search | Exa, `category: "people"` | Candidate discovery for identity resolution. |
 | Search | Exa `/contents` (person entity; schema summary for other pages), Parallel Task API optional | Structured enrichment of the confirmed identity (ADR-0034). |
@@ -258,6 +259,7 @@ Cold start needs no LLM. The first 10 questions are static anchors, which gives 
 - `EXA_API_KEY`
 - `PARALLEL_API_KEY`
 - `PERPLEXITY_API_KEY` (optional)
+- `FASTINO_API_KEY` (optional; E8's GLiDE, ADR-0070)
 - `SESSION_SECRET`
 - `ADMIN_EMAILS`
 - `INVITE_CODES` (comma-separated, for the private cohort)
@@ -988,18 +990,19 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   consistency as the per-person ceiling. `PROBE_RULE` decides when answers help at each distance and when E3b may
   start. Set up from the `e7` preset in `/lab` (`cfg.e7.probes`, draft) and read with `pnpm eval -- probes`; readout
   `docs/reports/e7-probes.md`.
-- **E8 Decision models** (paired, offline on sealed states; ADR-0068, `docs/MODELS.md`). Which decision model predicts
-  a person best? Jev, span-01, Cloudflare's clef and clef-flash, and Perplexity's decider answer the same sealed
-  instances from the same state, in the same requests, on served questions (real people) and Twin-2K-500 at k = 30,
-  each also from the context alone. Primary metric: paired Δ log loss against Jev after a temperature per model fitted
-  leaving each person out; then item accuracy, lift over context, latency, errors and cost. `MODELS_RULE` decides
-  whether a challenger earns a shadow. Run it from Actions → Decision models (`pnpm eval -- models`); readout
-  `docs/reports/e8-models.md`. Result (2026-10-01): keep Jev. On 9 real people (462 served questions) no challenger
-  is better: span-01 is `worse`, and clef, clef-flash and the decider are `level`, each about 4 points less accurate.
-  On Twin, clef, the decider and clef-flash beat Jev, so the survey ranking does not carry over. Every challenger
-  fails the latency check. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9) re-asks it with every model at its best: a fixed
-  grid of views, scale formats, state formats and wordings, each model's configuration chosen by nested
+- **E8 Decision models** (paired, offline on sealed states; ADR-0068, `docs/MODELS.md`). Which decision model predicts a
+  person best? Jev, span-01, Cloudflare's clef and clef-flash, Perplexity's decider and Fastino's GLiDE (ADR-0070)
+  answer the same sealed instances from the same state, in the same requests, on served questions (real people) and
+  Twin-2K-500 at k = 30, each also from the context alone. Primary metric: paired Δ log loss against Jev after a
+  temperature per model fitted leaving each person out; then item accuracy, lift over context, latency, errors and cost.
+  `MODELS_RULE` decides whether a challenger earns a shadow. Run it from Actions → Decision models
+  (`pnpm eval -- models`); readout `docs/reports/e8-models.md`. Result (2026-10-01): keep Jev. On 9 real people (462 served questions)
+  no challenger is better: span-01 is `worse`, and clef, clef-flash and the decider are `level`, each about 4 points
+  less accurate. On Twin, clef, the decider and clef-flash beat Jev, so the survey ranking does not carry over. Every
+  challenger fails the latency check. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9) re-asks it with every model at its
+  best: a fixed grid of views, scale formats, state formats and wordings, each model's configuration chosen by nested
   leave-one-person-out cross-validation, judged by the same rule.
+
 
 ---
 

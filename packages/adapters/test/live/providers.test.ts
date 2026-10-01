@@ -7,6 +7,7 @@ import {
   decisionChallenger,
   FLAG_KEYS,
   Gateway,
+  GLIDE_MODEL,
   LlmPredictor,
   makePredictor,
   type PersonState,
@@ -21,6 +22,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ExaEnricher,
   ExaPeopleSearch,
+  FastinoDecisions,
   JevDecisions,
   OpenRouterChat,
   OpenRouterEmbedder,
@@ -112,6 +114,22 @@ describe.skipIf(!LIVE)('live providers', () => {
       expect(r.usage.costUsd).toBeGreaterThan(0);
     },
     30_000,
+  );
+
+  it.skipIf(!env.FASTINO_API_KEY)(
+    "Fastino's GLiDE answers the same request",
+    async () => {
+      const r = await new FastinoDecisions({ apiKey: env.FASTINO_API_KEY }).decide({
+        model: GLIDE_MODEL,
+        ...sameAsJev,
+      });
+      console.log(JSON.stringify(r.raw));
+      expect(r.modelSnapshot).toBe('fastino/GLiDE');
+      expect(r.answers.s?.type).toBe('score');
+      expect(r.usage.costUsd).toBeGreaterThan(0);
+    },
+    // A cold model warms for about a minute, and GLiDE may think on a hard question.
+    300_000,
   );
 
   it('OpenRouter chat returns schema-valid JSON with cost', async () => {

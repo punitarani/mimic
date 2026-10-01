@@ -2553,3 +2553,42 @@ served people that risk is large.
 - Free-text prompt optimization per model stays out until there are more served people (`docs/MODELS.md` §9).
 - A tuned setting never reaches the primary directly: a recommendation goes to a shadow on new people first
   (ADR-0024).
+
+## ADR-0070 — Fastino's GLiDE joins E8 and E8b (2026-10-01)
+
+**Context.** Fastino released GLiDE on 1 October: a decision model that takes Jev's request on its own API
+(`POST https://api.fastino.ai/v1/systemone`, model `fastino/GLiDE`) and "thinks" further on a question it isn't
+confident about. Fastino reports it ahead of Jev on the Decision Index; E8 asks whether that holds on Mimic's people.
+Its contract differs from the other challengers in four ways (`docs.fastino.ai`, read 2026-10-01):
+- **Score answers.** `score` is the winning level's index; the probability-weighted level is `expected_level`.
+- **Cost.** It returns token counts and no cost. It is billed at $0.30/M input with the state counted once per
+  question.
+- **Cold start.** A cold model answers 425 for about a minute.
+- **Timeout.** Fastino recommends a 300 s read timeout.
+
+**Decision.**
+- **Model and routing.** `fastino/glide` (`GLIDE_MODEL`) is a provider-neutral ID like ADR-0068's. `RoutedDecisions`
+  sends `fastino/` to `FastinoDecisions`, which:
+  - asks for `fastino/GLiDE` with exactly `model`, `state` and `questions` (Fastino returns 422 on any other field);
+  - authenticates with `X-API-Key` from `FASTINO_API_KEY`;
+  - accepts `glide` as the echo.
+- **List rate.** `DECISION_LIST_RATES` registers $0.30/M input, output free, from Fastino's pricing page, as ADR-0068's
+  exception allows.
+- **Answers.** Levels are read from `probabilities` as for every model, so the integer `score` changes nothing. The
+  same answer checks apply.
+- **Waiting.**
+  - On a 425 the adapter waits 60 s and asks again, up to three times, beyond the HTTP layer's short retries.
+  - The timeout is 300 s.
+  - Latency counts only the attempt that answered, as before.
+- **Limits.** No question limit is documented, only 40,000 tokens per question with the state, which Mimic's states
+  fit. Twin keeps batches of 20.
+- **In both experiments.** GLiDE is in E8's and E8b's default arms. `MODELS_RULE` and E8b's grid are unchanged.
+- **Caps.** The default caps rise to $10 for E8 and $40 for E8b. They were $5 and $15. Expected spend at 200 Twin
+  people is about $7 and $28; GLiDE alone is about $5 and $19.
+
+**Consequences.**
+- The workflow passes `FASTINO_API_KEY` (a GitHub secret synced from Doppler). A missing or unfunded key fails GLiDE's
+  canary, and the run goes on without it, naming it.
+- `api.fastino.ai` is blocked from the environment that wrote the adapter. The fixtures are built from Fastino's
+  documented shapes, and the first live canary's `canary.json` replaces them (as ADR-0068 did for clef).
+- GLiDE's adaptive thinking may widen its latency tail. E8's operational check reads p95 as it does for every model.

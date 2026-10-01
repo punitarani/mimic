@@ -2,26 +2,29 @@
 
 v1 · 2026-10-01 · Status: run on 2026-10-01 (Actions run `36926382050`, eval run `01M3WP08Q7MSSY0772PRNCQE27`, $2.00).
 Verdict: keep Jev. Readout: `docs/reports/e8-models.md`. ADR-0068. The rule in §5 was fixed before the first run.
-E8b (§9, ADR-0069) re-asks the question with every model at its best: designed, not run.
+E8b (§9, ADR-0069) re-asks the question with every model at its best: designed, not run. Fastino's GLiDE joins both
+(ADR-0070) from the next run.
 
 E8 asks which decision model predicts a person best. Jev is Mimic's primary. span-01 is the challenger behind the
 `decisions-model` flag (ADR-0051). Cloudflare's clef and clef-flash, and Perplexity's decider, were released this week
-and take the same request.
+and take the same request. Fastino's GLiDE, released on 1 October with "adaptive thinking" (it reasons further on a hard
+question), joined after the first run (ADR-0070).
 
 Every model answers the same sealed instances, from the same state, in the same requests, so this is a paired
 experiment that needs no new people. It costs a few dollars and runs in one workflow.
 
 ## 1. Why this experiment
 
-- **Same API, different models.** All five take a state and named `noul` / `choice` / `score` questions, and return a
+- **Same API, different models.** All six take a state and named `noul` / `choice` / `score` questions, and return a
   probability per option. Clef's model card says its API is "fully compatible with Jev and SystemOne", and
-  Perplexity's matches field for field. Mimic can therefore ask all five the same question in the same words.
+  Perplexity's and Fastino's match field for field. Mimic can therefore ask all six the same question in the same words.
   Prompts, states and batching then cancel out, and only the model differs.
 - **Jev's limits are known.** E6 found that Jev learns from Twin's survey answers but not from Mimic's served ones
   (`docs/reports/e6-evidence.md`). The span-01 benchmark has no published result yet. A model that learns from served
   answers, or that knows the population better, would change the primary.
-- **The challengers are cheap enough to serve.** At Mimic's state sizes, every model costs about $0.001 per request or
-  less (§2).
+- **The challengers are cheap enough to serve.** At Mimic's state sizes, every model costs about $0.001 per
+  single-question request or less (§2). The decider and GLiDE count the state once per question, so a batch costs them
+  about as much as asking each question alone.
 
 ## 2. The models
 
@@ -32,6 +35,7 @@ experiment that needs no new people. It costs a few dollars and runs in one work
 | clef | `cloudflare/clef` | Cloudflare Workers AI | 27B | $0.24/M, list rate | 64K context, 64 questions a request | none |
 | clef-flash | `cloudflare/clef-flash` | Cloudflare Workers AI | 9B | $0.09/M, list rate | 64K context, 64 questions a request | none |
 | Perplexity's decider | `perplexity/pplx-decider-v1-27b` | Perplexity API | 27B | $0.04/M, list rate | 262K tokens, 128 questions a request | none |
+| GLiDE | `fastino/glide` | Fastino API (`/v1/systemone`, as `fastino/GLiDE`) | not disclosed | $0.30/M, list rate; the state counted once per question | 40K tokens per question; no question limit documented | none |
 
 **IDs and wiring.**
 - Mimic's model IDs are provider-neutral, with the vendor as a prefix, because `@` separates a predictor's prompt
@@ -40,10 +44,13 @@ experiment that needs no new people. It costs a few dollars and runs in one work
   Each `model_calls` row names the vendor that served the call.
 
 **Prices.**
-- Workers AI and Perplexity return token counts but no cost. Their calls are priced at the published list rate,
+- Workers AI, Perplexity and Fastino return token counts but no cost. Their calls are priced at the published list rate,
   registered with its source and date in `DECISION_LIST_RATES`. This is the one exception to "money is the
   provider's `usage.cost`" (ADR-0068).
-- **Snapshot.** Neither vendor has a dated snapshot, so a result holds for the day it was measured.
+- **Snapshot.** No vendor outside OpenRouter has a dated snapshot, so a result holds for the day it was measured.
+- **GLiDE's answers.** Its `score` is the winning level's index, not an expectation (that is `expected_level`). Mimic
+  reads levels from `probabilities`, as for every model, so this changes nothing. A cold model answers HTTP 425 for
+  about a minute; the adapter waits it out (ADR-0070).
 
 ### Keys the run needs
 
@@ -52,6 +59,7 @@ experiment that needs no new people. It costs a few dollars and runs in one work
 | `OPENROUTER_API_KEY` | Jev, span-01 | Already set. |
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | clef, clef-flash | The deploy token, with **Account · Workers AI · Read** added (`docs/DEPLOY.md`). |
 | `PERPLEXITY_API_KEY` | Perplexity's decider | Any Perplexity API key; the same secret the optional people-search adapter reads. |
+| `FASTINO_API_KEY` | GLiDE | A Fastino key (`fast_sk_…`) with credits; a 402 or 403 means billing, not the key. |
 
 A canary request per model runs first, and names the fix when a key or permission is missing. By default a failed
 canary stops the run before anything else is spent. With `--drop-failed-canary` (the workflow's setting) only that
@@ -168,7 +176,8 @@ Each is reported per dataset × model × view:
 
 - **Few served people.** Served questions come from about six consented people, so the served interval is by question
   and the people count is a floor rather than power. The verdict needs Twin to agree in direction.
-- **No snapshots.** Clef and Perplexity's decider can change under the same name, so the report records the run date.
+- **No snapshots.** Clef, Perplexity's decider and GLiDE can change under the same name, so the report records the run
+  date.
 - **One prompt.** Every model is asked in Jev's words, and the harness's components were tuned on Jev. A challenger's
   best prompt could do better. E8b (§9) gives every model a fixed grid of request settings; free-text prompt
   optimization would be its own run (`docs/OPTIMIZATION.md`).
@@ -181,7 +190,7 @@ Each is reported per dataset × model × view:
 
 **In CI (the usual way, after merge):** Actions → **Decision models** → Run workflow.
 - **Inputs:** `data` (prod, twin or both; the verdict needs both), `twin_people` (200), `predictors` (empty means all
-  five), `tune` (also run E8b, §9), `max_usd` (empty means $5, or $15 with `tune`), `publish` (to `/lab`).
+  six), `tune` (also run E8b, §9), `max_usd` (empty means $10, or $40 with `tune`), `publish` (to `/lab`).
 - **Outputs:** the readout lands in the step summary and in `/lab`. The artifact holds `report.md` and `canary.json`,
   and the log prints the canary. Per-question records stay on the runner.
 - **A failed canary.** The workflow passes `--drop-failed-canary`, so a model whose canary fails is left out and named
@@ -193,8 +202,8 @@ Each is reported per dataset × model × view:
 doppler run -- pnpm deploy:config --env prod
 pnpm eval -- export --env prod --out data/prod.sqlite                  # consented people only (ADR-0018)
 pnpm eval -- import twin2k500 --path data/twin.jsonl --out data/twin.sqlite
-pnpm eval -- models --data data/prod.sqlite,data/twin.sqlite           # live, capped at --max-usd (default $5)
-pnpm eval -- models --data data/prod.sqlite,data/twin.sqlite --tune    # E8 and E8b (§9), default cap $15
+pnpm eval -- models --data data/prod.sqlite,data/twin.sqlite           # live, capped at --max-usd (default $10)
+pnpm eval -- models --data data/prod.sqlite,data/twin.sqlite --tune    # E8 and E8b (§9), default cap $40
 pnpm eval -- models --data data/twin.sqlite --offline --population all --k 8   # the harness, free, meaningless numbers
 ```
 
@@ -263,9 +272,12 @@ cross-validation, on mean log loss per prediction, with failures counted as unif
   setting goes to a shadow next, in its own ADR. Two of the grid's ideas already run as shadows (`@jev-derived.v1`,
   `@jev-scales.v1`); E8b reads them on the same people, not new ones.
 
-**Cost and time.** About $9 and an hour at 200 Twin people: ten settings on served questions, six distinct ones on
-Twin. The cap is $15 by default with `--tune`. Each model runs its settings one after another at E8's concurrency, so
-latency stays comparable.
+**Cost and time.** Ten settings on served questions, six distinct ones on Twin. Each model runs its settings one after
+another at E8's concurrency, so latency stays comparable.
+- **Without GLiDE:** about $9 and an hour at 200 Twin people.
+- **With GLiDE (ADR-0070):** about $28. GLiDE alone is about $19, since it is billed at $0.30/M with the state counted
+  per question: about $3.65 per full-state setting on Twin's 4,000 predictions.
+- **The cap** is $40 by default with `--tune`. `twin_people` 100 roughly halves the Twin part.
 
 **What it can't show.**
 - **Nine served people make noisy folds.** The fold agreement says how stable a choice is. Twin's 200 people steady

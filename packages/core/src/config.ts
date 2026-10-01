@@ -169,6 +169,8 @@ export const DECISION_MODELS: Readonly<Record<string, string>> = {
 export const CLEF_MODEL = 'cloudflare/clef';
 export const CLEF_FLASH_MODEL = 'cloudflare/clef-flash';
 export const PPLX_DECIDER_MODEL = 'perplexity/pplx-decider-v1-27b';
+/** Fastino's GLiDE on its own API (ADR-0070), asked for as `fastino/GLiDE`; it answers as `glide`. */
+export const GLIDE_MODEL = 'fastino/glide';
 export const LLM = {
   luna: 'openai/gpt-6-luna',
   deepseek: 'deepseek/deepseek-v4.1-flash',

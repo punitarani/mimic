@@ -6,6 +6,7 @@ import {
   type DecisionProvider,
   type DecisionRequest,
   Gateway,
+  GLIDE_MODEL,
   JEV_MODEL,
   PPLX_DECIDER_MODEL,
   RejectedResponseError,
@@ -619,6 +620,7 @@ describe('runs on the Twin sample, offline', () => {
     expect(Object.keys(r.rates).sort()).toEqual([
       'cloudflare/clef',
       'cloudflare/clef-flash',
+      GLIDE_MODEL,
       PPLX_DECIDER_MODEL,
     ]);
     expect(r.verdict.challengers.every((c) => c.outcome === 'insufficient')).toBe(true);
