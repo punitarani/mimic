@@ -197,6 +197,21 @@ export async function canary(
   return { results, recorded };
 }
 
+/**
+ * The predictors to run after the canary: all of them if it passed. With `dropFailed`, the ones that failed are left out
+ * (the report lists them) as long as the reference and a challenger remain; otherwise the run stops here.
+ */
+export function afterCanary(predictors: string[], results: CanaryResult[], dropFailed: boolean): string[] {
+  const failed = results.filter((x) => !x.ok);
+  if (!failed.length) return predictors;
+  const kept = predictors.filter((p) => !failed.some((x) => x.predictor === p));
+  if (!dropFailed || kept[0] !== predictors[0] || kept.length < 2)
+    throw new Error(
+      `canary failed for ${failed.map((x) => `${x.label}: ${x.error}`).join('; ')}. Nothing else was spent; fix it or leave the model out of --predictors`,
+    );
+  return kept;
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Running: people in chunks, every model and view per chunk
 // ---------------------------------------------------------------------------------------------------------------
@@ -402,6 +417,8 @@ export interface ModelsReport {
   population: string;
   reference: string;
   predictors: string[];
+  /** Left out after a failed canary (`--drop-failed-canary`). */
+  dropped: string[];
   views: StateView[];
   maxQuestionsPerRequest: number;
   costUsd: number;
@@ -552,6 +569,7 @@ export function analyzeModels(
   o: {
     reference: string;
     predictors: string[];
+    dropped?: string[];
     views: StateView[];
     k: number;
     population: string;
@@ -713,6 +731,7 @@ export function analyzeModels(
     population: o.population,
     reference: o.reference,
     predictors: o.predictors,
+    dropped: o.dropped ?? [],
     views: o.views,
     maxQuestionsPerRequest: o.maxQuestionsPerRequest,
     costUsd: o.costUsd,
@@ -754,6 +773,8 @@ export function renderModels(r: ModelsReport): string[] {
     `Data: ${r.datasets.map((d) => `${datasetTitle(d.key, r)}, ${d.instances} predictions from ${d.people} people`).join('; ') || 'none'}. Spend $${r.costUsd.toFixed(4)}.`,
     '',
   );
+  if (r.dropped?.length)
+    out.push(`**Left out after a failed canary:** ${r.dropped.map(label).join(', ')} (see Canary).`, '');
   if (r.stopReason) out.push(`**Stopped early:** ${r.stopReason}`, '');
 
   const rec = r.verdict.recommendation;
@@ -948,6 +969,7 @@ export async function modelsCmd(argv: string[]): Promise<void> {
       'chunk-people': { type: 'string', default: '10' },
       seed: { type: 'string', default: 'models' },
       'skip-canary': { type: 'boolean', default: false },
+      'drop-failed-canary': { type: 'boolean', default: false },
       name: { type: 'string' },
       out: { type: 'string' },
       summary: { type: 'string' },
@@ -997,6 +1019,7 @@ export async function modelsCmd(argv: string[]): Promise<void> {
   const arms = new Map<string, Arm>();
   let stopReason: string | null = null;
   let canaryResults: CanaryResult[] = [];
+  let measured = predictors;
   try {
     if (!values['skip-canary']) {
       const c = await canary(engine.deps.gateway, predictors);
@@ -1005,10 +1028,10 @@ export async function modelsCmd(argv: string[]): Promise<void> {
       meter.usd += sum(c.results.map((x) => x.costUsd ?? 0));
       for (const x of c.results)
         console.log(`canary ${x.label}: ${x.ok ? `ok (${x.modelSnapshot}, ${x.latencyMs} ms)` : x.error}`);
-      const failed = c.results.filter((x) => !x.ok);
-      if (failed.length)
-        throw new Error(
-          `canary failed for ${failed.map((x) => `${x.label}: ${x.error}`).join('; ')}. Nothing else was spent; fix it or leave the model out of --predictors`,
+      measured = afterCanary(predictors, c.results, values['drop-failed-canary']);
+      if (measured.length < predictors.length)
+        console.warn(
+          `left out after a failed canary: ${predictors.filter((p) => !measured.includes(p)).join(', ')}`,
         );
     }
 
@@ -1024,13 +1047,18 @@ export async function modelsCmd(argv: string[]): Promise<void> {
         break;
       }
       const before = meter.usd;
-      const res = await runChunk(chunk, cands, MODELS_VIEWS, {
-        gateway: engine.deps.gateway,
-        meter,
-        cache,
-        concurrency,
-        maxQuestions: chunk.dataset === SERVED ? 1 : maxQuestions,
-      });
+      const res = await runChunk(
+        chunk,
+        cands.filter((c) => measured.includes(c.label)),
+        MODELS_VIEWS,
+        {
+          gateway: engine.deps.gateway,
+          meter,
+          cache,
+          concurrency,
+          maxQuestions: chunk.dataset === SERVED ? 1 : maxQuestions,
+        },
+      );
       if ('stop' in res) {
         stopReason = `${res.stop.message}; chunk ${i + 1} of ${chunks.length} (${chunk.people.length} ${chunk.dataset} people) was dropped for every model, later chunks not run`;
         break;
@@ -1053,9 +1081,11 @@ export async function modelsCmd(argv: string[]): Promise<void> {
     engine.close();
   }
 
+  const dropped = predictors.filter((p) => !measured.includes(p));
   const report = analyzeModels([...arms.values()], {
     reference,
-    predictors,
+    predictors: measured,
+    dropped,
     views: MODELS_VIEWS,
     k,
     population: values.population,
@@ -1070,7 +1100,8 @@ export async function modelsCmd(argv: string[]): Promise<void> {
     name: values.name ?? 'E8: decision models compared',
     spec: {
       kind: 'models',
-      predictors,
+      predictors: measured,
+      dropped,
       reference,
       split: values.split,
       k,

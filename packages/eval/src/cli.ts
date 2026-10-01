@@ -137,7 +137,7 @@ Commands
             person out, lift over context, latency, cost and errors, and MODELS_RULE's verdict
             --data <prod.sqlite>[,<twin.sqlite>] [--predictors a,b,…] [--population real|all] [--split all] [--k 30]
             [--max-targets 20] [--limit N] [--max-usd 5] [--concurrency 4] [--max-questions 20]
-            [--chunk-people 10] [--skip-canary]
+            [--chunk-people 10] [--skip-canary] [--drop-failed-canary (run on without models whose canary failed)]
             [--publish local|preview|prod] [--summary <file>] [--offline]
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
             --data … --predictor decision:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]

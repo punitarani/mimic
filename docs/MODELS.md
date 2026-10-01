@@ -52,8 +52,9 @@ experiment that needs no new people. It costs a few dollars and runs in one work
 | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` | clef, clef-flash | The deploy token, with **Account · Workers AI · Read** added (`docs/DEPLOY.md`). |
 | `PERPLEXITY_API_KEY` | Perplexity's decider | Any Perplexity API key; the same secret the optional people-search adapter reads. |
 
-A canary request per model runs first. If a key or permission is missing, it stops the run before anything else is
-spent and names the fix.
+A canary request per model runs first, and names the fix when a key or permission is missing. By default a failed
+canary stops the run before anything else is spent. With `--drop-failed-canary` (the workflow's setting) only that
+model is left out.
 
 ## 3. Questions and hypotheses
 
@@ -179,8 +180,10 @@ Each is reported per dataset × model × view:
 **In CI (the usual way, after merge):** Actions → **Decision models** → Run workflow.
 - **Inputs:** `data` (prod, twin or both; the verdict needs both), `twin_people` (200), `predictors` (empty means all
   five), `max_usd` (5), `publish` (to `/lab`).
-- **Outputs:** the readout lands in the step summary and in `/lab`. The artifact holds `report.md` and `canary.json`.
-  Per-question records stay on the runner.
+- **Outputs:** the readout lands in the step summary and in `/lab`. The artifact holds `report.md` and `canary.json`,
+  and the log prints the canary. Per-question records stay on the runner.
+- **A failed canary.** The workflow passes `--drop-failed-canary`, so a model whose canary fails is left out and named
+  in the report, and the others still run. The reference (Jev) must pass, and at least one challenger must remain.
 
 **Locally:**
 
