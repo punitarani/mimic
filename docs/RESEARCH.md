@@ -43,12 +43,14 @@ dev split for a predict-the-rest objective: pick the 10 stable items (anchors an
 the remaining answers across people, under embedding-cluster coverage. **Experiment:** `pnpm eval -- select` with a
 `fixed` opening block against `voi` on questions-to-sustained-fidelity; then an arm.
 
-### 1.2 Residual fidelity — designed
+### 1.2 Residual fidelity — built
 
 Report lift over an item-mean predictor beside lift over the context baseline, and select by expected residual-variance
 reduction. `item_stats` already holds per-item answer entropy and baseline error; a population-mode predictor is a
-derived row per stable item. **Experiment:** add `residual` rows to `evaluate --from stored` and to `/lab`; selection
-weight `pop(q)` becomes primary once the residual metric exists.
+derived row per stable item. **Built:** `evaluate --from stored` (and its `/lab` report) scores every predictor
+against a leave-one-out item mean on items asked of at least six people (anchors, reserve items, E7's shared probes,
+an import's held-out items), with intervals over people. **Next:** read it on E7's shared probes; selection weight
+`pop(q)` becomes primary once it shows residual skill on served people.
 
 ### 1.3 Decision coverage, not trait coverage — open
 
@@ -339,7 +341,7 @@ benchmark either way.
 | View shadows in `cfg.default.v9` (Jev on derived data, DeepSeek's context prior), backfilled; read by ADR-0065's rule | people to read them | §10.3 |
 | Retrieval by meaning and `fill` where the budget binds (long-lived mimics, agents' cards) | nothing | §10.2 |
 | Run `transfer`, `ensemble`, `replay --evidence` on the consented cohort | people, ~$1 | §3.1, §2.1, §6.1 |
-| Residual metric in `evaluate` and `/lab` | nothing | §1.2 |
+| Residual metric in `evaluate` and `/lab` (built; read it on E7's shared probes) | people | §1.2 |
 | `jev-predict.v3` structured criteria; per-person temperature | nothing | §2.3, §2.4 |
 | Footprint proposals with consenting people | people, ~$0.05 each | §4.1 |
 | Host-sized views and the host-condition matrix | §3.1 | §3.3 |

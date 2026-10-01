@@ -16,6 +16,7 @@ import { datasetHash } from '../export';
 import { openLocalEngine } from '../local';
 import { publishReport, renderReport, writeReport } from '../report';
 import {
+  againstPrimary,
   BudgetStop,
   breakdown,
   type Candidate,
@@ -28,6 +29,7 @@ import {
   noiseSd,
   pairedComparisons,
   pairedDelta,
+  residualReport,
   resolveCandidate,
   selfConsistencyOf,
   storedRecords,
@@ -238,6 +240,8 @@ export async function evaluateCmd(argv: string[]) {
         selfConsistency: selfConsistencyOf(loaded.instances),
         fits: calibrationFits(loaded.instances),
         paired: pairedComparisons(recs),
+        againstPrimary: againstPrimary(recs),
+        residual: residualReport(loaded.instances, recs),
       },
       r2ReportKey: null,
       createdAt: Date.now(),

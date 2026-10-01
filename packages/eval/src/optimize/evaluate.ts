@@ -13,6 +13,7 @@ import {
   formatPredictorId,
   type Gateway,
   HARNESS_STATE_VIEWS,
+  type HarnessStateView,
   harnessProblems,
   INCUMBENT_HARNESS,
   LlmPredictor,
@@ -897,6 +898,209 @@ export function pairedComparisons(recs: EvalRecord[]): PairedRow[] {
       });
     }
   return rows;
+}
+
+/** A paired difference whose interval resamples people, so correlated questions within a person do not narrow it. */
+export interface PersonDelta extends PairedDelta {
+  people: number;
+  /** People whose own mean difference is an improvement (lower log loss, higher accuracy), and the reverse. */
+  better: number;
+  worse: number;
+}
+
+/** Mean of (b − a) over the questions both answered, with a 90% interval from resampling people (as E6 does). */
+export function pairedByPerson(
+  a: EvalRecord[],
+  b: EvalRecord[],
+  metric: 'itemAcc' | 'logLoss',
+  seed: string,
+  resamples = 2000,
+): PersonDelta {
+  const bi = new Map(b.map((r) => [r.instanceId, r]));
+  const byPerson = new Map<string, number[]>();
+  for (const r of a) {
+    const o = bi.get(r.instanceId);
+    if (!o) continue;
+    const d = byPerson.get(r.mimicId) ?? [];
+    d.push(o[metric] - r[metric]);
+    byPerson.set(r.mimicId, d);
+  }
+  const people = [...byPerson.values()];
+  const n = people.reduce((x, d) => x + d.length, 0);
+  if (!n) return { n: 0, mean: 0, ciLow: 0, ciHigh: 0, people: 0, better: 0, worse: 0 };
+  const sign = metric === 'logLoss' ? -1 : 1;
+  const means = people.map(mean);
+  const rng = seededRng(seed);
+  const samples: number[] = [];
+  for (let s = 0; s < resamples; s++) {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < people.length; i++) {
+      const d = people[Math.floor(rng() * people.length)]!;
+      for (const x of d) sum += x;
+      count += d.length;
+    }
+    samples.push(sum / count);
+  }
+  return {
+    n,
+    mean: mean(people.flat()),
+    ciLow: quantile(samples, 0.05),
+    ciHigh: quantile(samples, 0.95),
+    people: people.length,
+    better: means.filter((m) => sign * m > 0).length,
+    worse: means.filter((m) => sign * m < 0).length,
+  };
+}
+
+/**
+ * ADR-0065's rule, fixed before any data: a view shadow earns a calibrated variant of its own only if, on enough
+ * people who joined after E6's export, it is more accurate than the primary and no worse on log loss.
+ */
+export const VIEW_RULE = { minPeople: 25, maxLogLossWorse: 0.01 } as const;
+export type ViewVerdict = 'insufficient' | 'passes' | 'fails';
+
+export interface AgainstPrimaryRow {
+  primary: string;
+  predictor: string;
+  role: string;
+  /** The view the predictor reads (ADR-0065), when it reads one. */
+  view: HarnessStateView | null;
+  logLoss: PersonDelta;
+  itemAcc: PersonDelta;
+  verdict: ViewVerdict | null;
+}
+
+function viewOf(predictorId: string): HarnessStateView | null {
+  try {
+    const spec = parsePredictorId(predictorId);
+    const version = spec.promptVersion ?? DEFAULT_PROMPT_VERSION[spec.kind];
+    return resolvePredictPrompt(version, spec.kind, spec.model).harness.stateView ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Every shadow and derived row against the primary that served the same questions, across models, with intervals
+ * over people. A view shadow also gets ADR-0065's verdict.
+ */
+export function againstPrimary(recs: EvalRecord[]): AgainstPrimaryRow[] {
+  const role = (r: EvalRecord) => r.candidate.split('|')[1]!;
+  const primaries = groupBy(
+    recs.filter((r) => role(r) === 'primary'),
+    (r) => r.predictorId,
+  );
+  const others = groupBy(
+    recs.filter((r) => role(r) === 'shadow' || role(r) === 'derived'),
+    (r) => r.candidate,
+  );
+  const rows: AgainstPrimaryRow[] = [];
+  for (const [primary, ps] of [...primaries.entries()].sort(([a], [b]) => a.localeCompare(b)))
+    for (const [candidate, xs] of [...others.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const [predictor, r] = candidate.split('|') as [string, string];
+      if (predictor === primary) continue;
+      const logLoss = pairedByPerson(ps, xs, 'logLoss', `${primary}>${candidate}`);
+      if (logLoss.n < 10) continue;
+      const itemAcc = pairedByPerson(ps, xs, 'itemAcc', `${primary}>${candidate}:acc`);
+      const view = viewOf(predictor);
+      const verdict: ViewVerdict | null =
+        view === null
+          ? null
+          : logLoss.people < VIEW_RULE.minPeople
+            ? 'insufficient'
+            : itemAcc.ciLow > 0 && logLoss.ciHigh < VIEW_RULE.maxLogLossWorse
+              ? 'passes'
+              : 'fails';
+      rows.push({ primary, predictor, role: r, view, logLoss, itemAcc, verdict });
+    }
+  return rows;
+}
+
+/** People besides the one predicted who must have answered an item before its mean is used (as PROBE_RULE's). */
+export const RESIDUAL_MIN_OTHERS = 5;
+
+export interface ResidualReport {
+  minOthers: number;
+  items: number;
+  instances: number;
+  people: number;
+  /** The item mean's own scores on those questions. */
+  itemMean: { logLoss: number; itemAcc: number };
+  /** Each predictor against the item mean on the same questions: negative log loss is skill beyond the population. */
+  rows: Array<{ predictor: string; role: string; logLoss: PersonDelta; itemAcc: PersonDelta }>;
+}
+
+/**
+ * Residual fidelity (RESEARCH §1.2): on items asked of many people (anchors, reserve items, E7's shared probes, an
+ * import's held-out items), the population's answer distribution is a predictor that knows nothing about the person.
+ * Each person's item mean leaves their own answer out and is smoothed by half an answer per option. Only aggregates
+ * over at least `minOthers` other people are used, and only here, never in a prompt or a state (PLAN §3.8).
+ */
+export function residualReport(
+  instances: EvalInstance[],
+  recs: EvalRecord[],
+  minOthers = RESIDUAL_MIN_OTHERS,
+): ResidualReport {
+  const answers = new Map<string, Map<string, string>>();
+  for (const i of instances) {
+    const key = i.question.itemKey;
+    if (!key) continue;
+    const m = answers.get(key) ?? new Map<string, string>();
+    if (!m.has(i.mimicId)) m.set(i.mimicId, i.answer);
+    answers.set(key, m);
+  }
+  const means: EvalRecord[] = [];
+  for (const i of instances) {
+    const by = i.question.itemKey ? answers.get(i.question.itemKey) : undefined;
+    const others = [...(by?.entries() ?? [])].filter(([m]) => m !== i.mimicId).map(([, a]) => a);
+    if (others.length < minOthers) continue;
+    const keys = i.question.options.map((o) => o.key);
+    const dist: Distribution = Object.fromEntries(
+      keys.map((k) => [
+        k,
+        (others.filter((a) => a === k).length + 0.5) / (others.length + 0.5 * keys.length),
+      ]),
+    );
+    means.push(
+      toRecord(i, 'item-mean|population', 'item-mean', {
+        dist,
+        ok: true,
+        costUsd: 0,
+        latencyMs: 0,
+        modelSnapshot: 'item-mean',
+      }),
+    );
+  }
+  const covered = new Set(means.map((r) => r.instanceId));
+  const role = (r: EvalRecord) => r.candidate.split('|')[1]!;
+  const rows = [
+    ...groupBy(
+      recs.filter((r) => covered.has(r.instanceId) && role(r) !== 'fallback'),
+      (r) => r.candidate,
+    ).entries(),
+  ]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([candidate, xs]) => {
+      const [predictor, r] = candidate.split('|') as [string, string];
+      return {
+        predictor,
+        role: r,
+        logLoss: pairedByPerson(means, xs, 'logLoss', `residual>${candidate}`),
+        itemAcc: pairedByPerson(means, xs, 'itemAcc', `residual>${candidate}:acc`),
+      };
+    });
+  return {
+    minOthers,
+    items: new Set(instances.filter((i) => covered.has(i.id)).map((i) => i.question.itemKey)).size,
+    instances: means.length,
+    people: new Set(means.map((r) => r.mimicId)).size,
+    itemMean: {
+      logLoss: means.length ? mean(means.map((r) => r.logLoss)) : 0,
+      itemAcc: means.length ? mean(means.map((r) => r.itemAcc)) : 0,
+    },
+    rows,
+  };
 }
 
 /** Self-consistency per person from repeat probes, smoothed toward the 0.8 prior (PLAN §9.10). */

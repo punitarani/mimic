@@ -2354,6 +2354,11 @@ served sessions never outgrow the §9.9 budget, so it would equal `mixed`.
 - A view is never a calibration: `isCalibrationOnly`, evaluate's free derived calibrations and transfer's readers
   treat a view variant as its own predictor.
 - Both run over served questions of consented people with `pnpm backfill` (Actions → Backfill).
+- The stored report reads them: every shadow against the primary that served the same questions, across models, with
+  intervals over people and this ADR's verdict for view shadows; `--since` keeps people who joined after a date. It
+  also gains residual rows (RESEARCH §1.2): each predictor against the population's answers on items asked of at
+  least six people, leaving the person's own answer out. That aggregate stays in the report, never in a prompt or a
+  state.
 
 **Reading rule, fixed before any data.** On people not in E6's export, paired with the primary on the same questions,
 intervals by person (`pnpm eval -- evaluate --from stored`): `jev-derived.v1` is worth a calibrated variant of its own
