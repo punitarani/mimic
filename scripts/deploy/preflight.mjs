@@ -16,7 +16,7 @@ import {
   WEB_CONFIG,
   WORKER_CONFIG,
 } from './lib.mjs';
-import { providerSecrets, resolveSettings } from './settings.mjs';
+import { providerSecrets, redundantSettings, resolveSettings } from './settings.mjs';
 
 /** Local-dev-only names: harmless (only the names a deploy needs are pushed) but a sign of a mixed-up config. */
 export const DEV_ONLY = ['DEV_MODE', 'EGRESS_RELAY'];
@@ -68,9 +68,10 @@ export function checkNames(source, webConfig, workerConfig, env) {
       (k) => `${k} is missing or empty (a GitHub secret synced from Doppler)`,
     ),
   ];
-  const warnings = DEV_ONLY.filter((k) => source[k]).map(
-    (k) => `${k} is set; it is for local dev only and is ignored`,
-  );
+  const warnings = [
+    ...DEV_ONLY.filter((k) => source[k]).map((k) => `${k} is set; it is for local dev only and is ignored`),
+    ...redundantSettings([workerConfig, webConfig], env, source),
+  ];
   const domain = customDomain(webConfig, env);
   if (domain && source.APP_URL) {
     let url;
@@ -191,7 +192,7 @@ export async function preflight(env, source = process.env) {
   if (gaps.length) throw new Error(`preflight failed: Cloudflare API token\n  - ${gaps.join('\n  - ')}`);
   console.log('  token can use every resource, Access and the zone');
   // Every flag the code reads is defined and evaluates, before a deploy ships code that reads it (ADR-0051).
-  await checkFlags(env, source);
+  await checkFlags(env);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

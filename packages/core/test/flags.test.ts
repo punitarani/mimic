@@ -8,12 +8,13 @@ import {
   FLAG_SPECS,
   flagCreateBody,
   type LiveFlag,
+  parseSpendLimits,
   planDecision,
 } from '../src';
 
 /**
- * The `mimic` app as the dashboard showed it on 2026-09-30: variations named by their labels, values as the code
- * spells them, plus `vector-backend`, which no code reads.
+ * The `mimic` app as the Flags workflow saw it on 2026-09-30: variations named by their labels, values as the code
+ * spells them, a $2 cap, plus the provider flags and `vector-backend`, which no code reads since ADR-0052.
  */
 const live = (): LiveFlag[] => [
   {
@@ -23,7 +24,7 @@ const live = (): LiveFlag[] => [
     variations: { Jev: 'jev', 'Span-01': 'span-01' },
     rules: [],
   },
-  { key: 'budget-usd', enabled: true, default_variation: '1', variations: { '1': 1 }, rules: [] },
+  { key: 'budget-usd', enabled: true, default_variation: '2', variations: { '1': 1, '2': 2 }, rules: [] },
   {
     key: 'budget-session-share',
     enabled: true,
@@ -31,45 +32,21 @@ const live = (): LiveFlag[] => [
     variations: { '75': 0.75, '80': 0.8, '85': 0.85, '90': 0.9 },
     rules: [],
   },
-  {
-    key: 'search-provider',
+  ...['search-provider', 'enrich-provider', 'embeddings-provider', 'vector-backend'].map((key) => ({
+    key,
     enabled: true,
-    default_variation: 'Exa',
-    variations: { Exa: 'exa', Parallel: 'parallel', Perplexity: 'perplexity' },
+    default_variation: 'v',
+    variations: { v: 'x' },
     rules: [],
-  },
-  {
-    key: 'enrich-provider',
-    enabled: true,
-    default_variation: 'Exa',
-    variations: { Exa: 'exa', Parallel: 'parallel' },
-    rules: [],
-  },
-  {
-    key: 'embeddings-provider',
-    enabled: true,
-    default_variation: 'OpenRouter',
-    variations: { OpenRouter: 'openrouter', 'Cloudflare-Workers-AI': 'workers-ai' },
-    rules: [],
-  },
-  {
-    key: 'vector-backend',
-    enabled: true,
-    default_variation: 'Cloudflare-Vectorize',
-    variations: { 'Cloudflare-Vectorize': 'vectorize' },
-    rules: [],
-  },
+  })),
 ];
 
-describe('flag registry (ADR-0051)', () => {
-  it('defines each flag once, with a fallback the code accepts and variations it accepts', () => {
+describe('flag registry (ADR-0051, ADR-0052)', () => {
+  it('holds only runtime levers, each with a fallback and variations the code accepts', () => {
     expect(Object.values(FLAG_KEYS).sort()).toEqual([
       'budget-session-share',
       'budget-usd',
       'decisions-model',
-      'embeddings-provider',
-      'enrich-provider',
-      'search-provider',
     ]);
     for (const spec of Object.values(FLAG_SPECS)) {
       expect(spec.parse(spec.fallback)).not.toBeNull();
@@ -79,47 +56,38 @@ describe('flag registry (ADR-0051)', () => {
     expect(FLAG_SPECS.decisionsModel.fallback).toBe('jev');
   });
 
-  it('the app as it stands passes, with warnings for what deserves a look', () => {
-    const r = checkFlags(live(), {
-      EMBEDDINGS_PROVIDER: 'workers-ai',
-      SEARCH_PROVIDER: 'exa',
-      BUDGET_SESSION_SHARE: '0.8',
-    });
+  it('the app as it stands passes; the retired flags are only warnings, so they can go after the deploy', () => {
+    const r = checkFlags(live());
     expect(r.problems).toEqual([]);
+    // The flag is the source of truth for its value: a $2 cap is not a warning.
     expect(r.warnings).toEqual([
-      'search-provider: variation "Parallel" = "parallel" is not a value the code accepts; serving it would fall back to SEARCH_PROVIDER',
-      'embeddings-provider: serves "openrouter" over EMBEDDINGS_PROVIDER="workers-ai"',
+      'search-provider: in the app, but no code reads it',
+      'enrich-provider: in the app, but no code reads it',
+      'embeddings-provider: in the app, but no code reads it',
       'vector-backend: in the app, but no code reads it',
     ]);
-  });
-
-  it('a flag over an unset setting is compared with the code default', () => {
-    // The live app served a $2 cap on 2026-09-30: with BUDGET_USD unset, that doubles the code default of $1.
-    const two = live().map((f) =>
-      f.key === 'budget-usd' ? { ...f, default_variation: '2', variations: { '2': 2 } } : f,
-    );
-    expect(checkFlags(two).warnings).toContain(
-      'budget-usd: serves 2 over the code default 1 (BUDGET_USD is unset here)',
-    );
-    const matched = checkFlags(two, { BUDGET_USD: '2' }).warnings;
-    expect(matched.some((w) => w.startsWith('budget-usd'))).toBe(false);
   });
 
   it('fails on missing flags, unusable values that are served, and dangling variations', () => {
     const flags = live().filter((f) => f.key !== 'budget-usd');
     const model = flags.find((f) => f.key === 'decisions-model')!;
     model.variations.gpt = 'not a model';
+    model.variations.other = 'also not a model';
     model.rules = [{ serve_variation: 'gpt' }];
-    flags.find((f) => f.key === 'enrich-provider')!.default_variation = 'Nope';
-    flags.find((f) => f.key === 'budget-session-share')!.rules = [{ serve_variation: 'Ghost' }];
+    const share = flags.find((f) => f.key === 'budget-session-share')!;
+    share.rules = [{ serve_variation: 'Ghost' }];
+    share.default_variation = 'Nope';
     flags.push({ key: 'use-span-01', enabled: false, default_variation: 'off', variations: { off: 'off' } });
     const r = checkFlags(flags);
     expect(r.problems).toEqual([
       'decisions-model: variation "gpt" = "not a model" is not a value the code accepts',
       expect.stringMatching(/^budget-usd: missing \(create it as a number flag/),
+      'budget-session-share: default variation "Nope" does not exist',
       'budget-session-share: a rule serves "Ghost", which does not exist',
-      'enrich-provider: default variation "Nope" does not exist',
     ]);
+    expect(r.warnings).toContain(
+      'decisions-model: variation "other" = "also not a model" is not a value the code accepts; serving it would fall back to "jev"',
+    );
     expect(r.warnings).toContain('use-span-01: in the app, but no code reads it');
     expect(r.warnings).toContain('decisions-model: 1 targeting rule(s) active');
     // A share above 1 is not a share.
@@ -127,7 +95,38 @@ describe('flag registry (ADR-0051)', () => {
     expect(FLAG_SPECS.budgetSessionShare.parse('0.75')).toBe(0.75);
   });
 
-  it('create bodies start at the setting (or the fallback), with the variations the code accepts', () => {
+  it('the spend-cap flags accept exactly the values the Workers read from their vars (ADR-0035)', () => {
+    const values = [
+      '1',
+      '0.75',
+      ' 2 ',
+      '1e3',
+      '0',
+      '-1',
+      'abc',
+      '$1',
+      '1,00',
+      'Infinity',
+      '0.5',
+      '1.01',
+      '80%',
+      2,
+      0,
+    ];
+    for (const [name, spec] of [
+      ['BUDGET_USD', FLAG_SPECS.budgetUsd],
+      ['BUDGET_SESSION_SHARE', FLAG_SPECS.budgetSessionShare],
+    ] as const) {
+      expect(spec.setting).toBe(name);
+      for (const value of values) {
+        const flag = spec.parse(value) !== null;
+        const runtime = parseSpendLimits({ [name]: value }).problems.length === 0;
+        expect({ name, value, accepted: flag }).toEqual({ name, value, accepted: runtime });
+      }
+    }
+  });
+
+  it('create bodies start at the fallback, with the variations the code accepts', () => {
     expect(flagCreateBody(FLAG_SPECS.decisionsModel)).toMatchObject({
       key: 'decisions-model',
       enabled: true,
@@ -135,13 +134,12 @@ describe('flag registry (ADR-0051)', () => {
       variations: { jev: 'jev', 'span-01': 'span-01' },
       rules: [],
     });
-    expect(flagCreateBody(FLAG_SPECS.budgetUsd, '2.5')).toMatchObject({
-      default_variation: '2.5',
-      variations: { standard: 1, '2.5': 2.5 },
+    expect(flagCreateBody(FLAG_SPECS.budgetUsd)).toMatchObject({
+      default_variation: 'standard',
+      variations: { standard: 1 },
     });
-    expect(flagCreateBody(FLAG_SPECS.embeddingsProvider, 'openrouter').default_variation).toBe('openrouter');
     for (const spec of Object.values(FLAG_SPECS))
-      expect(checkFlags([flagCreateBody(spec)], {}, [spec]).problems).toEqual([]);
+      expect(checkFlags([flagCreateBody(spec)], [spec]).problems).toEqual([]);
   });
 });
 

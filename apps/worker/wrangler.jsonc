@@ -93,7 +93,7 @@
         ]
       },
       "ratelimits": [{ "name": "RL", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } }],
-      // Defaults; a value set in the deploy environment (Doppler → GitHub) overrides each (scripts/deploy/settings.mjs).
+      // Settings (scripts/deploy/settings.mjs); a value set in Doppler overrides one. Runtime levers are flags (ADR-0052).
       "vars": {
         "VECTOR_BACKEND": "vectorize",
         "EMBEDDINGS_PROVIDER": "workers-ai",
@@ -148,10 +148,10 @@
         ]
       },
       "ratelimits": [{ "name": "RL", "namespace_id": "1003", "simple": { "limit": 120, "period": 60 } }],
-      // Defaults; a value set in the deploy environment (Doppler → GitHub) overrides each (scripts/deploy/settings.mjs).
+      // Settings (scripts/deploy/settings.mjs); a value set in Doppler overrides one. Runtime levers are flags (ADR-0052).
       "vars": {
         "VECTOR_BACKEND": "vectorize",
-        "EMBEDDINGS_PROVIDER": "workers-ai",
+        "EMBEDDINGS_PROVIDER": "openrouter",
         "SEARCH_PROVIDER": "exa",
         "ENRICH_PROVIDER": "exa"
       },

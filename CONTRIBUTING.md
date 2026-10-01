@@ -48,14 +48,16 @@ both files.
 <details>
 <summary>Deployed settings (Doppler)</summary>
 
-Leave each one unset to keep its default. See [docs/DEPLOY.md](docs/DEPLOY.md).
+Each one overrides the environment's checked-in value in `wrangler.jsonc`; leave it unset to keep that value. See
+[docs/DEPLOY.md](docs/DEPLOY.md).
 
-| Name | Allowed | Default |
+| Name | Allowed | Prod value |
 | --- | --- | --- |
-| `EMBEDDINGS_PROVIDER` | `workers-ai`, `openrouter` | `workers-ai` |
+| `EMBEDDINGS_PROVIDER` | `workers-ai`, `openrouter` | `openrouter` |
 | `VECTOR_BACKEND` | `vectorize`, `sql` | `vectorize` |
-| `BUDGET_USD` | a number > 0 | `1` (spend cap per mimic; ADR-0035) |
-| `BUDGET_SESSION_SHARE` | a number in (0, 1] | `0.8` (the rest is kept for the mimic page) |
+
+The spend caps are the Flagship flags `budget-usd` (default `1`) and `budget-session-share` (default `0.8`), not
+Doppler settings (ADR-0035, ADR-0052); `BUDGET_USD` and `BUDGET_SESSION_SHARE` apply only in `.dev.vars`.
 
 </details>
 
