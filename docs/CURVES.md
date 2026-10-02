@@ -110,9 +110,18 @@ Fixed before the first run. Against `random`:
 
 **Variants in one run.** A policy spec may carry its own knobs and an opening block, so a hypothesis is one run:
 `jev-eig[ref=pool,tsel=1,short=8]` (knobs `ent`, `short`, `refsize`, `tsel`, `floor`, `beta` — the persona
-posterior's likelihood temper, below 1 for a posterior that concentrates more slowly — and `ref` = `R` or `pool`), and
-`open10-pop-eig` (the first 10 from the static questionnaire, then `pop-eig`). `ref=pool` aims a policy at a fixed
-sample of the person's own pool questions instead of R: no knowledge of the decisions to be scored.
+posterior's likelihood temper, below 1 for a posterior that concentrates more slowly — and `ref` = `R`, `pool` or
+`id`), and `open10-pop-eig` (the first 10 from the static questionnaire, then `pop-eig`). `ref=pool` aims a policy at a
+fixed sample of the person's own pool questions instead of R: no knowledge of the decisions to be scored. `ref=id`
+(persona posterior policies only) aims at the person themselves: the information an answer carries about which train
+person they answer like, I(A; J), the classic "learn the most about the user" criterion, against R's "learn the most
+about what will be predicted".
+
+**Given answers (`--given`).** Mimic knows some things before the first question: identity supplies demographics as
+context. `--given Demographics,-QID20,-QID21,-QID22` moves those pool items (a block, minus the listed QIDs) into every
+state ahead of anything asked and into the persona posterior, for every policy, and out of the pool; k counts only what
+a policy asks. The question it answers: once what identity supplies is known, does choosing still matter, and which
+policy chooses best among the questions Mimic actually asks.
 
 **Outages and `--no-jev`.** A chunk whose predictions fail above 2% is an outage: it is dropped for every policy and
 the run stops, so a failed call is never scored as a uniform prediction. `--no-jev` scores with the population reader

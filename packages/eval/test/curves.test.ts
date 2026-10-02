@@ -20,6 +20,7 @@ import {
   interpolate,
   stoppingRows,
 } from '../src/curves/analyze';
+import { ClassPosterior, classKeys, fitClasses } from '../src/curves/classes';
 import {
   buildPolicies,
   populationReader,
@@ -28,10 +29,28 @@ import {
   targetInstances,
   walk,
 } from '../src/curves/command';
-import { halfOf, loadPeople, mimicIdOf, roleOf, stateAfter, type TwinPerson } from '../src/curves/data';
+import {
+  halfOf,
+  loadPeople,
+  mimicIdOf,
+  roleOf,
+  stateAfter,
+  stateOf,
+  type TwinPerson,
+  withGiven,
+  withoutItems,
+} from '../src/curves/data';
 import { embedTexts, textOf } from '../src/curves/embeddings';
-import { JevOracle, POLICY_DEFAULTS, POLICY_NAMES, parsePolicySpec } from '../src/curves/policies';
-import { PersonaPosterior, Population, staticSequence } from '../src/curves/population';
+import {
+  anchorOrder,
+  JevOracle,
+  POLICY_DEFAULTS,
+  POLICY_NAMES,
+  parsePolicySpec,
+  referenceSample,
+  TWIN_ANCHORS,
+} from '../src/curves/policies';
+import { identityGain, PersonaPosterior, Population, staticSequence } from '../src/curves/population';
 import { CachingGateway } from '../src/decision-cache';
 import { FakeDecisions, FakeLlm } from '../src/fakes';
 import { openLocalEngine } from '../src/local';
@@ -264,6 +283,86 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
     expect(post.eig('twin2k/w13/QID40', ['twin2k/w13/QID25/1'], w)).toBeCloseTo(0, 10);
   });
 
+  it('computes information about the person (ref=id) as enumeration over train people does', async () => {
+    const { people } = await loadPeople(fixture(40));
+    const train = people.filter((p) => p.role === 'train');
+    const pop = new Population(train, { eps: 0.2, scaleSigma: 0.6 });
+    const post = new PersonaPosterior(pop, undefined, 0.5);
+    post.observe('twin2k/w13/QID11', 0);
+    const w = post.weights();
+    for (const key of ['twin2k/w13/QID50', 'twin2k/w13/QID25/1', 'twin2k/w13/QID40']) {
+      const c = pop.item(key)!;
+      // I(A; J) = Σ_j w_j Σ_a E_j(a) log(E_j(a) / p(a)).
+      const row = (j: number) =>
+        Array.from({ length: c.k }, (_, v) =>
+          c.codes[j]! < 0 ? 1 / c.k : c.emission[c.codes[j]! * c.k + v]!,
+        );
+      const p = new Array<number>(c.k).fill(0);
+      for (let j = 0; j < pop.n; j++)
+        row(j).forEach((x, v) => {
+          p[v]! += w[j]! * x;
+        });
+      let mi = 0;
+      for (let j = 0; j < pop.n; j++)
+        row(j).forEach((x, v) => {
+          if (w[j]! > 0 && x > 0) mi += w[j]! * x * Math.log(x / p[v]!);
+        });
+      expect(identityGain(post, pop, key, w)).toBeCloseTo(mi, 10);
+    }
+    // Everyone answers the sequence item alike: it says nothing about who they are.
+    expect(identityGain(post, pop, 'twin2k/w13/QID40', w)).toBeLessThan(0.02);
+    expect(parsePolicySpec('pop-eig[ref=id]').knobs.reference).toBe('id');
+    expect(() => referenceSample(people[0]!, { ...POLICY_DEFAULTS, reference: 'id' }, 's')).toThrow(/ref=id/);
+  });
+
+  it('fits latent classes that recover the planted trait, with closed forms equal to enumeration', async () => {
+    const { people } = await loadPeople(fixture(60));
+    const train = people.filter((p) => p.role === 'train');
+    const pop = new Population(train);
+    const keys = classKeys(train);
+    expect(keys.some((k) => train[0]!.targets.some((t) => t.key === k))).toBe(false);
+    const one = fitClasses(pop, keys, { k: 1, seed: 's' });
+    const two = fitClasses(pop, keys, { k: 2, seed: 's' });
+    expect(two.logLik).toBeGreaterThan(one.logLik + 0.5);
+    expect(fitClasses(pop, keys, { k: 2, seed: 's' })).toEqual(two);
+    // One answer on the trait moves the other trait items, as the planted latent does.
+    const post = new ClassPosterior(two);
+    const before = post.predictive('twin2k/w13/QID50')!;
+    post.observe('twin2k/w13/QID11', 0);
+    const after = post.predictive('twin2k/w13/QID50')!;
+    expect(Math.abs(after[0]! - before[0]!)).toBeGreaterThan(0.3);
+    // Closed forms against enumeration over classes.
+    const w = post.weights();
+    const ci = two.keys.indexOf('twin2k/w13/QID25/1');
+    const ri = two.keys.indexOf('twin2k/w13/QID50');
+    const kc = two.options[ci]!;
+    const kr = two.options[ri]!;
+    const joint = Array.from({ length: kc }, (_, v) =>
+      Array.from({ length: kr }, (_, u) =>
+        w.reduce((a, wc, c) => a + wc * two.theta[c]![ci]![v]! * two.theta[c]![ri]![u]!, 0),
+      ),
+    );
+    let mi = 0;
+    for (const row of joint) {
+      row.forEach((x, u) => {
+        const pv = row.reduce((a, b) => a + b, 0);
+        const pu = joint.reduce((a, r) => a + r[u]!, 0);
+        if (x > 0) mi += x * Math.log(x / (pv * pu));
+      });
+    }
+    expect(post.eig('twin2k/w13/QID25/1', ['twin2k/w13/QID50'], w)).toBeCloseTo(mi, 10);
+    const pc = post.predictive('twin2k/w13/QID25/1', w)!;
+    let id = 0;
+    w.forEach((wc, c) => {
+      two.theta[c]![ci]!.forEach((x, v) => {
+        if (x > 0) id += wc * x * Math.log(x / pc[v]!);
+      });
+    });
+    expect(post.identity('twin2k/w13/QID25/1', w)).toBeCloseTo(id, 10);
+    expect(parsePolicySpec('pop-eig[cls=16]').knobs.classes).toBe(16);
+    expect(() => buildPolicies(['random[cls=2]'], POLICY_DEFAULTS, 's', null, () => two)).toThrow(/cls/);
+  });
+
   it('tempers the likelihood: below 1 the weights spread over more train people', async () => {
     const { people } = await loadPeople(fixture(60));
     const train = people.filter((p) => p.role === 'train');
@@ -316,6 +415,35 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
   });
 });
 
+describe('E9 given answers: what Mimic knows before the first question (docs/CURVES.md §4)', () => {
+  it('moves a block out of the pool into every state and the posterior, never into k', async () => {
+    const { people } = await loadPeople(fixture(40));
+    const given = withGiven(people, 'Demographics,-QID12');
+    const p = given.find((x) => x.role === 'dev')!;
+    expect(p.given.map((i) => i.qid)).toEqual(['QID11']);
+    expect(p.pool.some((i) => i.block === 'Demographics' && i.qid === 'QID11')).toBe(false);
+    expect(p.pool.some((i) => i.qid === 'QID12')).toBe(true);
+    // At k = 0 the state already holds the given answer, as its first piece of evidence.
+    const at0 = stateOf(p, []);
+    expect(JSON.stringify(at0)).toContain(p.given[0]!.prompt);
+    expect(stateOf(p, [p.pool[0]!])).toEqual(stateAfter(p.pid, [...p.given, p.pool[0]!]));
+    // The posterior and the reader condition on it: the same walk reads the targets differently.
+    const train = given.filter((x) => x.role === 'train');
+    const pop = new Population(train);
+    const bare = { ...p, given: [] };
+    const [policy] = buildPolicies(['pop-eig'], POLICY_DEFAULTS, 's', null);
+    const { gateway } = recordingGateway();
+    const asked = await walk(p, policy!, 2, { jev: jevFor(gateway), pop, seed: 's' });
+    expect(asked.every((i) => p.pool.includes(i))).toBe(true);
+    const withIt = populationReader(pop, p, asked, [0], 'pop-eig', 0.5);
+    const without = populationReader(pop, bare, asked, [0], 'pop-eig', 0.5);
+    expect(withIt.map((r) => r.rec.instanceId)).toEqual(without.map((r) => r.rec.instanceId));
+    expect(withIt.map((r) => r.rec.logLoss)).not.toEqual(without.map((r) => r.rec.logLoss));
+    // Train people keep the given items in the population statistics.
+    expect(pop.has(p.given[0]!.key)).toBe(true);
+  });
+});
+
 describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
   const run = async (people: TwinPerson[], train: TwinPerson[], name: string, seed = 's') => {
     const { gateway, seen } = recordingGateway();
@@ -327,6 +455,7 @@ describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
       { ...POLICY_DEFAULTS, entropyShortlist: 6, lookaheadShortlist: 2 },
       seed,
       seq,
+      (k) => fitClasses(pop, classKeys(train), { k, seed }),
     );
     const jev = jevFor(gateway);
     const vectors = await embedTexts(
@@ -353,7 +482,7 @@ describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
       reference: p.reference.map((r) => ({ ...r, answer: r.options[r.options.length - 1]!.key })),
       targets: p.targets.map((t) => ({ ...t, answer: t.options[t.options.length - 1]!.key })),
     }));
-    for (const name of POLICY_NAMES) {
+    for (const name of [...POLICY_NAMES, 'pop-eig[cls=2]', 'anchors-pop-eig[ref=id]']) {
       const a = await run(dev, train, name);
       const b = await run(flipped, train, name);
       expect(b.asked, name).toEqual(a.asked);
@@ -760,14 +889,49 @@ describe('E9 policy specs: variants and opening blocks (docs/CURVES.md §7)', ()
       open: 10,
       knobs: { reference: 'pool', tSel: 1, lookaheadShortlist: 8 },
     });
+    expect(parsePolicySpec('anchors-random')).toMatchObject({ base: 'random', open: 8, opening: 'anchors' });
+    expect(parsePolicySpec('anchors4-pop-eig')).toMatchObject({
+      base: 'pop-eig',
+      open: 4,
+      opening: 'anchors',
+    });
+    expect(() => parsePolicySpec('open-pop-eig')).toThrow(/unknown policy/);
     expect(() => parsePolicySpec('greedy')).toThrow(/unknown policy/);
     expect(() => parsePolicySpec('jev-eig[depth=2]')).toThrow(/unknown knob/);
-    expect(() => parsePolicySpec('jev-eig[ref=T]')).toThrow(/R or pool/);
+    expect(() => parsePolicySpec('jev-eig[ref=T]')).toThrow(/R, pool or id/);
     expect(splitSpecs('random,jev-eig[ref=pool,tsel=1], open5-pop-eig')).toEqual([
       'random',
       'jev-eig[ref=pool,tsel=1]',
       'open5-pop-eig',
     ]);
+  });
+
+  it('opens with production’s anchors in a per-person order, skipping any the pool lacks, then hands over', async () => {
+    const p = (await loadPeople(fixture(20))).people[0]!;
+    // Plant three of the anchors' Twin counterparts in the pool (the fixture has none).
+    const planted = TWIN_ANCHORS.slice(0, 3).map((key, i) => ({ ...p.pool[0]!, key, qid: `A${i}` }));
+    const person = { ...p, pool: [...p.pool, ...planted] };
+    const [policy] = buildPolicies(['anchors-order'], POLICY_DEFAULTS, 's', null);
+    const { gateway } = recordingGateway();
+    const asked = await walk(person, policy!, 5, { jev: jevFor(gateway), pop: null, seed: 's' });
+    const order = anchorOrder('s')(p.pid).filter((k) => planted.some((x) => x.key === k));
+    expect(asked.slice(0, 3).map((i) => i.key)).toEqual(order);
+    // Then survey order, from the top.
+    expect(asked[3]!.key).toBe(person.pool[0]!.key);
+    // Another person sees another order.
+    const orders = new Set(['a', 'b', 'c', 'd', 'e', 'f'].map((pid) => anchorOrder('s')(pid).join()));
+    expect(orders.size).toBeGreaterThan(1);
+  });
+
+  it('drops items from the pool by block or QID, keeping what a minus sign names', async () => {
+    const { people } = await loadPeople(fixture(10));
+    const dropped = withoutItems(people, 'QID11,Economic preferences,-QID50');
+    for (const p of dropped) {
+      expect(p.pool.some((i) => i.qid === 'QID11')).toBe(false);
+      expect(p.pool.some((i) => i.qid === 'QID50')).toBe(true);
+      expect(p.pool.some((i) => i.block === 'Economic preferences' && i.qid !== 'QID50')).toBe(false);
+      expect(p.given).toEqual([]);
+    }
   });
 
   it('opens with the static questionnaire, then hands over, and records each step’s score', async () => {

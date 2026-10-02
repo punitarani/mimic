@@ -19,18 +19,22 @@ import {
 import type { EvalInstance } from '../optimize/instances';
 import { renderReport, writeReport } from '../report';
 import { analyzeCurves, type CurveRecord, type CurvesReport, renderCurves } from './analyze';
+import { type ClassModel, ClassPosterior, classKeys, fitClasses } from './classes';
 import {
   type LoadAudit,
   loadPeople,
   mimicIdOf,
   questionOf,
   type Role,
-  stateAfter,
+  stateOf,
   type TwinItem,
   type TwinPerson,
+  withGiven,
+  withoutItems,
 } from './data';
 import { embedTexts, textOf } from './embeddings';
 import {
+  anchorOrder,
   hybridPolicy,
   JevOracle,
   jevEigPolicy,
@@ -86,14 +90,17 @@ export async function walk(
   const asked: TwinItem[] = [];
   let remaining = [...person.pool];
   const posterior =
-    policy.usesPopulation && ctx.pop ? new PersonaPosterior(ctx.pop, undefined, policy.beta ?? 1) : null;
+    policy.usesPopulation && ctx.pop
+      ? (policy.posteriorOf?.() ?? new PersonaPosterior(ctx.pop, undefined, policy.beta ?? 1))
+      : null;
+  if (posterior) for (const g of person.given) posterior.observe(g.key, posterior.indexOf(g));
   for (let t = 0; t < Math.min(steps, person.pool.length); t++) {
     let score: number | null = null;
     const item = await policy.next({
       person,
       asked,
       remaining,
-      state: stateAfter(person.pid, asked),
+      state: stateOf(person, asked),
       rng,
       jev: ctx.jev,
       pop: ctx.pop,
@@ -107,7 +114,7 @@ export async function walk(
     if (!remaining.includes(item)) throw new Error(`${policy.name} picked ${item.key}, not in the pool`);
     asked.push(item);
     remaining = remaining.filter((i) => i !== item);
-    if (posterior && ctx.pop) posterior.observe(item.key, ctx.pop.indexOf(item));
+    if (posterior) posterior.observe(item.key, posterior.indexOf(item));
   }
   return asked;
 }
@@ -126,6 +133,7 @@ export function populationReader(
   beta = 1,
 ): CurveRecord[] {
   const post = new PersonaPosterior(pop, undefined, beta);
+  for (const g of person.given) post.observe(g.key, pop.indexOf(g));
   const out: CurveRecord[] = [];
   let seen = 0;
   for (const k of [...checkpoints].sort((a, b) => a - b)) {
@@ -161,7 +169,7 @@ export function populationReader(
 /** The scored instances for one person after the first k asked: every target T from the sealed state. */
 export function targetInstances(person: TwinPerson, asked: readonly TwinItem[], k: number): EvalInstance[] {
   const mimicId = mimicIdOf(person.pid);
-  const state = stateAfter(person.pid, asked.slice(0, k));
+  const state = stateOf(person, asked.slice(0, k));
   return person.targets.map((it, i) => ({
     id: `${mimicId}|${k}|${it.key}`,
     mimicId,
@@ -222,11 +230,21 @@ export function buildPolicies(
   knobs: PolicyKnobs,
   seed: string,
   staticSeq: readonly string[] | null,
+  /** The latent-class model with k classes (`cls=k`), fitted once on the train people. */
+  classesOf?: (k: number) => ClassModel,
 ): Policy[] {
   return specs.map((raw) => {
     const s = parsePolicySpec(raw);
     const own = { ...knobs, ...s.knobs };
-    const inner = basePolicy(s.base, own, seed, staticSeq);
+    const base = basePolicy(s.base, own, seed, staticSeq);
+    let inner = base;
+    if (own.classes > 0) {
+      if (!base.usesPopulation) throw new Error(`${s.spec}: cls is for the persona posterior's policies`);
+      if (!classesOf) throw new Error(`${s.spec} needs the train people's classes`);
+      const model = classesOf(own.classes);
+      inner = { ...base, posteriorOf: () => new ClassPosterior(model, own.beta) };
+    }
+    if (s.open > 0 && s.opening === 'anchors') return openedPolicy(s.spec, s.open, anchorOrder(seed), inner);
     if (s.open > 0) {
       if (!staticSeq) throw new Error(`${s.spec} needs the static questionnaire`);
       return openedPolicy(s.spec, s.open, staticSeq, inner);
@@ -283,9 +301,24 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
           steps: Math.max(...opts.checkpoints),
           probes: opts.knobs.staticProbes,
           seed: opts.seed,
+          // Planned with the posterior the run reads with (`--beta`); 1 reproduces round 1's sequence.
+          beta: opts.knobs.beta,
         })
       : null;
-  const policies = buildPolicies(opts.policies, opts.knobs, opts.seed, staticSeq);
+  const fitted = new Map<number, ClassModel>();
+  const classesOf = (k: number) => {
+    if (!pop) throw new Error('classes need train people');
+    let m = fitted.get(k);
+    if (!m) {
+      m = fitClasses(pop, classKeys(opts.train), { k, seed: opts.seed });
+      fitted.set(k, m);
+      console.log(
+        `classes: ${k} fitted on ${opts.train.length} train people, mean log likelihood ${m.logLik.toFixed(2)}`,
+      );
+    }
+    return m;
+  };
+  const policies = buildPolicies(opts.policies, opts.knobs, opts.seed, staticSeq, classesOf);
   const vectors = specs.some(needsEmbeddings)
     ? await embedTexts(
         deps.gateway,
@@ -461,6 +494,9 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       beta: { type: 'string', default: String(POLICY_DEFAULTS.beta) },
       mmr: { type: 'string', default: String(POLICY_DEFAULTS.mmr) },
       reference: { type: 'string', default: POLICY_DEFAULTS.reference },
+      given: { type: 'string' },
+      classes: { type: 'string', default: String(POLICY_DEFAULTS.classes) },
+      drop: { type: 'string' },
       'train-people': { type: 'string' },
       name: { type: 'string' },
       out: { type: 'string' },
@@ -493,9 +529,12 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     staticProbes: positive('static-probes', values['static-probes']),
     beta: positive('beta', values.beta, false),
     mmr: Number(values.mmr),
-    reference: values.reference === 'pool' ? 'pool' : 'R',
+    reference: values.reference === 'pool' ? 'pool' : values.reference === 'id' ? 'id' : 'R',
+    classes: Number(values.classes),
   };
-  if (values.reference !== 'R' && values.reference !== 'pool') throw new Error('--reference is R or pool');
+  if (!Number.isInteger(knobs.classes) || knobs.classes < 0) throw new Error('--classes is a whole number');
+  if (values.reference !== 'R' && values.reference !== 'pool' && values.reference !== 'id')
+    throw new Error('--reference is R, pool or id');
   const nPeople = positive('people', values.people);
   const loaded = await loadPeople(values.data, {
     roles: ['train', role],
@@ -505,8 +544,15 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     },
     seed: values.seed,
   });
-  const people = loaded.people.filter((p) => p.role === role);
-  const train = loaded.people.filter((p) => p.role === 'train');
+  // Given answers move out of everyone's pool, train people's too, so pop-static never plans to ask one.
+  const kept = values.drop ? withoutItems(loaded.people, values.drop) : loaded.people;
+  const all = values.given ? withGiven(kept, values.given) : kept;
+  const people = all.filter((p) => p.role === role);
+  const train = all.filter((p) => p.role === 'train');
+  if (values.given && !people.some((p) => p.given.length))
+    throw new Error(
+      `--given ${values.given} names no pool item (blocks: ${[...new Set(people.flatMap((p) => p.pool.map((i) => i.block)))].join(', ')})`,
+    );
   console.log(
     `E9: ${policies.join(', ')} on ${people.length} ${role} people (${train.length} train people for population statistics); checkpoints ${checkpoints.join(', ')}`,
   );
@@ -577,6 +623,9 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     audit: {
       ...(loaded.audit as unknown as Record<string, unknown>),
       staticSequence: result.staticSequence?.slice(0, 10) ?? null,
+      given: values.given ?? null,
+      drop: values.drop ?? null,
+      meanGiven: people.reduce((a, p) => a + p.given.length, 0) / people.length,
     },
     costUsd: meter.usd,
     cache: gateway.stats,
@@ -600,6 +649,8 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       seed: values.seed,
       maxUsd: meter.maxUsd,
       data: basename(values.data),
+      ...(values.given ? { given: values.given } : {}),
+      ...(values.drop ? { drop: values.drop } : {}),
       stopReason: result.stopReason,
     },
     datasetHash: sha256Hex(`${basename(values.data)}:${st.size}:${people.map((p) => p.pid).join(',')}`),

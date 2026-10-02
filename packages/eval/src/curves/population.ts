@@ -36,7 +36,7 @@ export class Population {
   ) {
     this.n = train.length;
     const optionOrder = new Map<string, { type: QType; keys: string[] }>();
-    const all = (p: TwinPerson) => [...p.pool, ...p.reference, ...p.targets];
+    const all = (p: TwinPerson) => [...p.given, ...p.pool, ...p.reference, ...p.targets];
     for (const p of train)
       for (const it of all(p))
         if (!optionOrder.has(it.key))
@@ -113,10 +113,28 @@ function mutualInformation(joint: Float64Array, rows: number, cols: number): num
 }
 
 /**
+ * What a policy selects with: a posterior over train people (`PersonaPosterior`) or over latent classes of them
+ * (`ClassPosterior`, `classes.ts`), with the same closed forms.
+ */
+export interface Posterior {
+  readonly beta: number;
+  has(key: string): boolean;
+  /** The option index of an item's answer, as the posterior codes it (−1 when it can't). */
+  indexOf(it: Pick<TwinItem, 'key' | 'options' | 'answer'>): number;
+  observe(key: string, v: number): void;
+  weights(): Float64Array;
+  predictive(key: string, w?: Float64Array): Float64Array | null;
+  /** Σ_r I(A_candidate; A_r): information about the reference. */
+  eig(candidate: string, reference: readonly string[], w?: Float64Array): number;
+  /** I(A_candidate; who they answer like): information about the person. */
+  identity(candidate: string, w?: Float64Array): number;
+}
+
+/**
  * Weights over the train people for one person, updated by each of their answers: w_j ∝ Π E[a_j][v]. A train person
  * without an answer to the item keeps their weight. `exclude` drops one train person (a probe scoring itself).
  */
-export class PersonaPosterior {
+export class PersonaPosterior implements Posterior {
   private readonly logw: Float64Array;
 
   /**
@@ -130,6 +148,18 @@ export class PersonaPosterior {
   ) {
     this.logw = new Float64Array(pop.n);
     if (exclude !== undefined) this.logw[exclude] = Number.NEGATIVE_INFINITY;
+  }
+
+  has(key: string): boolean {
+    return this.pop.has(key);
+  }
+
+  indexOf(it: Pick<TwinItem, 'key' | 'options' | 'answer'>): number {
+    return this.pop.indexOf(it);
+  }
+
+  identity(candidate: string, w = this.weights()): number {
+    return identityGain(this, this.pop, candidate, w);
   }
 
   clone(): PersonaPosterior {
@@ -229,6 +259,38 @@ export class PersonaPosterior {
 }
 
 /**
+ * Information about the person rather than about any decision (`ref=id`): I(A_c; J), the mutual information between
+ * the item's answer and which train person they answer like, H(Σ_j w_j E_j) − Σ_j w_j H(E_j). A train person without
+ * an answer to the item emits uniformly.
+ */
+export function identityGain(
+  post: PersonaPosterior,
+  pop: Population,
+  key: string,
+  w = post.weights(),
+): number {
+  const c = pop.item(key);
+  if (!c) return 0;
+  const p = post.predictive(key, w);
+  if (!p) return 0;
+  const h = (row: ArrayLike<number>) => {
+    let x = 0;
+    for (let u = 0; u < row.length; u++) if (row[u]! > 0) x -= row[u]! * Math.log(row[u]!);
+    return x;
+  };
+  const rowH = Array.from({ length: c.k }, (_, a) => h(c.emission.subarray(a * c.k, (a + 1) * c.k)));
+  const uniformH = Math.log(c.k);
+  let cond = 0;
+  for (let j = 0; j < pop.n; j++) {
+    const wj = w[j]!;
+    if (!wj) continue;
+    const a = c.codes[j]!;
+    cond += wj * (a >= 0 ? rowH[a]! : uniformH);
+  }
+  return Math.max(0, h(p) - cond);
+}
+
+/**
  * The best fixed questionnaire for the population (`pop-static`): greedy, each next item the one with the highest
  * expected information about the reference, averaged over probe train people who answer it as they did, each scored
  * against everyone else. The same sequence for everyone, chosen without any dev or test answer.
@@ -237,13 +299,13 @@ export function staticSequence(
   pop: Population,
   train: readonly TwinPerson[],
   reference: readonly string[],
-  opts: { steps: number; probes: number; seed: string },
+  opts: { steps: number; probes: number; seed: string; beta?: number },
 ): string[] {
   const probes = shuffle(
     train.map((_, j) => j),
     seededRng(`${opts.seed}:static`),
   ).slice(0, Math.min(opts.probes, train.length));
-  const posts = probes.map((j) => new PersonaPosterior(pop, j));
+  const posts = probes.map((j) => new PersonaPosterior(pop, j, opts.beta ?? 1));
   const poolKeys = [...new Set(train.flatMap((p) => p.pool.map((i) => i.key)))].filter((k) => pop.has(k));
   const seq: string[] = [];
   for (let t = 0; t < Math.min(opts.steps, poolKeys.length); t++) {
