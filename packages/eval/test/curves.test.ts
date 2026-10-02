@@ -810,7 +810,9 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
       knobs: {},
       offline: true,
       seed: 's',
+      versus: ['pop-eig'],
     });
+    expect(report.deltas.filter((d) => d.against === 'pop-eig')).toHaveLength(POLICY_NAMES.length - 1);
     expect(report.verdicts.every((v) => v.outcome === 'insufficient')).toBe(true); // 4 people < 30
     expect(report.points.filter((p) => p.k === 3)).toHaveLength(POLICY_NAMES.length);
     const md = renderReport({
@@ -824,6 +826,7 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
       createdAt: 0,
     });
     expect(md).toContain('Verdict against `random`');
+    expect(md).toContain('### Against `pop-eig`');
     expect(md).toContain('Learning curves');
     expect(md).toContain('Offline fakes: not a result');
     expect(CURVES_RULE.reference).toBe('random');

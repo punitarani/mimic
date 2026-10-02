@@ -346,6 +346,8 @@ export interface AnalyzeInput {
   /** Who predicted the targets: Jev, or the population reader (`--no-jev`, a yardstick). */
   scorer?: 'jev' | 'population';
   seed: string;
+  /** Further policies to compare every policy with, beside the rule's reference and `order` (`--versus`). */
+  versus?: string[];
 }
 
 export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesReport {
@@ -402,7 +404,7 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
   });
 
   const deltas: PolicyDelta[] = [];
-  for (const against of [rule.reference, 'order'])
+  for (const against of [...new Set([rule.reference, 'order', ...(input.versus ?? [])])])
     for (const policy of input.policies) {
       if (policy === against || !input.policies.includes(against)) continue;
       const seed = `curves:${input.seed}:${against}:${policy}`;
@@ -584,7 +586,7 @@ export function renderCurves(r: CurvesReport): string[] {
       `| ${s.policy} | ${f4(s.aulcLogLoss)} | ${pct(s.aulcItemAcc)} | ${f4(s.first.logLoss)} / ${f4(s.last.logLoss)} | ${pct(s.first.itemAcc)} / ${pct(s.last.itemAcc)} | ${qs} | $${s.costUsd.selection.toFixed(3)} / $${s.costUsd.scoring.toFixed(3)} |`,
     );
   }
-  for (const against of [r.rule.reference, 'order']) {
+  for (const against of [...new Set(r.deltas.map((d) => d.against))]) {
     const ds = r.deltas.filter((d) => d.against === against);
     if (!ds.length) continue;
     out.push(
