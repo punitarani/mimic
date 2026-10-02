@@ -95,6 +95,21 @@ Run `01M3YYHZDT9XGBYAR58M6NH27D` (2p-a), fixed and statistic policies; the reade
    of personality rows outweigh them (a naive-Bayes over-count: each row is weighted as if independent). So the rounds
    below rank policies with it early and leave the verdict to Jev.
 
+**What carries information about decisions.** `pop-transfer`'s statistic, each pool question's mutual information with
+the 43 reference questions across the 1,052 train people (Σ_r I(A_c; A_r), no conditioning), by block:
+
+| Block | Questions | Mean transfer (nats) | Highest |
+| --- | --- | --- | --- |
+| Demographics | 9 | 0.040 | 0.078 (political views) |
+| Cognitive tests | 43 | 0.034 | 0.080 (a syllogism) |
+| Personality | 199 | 0.021 | 0.060 (consumer uniqueness) |
+| Economic preferences | 169 | 0.014 | 0.041 |
+
+The top ten are a syllogism, political views, two vocabulary items, consumer uniqueness ("I actively seek to develop
+my personal uniqueness by buying special products"), household size, a third vocabulary item, party, trouble limiting
+spending and a fourth vocabulary item. Lotteries and time preferences, the kind of question production's anchors open
+with, carry the least.
+
 ## Round 3: what Mimic knows and may ask (dev, population reader)
 
 Mimic is not Twin's survey. Identity supplies some demographics before the first question, and politics and money are
