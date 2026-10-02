@@ -56,3 +56,31 @@ any chunk with failed predictions, so 30 people are clean.
    region, race, the trust game, age and spending. Reasoning, identity and money, not personality rows.
 5. **Stopping on the policy's own score saves nothing yet** (−0.9 to +0.3 points against a fixed length of the same
    mean), and `pop-eig`'s curve is flat after 10–15, so a fixed length there is close to optimal.
+
+## Round 2p: what the answers say without Jev (dev, all 609 people, no model calls)
+
+Free rounds with `--no-jev`: the persona posterior over the 1,052 train people reads the targets from the asked
+answers (`populationReader`). It ranks what each policy's answers carry; it is not Jev, and (below) it is a yardstick
+for the first answers only.
+
+**The reader needs a temper.** Untempered (β = 1) it gets worse with every answer after the first few (0.898 at k = 0,
+0.933 at 30 under `order`); β = 0.25 is the best of 1, 0.5, 0.25 and 0.1 (300 people: `order` AULC 0.8755 against
+0.8865 at 0.1, 0.8930 at 0.5 and 0.9204 at 1). Every round below reads at β = 0.25.
+
+Run `01M3YYHZDT9XGBYAR58M6NH27D` (2p-a), fixed and statistic policies; the reader sweep is runs `01M3YXQ…`–`01M3YXR…`:
+
+| Policy | AULC log loss | Δ vs random | Δ vs order | Accuracy at 30 |
+| --- | --- | --- | --- | --- |
+| `order` | 0.8718 | −0.0165 [−0.0189, −0.0139] | — | 62.4% |
+| `pop-transfer` | 0.8732 | −0.0151 [−0.0176, −0.0125] | +0.0013 [−0.0009, +0.0035] | 62.7% |
+| `stratified` | 0.8787 | −0.0096 [−0.0118, −0.0076] | +0.0069 [+0.0048, +0.0088] | 62.6% |
+| `pop-static` | 0.8795 | −0.0088 [−0.0113, −0.0065] | +0.0076 [+0.0054, +0.0098] | 61.6% |
+| `random` | 0.8883 | — | +0.0165 [+0.0139, +0.0189] | 62.1% |
+| `pop-entropy` | 0.8942 | +0.0059 [+0.0042, +0.0076] | +0.0223 [+0.0193, +0.0252] | 60.9% |
+
+1. **Production's population statistic points the wrong way.** `pop-entropy` asks the items people disagree on most,
+   the answer-entropy half of `item_stats`' `pop(q)` (`docs/SELECTION.md` §7). It is worse than random: those items
+   (price lists, lotteries) differ between people without saying anything about their other answers.
+2. **Transfer is the statistic that works.** `pop-transfer` ranks items once by their mutual information with the
+   reference questions across the train people, Σ_r I(A_c; A_r), with no conditioning on the person. It ties survey
+   order, which starts with the demographics, and asks the syllogism or political views first.
