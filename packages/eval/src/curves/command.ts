@@ -569,6 +569,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       mmr: { type: 'string', default: String(POLICY_DEFAULTS.mmr) },
       reference: { type: 'string', default: POLICY_DEFAULTS.reference },
       given: { type: 'string' },
+      versus: { type: 'string' },
       opening: { type: 'string' },
       classes: { type: 'string', default: String(POLICY_DEFAULTS.classes) },
       'lift-shortlist': { type: 'string', default: String(POLICY_DEFAULTS.liftShortlist) },
@@ -731,6 +732,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     offline: values.offline,
     scorer: values['no-jev'] ? 'population' : 'jev',
     seed: values.seed,
+    ...(values.versus ? { versus: splitSpecs(values.versus) } : {}),
   });
   const st = statSync(values.data);
   const run: EvalRunRecord = {

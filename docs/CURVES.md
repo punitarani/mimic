@@ -172,3 +172,44 @@ is $60; the cache lives in `data/curves-cache`.
   (`docs/RESEARCH.md` §1.3).
 - **One draw of Jev.** The cache fixes each request's first answer; differences below about 0.01 nats are within
   Jev's own noise.
+
+## 10. The confirmatory run (pre-registered 2026-10-02, before any Jev-scored run of this setting)
+
+Written after the free rounds on dev people (`docs/reports/e9-curves.md`, rounds 2p–3) and before round 4, the first
+Jev-scored run of the Mimic setting. Neither round 4 nor anything else changes it; the test people are read once.
+
+**What it decides.** Whether an opening planned from E9 beats the one production asks today, for Jev, in the setting
+Mimic is in: demographics known before the first question, politics and money asked only once consented (here: after
+the six questions the trust ramp needs).
+
+**Run.**
+
+```
+pnpm eval -- curves --data data/twin-full.jsonl --role test --people 200 --seed e9 --beta 0.25 \
+  --given Demographics,-QID20,-QID21,-QID22 \
+  --opening QID234/3,QID32,QID34,QID26/1,QID239/1,QID33,QID22,QID21 \
+  --policies 'random,anchors-random,custom6-random,custom-random,jev-lift[lpeople=40],pop-eig[cls=16,beta=1]' \
+  --versus anchors-random --max-usd 12
+```
+
+- `custom-random` is `cfg.e9.opening` as Twin asks it: for each of `anchors.e9.v1`'s eight questions the closest Twin
+  question (consumer uniqueness, trouble limiting spending, the Mr A/B shopper, need for cognition, maximizing,
+  trouble spending; then political views and family income), then random, as the default's selector is level with
+  random here (round 1). `custom6-random` stops the opening before the two sensitive questions.
+- `anchors-random` is `anchors.v1` as Twin asks it (`TWIN_ANCHORS`), then random: production today.
+- `jev-lift` and `pop-eig[cls=16]` are the two selection principles that need no answers from the person being
+  scored beyond their own: Jev's measured lift on train people, and the persona posterior over 16 latent classes
+  (aggregate profiles only).
+
+**Rules.**
+
+1. Every policy against `random`: `CURVES_RULE`, unchanged.
+2. **Primary: `custom-random` against `anchors-random`.** The opening beats production's if the 90% interval by person
+   of the AULC log-loss difference lies below 0 and its accuracy at 30 is at most 1 point lower; it is worse if the
+   interval lies above 0; otherwise level. `cfg.e9.opening` goes to real people (the `e9` preset, draft) only if it
+   beats; otherwise the arm is not shipped and the readout says why.
+3. Secondary, reported with intervals and no decision: `custom-random` against `custom6-random` (asking politics and
+   money right after the ramp), and `jev-lift` and `pop-eig[cls=16]` against `anchors-random`.
+
+If the run stops early (an outage or the cap), the people completed are the result, and the readout says how many;
+nothing is re-run on test people.
