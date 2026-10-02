@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { PREDICT_PROMPTS, renderVariantDoc } from './components';
 import { MimicJson } from './engine/artifact';
 import {
+  ANCHORS_E9_V1,
   ANCHORS_V1,
   FACET_GROUPS_V2,
   NEW_IN_V2,
@@ -55,6 +56,7 @@ export function docsFiles(): Record<string, string> {
   const files: Record<string, string> = {
     'docs/ontology/v1.json': json({ version: 'v1', facets: ONTOLOGY_V1 }),
     'docs/ontology/anchors.v1.json': json({ setId: 'anchors.v1', items: ANCHORS_V1 }),
+    'docs/ontology/anchors.e9.v1.json': json({ setId: 'anchors.e9.v1', items: ANCHORS_E9_V1 }),
     'docs/ontology/reserve.v1.json': json({ setId: 'reserve.v1', items: RESERVE_V1 }),
     'docs/ontology/v2.json': json({ version: 'v2', groups: FACET_GROUPS_V2, facets: ONTOLOGY_V2 }),
     'docs/ontology/v2.sources.md': renderSources(),

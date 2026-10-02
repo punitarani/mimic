@@ -5,6 +5,8 @@ import {
   E3B_CONTROL_LABEL,
   E7_PROBES_CONFIG,
   E7_PROBES_LABEL,
+  E9_OPENING_CONFIG,
+  E9_OPENING_LABEL,
   type PipelineConfig,
 } from '../config';
 import type { ExperimentRecord } from '../store';
@@ -36,6 +38,15 @@ export const EXPERIMENT_PRESETS = {
     summary:
       'cfg.default.v10 with fourteen probes per person at fixed points (cfg.e7.probes): three items asked of everyone, two repeats, and the rest at a measured distance from what the person answered. Measures what the mimic learns per distance, apart from what selection asks next; read with pnpm eval -- probes. Decides when E3b can start.',
     arms: [{ arm: 'probes', config: E7_PROBES_CONFIG, label: E7_PROBES_LABEL, weight: 1 }],
+  },
+  e9: {
+    name: 'E9: the opening (anchors.e9.v1) vs anchors.v1',
+    summary:
+      'cfg.e7.probes against the same config opening with E9’s planned sequence (cfg.e9.opening: money and possessions first, then consented politics and finances once the trust ramp opens), 1:1. Both arms carry E7’s probes, which measure what the opening changes on real people; read with pnpm eval -- probes and arms.',
+    arms: [
+      { arm: 'control', config: E7_PROBES_CONFIG, label: E7_PROBES_LABEL, weight: 1 },
+      { arm: 'opening', config: E9_OPENING_CONFIG, label: E9_OPENING_LABEL, weight: 1 },
+    ],
   },
 } as const satisfies Record<string, ExperimentPreset>;
 export type PresetId = keyof typeof EXPERIMENT_PRESETS;
