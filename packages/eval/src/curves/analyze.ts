@@ -138,6 +138,7 @@ export interface CurvesReport {
   stopReason: string | null;
   knobs: Record<string, unknown>;
   offline: boolean;
+  scorer: 'jev' | 'population';
 }
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -342,6 +343,8 @@ export interface AnalyzeInput {
   stopReason: string | null;
   knobs: Record<string, unknown>;
   offline: boolean;
+  /** Who predicted the targets: Jev, or the population reader (`--no-jev`, a yardstick). */
+  scorer?: 'jev' | 'population';
   seed: string;
 }
 
@@ -530,6 +533,7 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
     stopReason: input.stopReason,
     knobs: input.knobs,
     offline: input.offline,
+    scorer: input.scorer ?? 'jev',
   };
 }
 
@@ -548,6 +552,11 @@ export function renderCurves(r: CurvesReport): string[] {
     `People: ${r.people} (${r.role}). Twin answers rank policies for Jev on Twin's questions; they never stand in for a Mimic user (docs/RESEARCH.md §8).${r.offline ? ' **Offline fakes: not a result.**' : ''}`,
     '',
   );
+  if (r.scorer === 'population')
+    out.push(
+      "**Scored by the population reader, not Jev** (`--no-jev`): what each policy's answers say about the targets, read from the train people who answered alike. A yardstick for the population policies, never a result about Jev.",
+      '',
+    );
   if (r.stopReason) out.push(`**Stopped:** ${r.stopReason}`, '');
   out.push(
     `## Verdict against \`${r.rule.reference}\``,

@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { HashEmbedder } from '@mimic/adapters';
 import {
   type DecisionProvider,
   type DecisionRequest,
@@ -28,6 +29,7 @@ import {
   walk,
 } from '../src/curves/command';
 import { halfOf, loadPeople, mimicIdOf, roleOf, stateAfter, type TwinPerson } from '../src/curves/data';
+import { embedTexts, textOf } from '../src/curves/embeddings';
 import { JevOracle, POLICY_DEFAULTS, POLICY_NAMES, parsePolicySpec } from '../src/curves/policies';
 import { PersonaPosterior, Population, staticSequence } from '../src/curves/population';
 import { CachingGateway } from '../src/decision-cache';
@@ -153,6 +155,7 @@ function recordingGateway(costUsd = 0) {
   const gateway = new Gateway({
     decisions,
     llm: new FakeLlm(),
+    embedder: new HashEmbedder(),
     log: { write: async () => {} },
     clock: () => 1,
     newId: () => 'id',
@@ -261,6 +264,45 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
     expect(post.eig('twin2k/w13/QID40', ['twin2k/w13/QID25/1'], w)).toBeCloseTo(0, 10);
   });
 
+  it('tempers the likelihood: below 1 the weights spread over more train people', async () => {
+    const { people } = await loadPeople(fixture(60));
+    const train = people.filter((p) => p.role === 'train');
+    const pop = new Population(train);
+    const spread = (beta: number) => {
+      const post = new PersonaPosterior(pop, undefined, beta);
+      for (const key of ['twin2k/w13/QID11', 'twin2k/w13/QID50', 'twin2k/w13/QID25/1']) post.observe(key, 0);
+      const w = post.weights();
+      return -[...w].reduce((a, x) => a + (x > 0 ? x * Math.log(x) : 0), 0);
+    };
+    expect(spread(0.3)).toBeGreaterThan(spread(1));
+    expect(parsePolicySpec('pop-eig[beta=0.3]').knobs.beta).toBe(0.3);
+    const [p] = buildPolicies(['pop-eig[beta=0.3]'], POLICY_DEFAULTS, 's', null);
+    expect(p!.beta).toBe(0.3);
+  });
+
+  it('asks the pool question closest in meaning to the reference first, then avoids repeating itself', async () => {
+    const all = (await loadPeople(fixture(20))).people;
+    const p = all[0]!;
+    const { gateway } = recordingGateway();
+    const vectors = await embedTexts(gateway, [...p.pool, ...p.reference].map(textOf), {
+      dir: mkdtempSync(join(tmpdir(), 'e9-emb-')),
+      meter: new Meter(),
+    });
+    // The fixture plants a pool question that repeats a reference one word for word before it is dropped; here a
+    // reference question is copied into the pool to check the policy finds its twin.
+    const twin = { ...p.reference[0]!, key: 'twin2k/w13/QIDX', qid: 'QIDX', block: 'Economic preferences' };
+    const person = { ...p, pool: [...p.pool, twin] };
+    const all2 = await embedTexts(gateway, [textOf(twin)], {
+      dir: mkdtempSync(join(tmpdir(), 'e9-emb-')),
+      meter: new Meter(),
+    });
+    const vs = new Map([...vectors, ...all2]);
+    const [policy] = buildPolicies(['sem-ref'], POLICY_DEFAULTS, 's', null);
+    const asked = await walk(person, policy!, 2, { jev: jevFor(gateway), pop: null, seed: 's', vectors: vs });
+    expect(asked[0]!.key).toBe('twin2k/w13/QIDX');
+    expect(asked[1]!.key).not.toBe(asked[0]!.key);
+  });
+
   it('builds the static questionnaire from train people only, most informative first', async () => {
     const { people } = await loadPeople(fixture(40));
     const train = people.filter((p) => p.role === 'train');
@@ -287,8 +329,17 @@ describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
       seq,
     );
     const jev = jevFor(gateway);
+    const vectors = await embedTexts(
+      gateway,
+      people.flatMap((p) => [...p.pool, ...p.reference].map(textOf)),
+      {
+        dir: mkdtempSync(join(tmpdir(), 'e9-emb-')),
+        meter: new Meter(),
+      },
+    );
     const asked = [];
-    for (const p of people) asked.push((await walk(p, policy!, 4, { jev, pop, seed })).map((i) => i.key));
+    for (const p of people)
+      asked.push((await walk(p, policy!, 4, { jev, pop, seed, vectors })).map((i) => i.key));
     return { asked, seen };
   };
 
@@ -624,6 +675,70 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
       return xs.reduce((a, b) => a + b, 0) / xs.length;
     };
     expect(acc(5)).toBeGreaterThan(acc(0));
+  });
+
+  it('stops at an outage and drops the chunk, instead of scoring failures as uniform', async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const dev = all.filter((p) => p.role === 'dev').slice(0, 4);
+    const fake = new FakeDecisions();
+    let calls = 0;
+    const decisions: DecisionProvider = {
+      provider: 'fake',
+      decide: async (req) => {
+        // The budget runs out after the first chunk's requests.
+        if (++calls > 6) throw new Error('HTTP 403: Workspace daily budget exceeded');
+        return fake.decide(req);
+      },
+    };
+    const gateway = new Gateway({
+      decisions,
+      llm: new FakeLlm(),
+      log: { write: async () => {} },
+      clock: () => 1,
+      newId: () => 'id',
+    });
+    const res = await runCurves(
+      { gateway, meter: new Meter() },
+      {
+        people: dev,
+        train: [],
+        policies: ['order', 'random'],
+        checkpoints: [0, 2],
+        knobs: POLICY_DEFAULTS,
+        seed: 's',
+        concurrency: 1,
+        chunkPeople: 2,
+      },
+    );
+    expect(res.stopReason).toMatch(/^outage/);
+    expect(res.records.every((r) => r.rec.ok)).toBe(true);
+    const people = new Set(res.records.map((r) => r.rec.mimicId));
+    expect(people.size).toBeLessThan(dev.length);
+  });
+
+  it('scores with the population reader alone under --no-jev, with no model calls', async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const dev = all.filter((p) => p.role === 'dev').slice(0, 3);
+    const train = all.filter((p) => p.role === 'train');
+    const { gateway, seen } = recordingGateway();
+    const res = await runCurves(
+      { gateway, meter: new Meter() },
+      {
+        people: dev,
+        train,
+        policies: ['random', 'pop-eig'],
+        checkpoints: [0, 2],
+        knobs: POLICY_DEFAULTS,
+        seed: 's',
+        concurrency: 1,
+        chunkPeople: 3,
+        noJev: true,
+      },
+    );
+    expect(seen).toHaveLength(0);
+    expect(res.records.length).toBeGreaterThan(0);
+    expect(res.records.every((r) => r.rec.modelSnapshot === 'population')).toBe(true);
+    expect(res.stopReason).toBeNull();
   });
 
   it('scores the targets from the sealed state at k, with the person’s retest beside each', async () => {

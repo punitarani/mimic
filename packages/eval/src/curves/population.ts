@@ -119,16 +119,21 @@ function mutualInformation(joint: Float64Array, rows: number, cols: number): num
 export class PersonaPosterior {
   private readonly logw: Float64Array;
 
+  /**
+   * `beta` tempers the likelihood (w_j ∝ Π E^β): below 1 the posterior concentrates more slowly, so a few look-alike
+   * train people don't take all the weight (docs/RESEARCH.md §1.7, calibrate before planning).
+   */
   constructor(
     private readonly pop: Population,
     exclude?: number,
+    readonly beta = 1,
   ) {
     this.logw = new Float64Array(pop.n);
     if (exclude !== undefined) this.logw[exclude] = Number.NEGATIVE_INFINITY;
   }
 
   clone(): PersonaPosterior {
-    const c = new PersonaPosterior(this.pop);
+    const c = new PersonaPosterior(this.pop, undefined, this.beta);
     c.logw.set(this.logw);
     return c;
   }
@@ -139,7 +144,7 @@ export class PersonaPosterior {
     if (!c || v < 0 || v >= c.k) return;
     for (let j = 0; j < this.pop.n; j++) {
       const a = c.codes[j]!;
-      if (a >= 0) this.logw[j]! += Math.log(c.emission[a * c.k + v]!);
+      if (a >= 0) this.logw[j]! += this.beta * Math.log(c.emission[a * c.k + v]!);
     }
   }
 
