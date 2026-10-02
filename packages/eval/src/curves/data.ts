@@ -261,19 +261,35 @@ export function stateOf(person: Pick<TwinPerson, 'pid' | 'given'>, asked: readon
  * a QID left in the pool: `Demographics,-QID20` gives the demographics except party.
  */
 export function withGiven(people: readonly TwinPerson[], spec: string): TwinPerson[] {
-  const tokens = spec
-    .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean);
-  const blocks = new Set(tokens.filter((t) => !t.startsWith('-')));
-  const keep = new Set(tokens.filter((t) => t.startsWith('-')).map((t) => t.slice(1)));
-  const isGiven = (i: TwinItem) =>
-    blocks.has(i.block) && !keep.has(i.qid) && !keep.has(i.key.split('/').pop()!);
+  const isGiven = itemMatcher(spec);
   return people.map((p) => ({
     ...p,
     given: [...p.given, ...p.pool.filter(isGiven)],
     pool: p.pool.filter((i) => !isGiven(i)),
   }));
+}
+
+/**
+ * Removes pool items from everyone (`--drop`): items Mimic never asks early, as its trust ramp holds sensitive ones
+ * back. A token names a block or a QID (`QID20,QID21`); one prefixed with `-` keeps a QID of a named block. A dropped
+ * item is never asked, given or planned; the population statistics still hold the train people's answers to it.
+ */
+export function withoutItems(people: readonly TwinPerson[], spec: string): TwinPerson[] {
+  const drop = itemMatcher(spec, true);
+  return people.map((p) => ({ ...p, pool: p.pool.filter((i) => !drop(i)) }));
+}
+
+/** The item's QID as the key spells it (`twin2k/w13/QID25/36` → `QID25`). */
+const qidOf = (i: TwinItem) => i.key.split('/')[2] ?? i.qid;
+
+function itemMatcher(spec: string, byQid = false): (i: TwinItem) => boolean {
+  const tokens = spec
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const named = new Set(tokens.filter((t) => !t.startsWith('-')));
+  const keep = new Set(tokens.filter((t) => t.startsWith('-')).map((t) => t.slice(1)));
+  return (i) => (named.has(i.block) || (byQid && named.has(qidOf(i)))) && !keep.has(qidOf(i));
 }
 
 export function stateAfter(pid: string, asked: readonly TwinItem[]): PersonState {

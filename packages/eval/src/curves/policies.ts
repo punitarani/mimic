@@ -11,7 +11,7 @@ import {
 import type { Meter } from '../optimize/evaluate';
 import { mimicIdOf, questionOf, stateOf, type TwinItem, type TwinPerson } from './data';
 import { cosine, textOf } from './embeddings';
-import { identityGain, PersonaPosterior, type Population } from './population';
+import { PersonaPosterior, type Population, type Posterior } from './population';
 
 /**
  * Selection policies for E9 (docs/CURVES.md §4). Each picks the next item from what is left of a person's pool,
@@ -84,7 +84,7 @@ export interface PolicyContext {
   rng: () => number;
   jev: JevOracle;
   pop: Population | null;
-  posterior: PersonaPosterior | null;
+  posterior: Posterior | null;
   /** Records the chosen item's selection score (its expected gain or entropy), for the stopping-rule analysis. */
   note?: (score: number) => void;
   /** Question text (`textOf`) → embedding, for the semantic policies. */
@@ -97,6 +97,8 @@ export interface Policy {
   readonly usesPopulation: boolean;
   /** The posterior's likelihood temper (`PersonaPosterior`); 1 when absent. */
   readonly beta?: number;
+  /** A posterior of the policy's own (over latent classes, `cls=K`); the train people's when absent. */
+  readonly posteriorOf?: () => Posterior;
   next(ctx: PolicyContext): Promise<TwinItem>;
 }
 
@@ -117,6 +119,8 @@ export interface PolicyKnobs {
   beta: number;
   /** `sem-ref`'s redundancy weight: relevance to R minus this times the closest question already asked. */
   mmr: number;
+  /** Latent classes the persona posterior runs over (`classes.ts`); 0 runs it over the train people themselves. */
+  classes: number;
   /**
    * What the lookahead and the persona posterior aim at: `R`, the wave 4 reference questions (the kind of decision
    * that will be scored), `pool`, a fixed sample of the person's own pool questions (no knowledge of the targets), or
@@ -135,6 +139,7 @@ export const POLICY_DEFAULTS: PolicyKnobs = {
   beta: 1,
   mmr: 0.5,
   reference: 'R',
+  classes: 0,
 };
 
 const argmaxBy = <T>(xs: readonly T[], f: (x: T) => number): T | undefined => {
@@ -284,7 +289,7 @@ const popKeys = (ctx: PolicyContext, knobs: PolicyKnobs, seed: string) =>
     : ctx.person.reference
   )
     .map((r) => r.key)
-    .filter((k) => ctx.pop?.has(k));
+    .filter((k) => ctx.posterior?.has(k) ?? ctx.pop?.has(k));
 
 /** The persona posterior's expected information about the reference, in closed form (no model calls). */
 export function popEigPolicy(knobs: PolicyKnobs, seed: string): Policy {
@@ -299,11 +304,9 @@ export function popEigPolicy(knobs: PolicyKnobs, seed: string): Policy {
       let best: TwinItem | undefined;
       let bestScore = Number.NEGATIVE_INFINITY;
       for (const i of ctx.remaining) {
-        if (!ctx.pop.has(i.key)) continue;
+        if (!ctx.posterior.has(i.key)) continue;
         const g =
-          knobs.reference === 'id'
-            ? identityGain(ctx.posterior, ctx.pop, i.key, w)
-            : ctx.posterior.eig(i.key, refs, w);
+          knobs.reference === 'id' ? ctx.posterior.identity(i.key, w) : ctx.posterior.eig(i.key, refs, w);
         if (g > bestScore + 1e-12) {
           bestScore = g;
           best = i;
@@ -444,7 +447,7 @@ export function hybridPolicy(knobs: PolicyKnobs, seed: string): Policy {
       const refs = popKeys(ctx, knobs, seed);
       const w = ctx.posterior.weights();
       const short = ctx.remaining
-        .filter((i) => ctx.pop!.has(i.key))
+        .filter((i) => ctx.posterior!.has(i.key))
         .map((i) => ({ i, g: ctx.posterior!.eig(i.key, refs, w) }))
         .sort((a, b) => b.g - a.g)
         .slice(0, knobs.lookaheadShortlist)
@@ -489,10 +492,30 @@ export type PolicyName = (typeof POLICY_NAMES)[number];
 export interface PolicySpec {
   spec: string;
   base: PolicyName;
-  /** Items taken from the static questionnaire before the base policy starts. */
+  /** Items asked before the base policy starts, from `opening`. */
   open: number;
+  /** `static`: the static questionnaire (`open10-…`); `anchors`: production's anchors as Twin asks them (`anchors-…`). */
+  opening: 'static' | 'anchors';
   knobs: Partial<PolicyKnobs>;
 }
+
+/**
+ * Production's opening (`anchors.v1`, `packages/core/src/ontology/anchors.ts`) as Twin asks it: for each anchor the
+ * Twin question closest in content. The five Big Five markers have BFI-44 counterparts (outgoing; considerate; thorough;
+ * relaxed; active imagination), the risk gamble a row of the lottery price list, the intertemporal choice a row of the
+ * now-or-later list, and the trust game the receiver's trust-game question. The work and Saturday scenes have none.
+ * Shown in a per-person random order, as production does.
+ */
+export const TWIN_ANCHORS = [
+  'twin2k/w13/QID25/36',
+  'twin2k/w13/QID25/32',
+  'twin2k/w13/QID25/3',
+  'twin2k/w13/QID25/9',
+  'twin2k/w13/QID25/20',
+  'twin2k/w13/QID250/7',
+  'twin2k/w13/QID246/4',
+  'twin2k/w13/QID122',
+] as const;
 
 const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
   ent: 'entropyShortlist',
@@ -503,16 +526,17 @@ const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
   beta: 'beta',
   mmr: 'mmr',
   ref: 'reference',
+  cls: 'classes',
 };
 
 export function parsePolicySpec(spec: string): PolicySpec {
-  const m = /^(?:open(\d+)-)?([a-z-]+)(?:\[([^\]]*)\])?$/.exec(spec.trim());
-  if (!m || !(POLICY_NAMES as readonly string[]).includes(m[2]!))
+  const m = /^(?:(open|anchors)(\d+)?-)?([a-z-]+)(?:\[([^\]]*)\])?$/.exec(spec.trim());
+  if (!m || !(POLICY_NAMES as readonly string[]).includes(m[3]!) || (m[1] === 'open' && !m[2]))
     throw new Error(
       `unknown policy ${spec} (known: ${POLICY_NAMES.join(', ')}; e.g. open10-jev-eig[ref=pool,tsel=1])`,
     );
   const knobs: Partial<PolicyKnobs> = {};
-  for (const kv of (m[3] ?? '').split(',').filter(Boolean)) {
+  for (const kv of (m[4] ?? '').split(',').filter(Boolean)) {
     const [k, v] = kv.split('=').map((x) => x.trim());
     const key = KNOB_KEYS[k ?? ''];
     if (!key || v === undefined || v === '')
@@ -526,7 +550,9 @@ export function parsePolicySpec(spec: string): PolicySpec {
       knobs[key] = n;
     }
   }
-  return { spec: spec.trim(), base: m[2] as PolicyName, open: Number(m[1] ?? 0), knobs };
+  const opening = m[1] === 'anchors' ? 'anchors' : 'static';
+  const open = m[1] ? Number(m[2] ?? TWIN_ANCHORS.length) : 0;
+  return { spec: spec.trim(), base: m[3] as PolicyName, open, opening, knobs };
 }
 
 /** Policies that ask Jev to select (none can run with `--no-jev`). */
@@ -540,15 +566,39 @@ export const needsPopulation = (s: PolicySpec) =>
   s.base === 'pop-entropy' ||
   s.base === 'pop-transfer' ||
   s.base === 'hybrid' ||
-  s.open > 0;
+  (s.open > 0 && s.opening === 'static');
 
-/** The first `n` items from the static questionnaire, then `inner`. */
-export function openedPolicy(name: string, n: number, sequence: readonly string[], inner: Policy): Policy {
-  const opening = popStaticPolicy(sequence);
+/**
+ * The first `n` items of `sequence` (or of `sequence(pid)`, the person's own order) that the person's pool holds, then
+ * `inner`; a sequence that runs out first hands over early.
+ */
+export function openedPolicy(
+  name: string,
+  n: number,
+  sequence: readonly string[] | ((pid: string) => readonly string[]),
+  inner: Policy,
+): Policy {
   return {
     name,
     usesPopulation: inner.usesPopulation,
     ...(inner.beta !== undefined ? { beta: inner.beta } : {}),
-    next: (ctx) => (ctx.asked.length < n ? opening.next(ctx) : inner.next(ctx)),
+    next: (ctx) => {
+      if (ctx.asked.length < n) {
+        const seq = typeof sequence === 'function' ? sequence(ctx.person.pid) : sequence;
+        const left = new Map(ctx.remaining.map((i) => [i.key, i]));
+        const opened = new Set(ctx.asked.map((i) => i.key));
+        // Only while every question so far came from the opening: once one is missing, the opening is over.
+        if (ctx.asked.every((i) => seq.includes(i.key)))
+          for (const key of seq) {
+            const it = left.get(key);
+            if (it && !opened.has(key)) return Promise.resolve(it);
+          }
+      }
+      return inner.next(ctx);
+    },
   };
 }
+
+/** Production's anchors in a per-person order (seeded like `anchors:{mimicId}` at intake). */
+export const anchorOrder = (seed: string) => (pid: string) =>
+  shuffle([...TWIN_ANCHORS], seededRng(`${seed}:anchors:${pid}`));
