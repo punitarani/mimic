@@ -1001,7 +1001,10 @@ never enter a prompt or a state, so §3.9 holds. `pnpm eval -- select --no-popul
   about 4 points less accurate. On Twin, clef, the decider and clef-flash beat Jev, so the survey ranking does not carry
   over. Every challenger fails the latency check. E8b (`--tune`, ADR-0069, `docs/MODELS.md` §9) re-asks it with every
   model at its best: a fixed grid of views, scale formats, state formats and wordings, each model's configuration chosen
-  by nested leave-one-person-out cross-validation, judged by the same rule.
+  by nested leave-one-person-out cross-validation, judged by the same rule. Result (2026-10-02,
+  `docs/reports/e8b-tuning.md`): keep Jev. No tuned challenger is better on served questions (clef-flash on `derived`
+  came closest, −0.028 [−0.058, +0.005] and 1.7 points less accurate). On nine people, tuning didn't generalize: Jev's
+  nested score was worse than its untuned one. Tuned Jev is not better than Jev as served.
 
 
 
