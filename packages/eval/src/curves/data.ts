@@ -46,6 +46,12 @@ export interface TwinPerson {
   targets: TwinItem[];
   /** Wave 4 item key → agreement of the person's wave 1–3 answer with their wave 4 answer (test–retest). */
   retest: Map<string, number>;
+  /**
+   * Answers every policy starts from (`--given`, docs/CURVES.md §4), as Mimic's identity step supplies some before the
+   * first question: in the state ahead of anything asked and seen by the persona posterior, never in the pool, never
+   * counted in k. Empty unless a run gives them.
+   */
+  given: TwinItem[];
 }
 
 /**
@@ -151,7 +157,7 @@ export async function loadPeople(
     const reference: TwinItem[] = [];
     const targets: TwinItem[] = [];
     for (const h of held) (halfOf(h.qid ?? h.itemKey) === 'R' ? reference : targets).push(item(h, intern));
-    people.push({ pid: line.pid, role, pool, reference, targets, retest });
+    people.push({ pid: line.pid, role, pool, reference, targets, retest, given: [] });
   }
   const limited = limitPeople(people, opts);
   const byRole: Record<Role, number> = { train: 0, dev: 0, test: 0 };
@@ -244,6 +250,31 @@ export const mimicIdOf = (pid: string) => `twin2k:${pid}`;
  * the one E6 and E8 sent. `beforeSeq` seals it (invariant 1): only answers with seq < k + 1 enter.
  */
 export const STATE_BUDGET_TOKENS = 24_000;
+
+/** The sealed state after a person's given answers and then the first `asked`. */
+export function stateOf(person: Pick<TwinPerson, 'pid' | 'given'>, asked: readonly TwinItem[]): PersonState {
+  return stateAfter(person.pid, person.given.length ? [...person.given, ...asked] : asked);
+}
+
+/**
+ * Moves pool items into `given`, in survey order. A token names a block (every item in it); one prefixed with `-` is
+ * a QID left in the pool: `Demographics,-QID20` gives the demographics except party.
+ */
+export function withGiven(people: readonly TwinPerson[], spec: string): TwinPerson[] {
+  const tokens = spec
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const blocks = new Set(tokens.filter((t) => !t.startsWith('-')));
+  const keep = new Set(tokens.filter((t) => t.startsWith('-')).map((t) => t.slice(1)));
+  const isGiven = (i: TwinItem) =>
+    blocks.has(i.block) && !keep.has(i.qid) && !keep.has(i.key.split('/').pop()!);
+  return people.map((p) => ({
+    ...p,
+    given: [...p.given, ...p.pool.filter(isGiven)],
+    pool: p.pool.filter((i) => !isGiven(i)),
+  }));
+}
 
 export function stateAfter(pid: string, asked: readonly TwinItem[]): PersonState {
   const evidence: EvidenceItem[] = asked.map((it, i) => ({

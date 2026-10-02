@@ -25,9 +25,10 @@ import {
   mimicIdOf,
   questionOf,
   type Role,
-  stateAfter,
+  stateOf,
   type TwinItem,
   type TwinPerson,
+  withGiven,
 } from './data';
 import { embedTexts, textOf } from './embeddings';
 import {
@@ -87,13 +88,14 @@ export async function walk(
   let remaining = [...person.pool];
   const posterior =
     policy.usesPopulation && ctx.pop ? new PersonaPosterior(ctx.pop, undefined, policy.beta ?? 1) : null;
+  if (posterior && ctx.pop) for (const g of person.given) posterior.observe(g.key, ctx.pop.indexOf(g));
   for (let t = 0; t < Math.min(steps, person.pool.length); t++) {
     let score: number | null = null;
     const item = await policy.next({
       person,
       asked,
       remaining,
-      state: stateAfter(person.pid, asked),
+      state: stateOf(person, asked),
       rng,
       jev: ctx.jev,
       pop: ctx.pop,
@@ -126,6 +128,7 @@ export function populationReader(
   beta = 1,
 ): CurveRecord[] {
   const post = new PersonaPosterior(pop, undefined, beta);
+  for (const g of person.given) post.observe(g.key, pop.indexOf(g));
   const out: CurveRecord[] = [];
   let seen = 0;
   for (const k of [...checkpoints].sort((a, b) => a - b)) {
@@ -161,7 +164,7 @@ export function populationReader(
 /** The scored instances for one person after the first k asked: every target T from the sealed state. */
 export function targetInstances(person: TwinPerson, asked: readonly TwinItem[], k: number): EvalInstance[] {
   const mimicId = mimicIdOf(person.pid);
-  const state = stateAfter(person.pid, asked.slice(0, k));
+  const state = stateOf(person, asked.slice(0, k));
   return person.targets.map((it, i) => ({
     id: `${mimicId}|${k}|${it.key}`,
     mimicId,
@@ -461,6 +464,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       beta: { type: 'string', default: String(POLICY_DEFAULTS.beta) },
       mmr: { type: 'string', default: String(POLICY_DEFAULTS.mmr) },
       reference: { type: 'string', default: POLICY_DEFAULTS.reference },
+      given: { type: 'string' },
       'train-people': { type: 'string' },
       name: { type: 'string' },
       out: { type: 'string' },
@@ -493,9 +497,10 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     staticProbes: positive('static-probes', values['static-probes']),
     beta: positive('beta', values.beta, false),
     mmr: Number(values.mmr),
-    reference: values.reference === 'pool' ? 'pool' : 'R',
+    reference: values.reference === 'pool' ? 'pool' : values.reference === 'id' ? 'id' : 'R',
   };
-  if (values.reference !== 'R' && values.reference !== 'pool') throw new Error('--reference is R or pool');
+  if (values.reference !== 'R' && values.reference !== 'pool' && values.reference !== 'id')
+    throw new Error('--reference is R, pool or id');
   const nPeople = positive('people', values.people);
   const loaded = await loadPeople(values.data, {
     roles: ['train', role],
@@ -505,8 +510,14 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     },
     seed: values.seed,
   });
-  const people = loaded.people.filter((p) => p.role === role);
-  const train = loaded.people.filter((p) => p.role === 'train');
+  // Given answers move out of everyone's pool, train people's too, so pop-static never plans to ask one.
+  const all = values.given ? withGiven(loaded.people, values.given) : loaded.people;
+  const people = all.filter((p) => p.role === role);
+  const train = all.filter((p) => p.role === 'train');
+  if (values.given && !people.some((p) => p.given.length))
+    throw new Error(
+      `--given ${values.given} names no pool item (blocks: ${[...new Set(people.flatMap((p) => p.pool.map((i) => i.block)))].join(', ')})`,
+    );
   console.log(
     `E9: ${policies.join(', ')} on ${people.length} ${role} people (${train.length} train people for population statistics); checkpoints ${checkpoints.join(', ')}`,
   );
@@ -577,6 +588,8 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     audit: {
       ...(loaded.audit as unknown as Record<string, unknown>),
       staticSequence: result.staticSequence?.slice(0, 10) ?? null,
+      given: values.given ?? null,
+      meanGiven: people.reduce((a, p) => a + p.given.length, 0) / people.length,
     },
     costUsd: meter.usd,
     cache: gateway.stats,
@@ -600,6 +613,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       seed: values.seed,
       maxUsd: meter.maxUsd,
       data: basename(values.data),
+      ...(values.given ? { given: values.given } : {}),
       stopReason: result.stopReason,
     },
     datasetHash: sha256Hex(`${basename(values.data)}:${st.size}:${people.map((p) => p.pid).join(',')}`),

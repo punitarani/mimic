@@ -28,10 +28,25 @@ import {
   targetInstances,
   walk,
 } from '../src/curves/command';
-import { halfOf, loadPeople, mimicIdOf, roleOf, stateAfter, type TwinPerson } from '../src/curves/data';
+import {
+  halfOf,
+  loadPeople,
+  mimicIdOf,
+  roleOf,
+  stateAfter,
+  stateOf,
+  type TwinPerson,
+  withGiven,
+} from '../src/curves/data';
 import { embedTexts, textOf } from '../src/curves/embeddings';
-import { JevOracle, POLICY_DEFAULTS, POLICY_NAMES, parsePolicySpec } from '../src/curves/policies';
-import { PersonaPosterior, Population, staticSequence } from '../src/curves/population';
+import {
+  JevOracle,
+  POLICY_DEFAULTS,
+  POLICY_NAMES,
+  parsePolicySpec,
+  referenceSample,
+} from '../src/curves/policies';
+import { identityGain, PersonaPosterior, Population, staticSequence } from '../src/curves/population';
 import { CachingGateway } from '../src/decision-cache';
 import { FakeDecisions, FakeLlm } from '../src/fakes';
 import { openLocalEngine } from '../src/local';
@@ -264,6 +279,38 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
     expect(post.eig('twin2k/w13/QID40', ['twin2k/w13/QID25/1'], w)).toBeCloseTo(0, 10);
   });
 
+  it('computes information about the person (ref=id) as enumeration over train people does', async () => {
+    const { people } = await loadPeople(fixture(40));
+    const train = people.filter((p) => p.role === 'train');
+    const pop = new Population(train, { eps: 0.2, scaleSigma: 0.6 });
+    const post = new PersonaPosterior(pop, undefined, 0.5);
+    post.observe('twin2k/w13/QID11', 0);
+    const w = post.weights();
+    for (const key of ['twin2k/w13/QID50', 'twin2k/w13/QID25/1', 'twin2k/w13/QID40']) {
+      const c = pop.item(key)!;
+      // I(A; J) = Σ_j w_j Σ_a E_j(a) log(E_j(a) / p(a)).
+      const row = (j: number) =>
+        Array.from({ length: c.k }, (_, v) =>
+          c.codes[j]! < 0 ? 1 / c.k : c.emission[c.codes[j]! * c.k + v]!,
+        );
+      const p = new Array<number>(c.k).fill(0);
+      for (let j = 0; j < pop.n; j++)
+        row(j).forEach((x, v) => {
+          p[v]! += w[j]! * x;
+        });
+      let mi = 0;
+      for (let j = 0; j < pop.n; j++)
+        row(j).forEach((x, v) => {
+          if (w[j]! > 0 && x > 0) mi += w[j]! * x * Math.log(x / p[v]!);
+        });
+      expect(identityGain(post, pop, key, w)).toBeCloseTo(mi, 10);
+    }
+    // Everyone answers the sequence item alike: it says nothing about who they are.
+    expect(identityGain(post, pop, 'twin2k/w13/QID40', w)).toBeLessThan(0.02);
+    expect(parsePolicySpec('pop-eig[ref=id]').knobs.reference).toBe('id');
+    expect(() => referenceSample(people[0]!, { ...POLICY_DEFAULTS, reference: 'id' }, 's')).toThrow(/ref=id/);
+  });
+
   it('tempers the likelihood: below 1 the weights spread over more train people', async () => {
     const { people } = await loadPeople(fixture(60));
     const train = people.filter((p) => p.role === 'train');
@@ -313,6 +360,35 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
     expect(new Set(seq).size).toBe(3);
     // The constant item is never first.
     expect(seq[0]).not.toBe('twin2k/w13/QID40');
+  });
+});
+
+describe('E9 given answers: what Mimic knows before the first question (docs/CURVES.md §4)', () => {
+  it('moves a block out of the pool into every state and the posterior, never into k', async () => {
+    const { people } = await loadPeople(fixture(40));
+    const given = withGiven(people, 'Demographics,-QID12');
+    const p = given.find((x) => x.role === 'dev')!;
+    expect(p.given.map((i) => i.qid)).toEqual(['QID11']);
+    expect(p.pool.some((i) => i.block === 'Demographics' && i.qid === 'QID11')).toBe(false);
+    expect(p.pool.some((i) => i.qid === 'QID12')).toBe(true);
+    // At k = 0 the state already holds the given answer, as its first piece of evidence.
+    const at0 = stateOf(p, []);
+    expect(JSON.stringify(at0)).toContain(p.given[0]!.prompt);
+    expect(stateOf(p, [p.pool[0]!])).toEqual(stateAfter(p.pid, [...p.given, p.pool[0]!]));
+    // The posterior and the reader condition on it: the same walk reads the targets differently.
+    const train = given.filter((x) => x.role === 'train');
+    const pop = new Population(train);
+    const bare = { ...p, given: [] };
+    const [policy] = buildPolicies(['pop-eig'], POLICY_DEFAULTS, 's', null);
+    const { gateway } = recordingGateway();
+    const asked = await walk(p, policy!, 2, { jev: jevFor(gateway), pop, seed: 's' });
+    expect(asked.every((i) => p.pool.includes(i))).toBe(true);
+    const withIt = populationReader(pop, p, asked, [0], 'pop-eig', 0.5);
+    const without = populationReader(pop, bare, asked, [0], 'pop-eig', 0.5);
+    expect(withIt.map((r) => r.rec.instanceId)).toEqual(without.map((r) => r.rec.instanceId));
+    expect(withIt.map((r) => r.rec.logLoss)).not.toEqual(without.map((r) => r.rec.logLoss));
+    // Train people keep the given items in the population statistics.
+    expect(pop.has(p.given[0]!.key)).toBe(true);
   });
 });
 
@@ -762,7 +838,7 @@ describe('E9 policy specs: variants and opening blocks (docs/CURVES.md §7)', ()
     });
     expect(() => parsePolicySpec('greedy')).toThrow(/unknown policy/);
     expect(() => parsePolicySpec('jev-eig[depth=2]')).toThrow(/unknown knob/);
-    expect(() => parsePolicySpec('jev-eig[ref=T]')).toThrow(/R or pool/);
+    expect(() => parsePolicySpec('jev-eig[ref=T]')).toThrow(/R, pool or id/);
     expect(splitSpecs('random,jev-eig[ref=pool,tsel=1], open5-pop-eig')).toEqual([
       'random',
       'jev-eig[ref=pool,tsel=1]',

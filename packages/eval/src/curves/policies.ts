@@ -9,9 +9,9 @@ import {
   temperatureScale,
 } from '@mimic/core';
 import type { Meter } from '../optimize/evaluate';
-import { mimicIdOf, questionOf, stateAfter, type TwinItem, type TwinPerson } from './data';
+import { mimicIdOf, questionOf, stateOf, type TwinItem, type TwinPerson } from './data';
 import { cosine, textOf } from './embeddings';
-import { PersonaPosterior, type Population } from './population';
+import { identityGain, PersonaPosterior, type Population } from './population';
 
 /**
  * Selection policies for E9 (docs/CURVES.md §4). Each picks the next item from what is left of a person's pool,
@@ -119,9 +119,10 @@ export interface PolicyKnobs {
   mmr: number;
   /**
    * What the lookahead and the persona posterior aim at: `R`, the wave 4 reference questions (the kind of decision
-   * that will be scored), or `pool`, a fixed sample of the person's own pool questions (no knowledge of the targets).
+   * that will be scored), `pool`, a fixed sample of the person's own pool questions (no knowledge of the targets), or
+   * `id`, the person themselves: which train person they answer like (persona posterior policies only).
    */
-  reference: 'R' | 'pool';
+  reference: 'R' | 'pool' | 'id';
 }
 
 export const POLICY_DEFAULTS: PolicyKnobs = {
@@ -210,6 +211,8 @@ export function jevEntropyPolicy(knobs: PolicyKnobs): Policy {
 
 /** The reference questions a person's lookahead predicts: a fixed sample, the same at every step. */
 export function referenceSample(person: TwinPerson, knobs: PolicyKnobs, seed: string): TwinItem[] {
+  if (knobs.reference === 'id')
+    throw new Error("ref=id is for the persona posterior's policies, not Jev's lookahead");
   const from = knobs.reference === 'pool' ? person.pool : person.reference;
   return shuffle(from, seededRng(`${seed}:ref:${knobs.reference}:${person.pid}`)).slice(
     0,
@@ -235,7 +238,7 @@ export async function lookaheadGain(
   if (!answers.length || z <= 0) return 0;
   const preds = await Promise.all(
     answers.map(async ([a]) => {
-      const state = stateAfter(ctx.person.pid, [...ctx.asked, { ...item, answer: a }]);
+      const state = stateOf(ctx.person, [...ctx.asked, { ...item, answer: a }]);
       return ctx.jev.predict(ctx.person.pid, state, reference);
     }),
   );
@@ -291,13 +294,16 @@ export function popEigPolicy(knobs: PolicyKnobs, seed: string): Policy {
     beta: knobs.beta,
     next: async (ctx) => {
       if (!ctx.posterior || !ctx.pop) throw new Error('pop-eig needs the population');
-      const refs = popKeys(ctx, knobs, seed);
+      const refs = knobs.reference === 'id' ? [] : popKeys(ctx, knobs, seed);
       const w = ctx.posterior.weights();
       let best: TwinItem | undefined;
       let bestScore = Number.NEGATIVE_INFINITY;
       for (const i of ctx.remaining) {
         if (!ctx.pop.has(i.key)) continue;
-        const g = ctx.posterior.eig(i.key, refs, w);
+        const g =
+          knobs.reference === 'id'
+            ? identityGain(ctx.posterior, ctx.pop, i.key, w)
+            : ctx.posterior.eig(i.key, refs, w);
         if (g > bestScore + 1e-12) {
           bestScore = g;
           best = i;
@@ -512,7 +518,7 @@ export function parsePolicySpec(spec: string): PolicySpec {
     if (!key || v === undefined || v === '')
       throw new Error(`${spec}: unknown knob ${kv} (${Object.keys(KNOB_KEYS).join(', ')})`);
     if (key === 'reference') {
-      if (v !== 'R' && v !== 'pool') throw new Error(`${spec}: ref is R or pool`);
+      if (v !== 'R' && v !== 'pool' && v !== 'id') throw new Error(`${spec}: ref is R, pool or id`);
       knobs.reference = v;
     } else {
       const n = Number(v);
@@ -523,11 +529,11 @@ export function parsePolicySpec(spec: string): PolicySpec {
   return { spec: spec.trim(), base: m[2] as PolicyName, open: Number(m[1] ?? 0), knobs };
 }
 
-/** Policies that need the train population (to select, or for the static opening block). */
 /** Policies that ask Jev to select (none can run with `--no-jev`). */
 export const needsJev = (s: PolicySpec) =>
   s.base === 'jev-entropy' || s.base === 'jev-eig' || s.base === 'hybrid';
 
+/** Policies that need the train population (to select, or for the static opening block). */
 export const needsPopulation = (s: PolicySpec) =>
   s.base === 'pop-eig' ||
   s.base === 'pop-static' ||

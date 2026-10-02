@@ -36,7 +36,7 @@ export class Population {
   ) {
     this.n = train.length;
     const optionOrder = new Map<string, { type: QType; keys: string[] }>();
-    const all = (p: TwinPerson) => [...p.pool, ...p.reference, ...p.targets];
+    const all = (p: TwinPerson) => [...p.given, ...p.pool, ...p.reference, ...p.targets];
     for (const p of train)
       for (const it of all(p))
         if (!optionOrder.has(it.key))
@@ -226,6 +226,38 @@ export class PersonaPosterior {
     }
     return total;
   }
+}
+
+/**
+ * Information about the person rather than about any decision (`ref=id`): I(A_c; J), the mutual information between
+ * the item's answer and which train person they answer like, H(Σ_j w_j E_j) − Σ_j w_j H(E_j). A train person without
+ * an answer to the item emits uniformly.
+ */
+export function identityGain(
+  post: PersonaPosterior,
+  pop: Population,
+  key: string,
+  w = post.weights(),
+): number {
+  const c = pop.item(key);
+  if (!c) return 0;
+  const p = post.predictive(key, w);
+  if (!p) return 0;
+  const h = (row: ArrayLike<number>) => {
+    let x = 0;
+    for (let u = 0; u < row.length; u++) if (row[u]! > 0) x -= row[u]! * Math.log(row[u]!);
+    return x;
+  };
+  const rowH = Array.from({ length: c.k }, (_, a) => h(c.emission.subarray(a * c.k, (a + 1) * c.k)));
+  const uniformH = Math.log(c.k);
+  let cond = 0;
+  for (let j = 0; j < pop.n; j++) {
+    const wj = w[j]!;
+    if (!wj) continue;
+    const a = c.codes[j]!;
+    cond += wj * (a >= 0 ? rowH[a]! : uniformH);
+  }
+  return Math.max(0, h(p) - cond);
 }
 
 /**
