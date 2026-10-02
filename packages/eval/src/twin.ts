@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { createReadStream } from 'node:fs';
+import { createInterface } from 'node:readline';
 import {
   DEFAULT_SCOPE,
   type EngineDeps,
@@ -38,6 +39,7 @@ interface TwinQuestion {
 
 interface TwinElement {
   ElementType?: string;
+  BlockName?: string;
   Questions?: TwinQuestion[];
   Elements?: TwinElement[];
 }
@@ -48,9 +50,13 @@ export interface TypedItem {
   prompt: string;
   options: Option[];
   answer: string;
+  /** The Qualtrics question it came from; the rows of a matrix share one. */
+  qid?: string;
+  /** The survey block, trimmed (`Demographics`, `Personality`, …). */
+  block?: string;
 }
 
-const Line = z.object({
+export const Line = z.object({
   pid: z.union([z.string(), z.number()]).transform(String),
   wave1_3_persona_json: z.string(),
   wave4_Q_wave4_A: z.string(),
@@ -65,10 +71,11 @@ function strip(html: string | undefined): string {
     .trim();
 }
 
-function questionsOf(elements: TwinElement[]): TwinQuestion[] {
-  const out: TwinQuestion[] = [];
+function questionsOf(elements: TwinElement[]): Array<{ q: TwinQuestion; block: string }> {
+  const out: Array<{ q: TwinQuestion; block: string }> = [];
   for (const e of elements) {
-    if (e.ElementType === 'Block') out.push(...(e.Questions ?? []));
+    if (e.ElementType === 'Block')
+      out.push(...(e.Questions ?? []).map((q) => ({ q, block: (e.BlockName ?? '').trim() })));
     else if (e.ElementType === 'Branch') out.push(...questionsOf(e.Elements ?? []));
   }
   return out;
@@ -100,9 +107,10 @@ function keyForPosition(t: { type: QType; options: Option[] }, labels: string[],
 }
 
 /** Maps one Twin question onto zero or more typed items with answers. */
-export function toTypedItems(q: TwinQuestion, prefix: string): TypedItem[] {
+export function toTypedItems(q: TwinQuestion, prefix: string, block?: string): TypedItem[] {
   const id = q.QuestionID;
   if (!id) return [];
+  const origin = { qid: id, ...(block !== undefined ? { block } : {}) };
   const text = strip(q.QuestionText);
   if (q.QuestionType === 'MC') {
     const sel = q.Settings?.Selector;
@@ -113,7 +121,7 @@ export function toTypedItems(q: TwinQuestion, prefix: string): TypedItem[] {
     if (!t || typeof pos !== 'number' || !text) return [];
     const answer = keyForPosition(t, labels, pos);
     return answer
-      ? [{ itemKey: `${prefix}${id}`, type: t.type, prompt: text, options: t.options, answer }]
+      ? [{ itemKey: `${prefix}${id}`, type: t.type, prompt: text, options: t.options, answer, ...origin }]
       : [];
   }
   if (q.QuestionType === 'Matrix') {
@@ -134,6 +142,7 @@ export function toTypedItems(q: TwinQuestion, prefix: string): TypedItem[] {
         prompt: text ? `${text} — ${rowText}` : rowText,
         options: t.options,
         answer,
+        ...origin,
       });
     });
     return items;
@@ -144,7 +153,19 @@ export function toTypedItems(q: TwinQuestion, prefix: string): TypedItem[] {
 export function parseBlocks(json: string, prefix: string): TypedItem[] {
   const parsed = JSON.parse(json) as TwinElement[] | TwinElement;
   const elements = Array.isArray(parsed) ? parsed : [parsed];
-  return questionsOf(elements).flatMap((q) => toTypedItems(q, prefix));
+  return questionsOf(elements).flatMap(({ q, block }) => toTypedItems(q, prefix, block));
+}
+
+/**
+ * The file's participants, one at a time: the full `wave_split` export is about half a gigabyte, more than one string
+ * holds, so it is read line by line.
+ */
+export async function* readTwin(path: string): AsyncGenerator<z.infer<typeof Line>> {
+  const lines = createInterface({
+    input: createReadStream(path, 'utf8'),
+    crlfDelay: Number.POSITIVE_INFINITY,
+  });
+  for await (const raw of lines) if (raw.trim()) yield Line.parse(JSON.parse(raw));
 }
 
 export interface ImportOptions {
@@ -160,13 +181,11 @@ export async function importTwin(
   opts: ImportOptions,
 ): Promise<{ people: number; items: number }> {
   const cfgHash = await ensureDefaultConfig(deps);
-  const lines = readFileSync(opts.path, 'utf8')
-    .split('\n')
-    .filter((l) => l.trim());
   let people = 0;
   let items = 0;
-  for (const raw of lines.slice(0, opts.limit ?? lines.length)) {
-    const line = Line.parse(JSON.parse(raw));
+  let read = 0;
+  for await (const line of readTwin(opts.path)) {
+    if (read++ >= (opts.limit ?? Number.POSITIVE_INFINITY)) break;
     const evidence = parseBlocks(line.wave1_3_persona_json, 'twin2k/w13/').slice(0, opts.maxEvidence ?? 400);
     const heldout = parseBlocks(line.wave4_Q_wave4_A, HELDOUT_PREFIX);
     const retest = line.wave4_Q_wave1_3_A ? parseBlocks(line.wave4_Q_wave1_3_A, HELDOUT_PREFIX) : [];

@@ -21,7 +21,7 @@ pnpm db:migrate:local       # remote migrations run as part of each deploy
 pnpm deploy:dry-run         # OpenNext build + wrangler --dry-run for both Workers (CI's build job)
 doppler run -- pnpm deploy:prod   # what CD runs after green CI on main (docs/DEPLOY.md); also deploy:preview
 doppler run -- pnpm deploy:preflight | deploy:config --env prod   # checks only | write wrangler.deploy.jsonc
-pnpm eval -- <export|replay|select|import|report|session|rubric|arms|cohort|evaluate|diagnose|optimize|benchmark|evidence|models|probes|drafts|gates|transfer|ensemble|population|footprint> ...
+pnpm eval -- <export|replay|select|import|report|session|rubric|arms|cohort|evaluate|diagnose|optimize|benchmark|evidence|models|curves|probes|drafts|gates|transfer|ensemble|population|footprint> ...
 pnpm backfill --predictor <id>[,<id>] [--env local|prod] [--rate n] [--retry-failed] [--yes]   # new predictors on served questions (ADR-0024, ADR-0037)
 pnpm relabel:predictors [--env local|preview|prod] [--reverse] [--yes]   # stored jev: IDs → decision:, rerouted rows → the model that answered (ADR-0054)
 pnpm flags:check [--create-missing]   # Flagship app `mimic` vs the flag registry; needs CLOUDFLARE_API_TOKEN/ACCOUNT_ID (ADR-0051)
@@ -107,6 +107,11 @@ If a task seems to require breaking one of these, stop and ask.
   cross-validation, so no person's answers choose their own setting. Its verdict is also keep Jev
   (`docs/reports/e8b-tuning.md`): clef-flash on derived data came closest, and on nine served people tuning didn't
   generalize.
+- E9 (ADR-0071, `docs/CURVES.md`) measures question selection on recorded answers: policies ask each Twin-2K-500
+  person up to 30 of their own 420 wave 1–3 answers, and Jev predicts their wave 4 decisions after each checkpoint
+  (`pnpm eval -- curves`; data via `packages/eval/scripts/twin-rows.py`). People split by hash into train (population
+  statistics, which only order the pool), dev (iteration rounds) and test (read once); `CURVES_RULE` compares each
+  policy with random. A winner goes to real users as an arm, never as the default.
 - Scope and consent (ADR-0040, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and sensitive facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`), each behind its own consent (ticked by default at intake, ADR-0049); special-category areas also need a confirmation, and declined facets ("Prefer not to say") are blocked (ADR-0050, both enforced in `facetAllowed`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
 - Research directions and their experiments live in `docs/RESEARCH.md`. The evals behind them: `transfer` (what an
   export loses, ADR-0057), `ensemble` (pools of stored predictions, ADR-0058), `population` (a synthetic cohort,

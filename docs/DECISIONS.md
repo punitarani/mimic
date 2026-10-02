@@ -2630,3 +2630,39 @@ Its contract differs from the other challengers in four ways (`docs.fastino.ai`,
   documented shapes, and the first run that names GLiDE replaces them from its `canary.json` (as ADR-0068 did for
   clef).
 - GLiDE's adaptive thinking may widen its latency tail. E8's operational check reads p95 as it does for every model.
+
+## ADR-0071 — E9: learning curves for question selection on recorded answers (2026-10-02)
+
+**Context.** Mimic's selector has never been measured on real answers. `select` replays served pools that an online
+policy chose (biased, ADR-0018), and E3b needs about 64 real people per arm; there are 9. Twin-2K-500 gives 2,058
+people the same full questionnaire, so a policy can choose from a person's whole pool and get the answer they gave.
+
+**Decision.**
+- **E9** (`pnpm eval -- curves`, `docs/CURVES.md`) runs selection policies over each Twin person's 420 typed wave 1–3
+  answers. Jev predicts their wave 4 decisions from a sealed state holding exactly the answers asked, at
+  k = 0, 3, 6, 10, 15, 20, 25 and 30, each (policy, k) at a temperature fitted leaving each person out.
+- **Leakage controls.**
+  - People are split by hash into train (population statistics only), dev (iteration) and test (read once).
+  - Wave 4 questions are split by question into R, whose questions a policy may read, and T, the only ones scored.
+  - Pool items matching any wave 4 question are dropped.
+- **Cross-person data.** Two policies order the pool with a persona posterior over the train people's answers. As
+  with `item_stats` (ADR-0027), the population only ranks candidates; it never enters a prompt or a state. This is
+  the explicit flag invariant 8 allows.
+- **`CURVES_RULE`**, fixed before the first run: a policy beats `random` if, on at least 30 people, the interval of its
+  area under the log-loss curve (k = 3 … 30, by person, 90%) lies below 0 and its accuracy at 30 is at most 1 point
+  lower.
+- **Iteration and confirmation.**
+  - Dev rounds test one hypothesis each and choose knobs leaving each person out.
+  - Rounds stop at a plateau: two rounds under 0.003 nats.
+  - The final policy set is committed before the test people are read once.
+- **A request cache** (`CachingGateway`) keeps every answered decision request on disk by its content hash. A hit
+  makes no call and costs nothing; a miss is logged as usual (invariant 5). This freezes Jev's answer to a request at
+  its first draw, so policies sending the same request see the same answer.
+
+**Consequences.**
+- Results rank selection principles for Jev on Twin's questions. A winner reaches real users only as an arm
+  (`cfg.e9.*`), never as `cfg.default`, and only Jev-only principles port to generated questions.
+- `twin.ts` keeps each item's block and question ID and reads the export line by line (the full file is about
+  470 MB). `importTwin` is unchanged otherwise, its 400-item cap included.
+- `packages/eval/scripts/twin-rows.py` fetches the export through the datasets-server API where Hugging Face's CDN is
+  blocked.
