@@ -87,6 +87,8 @@ export interface Policy {
   readonly name: string;
   /** Keeps a persona posterior per person (updated by the runner after each answer). */
   readonly usesPopulation: boolean;
+  /** The posterior's likelihood temper (`PersonaPosterior`); 1 when absent. */
+  readonly beta?: number;
   next(ctx: PolicyContext): Promise<TwinItem>;
 }
 
@@ -103,6 +105,8 @@ export interface PolicyKnobs {
   answerFloor: number;
   /** pop-static's probe train people. */
   staticProbes: number;
+  /** Likelihood temper of the persona posterior a policy selects with (1: untempered). */
+  beta: number;
   /**
    * What the lookahead and the persona posterior aim at: `R`, the wave 4 reference questions (the kind of decision
    * that will be scored), or `pool`, a fixed sample of the person's own pool questions (no knowledge of the targets).
@@ -117,6 +121,7 @@ export const POLICY_DEFAULTS: PolicyKnobs = {
   tSel: 4,
   answerFloor: 0.05,
   staticProbes: 40,
+  beta: 1,
   reference: 'R',
 };
 
@@ -272,6 +277,7 @@ export function popEigPolicy(knobs: PolicyKnobs, seed: string): Policy {
   return {
     name: 'pop-eig',
     usesPopulation: true,
+    beta: knobs.beta,
     next: async (ctx) => {
       if (!ctx.posterior || !ctx.pop) throw new Error('pop-eig needs the population');
       const refs = popKeys(ctx, knobs, seed);
@@ -313,6 +319,7 @@ export function hybridPolicy(knobs: PolicyKnobs, seed: string): Policy {
   return {
     name: 'hybrid',
     usesPopulation: true,
+    beta: knobs.beta,
     next: async (ctx) => {
       if (!ctx.posterior || !ctx.pop) throw new Error('hybrid needs the population');
       const refs = popKeys(ctx, knobs, seed);
@@ -371,6 +378,7 @@ const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
   refsize: 'referenceSize',
   tsel: 'tSel',
   floor: 'answerFloor',
+  beta: 'beta',
   ref: 'reference',
 };
 
@@ -408,6 +416,7 @@ export function openedPolicy(name: string, n: number, sequence: readonly string[
   return {
     name,
     usesPopulation: inner.usesPopulation,
+    ...(inner.beta !== undefined ? { beta: inner.beta } : {}),
     next: (ctx) => (ctx.asked.length < n ? opening.next(ctx) : inner.next(ctx)),
   };
 }

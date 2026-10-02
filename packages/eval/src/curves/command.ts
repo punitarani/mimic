@@ -78,7 +78,8 @@ export async function walk(
   const rng = seededRng(`${ctx.seed}:${policy.name}:${person.pid}`);
   const asked: TwinItem[] = [];
   let remaining = [...person.pool];
-  const posterior = policy.usesPopulation && ctx.pop ? new PersonaPosterior(ctx.pop) : null;
+  const posterior =
+    policy.usesPopulation && ctx.pop ? new PersonaPosterior(ctx.pop, undefined, policy.beta ?? 1) : null;
   for (let t = 0; t < Math.min(steps, person.pool.length); t++) {
     let score: number | null = null;
     const item = await policy.next({
@@ -114,8 +115,9 @@ export function populationReader(
   asked: readonly TwinItem[],
   checkpoints: readonly number[],
   policy: string,
+  beta = 1,
 ): CurveRecord[] {
-  const post = new PersonaPosterior(pop);
+  const post = new PersonaPosterior(pop, undefined, beta);
   const out: CurveRecord[] = [];
   let seen = 0;
   for (const k of [...checkpoints].sort((a, b) => a - b)) {
@@ -319,7 +321,9 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
           chunkTraj.push({ policy: policy.name, pid: w.person.pid, asked: w.asked, scores: w.scores });
         if (pop)
           for (const w of walks)
-            chunkReader.push(...populationReader(pop, w.person, w.asked, opts.checkpoints, policy.name));
+            chunkReader.push(
+              ...populationReader(pop, w.person, w.asked, opts.checkpoints, policy.name, opts.knobs.beta),
+            );
         chunkCosts.set(policy.name, {
           selection: usd1 - usd0,
           scoring: deps.meter.usd - usd1,
@@ -395,6 +399,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       't-sel': { type: 'string', default: String(POLICY_DEFAULTS.tSel) },
       'answer-floor': { type: 'string', default: String(POLICY_DEFAULTS.answerFloor) },
       'static-probes': { type: 'string', default: String(POLICY_DEFAULTS.staticProbes) },
+      beta: { type: 'string', default: String(POLICY_DEFAULTS.beta) },
       reference: { type: 'string', default: POLICY_DEFAULTS.reference },
       'train-people': { type: 'string' },
       name: { type: 'string' },
@@ -418,6 +423,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     tSel: positive('t-sel', values['t-sel'], false),
     answerFloor: Number(values['answer-floor']),
     staticProbes: positive('static-probes', values['static-probes']),
+    beta: positive('beta', values.beta, false),
     reference: values.reference === 'pool' ? 'pool' : 'R',
   };
   if (values.reference !== 'R' && values.reference !== 'pool') throw new Error('--reference is R or pool');

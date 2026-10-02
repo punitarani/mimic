@@ -261,6 +261,22 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
     expect(post.eig('twin2k/w13/QID40', ['twin2k/w13/QID25/1'], w)).toBeCloseTo(0, 10);
   });
 
+  it('tempers the likelihood: below 1 the weights spread over more train people', async () => {
+    const { people } = await loadPeople(fixture(60));
+    const train = people.filter((p) => p.role === 'train');
+    const pop = new Population(train);
+    const spread = (beta: number) => {
+      const post = new PersonaPosterior(pop, undefined, beta);
+      for (const key of ['twin2k/w13/QID11', 'twin2k/w13/QID50', 'twin2k/w13/QID25/1']) post.observe(key, 0);
+      const w = post.weights();
+      return -[...w].reduce((a, x) => a + (x > 0 ? x * Math.log(x) : 0), 0);
+    };
+    expect(spread(0.3)).toBeGreaterThan(spread(1));
+    expect(parsePolicySpec('pop-eig[beta=0.3]').knobs.beta).toBe(0.3);
+    const [p] = buildPolicies(['pop-eig[beta=0.3]'], POLICY_DEFAULTS, 's', null);
+    expect(p!.beta).toBe(0.3);
+  });
+
   it('builds the static questionnaire from train people only, most informative first', async () => {
     const { people } = await loadPeople(fixture(40));
     const train = people.filter((p) => p.role === 'train');

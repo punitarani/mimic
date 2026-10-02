@@ -106,7 +106,8 @@ Fixed before the first run. Against `random`:
   commit, before any test person is read. The test run happens once; its numbers are the result.
 
 **Variants in one run.** A policy spec may carry its own knobs and an opening block, so a hypothesis is one run:
-`jev-eig[ref=pool,tsel=1,short=8]` (knobs `ent`, `short`, `refsize`, `tsel`, `floor`, `ref` = `R` or `pool`), and
+`jev-eig[ref=pool,tsel=1,short=8]` (knobs `ent`, `short`, `refsize`, `tsel`, `floor`, `beta` — the persona
+posterior's likelihood temper, below 1 for a posterior that concentrates more slowly — and `ref` = `R` or `pool`), and
 `open10-pop-eig` (the first 10 from the static questionnaire, then `pop-eig`). `ref=pool` aims a policy at a fixed
 sample of the person's own pool questions instead of R: no knowledge of the decisions to be scored.
 
