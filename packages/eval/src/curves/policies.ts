@@ -121,6 +121,10 @@ export interface PolicyKnobs {
   mmr: number;
   /** Latent classes the persona posterior runs over (`classes.ts`); 0 runs it over the train people themselves. */
   classes: number;
+  /** `jev-lift`: candidates measured (the top by population transfer, plus production's anchors). */
+  liftShortlist: number;
+  /** `jev-lift`: train people each candidate is measured on. */
+  liftPeople: number;
   /**
    * What the lookahead and the persona posterior aim at: `R`, the wave 4 reference questions (the kind of decision
    * that will be scored), `pool`, a fixed sample of the person's own pool questions (no knowledge of the targets), or
@@ -140,6 +144,8 @@ export const POLICY_DEFAULTS: PolicyKnobs = {
   mmr: 0.5,
   reference: 'R',
   classes: 0,
+  liftShortlist: 60,
+  liftPeople: 60,
 };
 
 const argmaxBy = <T>(xs: readonly T[], f: (x: T) => number): T | undefined => {
@@ -481,6 +487,7 @@ export const POLICY_NAMES = [
   'sem-ref',
   'jev-eig',
   'hybrid',
+  'jev-lift',
 ] as const;
 export type PolicyName = (typeof POLICY_NAMES)[number];
 
@@ -494,8 +501,11 @@ export interface PolicySpec {
   base: PolicyName;
   /** Items asked before the base policy starts, from `opening`. */
   open: number;
-  /** `static`: the static questionnaire (`open10-…`); `anchors`: production's anchors as Twin asks them (`anchors-…`). */
-  opening: 'static' | 'anchors';
+  /**
+   * `static`: the static questionnaire (`open10-…`); `anchors`: production's anchors as Twin asks them (`anchors-…`);
+   * `custom`: the run's `--opening` sequence, all of it unless a number cuts it (`custom-…`, `custom6-…`).
+   */
+  opening: 'static' | 'anchors' | 'custom';
   knobs: Partial<PolicyKnobs>;
 }
 
@@ -527,10 +537,12 @@ const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
   mmr: 'mmr',
   ref: 'reference',
   cls: 'classes',
+  lshort: 'liftShortlist',
+  lpeople: 'liftPeople',
 };
 
 export function parsePolicySpec(spec: string): PolicySpec {
-  const m = /^(?:(open|anchors)(\d+)?-)?([a-z-]+)(?:\[([^\]]*)\])?$/.exec(spec.trim());
+  const m = /^(?:(open|anchors|custom)(\d+)?-)?([a-z-]+)(?:\[([^\]]*)\])?$/.exec(spec.trim());
   if (!m || !(POLICY_NAMES as readonly string[]).includes(m[3]!) || (m[1] === 'open' && !m[2]))
     throw new Error(
       `unknown policy ${spec} (known: ${POLICY_NAMES.join(', ')}; e.g. open10-jev-eig[ref=pool,tsel=1])`,
@@ -550,14 +562,15 @@ export function parsePolicySpec(spec: string): PolicySpec {
       knobs[key] = n;
     }
   }
-  const opening = m[1] === 'anchors' ? 'anchors' : 'static';
-  const open = m[1] ? Number(m[2] ?? TWIN_ANCHORS.length) : 0;
+  const opening = m[1] === 'anchors' ? 'anchors' : m[1] === 'custom' ? 'custom' : 'static';
+  const whole = opening === 'anchors' ? TWIN_ANCHORS.length : Number.MAX_SAFE_INTEGER;
+  const open = m[1] ? Number(m[2] ?? whole) : 0;
   return { spec: spec.trim(), base: m[3] as PolicyName, open, opening, knobs };
 }
 
 /** Policies that ask Jev to select (none can run with `--no-jev`). */
 export const needsJev = (s: PolicySpec) =>
-  s.base === 'jev-entropy' || s.base === 'jev-eig' || s.base === 'hybrid';
+  s.base === 'jev-entropy' || s.base === 'jev-eig' || s.base === 'hybrid' || s.base === 'jev-lift';
 
 /** Policies that need the train population (to select, or for the static opening block). */
 export const needsPopulation = (s: PolicySpec) =>
@@ -566,6 +579,7 @@ export const needsPopulation = (s: PolicySpec) =>
   s.base === 'pop-entropy' ||
   s.base === 'pop-transfer' ||
   s.base === 'hybrid' ||
+  s.base === 'jev-lift' ||
   (s.open > 0 && s.opening === 'static');
 
 /**
@@ -598,6 +612,14 @@ export function openedPolicy(
     },
   };
 }
+
+/** `--opening` tokens as item keys: `QID268` → `twin2k/w13/QID268`, `QID234/3` → `twin2k/w13/QID234/3`. */
+export const openingKeys = (spec: string) =>
+  spec
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map((t) => (t.startsWith('twin2k/') ? t : `twin2k/w13/${t}`));
 
 /** Production's anchors in a per-person order (seeded like `anchors:{mimicId}` at intake). */
 export const anchorOrder = (seed: string) => (pid: string) =>

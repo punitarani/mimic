@@ -2666,3 +2666,16 @@ people the same full questionnaire, so a policy can choose from a person's whole
   470 MB). `importTwin` is unchanged otherwise, its 400-item cap included.
 - `packages/eval/scripts/twin-rows.py` fetches the export through the datasets-server API where Hugging Face's CDN is
   blocked.
+
+## ADR-0072 — An anchor set may fix its order (2026-10-02)
+
+**Context.** Anchors are seeded at intake in a per-person random order (PLAN §9.3), which suits a set of equals.
+E9 (ADR-0071) plans openings offline: a sequence chosen greedily, where each question is picked given the ones before
+it. Shuffled, such a sequence is no longer the one that was measured.
+
+**Decision.** `anchors.order` (optional): `fixed` seeds the set in its own order; absent or `shuffled` keeps the
+per-person shuffle. Deselected categories still drop their anchors, and the rest keep their order (ADR-0040). The
+field is optional and undefaulted, so every existing config, and its hash, is unchanged.
+
+**Consequences.** An arm can ship an opening exactly as E9 measured it (`custom-<policy>` in `pnpm eval -- curves`).
+No served config sets it yet.

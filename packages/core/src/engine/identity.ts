@@ -135,8 +135,9 @@ export async function createMimic(
 }
 
 /**
- * Anchors are inserted up front in a per-person random order, encoded in createdAt (PLAN §9.3). Anchors touching a
- * category the person deselected are left out, so fewer are seeded (ADR-0040); the order of the rest is unchanged.
+ * Anchors are inserted up front in a per-person random order, encoded in createdAt (PLAN §9.3), or in the set's own
+ * order when the config fixes it (ADR-0072). Anchors touching a category the person deselected are left out, so fewer
+ * are seeded (ADR-0040); the order of the rest is unchanged.
  */
 function anchorQuestions(
   deps: EngineDeps,
@@ -145,7 +146,8 @@ function anchorQuestions(
   now: number,
 ): QuestionRecord[] {
   const blocked = blockedFacetIds(m.scope, getOntology(cfg.ontologyVersion));
-  const items = shuffle(getAnchorSet(cfg.anchors.setId), seededRng(`anchors:${m.id}`))
+  const set = getAnchorSet(cfg.anchors.setId);
+  const items = (cfg.anchors.order === 'fixed' ? set : shuffle(set, seededRng(`anchors:${m.id}`)))
     .filter((item) => questionAllowed(item, blocked))
     .slice(0, cfg.anchors.count);
   return items.map((item, i) => ({

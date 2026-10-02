@@ -43,7 +43,15 @@ function checkPredictor(id: string, ctx: z.RefinementCtx): void {
 export const PipelineConfig = z.object({
   version: z.literal(1),
   ontologyVersion: z.string(),
-  anchors: z.object({ setId: z.string(), count: z.number().int() }),
+  anchors: z.object({
+    setId: z.string(),
+    count: z.number().int(),
+    /**
+     * `fixed` asks the set in its own order, as a sequence planned offline must be (ADR-0072); absent
+     * or `shuffled`, a per-person random order (PLAN §9.3). Optional and undefaulted, so older hashes are unchanged.
+     */
+    order: z.enum(['shuffled', 'fixed']).optional(),
+  }),
   /** Static items served when the generated pool is empty (ADR-0042); reserve.v1 when absent. */
   reserve: z.object({ setId: z.string() }).optional(),
   generator: z.object({

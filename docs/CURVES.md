@@ -117,6 +117,18 @@ fixed sample of the person's own pool questions instead of R: no knowledge of th
 person they answer like, I(A; J), the classic "learn the most about the user" criterion, against R's "learn the most
 about what will be predicted".
 
+**Openings.** `open10-<policy>` opens with the static questionnaire; `anchors-<policy>` with production's `anchors.v1`
+as Twin asks them (the closest Twin question to each, in a per-person order, as intake shuffles them);
+`custom-<policy>` with the run's `--opening QID268,QID32,…` in that order, the same for everyone, which is how the
+opening a production arm would ship is measured exactly. Each hands over to the policy once its sequence is asked.
+
+**Jev's lift (`jev-lift`).** The population says which questions carry information about the decisions; it cannot say
+whether Jev reads it. Before anyone is walked, `jev-lift` takes a seeded sample of train people (`lpeople`, default 60)
+and, for each candidate (the top `lshort` by population transfer, plus production's anchors and any `--opening`),
+measures the change in Jev's log loss on that person's R questions when the candidate's answer joins what is given,
+against what is given alone. It then asks the candidates in that order, most helpful first. Train people and R only;
+its cost is the policy's selection cost.
+
 **Given answers (`--given`).** Mimic knows some things before the first question: identity supplies demographics as
 context. `--given Demographics,-QID20,-QID21,-QID22` moves those pool items (a block, minus the listed QIDs) into every
 state ahead of anything asked and into the persona posterior, for every policy, and out of the pool; k counts only what

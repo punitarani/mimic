@@ -33,6 +33,7 @@ import {
   withoutItems,
 } from './data';
 import { embedTexts, textOf } from './embeddings';
+import { jevLift, type LiftRow } from './lift';
 import {
   anchorOrder,
   hybridPolicy,
@@ -43,6 +44,7 @@ import {
   needsJev,
   needsPopulation,
   openedPolicy,
+  openingKeys,
   orderPolicy,
   POLICY_DEFAULTS,
   POLICY_NAMES,
@@ -57,6 +59,7 @@ import {
   randomPolicy,
   semRefPolicy,
   stratifiedPolicy,
+  TWIN_ANCHORS,
 } from './policies';
 import { PersonaPosterior, POPULATION_DEFAULTS, Population, staticSequence } from './population';
 
@@ -196,6 +199,7 @@ function basePolicy(
   knobs: PolicyKnobs,
   seed: string,
   staticSeq: readonly string[] | null,
+  liftSeq?: readonly string[],
 ): Policy {
   switch (base) {
     case 'order':
@@ -221,7 +225,20 @@ function basePolicy(
       return popTransferPolicy(knobs, seed);
     case 'sem-ref':
       return semRefPolicy(knobs);
+    case 'jev-lift':
+      if (!liftSeq) throw new Error("jev-lift needs Jev's lift table (the run measures it on train people)");
+      return { ...popStaticPolicy(liftSeq), name: 'jev-lift' };
   }
+}
+
+/** What some policies need beyond their spec, measured or fitted once per run. */
+export interface PolicyExtras {
+  /** The latent-class model with k classes (`cls=k`), fitted once on the train people. */
+  classesOf?: (k: number) => ClassModel;
+  /** The run's `--opening` sequence, for `custom-…` policies. */
+  custom?: readonly string[];
+  /** Candidates by Jev's lift, most helpful first (`jev-lift`). */
+  liftSeq?: readonly string[];
 }
 
 /** Policies from their specs (`parsePolicySpec`), each named by its spec. */
@@ -230,13 +247,13 @@ export function buildPolicies(
   knobs: PolicyKnobs,
   seed: string,
   staticSeq: readonly string[] | null,
-  /** The latent-class model with k classes (`cls=k`), fitted once on the train people. */
-  classesOf?: (k: number) => ClassModel,
+  extras: PolicyExtras = {},
 ): Policy[] {
+  const { classesOf, custom, liftSeq } = extras;
   return specs.map((raw) => {
     const s = parsePolicySpec(raw);
     const own = { ...knobs, ...s.knobs };
-    const base = basePolicy(s.base, own, seed, staticSeq);
+    const base = basePolicy(s.base, own, seed, staticSeq, liftSeq);
     let inner = base;
     if (own.classes > 0) {
       if (!base.usesPopulation) throw new Error(`${s.spec}: cls is for the persona posterior's policies`);
@@ -245,6 +262,10 @@ export function buildPolicies(
       inner = { ...base, posteriorOf: () => new ClassPosterior(model, own.beta) };
     }
     if (s.open > 0 && s.opening === 'anchors') return openedPolicy(s.spec, s.open, anchorOrder(seed), inner);
+    if (s.open > 0 && s.opening === 'custom') {
+      if (!custom?.length) throw new Error(`${s.spec} needs --opening`);
+      return openedPolicy(s.spec, s.open, custom, inner);
+    }
     if (s.open > 0) {
       if (!staticSeq) throw new Error(`${s.spec} needs the static questionnaire`);
       return openedPolicy(s.spec, s.open, staticSeq, inner);
@@ -257,6 +278,8 @@ export interface RunOptions {
   people: TwinPerson[];
   train: TwinPerson[];
   policies: string[];
+  /** Item keys `custom-…` policies open with (`--opening`). */
+  opening?: string[];
   checkpoints: number[];
   knobs: PolicyKnobs;
   seed: string;
@@ -285,6 +308,8 @@ export interface RunResult {
   costs: Record<string, { selection: number; scoring: number; requests: number }>;
   stopReason: string | null;
   staticSequence: string[] | null;
+  /** Jev's lift per candidate (`jev-lift`), most helpful first; null when no policy measured it. */
+  lift: LiftRow[] | null;
 }
 
 /** Runs every policy on every person, chunk by chunk, then scores the targets at each checkpoint. */
@@ -318,7 +343,53 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     }
     return m;
   };
-  const policies = buildPolicies(opts.policies, opts.knobs, opts.seed, staticSeq, classesOf);
+  const candidate = resolveCandidate({ predictor: JEV_PREDICTOR });
+  // jev-lift: Jev's lift for the top candidates by population transfer (plus production's anchors), measured once on
+  // train people before anyone is walked; its cost is the policy's selection cost.
+  let lift: LiftRow[] | null = null;
+  let liftUsd = 0;
+  const liftSpec = specs.find((s) => s.base === 'jev-lift');
+  if (liftSpec && pop) {
+    const own = { ...opts.knobs, ...liftSpec.knobs };
+    const prior = new PersonaPosterior(pop);
+    const w = prior.weights();
+    const poolKeys = [...new Set(opts.train.flatMap((p) => p.pool.map((i) => i.key)))].filter((k) =>
+      pop.has(k),
+    );
+    const byTransfer = poolKeys
+      .map((key) => ({ key, t: prior.eig(key, refKeys, w) }))
+      .sort((a, b) => b.t - a.t || a.key.localeCompare(b.key))
+      .slice(0, own.liftShortlist)
+      .map((x) => x.key);
+    const inPool = new Set(poolKeys);
+    const candidates = [
+      ...new Set([...byTransfer, ...TWIN_ANCHORS.filter((k) => inPool.has(k)), ...(opts.opening ?? [])]),
+    ].filter((k) => inPool.has(k));
+    const jev = new JevOracle(predictorFor(deps.gateway, candidate, 'eval.curves.lift'), deps.meter);
+    const usd0 = deps.meter.usd;
+    lift = await jevLift({
+      train: opts.train,
+      candidates,
+      jev,
+      people: own.liftPeople,
+      seed: opts.seed,
+      tSel: own.tSel,
+      concurrency: opts.concurrency,
+    });
+    liftUsd = deps.meter.usd - usd0;
+    if (jev.predictions && jev.failed / jev.predictions > (opts.maxFailureRate ?? 0.02))
+      throw new Error(
+        `jev-lift: ${jev.failed} of ${jev.predictions} predictions failed while measuring lift; an outage, not a result`,
+      );
+    console.log(
+      `jev-lift: ${candidates.length} candidates on ${Math.min(own.liftPeople, opts.train.length)} train people, $${liftUsd.toFixed(4)}`,
+    );
+  }
+  const policies = buildPolicies(opts.policies, opts.knobs, opts.seed, staticSeq, {
+    classesOf,
+    ...(opts.opening ? { custom: opts.opening } : {}),
+    ...(lift ? { liftSeq: lift.map((r) => r.key) } : {}),
+  });
   const vectors = specs.some(needsEmbeddings)
     ? await embedTexts(
         deps.gateway,
@@ -326,7 +397,6 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
         { dir: opts.embedDir ?? 'data/curves-cache/emb', meter: deps.meter },
       )
     : undefined;
-  const candidate = resolveCandidate({ predictor: JEV_PREDICTOR });
   const steps = Math.max(...opts.checkpoints);
   const records: CurveRecord[] = [];
   const reader: CurveRecord[] = [];
@@ -444,7 +514,11 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
       `people ${start + 1}–${start + chunk.length} of ${opts.people.length}: $${deps.meter.usd.toFixed(4)} so far`,
     );
   }
-  return { records, reader, trajectories, scores, costs, stopReason, staticSequence: staticSeq };
+  if (liftSpec) {
+    const c = costs[liftSpec.spec];
+    if (c) c.selection += liftUsd;
+  }
+  return { records, reader, trajectories, scores, costs, stopReason, staticSequence: staticSeq, lift };
 }
 
 const list = (v: string) =>
@@ -495,7 +569,10 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       mmr: { type: 'string', default: String(POLICY_DEFAULTS.mmr) },
       reference: { type: 'string', default: POLICY_DEFAULTS.reference },
       given: { type: 'string' },
+      opening: { type: 'string' },
       classes: { type: 'string', default: String(POLICY_DEFAULTS.classes) },
+      'lift-shortlist': { type: 'string', default: String(POLICY_DEFAULTS.liftShortlist) },
+      'lift-people': { type: 'string', default: String(POLICY_DEFAULTS.liftPeople) },
       drop: { type: 'string' },
       'train-people': { type: 'string' },
       name: { type: 'string' },
@@ -531,6 +608,8 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     mmr: Number(values.mmr),
     reference: values.reference === 'pool' ? 'pool' : values.reference === 'id' ? 'id' : 'R',
     classes: Number(values.classes),
+    liftShortlist: positive('lift-shortlist', values['lift-shortlist']),
+    liftPeople: positive('lift-people', values['lift-people']),
   };
   if (!Number.isInteger(knobs.classes) || knobs.classes < 0) throw new Error('--classes is a whole number');
   if (values.reference !== 'R' && values.reference !== 'pool' && values.reference !== 'id')
@@ -557,6 +636,14 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     `E9: ${policies.join(', ')} on ${people.length} ${role} people (${train.length} train people for population statistics); checkpoints ${checkpoints.join(', ')}`,
   );
   if (!people.length) throw new Error(`no ${role} people in ${values.data}`);
+  if (values.opening) {
+    const inPools = new Set(people.flatMap((p) => p.pool.map((i) => i.key)));
+    const missing = openingKeys(values.opening).filter((k) => !inPools.has(k));
+    if (missing.length)
+      throw new Error(
+        `--opening names items no pool holds (given, dropped or unknown): ${missing.join(', ')}`,
+      );
+  }
 
   const runDir = resolve(values.out ?? `data/curves/${ulid()}`);
   mkdirSync(runDir, { recursive: true });
@@ -587,6 +674,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       chunkPeople: positive('chunk-people', values['chunk-people']),
       noJev: values['no-jev'],
       embedDir: join(cacheDir, 'emb'),
+      ...(values.opening ? { opening: openingKeys(values.opening) } : {}),
     },
   );
   const consistency = new Map<string, number>();
@@ -623,7 +711,16 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     audit: {
       ...(loaded.audit as unknown as Record<string, unknown>),
       staticSequence: result.staticSequence?.slice(0, 10) ?? null,
+      ...(result.lift
+        ? {
+            liftTop: result.lift.slice(0, 15).map((r) => `${r.key} ${r.lift.toFixed(4)}±${r.se.toFixed(4)}`),
+            liftAnchors: result.lift
+              .filter((r) => (TWIN_ANCHORS as readonly string[]).includes(r.key))
+              .map((r) => `${r.key} ${r.lift.toFixed(4)}±${r.se.toFixed(4)}`),
+          }
+        : {}),
       given: values.given ?? null,
+      opening: values.opening ?? null,
       drop: values.drop ?? null,
       meanGiven: people.reduce((a, p) => a + p.given.length, 0) / people.length,
     },
@@ -650,6 +747,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       maxUsd: meter.maxUsd,
       data: basename(values.data),
       ...(values.given ? { given: values.given } : {}),
+      ...(values.opening ? { opening: values.opening } : {}),
       ...(values.drop ? { drop: values.drop } : {}),
       stopReason: result.stopReason,
     },
