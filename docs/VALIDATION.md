@@ -764,5 +764,7 @@ Everything but the last item is offline. The run is Actions → Decision models 
     score (none for the opening);
   - the stopping analysis stops each person where the score drops and compares with the fixed length of the same
     mean (a worked example: 4.5 questions, 70% against 65%).
+  - the population reader gives a normalised distribution for every target at every checkpoint, and on the fixture's
+    one-trait people five answers read the trait-driven targets better than none.
 - **Live machinery check** (2026-10-02): all eight policies on 4 dev people, $0.36; Jev answered through the local
   proxy and the cache.

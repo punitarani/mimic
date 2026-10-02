@@ -14,6 +14,7 @@ import {
   mapLimit,
   predictorFor,
   resolveCandidate,
+  toRecord,
 } from '../optimize/evaluate';
 import type { EvalInstance } from '../optimize/instances';
 import { renderReport, writeReport } from '../report';
@@ -102,6 +103,51 @@ export async function walk(
   return asked;
 }
 
+/**
+ * The persona posterior as a reader: after the first k asked answers, its predictive distribution for each target,
+ * from the train people who answered alike. It measures what the asked answers say about the targets, apart from how
+ * well Jev reads them. Cross-person data, so a yardstick only (ADR-0071), never a predictor Mimic serves.
+ */
+export function populationReader(
+  pop: Population,
+  person: TwinPerson,
+  asked: readonly TwinItem[],
+  checkpoints: readonly number[],
+  policy: string,
+): CurveRecord[] {
+  const post = new PersonaPosterior(pop);
+  const out: CurveRecord[] = [];
+  let seen = 0;
+  for (const k of [...checkpoints].sort((a, b) => a - b)) {
+    for (; seen < Math.min(k, asked.length); seen++)
+      post.observe(asked[seen]!.key, pop.indexOf(asked[seen]!));
+    const w = post.weights();
+    for (const inst of targetInstances(person, asked, k)) {
+      const it = person.targets.find((t) => t.key === inst.question.itemKey)!;
+      const p = post.predictive(it.key, w);
+      const keys = it.options.map((o) => o.key);
+      const dist = Object.fromEntries(
+        keys.map((key, i) => [key, p && i < p.length ? p[i]! : 1 / keys.length]),
+      );
+      const z = Object.values(dist).reduce((a, b) => a + b, 0);
+      for (const key of keys) dist[key] = dist[key]! / z;
+      out.push({
+        policy,
+        k,
+        block: it.block,
+        rec: toRecord(inst, 'population', 'population', {
+          dist,
+          ok: true,
+          costUsd: 0,
+          latencyMs: 0,
+          modelSnapshot: 'population',
+        }),
+      });
+    }
+  }
+  return out;
+}
+
 /** The scored instances for one person after the first k asked: every target T from the sealed state. */
 export function targetInstances(person: TwinPerson, asked: readonly TwinItem[], k: number): EvalInstance[] {
   const mimicId = mimicIdOf(person.pid);
@@ -188,6 +234,8 @@ export interface RunOptions {
 
 export interface RunResult {
   records: CurveRecord[];
+  /** The population reader's predictions of the same targets from the same asked answers (no model calls). */
+  reader: CurveRecord[];
   trajectories: Map<string, Map<string, TwinItem[]>>;
   /** Policy → person → each step's selection score (null where the policy has none). */
   scores: Map<string, Map<string, Array<number | null>>>;
@@ -199,8 +247,10 @@ export interface RunResult {
 /** Runs every policy on every person, chunk by chunk, then scores the targets at each checkpoint. */
 export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<RunResult> {
   const specs = opts.policies.map(parsePolicySpec);
-  const needsPop = specs.some(needsPopulation);
-  const pop = needsPop ? new Population(opts.train, POPULATION_DEFAULTS) : null;
+  // The population serves the policies that select with it and, whenever there are train people, the population
+  // reader (what the asked answers say about the targets without Jev).
+  const pop =
+    specs.some(needsPopulation) || opts.train.length ? new Population(opts.train, POPULATION_DEFAULTS) : null;
   const refKeys = [...new Set(opts.train.flatMap((p) => p.reference.map((r) => r.key)))];
   const staticSeq =
     pop && specs.some((s) => s.base === 'pop-static' || s.open > 0)
@@ -214,6 +264,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
   const candidate = resolveCandidate({ predictor: JEV_PREDICTOR });
   const steps = Math.max(...opts.checkpoints);
   const records: CurveRecord[] = [];
+  const reader: CurveRecord[] = [];
   const trajectories = new Map<string, Map<string, TwinItem[]>>(policies.map((p) => [p.name, new Map()]));
   const scores = new Map<string, Map<string, Array<number | null>>>(policies.map((p) => [p.name, new Map()]));
   const costs: RunResult['costs'] = Object.fromEntries(
@@ -230,6 +281,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     }
     const before = deps.meter.usd;
     const chunkRecords: CurveRecord[] = [];
+    const chunkReader: CurveRecord[] = [];
     const chunkTraj: Array<{ policy: string; pid: string; asked: TwinItem[]; scores: Array<number | null> }> =
       [];
     const chunkCosts = new Map<string, { selection: number; scoring: number; requests: number }>();
@@ -265,6 +317,9 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
         });
         for (const w of walks)
           chunkTraj.push({ policy: policy.name, pid: w.person.pid, asked: w.asked, scores: w.scores });
+        if (pop)
+          for (const w of walks)
+            chunkReader.push(...populationReader(pop, w.person, w.asked, opts.checkpoints, policy.name));
         chunkCosts.set(policy.name, {
           selection: usd1 - usd0,
           scoring: deps.meter.usd - usd1,
@@ -277,6 +332,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
       break;
     }
     records.push(...chunkRecords);
+    reader.push(...chunkReader);
     for (const t of chunkTraj) {
       trajectories.get(t.policy)!.set(t.pid, t.asked);
       scores.get(t.policy)!.set(t.pid, t.scores);
@@ -292,7 +348,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
       `people ${start + 1}–${start + chunk.length} of ${opts.people.length}: $${deps.meter.usd.toFixed(4)} so far`,
     );
   }
-  return { records, trajectories, scores, costs, stopReason, staticSequence: staticSeq };
+  return { records, reader, trajectories, scores, costs, stopReason, staticSequence: staticSeq };
 }
 
 const list = (v: string) =>
@@ -366,9 +422,8 @@ export async function curvesCmd(argv: string[]): Promise<void> {
   };
   if (values.reference !== 'R' && values.reference !== 'pool') throw new Error('--reference is R or pool');
   const nPeople = positive('people', values.people);
-  const needsTrain = specs.some(needsPopulation);
   const loaded = await loadPeople(values.data, {
-    roles: needsTrain ? ['train', role] : [role],
+    roles: ['train', role],
     limitPerRole: {
       [role]: nPeople,
       ...(values['train-people'] ? { train: positive('train-people', values['train-people']) } : {}),
@@ -430,6 +485,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
   const report = analyzeCurves({
     role,
     records: result.records,
+    reader: result.reader,
     policies,
     checkpoints,
     consistency,

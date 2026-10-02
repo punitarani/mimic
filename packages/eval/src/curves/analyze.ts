@@ -124,6 +124,13 @@ export interface CurvesReport {
   blocks: BlockRow[];
   trajectories: TrajectoryRow[];
   stopping: StopRow[];
+  /** The population reader (no Jev): what each policy's answers say about the targets. */
+  reader: Array<{
+    policy: string;
+    aulcLogLoss: number;
+    aulcItemAcc: number;
+    points: Array<{ k: number; logLoss: number; itemAcc: number }>;
+  }>;
   consistency: number | null;
   audit: Record<string, unknown>;
   costUsd: number;
@@ -319,6 +326,8 @@ function questionsToReach(
 export interface AnalyzeInput {
   role: string;
   records: CurveRecord[];
+  /** The population reader's predictions from the same asked answers (no Jev), when there are train people. */
+  reader?: CurveRecord[];
   policies: string[];
   checkpoints: number[];
   /** Person (mimic ID) → their mean test–retest agreement on the scored targets. */
@@ -484,6 +493,21 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
     const s = input.scores?.get(policy);
     return s ? stoppingRows(cal, s, policy, ks) : [];
   });
+  const readerCal = input.reader?.length ? calibrateCells(input.reader).records : [];
+  const reader = readerCal.length
+    ? input.policies.map((policy) => {
+        const a = aulcRecords(readerCal, policy, aulcKs);
+        return {
+          policy,
+          aulcLogLoss: mean(a.map((r) => r.logLoss)),
+          aulcItemAcc: mean(a.map((r) => r.itemAcc)),
+          points: ks.map((k) => {
+            const m = metricsOf(readerCal.filter((r) => r.policy === policy && r.k === k).map((r) => r.rec));
+            return { k, logLoss: m.logLoss, itemAcc: m.itemAcc };
+          }),
+        };
+      })
+    : [];
   const cons = [...input.consistency.entries()].filter(([p]) => people.has(p)).map(([, c]) => c);
   return {
     role: input.role,
@@ -498,6 +522,7 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
     blocks,
     trajectories,
     stopping,
+    reader,
     consistency: cons.length ? mean(cons) : null,
     audit: input.audit,
     costUsd: input.costUsd,
@@ -603,6 +628,19 @@ export function renderCurves(r: CurvesReport): string[] {
   );
   for (const b of r.blocks)
     out.push(`| ${b.policy} | ${b.group} | ${b.n} | ${f4(b.logLoss)} | ${pct(b.itemAcc)} |`);
+  if (r.reader?.length) {
+    out.push(
+      '',
+      '## What the answers say, read without Jev (the persona posterior over train people; a yardstick, never served)',
+      '',
+      `| Policy | AULC log loss | AULC accuracy | ${r.checkpoints.map((k) => `k = ${k}`).join(' | ')} |`,
+      `| --- | --- | --- | ${r.checkpoints.map(() => '---').join(' | ')} |`,
+    );
+    for (const x of [...r.reader].sort((a, b) => a.aulcLogLoss - b.aulcLogLoss))
+      out.push(
+        `| ${x.policy} | ${f4(x.aulcLogLoss)} | ${pct(x.aulcItemAcc)} | ${x.points.map((p) => `${p.logLoss.toFixed(3)} / ${pct(p.itemAcc)}`).join(' | ')} |`,
+      );
+  }
   if (r.stopping?.length) {
     out.push(
       '',

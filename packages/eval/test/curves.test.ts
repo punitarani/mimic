@@ -19,7 +19,14 @@ import {
   interpolate,
   stoppingRows,
 } from '../src/curves/analyze';
-import { buildPolicies, runCurves, splitSpecs, targetInstances, walk } from '../src/curves/command';
+import {
+  buildPolicies,
+  populationReader,
+  runCurves,
+  splitSpecs,
+  targetInstances,
+  walk,
+} from '../src/curves/command';
 import { halfOf, loadPeople, mimicIdOf, roleOf, stateAfter, type TwinPerson } from '../src/curves/data';
 import { JevOracle, POLICY_DEFAULTS, POLICY_NAMES, parsePolicySpec } from '../src/curves/policies';
 import { PersonaPosterior, Population, staticSequence } from '../src/curves/population';
@@ -532,6 +539,7 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
     );
     const targets = dev.reduce((a, p) => a + p.targets.length, 0);
     expect(res.records).toHaveLength(POLICY_NAMES.length * checkpoints.length * targets);
+    expect(res.reader).toHaveLength(res.records.length);
     // k = 0 is the same state for everyone and every policy.
     const zero = res.records.filter((r) => r.k === 0);
     expect(new Set(zero.map((r) => r.rec.stateHash)).size).toBe(1);
@@ -598,6 +606,24 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
     await runCurves({ gateway: cached, meter: new Meter() }, opts);
     await runCurves({ gateway: cached, meter }, opts);
     expect(meter.usd).toBe(0);
+  });
+
+  it('reads the targets from the train people who answered alike, without Jev', async () => {
+    const all = (await loadPeople(fixture(60))).people;
+    const train = all.filter((p) => p.role === 'train');
+    const dev = all.filter((p) => p.role !== 'train');
+    const pop = new Population(train);
+    const recs = dev.flatMap((p) => populationReader(pop, p, p.pool, [0, 5], 'order'));
+    expect(recs).toHaveLength(dev.reduce((a, p) => a + 2 * p.targets.length, 0));
+    for (const r of recs) expect(Object.values(r.rec.dist).reduce((a, b) => a + b, 0)).toBeCloseTo(1, 10);
+    // The fixture's answers follow one trait, so five answers make the trait-driven targets easier to read.
+    const acc = (k: number) => {
+      const xs = recs
+        .filter((r) => r.k === k && r.block === 'Product Preferences - Pricing')
+        .map((r) => r.rec.itemAcc);
+      return xs.reduce((a, b) => a + b, 0) / xs.length;
+    };
+    expect(acc(5)).toBeGreaterThan(acc(0));
   });
 
   it('scores the targets from the sealed state at k, with the person’s retest beside each', async () => {

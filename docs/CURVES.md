@@ -110,6 +110,11 @@ Fixed before the first run. Against `random`:
 `open10-pop-eig` (the first 10 from the static questionnaire, then `pop-eig`). `ref=pool` aims a policy at a fixed
 sample of the person's own pool questions instead of R: no knowledge of the decisions to be scored.
 
+**Read without Jev.** Beside Jev's curves, the persona posterior reads the same targets from the same asked answers
+(`populationReader`): what each policy's answers say about the targets, apart from how well Jev reads them. If a
+policy's answers carry more and Jev doesn't gain from them, the bottleneck is reading, not asking. A yardstick only
+(cross-person data, ADR-0071), never a predictor Mimic serves.
+
 **Stopping on the policy's own score (H8).** Each step records the chosen item's score (its expected gain or entropy).
 The report stops each person before the first question (from the fourth on) whose score falls below τ, at five
 quantiles of the observed scores, and compares their accuracy where they stopped with a fixed length asking the same
