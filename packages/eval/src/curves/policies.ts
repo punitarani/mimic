@@ -10,6 +10,7 @@ import {
 } from '@mimic/core';
 import type { Meter } from '../optimize/evaluate';
 import { mimicIdOf, questionOf, stateAfter, type TwinItem, type TwinPerson } from './data';
+import { cosine, textOf } from './embeddings';
 import { PersonaPosterior, type Population } from './population';
 
 /**
@@ -86,6 +87,8 @@ export interface PolicyContext {
   posterior: PersonaPosterior | null;
   /** Records the chosen item's selection score (its expected gain or entropy), for the stopping-rule analysis. */
   note?: (score: number) => void;
+  /** Question text (`textOf`) → embedding, for the semantic policies. */
+  vectors?: ReadonlyMap<string, number[]>;
 }
 
 export interface Policy {
@@ -112,6 +115,8 @@ export interface PolicyKnobs {
   staticProbes: number;
   /** Likelihood temper of the persona posterior a policy selects with (1: untempered). */
   beta: number;
+  /** `sem-ref`'s redundancy weight: relevance to R minus this times the closest question already asked. */
+  mmr: number;
   /**
    * What the lookahead and the persona posterior aim at: `R`, the wave 4 reference questions (the kind of decision
    * that will be scored), or `pool`, a fixed sample of the person's own pool questions (no knowledge of the targets).
@@ -127,6 +132,7 @@ export const POLICY_DEFAULTS: PolicyKnobs = {
   answerFloor: 0.05,
   staticProbes: 40,
   beta: 1,
+  mmr: 0.5,
   reference: 'R',
 };
 
@@ -367,6 +373,44 @@ export function popTransferPolicy(knobs: PolicyKnobs, seed: string): Policy {
   };
 }
 
+/**
+ * Decision coverage by meaning (docs/RESEARCH.md §1.3): the question most similar in meaning to the reference
+ * decisions (the mean of its three closest R questions by embedding cosine), minus `mmr` times its similarity to the
+ * closest question already asked. No population and no model call per step: it ports to generated questions, with a
+ * mimic's probes as the reference.
+ */
+export function semRefPolicy(knobs: PolicyKnobs): Policy {
+  return {
+    name: 'sem-ref',
+    usesPopulation: false,
+    next: async (ctx) => {
+      const vec = (it: TwinItem) => ctx.vectors?.get(textOf(it));
+      const refs = ctx.person.reference.map(vec).filter((v): v is number[] => !!v);
+      const asked = ctx.asked.map(vec).filter((v): v is number[] => !!v);
+      if (!refs.length) throw new Error('sem-ref needs embeddings of the reference questions');
+      let best: TwinItem | undefined;
+      let bestScore = Number.NEGATIVE_INFINITY;
+      for (const it of ctx.remaining) {
+        const v = vec(it);
+        if (!v) continue;
+        const sims = refs.map((r) => cosine(v, r)).sort((a, b) => b - a);
+        const rel = sims.slice(0, 3).reduce((a, b) => a + b, 0) / Math.min(3, sims.length);
+        const red = asked.length ? Math.max(...asked.map((a) => cosine(v, a))) : 0;
+        const score = rel - knobs.mmr * red;
+        if (score > bestScore + 1e-12) {
+          bestScore = score;
+          best = it;
+        }
+      }
+      if (best) ctx.note?.(bestScore);
+      return best ?? randomOf(ctx.remaining, ctx.rng);
+    },
+  };
+}
+
+/** Policies that embed questions (`embedTexts`) before they run. */
+export const needsEmbeddings = (s: PolicySpec) => s.base === 'sem-ref';
+
 /** The best fixed questionnaire for the population (`staticSequence`), the same for everyone. */
 export function popStaticPolicy(sequence: readonly string[]): Policy {
   return {
@@ -425,6 +469,7 @@ export const POLICY_NAMES = [
   'pop-eig',
   'pop-entropy',
   'pop-transfer',
+  'sem-ref',
   'jev-eig',
   'hybrid',
 ] as const;
@@ -450,6 +495,7 @@ const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
   tsel: 'tSel',
   floor: 'answerFloor',
   beta: 'beta',
+  mmr: 'mmr',
   ref: 'reference',
 };
 

@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { HashEmbedder } from '@mimic/adapters';
 import {
   type DecisionProvider,
   type DecisionRequest,
@@ -28,6 +29,7 @@ import {
   walk,
 } from '../src/curves/command';
 import { halfOf, loadPeople, mimicIdOf, roleOf, stateAfter, type TwinPerson } from '../src/curves/data';
+import { embedTexts, textOf } from '../src/curves/embeddings';
 import { JevOracle, POLICY_DEFAULTS, POLICY_NAMES, parsePolicySpec } from '../src/curves/policies';
 import { PersonaPosterior, Population, staticSequence } from '../src/curves/population';
 import { CachingGateway } from '../src/decision-cache';
@@ -153,6 +155,7 @@ function recordingGateway(costUsd = 0) {
   const gateway = new Gateway({
     decisions,
     llm: new FakeLlm(),
+    embedder: new HashEmbedder(),
     log: { write: async () => {} },
     clock: () => 1,
     newId: () => 'id',
@@ -277,6 +280,29 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
     expect(p!.beta).toBe(0.3);
   });
 
+  it('asks the pool question closest in meaning to the reference first, then avoids repeating itself', async () => {
+    const all = (await loadPeople(fixture(20))).people;
+    const p = all[0]!;
+    const { gateway } = recordingGateway();
+    const vectors = await embedTexts(gateway, [...p.pool, ...p.reference].map(textOf), {
+      dir: mkdtempSync(join(tmpdir(), 'e9-emb-')),
+      meter: new Meter(),
+    });
+    // The fixture plants a pool question that repeats a reference one word for word before it is dropped; here a
+    // reference question is copied into the pool to check the policy finds its twin.
+    const twin = { ...p.reference[0]!, key: 'twin2k/w13/QIDX', qid: 'QIDX', block: 'Economic preferences' };
+    const person = { ...p, pool: [...p.pool, twin] };
+    const all2 = await embedTexts(gateway, [textOf(twin)], {
+      dir: mkdtempSync(join(tmpdir(), 'e9-emb-')),
+      meter: new Meter(),
+    });
+    const vs = new Map([...vectors, ...all2]);
+    const [policy] = buildPolicies(['sem-ref'], POLICY_DEFAULTS, 's', null);
+    const asked = await walk(person, policy!, 2, { jev: jevFor(gateway), pop: null, seed: 's', vectors: vs });
+    expect(asked[0]!.key).toBe('twin2k/w13/QIDX');
+    expect(asked[1]!.key).not.toBe(asked[0]!.key);
+  });
+
   it('builds the static questionnaire from train people only, most informative first', async () => {
     const { people } = await loadPeople(fixture(40));
     const train = people.filter((p) => p.role === 'train');
@@ -303,8 +329,17 @@ describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
       seq,
     );
     const jev = jevFor(gateway);
+    const vectors = await embedTexts(
+      gateway,
+      people.flatMap((p) => [...p.pool, ...p.reference].map(textOf)),
+      {
+        dir: mkdtempSync(join(tmpdir(), 'e9-emb-')),
+        meter: new Meter(),
+      },
+    );
     const asked = [];
-    for (const p of people) asked.push((await walk(p, policy!, 4, { jev, pop, seed })).map((i) => i.key));
+    for (const p of people)
+      asked.push((await walk(p, policy!, 4, { jev, pop, seed, vectors })).map((i) => i.key));
     return { asked, seen };
   };
 

@@ -64,6 +64,7 @@ Each picks the next item from what is left of the pool. After each pick the pers
 | `hybrid` | `pop-eig`'s 6 best, reranked by Jev's lookahead | about 22 a step |
 | `pop-entropy` | The item whose answers the train people differ on most: production's `populationScore` without the baseline term (added after round 1) | none |
 | `pop-transfer` | A fixed ranking by each item's information about R under the unconditioned population: an aggregate statistic a cohort could store (added after round 1) | none |
+| `sem-ref` | The question closest in meaning to R (mean of its three nearest R questions by embedding cosine), minus 0.5 × its similarity to the closest question already asked: decision coverage by meaning (RESEARCH §1.3), portable to generated questions (added after round 1) | none; the questions are embedded once, cached |
 
 - **Persona posterior** (`population.ts`): w_j ∝ Π E[a_j][v] over the train people j, with E a noisy channel (ε =
   0.15; a scale's emission spreads to neighbouring levels, σ = 0.6). The expected information of an item about each

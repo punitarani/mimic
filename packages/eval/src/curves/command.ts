@@ -29,11 +29,13 @@ import {
   type TwinItem,
   type TwinPerson,
 } from './data';
+import { embedTexts, textOf } from './embeddings';
 import {
   hybridPolicy,
   JevOracle,
   jevEigPolicy,
   jevEntropyPolicy,
+  needsEmbeddings,
   needsJev,
   needsPopulation,
   openedPolicy,
@@ -49,6 +51,7 @@ import {
   popStaticPolicy,
   popTransferPolicy,
   randomPolicy,
+  semRefPolicy,
   stratifiedPolicy,
 } from './policies';
 import { PersonaPosterior, POPULATION_DEFAULTS, Population, staticSequence } from './population';
@@ -76,6 +79,7 @@ export async function walk(
     seed: string;
     /** Filled with each step's selection score (null when the policy has none). */
     scores?: Array<number | null>;
+    vectors?: ReadonlyMap<string, number[]>;
   },
 ): Promise<TwinItem[]> {
   const rng = seededRng(`${ctx.seed}:${policy.name}:${person.pid}`);
@@ -97,6 +101,7 @@ export async function walk(
       note: (x) => {
         score = x;
       },
+      ...(ctx.vectors ? { vectors: ctx.vectors } : {}),
     });
     ctx.scores?.push(score);
     if (!remaining.includes(item)) throw new Error(`${policy.name} picked ${item.key}, not in the pool`);
@@ -206,6 +211,8 @@ function basePolicy(
       return popEntropyPolicy;
     case 'pop-transfer':
       return popTransferPolicy(knobs, seed);
+    case 'sem-ref':
+      return semRefPolicy(knobs);
   }
 }
 
@@ -246,6 +253,8 @@ export interface RunOptions {
   noJev?: boolean;
   /** A chunk whose predictions fail above this rate is an outage: dropped for every policy, and the run stops. */
   maxFailureRate?: number;
+  /** Where the semantic policies' embeddings are kept (`embedTexts`). */
+  embedDir?: string;
 }
 
 export interface RunResult {
@@ -277,6 +286,13 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
         })
       : null;
   const policies = buildPolicies(opts.policies, opts.knobs, opts.seed, staticSeq);
+  const vectors = specs.some(needsEmbeddings)
+    ? await embedTexts(
+        deps.gateway,
+        opts.people.flatMap((p) => [...p.pool, ...p.reference].map(textOf)),
+        { dir: opts.embedDir ?? 'data/curves-cache/emb', meter: deps.meter },
+      )
+    : undefined;
   const candidate = resolveCandidate({ predictor: JEV_PREDICTOR });
   const steps = Math.max(...opts.checkpoints);
   const records: CurveRecord[] = [];
@@ -309,7 +325,13 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
         const usd0 = deps.meter.usd;
         const walks = await mapLimit(chunk, opts.concurrency, async (person) => {
           const scores: Array<number | null> = [];
-          const asked = await walk(person, policy, steps, { jev, pop, seed: opts.seed, scores });
+          const asked = await walk(person, policy, steps, {
+            jev,
+            pop,
+            seed: opts.seed,
+            scores,
+            ...(vectors ? { vectors } : {}),
+          });
           return { person, asked, scores };
         });
         const usd1 = deps.meter.usd;
@@ -437,6 +459,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       'answer-floor': { type: 'string', default: String(POLICY_DEFAULTS.answerFloor) },
       'static-probes': { type: 'string', default: String(POLICY_DEFAULTS.staticProbes) },
       beta: { type: 'string', default: String(POLICY_DEFAULTS.beta) },
+      mmr: { type: 'string', default: String(POLICY_DEFAULTS.mmr) },
       reference: { type: 'string', default: POLICY_DEFAULTS.reference },
       'train-people': { type: 'string' },
       name: { type: 'string' },
@@ -469,6 +492,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     answerFloor: Number(values['answer-floor']),
     staticProbes: positive('static-probes', values['static-probes']),
     beta: positive('beta', values.beta, false),
+    mmr: Number(values.mmr),
     reference: values.reference === 'pool' ? 'pool' : 'R',
   };
   if (values.reference !== 'R' && values.reference !== 'pool') throw new Error('--reference is R or pool');
@@ -516,6 +540,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       concurrency: positive('concurrency', values.concurrency),
       chunkPeople: positive('chunk-people', values['chunk-people']),
       noJev: values['no-jev'],
+      embedDir: join(cacheDir, 'emb'),
     },
   );
   const consistency = new Map<string, number>();

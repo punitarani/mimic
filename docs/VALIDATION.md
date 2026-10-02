@@ -769,6 +769,8 @@ Everything but the last item is offline. The run is Actions → Decision models 
   - a tempered posterior (β < 1) spreads its weight over more train people;
   - an outage (calls failing after the first chunk) stops the run and drops the chunk, so no failure is scored;
     `--no-jev` makes no model call and scores with the reader.
+  - `sem-ref` asks a pool question that copies a reference question first (hash embeddings offline), then moves on;
+    embeddings are kept on disk by text hash.
 - **Budget.** The OpenRouter workspace has a $25 daily budget. Round 1's 150-person run passed it at 17:48 UTC; its
   failed calls were never used (the 30 clean people were rebuilt from the cache, and the guard now stops such runs).
 - **Live machinery check** (2026-10-02): all eight policies on 4 dev people, $0.36; Jev answered through the local
