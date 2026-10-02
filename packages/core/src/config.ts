@@ -47,7 +47,7 @@ export const PipelineConfig = z.object({
     setId: z.string(),
     count: z.number().int(),
     /**
-     * `fixed` asks the set in its own order, as a sequence planned offline must be (E9's opening, ADR-0072); absent
+     * `fixed` asks the set in its own order, as a sequence planned offline must be (ADR-0072); absent
      * or `shuffled`, a per-person random order (PLAN §9.3). Optional and undefaulted, so older hashes are unchanged.
      */
     order: z.enum(['shuffled', 'fixed']).optional(),
