@@ -642,6 +642,70 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
     expect(acc(5)).toBeGreaterThan(acc(0));
   });
 
+  it('stops at an outage and drops the chunk, instead of scoring failures as uniform', async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const dev = all.filter((p) => p.role === 'dev').slice(0, 4);
+    const fake = new FakeDecisions();
+    let calls = 0;
+    const decisions: DecisionProvider = {
+      provider: 'fake',
+      decide: async (req) => {
+        // The budget runs out after the first chunk's requests.
+        if (++calls > 6) throw new Error('HTTP 403: Workspace daily budget exceeded');
+        return fake.decide(req);
+      },
+    };
+    const gateway = new Gateway({
+      decisions,
+      llm: new FakeLlm(),
+      log: { write: async () => {} },
+      clock: () => 1,
+      newId: () => 'id',
+    });
+    const res = await runCurves(
+      { gateway, meter: new Meter() },
+      {
+        people: dev,
+        train: [],
+        policies: ['order', 'random'],
+        checkpoints: [0, 2],
+        knobs: POLICY_DEFAULTS,
+        seed: 's',
+        concurrency: 1,
+        chunkPeople: 2,
+      },
+    );
+    expect(res.stopReason).toMatch(/^outage/);
+    expect(res.records.every((r) => r.rec.ok)).toBe(true);
+    const people = new Set(res.records.map((r) => r.rec.mimicId));
+    expect(people.size).toBeLessThan(dev.length);
+  });
+
+  it('scores with the population reader alone under --no-jev, with no model calls', async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const dev = all.filter((p) => p.role === 'dev').slice(0, 3);
+    const train = all.filter((p) => p.role === 'train');
+    const { gateway, seen } = recordingGateway();
+    const res = await runCurves(
+      { gateway, meter: new Meter() },
+      {
+        people: dev,
+        train,
+        policies: ['random', 'pop-eig'],
+        checkpoints: [0, 2],
+        knobs: POLICY_DEFAULTS,
+        seed: 's',
+        concurrency: 1,
+        chunkPeople: 3,
+        noJev: true,
+      },
+    );
+    expect(seen).toHaveLength(0);
+    expect(res.records.length).toBeGreaterThan(0);
+    expect(res.records.every((r) => r.rec.modelSnapshot === 'population')).toBe(true);
+    expect(res.stopReason).toBeNull();
+  });
+
   it('scores the targets from the sealed state at k, with the person’s retest beside each', async () => {
     const { people } = await loadPeople(fixture(10));
     const p = people[0]!;

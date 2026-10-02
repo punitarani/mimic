@@ -62,6 +62,8 @@ Each picks the next item from what is left of the pool. After each pick the pers
 | `pop-eig` | The highest expected information about R under a persona posterior over the train people | none |
 | `jev-eig` | Jev's lookahead: the 6 highest-entropy candidates; for each answer Jev expects (q(a) ≥ 0.05), Jev predicts 20 R questions from the state with that answer; gain = Σ_r H(Σ_a q(a)·p_r^a) − Σ_a q(a)·H(p_r^a) | about 24 a step |
 | `hybrid` | `pop-eig`'s 6 best, reranked by Jev's lookahead | about 22 a step |
+| `pop-entropy` | The item whose answers the train people differ on most: production's `populationScore` without the baseline term (added after round 1) | none |
+| `pop-transfer` | A fixed ranking by each item's information about R under the unconditioned population: an aggregate statistic a cohort could store (added after round 1) | none |
 
 - **Persona posterior** (`population.ts`): w_j ∝ Π E[a_j][v] over the train people j, with E a noisy channel (ε =
   0.15; a scale's emission spreads to neighbouring levels, σ = 0.6). The expected information of an item about each
@@ -110,6 +112,10 @@ Fixed before the first run. Against `random`:
 posterior's likelihood temper, below 1 for a posterior that concentrates more slowly — and `ref` = `R` or `pool`), and
 `open10-pop-eig` (the first 10 from the static questionnaire, then `pop-eig`). `ref=pool` aims a policy at a fixed
 sample of the person's own pool questions instead of R: no knowledge of the decisions to be scored.
+
+**Outages and `--no-jev`.** A chunk whose predictions fail above 2% is an outage: it is dropped for every policy and
+the run stops, so a failed call is never scored as a uniform prediction. `--no-jev` scores with the population reader
+and refuses the policies that select with Jev: no model calls, for iterating on the population policies.
 
 **Read without Jev.** Beside Jev's curves, the persona posterior reads the same targets from the same asked answers
 (`populationReader`): what each policy's answers say about the targets, apart from how well Jev reads them. If a

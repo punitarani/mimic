@@ -34,6 +34,7 @@ import {
   JevOracle,
   jevEigPolicy,
   jevEntropyPolicy,
+  needsJev,
   needsPopulation,
   openedPolicy,
   orderPolicy,
@@ -44,7 +45,9 @@ import {
   type PolicyName,
   parsePolicySpec,
   popEigPolicy,
+  popEntropyPolicy,
   popStaticPolicy,
+  popTransferPolicy,
   randomPolicy,
   stratifiedPolicy,
 } from './policies';
@@ -199,6 +202,10 @@ function basePolicy(
       return jevEigPolicy(knobs, seed);
     case 'hybrid':
       return hybridPolicy(knobs, seed);
+    case 'pop-entropy':
+      return popEntropyPolicy;
+    case 'pop-transfer':
+      return popTransferPolicy(knobs, seed);
   }
 }
 
@@ -232,6 +239,13 @@ export interface RunOptions {
   concurrency: number;
   /** People per chunk: a budget stop drops the chunk for every policy, so the arms stay paired. */
   chunkPeople: number;
+  /**
+   * Score with the population reader instead of Jev, and refuse policies that need Jev: no model calls at all, for
+   * iterating on the population policies (a yardstick, never a result about Jev).
+   */
+  noJev?: boolean;
+  /** A chunk whose predictions fail above this rate is an outage: dropped for every policy, and the run stops. */
+  maxFailureRate?: number;
 }
 
 export interface RunResult {
@@ -287,6 +301,8 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     const chunkTraj: Array<{ policy: string; pid: string; asked: TwinItem[]; scores: Array<number | null> }> =
       [];
     const chunkCosts = new Map<string, { selection: number; scoring: number; requests: number }>();
+    let asked = 0;
+    let failed = 0;
     try {
       for (const policy of policies) {
         const jev = new JevOracle(predictorFor(deps.gateway, candidate, 'eval.curves.select'), deps.meter);
@@ -297,16 +313,24 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
           return { person, asked, scores };
         });
         const usd1 = deps.meter.usd;
-        const instances = walks.flatMap(({ person, asked }) =>
-          opts.checkpoints.flatMap((k) => targetInstances(person, asked, k)),
-        );
-        const recs = await evaluateCandidate(candidate, instances, {
-          gateway: deps.gateway,
-          meter: deps.meter,
-          concurrency: opts.concurrency * 2,
-          purpose: 'eval.curves.score',
-          maxQuestionsPerRequest: 20,
-        });
+        asked += jev.predictions;
+        failed += jev.failed;
+        const instances = opts.noJev
+          ? []
+          : walks.flatMap(({ person, asked }) =>
+              opts.checkpoints.flatMap((k) => targetInstances(person, asked, k)),
+            );
+        const recs = opts.noJev
+          ? []
+          : await evaluateCandidate(candidate, instances, {
+              gateway: deps.gateway,
+              meter: deps.meter,
+              concurrency: opts.concurrency * 2,
+              purpose: 'eval.curves.score',
+              maxQuestionsPerRequest: 20,
+            });
+        asked += recs.length;
+        failed += recs.filter((r) => !r.ok).length;
         const blockOf = new Map(walks.flatMap(({ person }) => person.targets.map((t) => [t.key, t.block])));
         recs.forEach((rec, i) => {
           const inst = instances[i]!;
@@ -320,10 +344,18 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
         for (const w of walks)
           chunkTraj.push({ policy: policy.name, pid: w.person.pid, asked: w.asked, scores: w.scores });
         if (pop)
-          for (const w of walks)
-            chunkReader.push(
-              ...populationReader(pop, w.person, w.asked, opts.checkpoints, policy.name, opts.knobs.beta),
+          for (const w of walks) {
+            const read = populationReader(
+              pop,
+              w.person,
+              w.asked,
+              opts.checkpoints,
+              policy.name,
+              opts.knobs.beta,
             );
+            // Without Jev, the reader is the scorer.
+            (opts.noJev ? chunkRecords : chunkReader).push(...read);
+          }
         chunkCosts.set(policy.name, {
           selection: usd1 - usd0,
           scoring: deps.meter.usd - usd1,
@@ -333,6 +365,11 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     } catch (e) {
       if (!(e instanceof BudgetStop)) throw e;
       stopReason = `${e.message}; the chunk of ${chunk.length} people starting at ${start} was dropped for every policy`;
+      break;
+    }
+    const maxFail = opts.maxFailureRate ?? 0.02;
+    if (asked && failed / asked > maxFail) {
+      stopReason = `outage: ${failed} of ${asked} predictions failed in the chunk of ${chunk.length} people starting at ${start} (above ${maxFail * 100}%); it was dropped for every policy and the run stopped`;
       break;
     }
     records.push(...chunkRecords);
@@ -406,6 +443,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       out: { type: 'string' },
       summary: { type: 'string' },
       offline: { type: 'boolean', default: false },
+      'no-jev': { type: 'boolean', default: false },
     },
   });
   if (!values.data) throw new Error('--data is required (the Twin-2K-500 wave_split JSON Lines)');
@@ -413,6 +451,13 @@ export async function curvesCmd(argv: string[]): Promise<void> {
   if (role !== 'dev' && role !== 'test') throw new Error('--role must be dev or test');
   const policies = splitSpecs(values.policies);
   const specs = policies.map(parsePolicySpec);
+  if (values['no-jev'] && specs.some(needsJev))
+    throw new Error(
+      `--no-jev can't run ${specs
+        .filter(needsJev)
+        .map((x) => x.spec)
+        .join(', ')}: they select with Jev`,
+    );
   const checkpoints = [...new Set(list(values.checkpoints).map(Number))].sort((a, b) => a - b);
   if (checkpoints.some((k) => !Number.isInteger(k) || k < 0))
     throw new Error('--checkpoints are whole numbers');
@@ -470,6 +515,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       seed: values.seed,
       concurrency: positive('concurrency', values.concurrency),
       chunkPeople: positive('chunk-people', values['chunk-people']),
+      noJev: values['no-jev'],
     },
   );
   const consistency = new Map<string, number>();
@@ -512,6 +558,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     stopReason: result.stopReason,
     knobs: { ...knobs, population: POPULATION_DEFAULTS },
     offline: values.offline,
+    scorer: values['no-jev'] ? 'population' : 'jev',
     seed: values.seed,
   });
   const st = statSync(values.data);

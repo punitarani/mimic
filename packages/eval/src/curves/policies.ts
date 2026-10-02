@@ -10,7 +10,7 @@ import {
 } from '@mimic/core';
 import type { Meter } from '../optimize/evaluate';
 import { mimicIdOf, questionOf, stateAfter, type TwinItem, type TwinPerson } from './data';
-import type { PersonaPosterior, Population } from './population';
+import { PersonaPosterior, type Population } from './population';
 
 /**
  * Selection policies for E9 (docs/CURVES.md §4). Each picks the next item from what is left of a person's pool,
@@ -21,6 +21,9 @@ import type { PersonaPosterior, Population } from './population';
 /** Jev on raw probabilities, batched as production batches (questions sharing a state, at most 20 a request). */
 export class JevOracle {
   requests = 0;
+  /** Predictions asked for, and those that failed twice (an outage shows here first). */
+  predictions = 0;
+  failed = 0;
   constructor(
     private readonly predictor: Predictor,
     private readonly meter: Meter,
@@ -61,7 +64,9 @@ export class JevOracle {
         this.meter.predictions += chunk.length;
         chunk.forEach((c, j) => {
           const r = res[j]!;
+          this.predictions++;
           if (r.ok) out[c.i] = r.dist;
+          else this.failed++;
         });
       }),
     );
@@ -298,6 +303,70 @@ export function popEigPolicy(knobs: PolicyKnobs, seed: string): Policy {
   };
 }
 
+/**
+ * Production's population term, alone (`populationScore`, docs/SELECTION.md §7): the item whose answers people differ
+ * on most (normalised entropy of the train people's answers). Information about the item itself, not about others.
+ */
+export const popEntropyPolicy: Policy = {
+  name: 'pop-entropy',
+  usesPopulation: true,
+  next: async (ctx) => {
+    if (!ctx.pop) throw new Error('pop-entropy needs the population');
+    const prior = new PersonaPosterior(ctx.pop);
+    const w = prior.weights();
+    let best: TwinItem | undefined;
+    let bestScore = Number.NEGATIVE_INFINITY;
+    for (const i of ctx.remaining) {
+      const p = prior.predictive(i.key, w);
+      if (!p || p.length < 2) continue;
+      const h = -[...p].reduce((a, x) => a + (x > 0 ? x * Math.log(x) : 0), 0) / Math.log(p.length);
+      if (h > bestScore + 1e-12) {
+        bestScore = h;
+        best = i;
+      }
+    }
+    if (best) ctx.note?.(bestScore);
+    return best ?? randomOf(ctx.remaining, ctx.rng);
+  },
+};
+
+/**
+ * An item statistic a cohort could store (aggregate-only, like `item_stats`): each item's information about the
+ * reference under the unconditioned population, Σ_r I(A_c; A_r), ranked once and asked in that order. No
+ * conditioning on the person and no redundancy check: the simplest portable form of `pop-eig`.
+ */
+export function popTransferPolicy(knobs: PolicyKnobs, seed: string): Policy {
+  const rankings = new Map<string, Array<{ key: string; g: number }>>();
+  return {
+    name: 'pop-transfer',
+    usesPopulation: true,
+    next: async (ctx) => {
+      if (!ctx.pop) throw new Error('pop-transfer needs the population');
+      const refs = popKeys(ctx, knobs, seed);
+      const sig = refs.join('|');
+      let ranking = rankings.get(sig);
+      if (!ranking) {
+        const prior = new PersonaPosterior(ctx.pop);
+        const w = prior.weights();
+        ranking = ctx.person.pool
+          .filter((i) => ctx.pop!.has(i.key))
+          .map((i) => ({ key: i.key, g: prior.eig(i.key, refs, w) }))
+          .sort((a, b) => b.g - a.g);
+        rankings.set(sig, ranking);
+      }
+      const left = new Map(ctx.remaining.map((i) => [i.key, i]));
+      for (const r of ranking) {
+        const it = left.get(r.key);
+        if (it) {
+          ctx.note?.(r.g);
+          return it;
+        }
+      }
+      return randomOf(ctx.remaining, ctx.rng);
+    },
+  };
+}
+
 /** The best fixed questionnaire for the population (`staticSequence`), the same for everyone. */
 export function popStaticPolicy(sequence: readonly string[]): Policy {
   return {
@@ -354,6 +423,8 @@ export const POLICY_NAMES = [
   'jev-entropy',
   'pop-static',
   'pop-eig',
+  'pop-entropy',
+  'pop-transfer',
   'jev-eig',
   'hybrid',
 ] as const;
@@ -407,8 +478,17 @@ export function parsePolicySpec(spec: string): PolicySpec {
 }
 
 /** Policies that need the train population (to select, or for the static opening block). */
+/** Policies that ask Jev to select (none can run with `--no-jev`). */
+export const needsJev = (s: PolicySpec) =>
+  s.base === 'jev-entropy' || s.base === 'jev-eig' || s.base === 'hybrid';
+
 export const needsPopulation = (s: PolicySpec) =>
-  s.base === 'pop-eig' || s.base === 'pop-static' || s.base === 'hybrid' || s.open > 0;
+  s.base === 'pop-eig' ||
+  s.base === 'pop-static' ||
+  s.base === 'pop-entropy' ||
+  s.base === 'pop-transfer' ||
+  s.base === 'hybrid' ||
+  s.open > 0;
 
 /** The first `n` items from the static questionnaire, then `inner`. */
 export function openedPolicy(name: string, n: number, sequence: readonly string[], inner: Policy): Policy {
