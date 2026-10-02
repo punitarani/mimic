@@ -494,8 +494,11 @@ export interface PolicySpec {
   base: PolicyName;
   /** Items asked before the base policy starts, from `opening`. */
   open: number;
-  /** `static`: the static questionnaire (`open10-…`); `anchors`: production's anchors as Twin asks them (`anchors-…`). */
-  opening: 'static' | 'anchors';
+  /**
+   * `static`: the static questionnaire (`open10-…`); `anchors`: production's anchors as Twin asks them (`anchors-…`);
+   * `custom`: the run's `--opening` sequence, all of it unless a number cuts it (`custom-…`, `custom6-…`).
+   */
+  opening: 'static' | 'anchors' | 'custom';
   knobs: Partial<PolicyKnobs>;
 }
 
@@ -530,7 +533,7 @@ const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
 };
 
 export function parsePolicySpec(spec: string): PolicySpec {
-  const m = /^(?:(open|anchors)(\d+)?-)?([a-z-]+)(?:\[([^\]]*)\])?$/.exec(spec.trim());
+  const m = /^(?:(open|anchors|custom)(\d+)?-)?([a-z-]+)(?:\[([^\]]*)\])?$/.exec(spec.trim());
   if (!m || !(POLICY_NAMES as readonly string[]).includes(m[3]!) || (m[1] === 'open' && !m[2]))
     throw new Error(
       `unknown policy ${spec} (known: ${POLICY_NAMES.join(', ')}; e.g. open10-jev-eig[ref=pool,tsel=1])`,
@@ -550,8 +553,9 @@ export function parsePolicySpec(spec: string): PolicySpec {
       knobs[key] = n;
     }
   }
-  const opening = m[1] === 'anchors' ? 'anchors' : 'static';
-  const open = m[1] ? Number(m[2] ?? TWIN_ANCHORS.length) : 0;
+  const opening = m[1] === 'anchors' ? 'anchors' : m[1] === 'custom' ? 'custom' : 'static';
+  const whole = opening === 'anchors' ? TWIN_ANCHORS.length : Number.MAX_SAFE_INTEGER;
+  const open = m[1] ? Number(m[2] ?? whole) : 0;
   return { spec: spec.trim(), base: m[3] as PolicyName, open, opening, knobs };
 }
 
@@ -598,6 +602,14 @@ export function openedPolicy(
     },
   };
 }
+
+/** `--opening` tokens as item keys: `QID268` → `twin2k/w13/QID268`, `QID234/3` → `twin2k/w13/QID234/3`. */
+export const openingKeys = (spec: string) =>
+  spec
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map((t) => (t.startsWith('twin2k/') ? t : `twin2k/w13/${t}`));
 
 /** Production's anchors in a per-person order (seeded like `anchors:{mimicId}` at intake). */
 export const anchorOrder = (seed: string) => (pid: string) =>

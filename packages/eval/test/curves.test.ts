@@ -44,6 +44,7 @@ import { embedTexts, textOf } from '../src/curves/embeddings';
 import {
   anchorOrder,
   JevOracle,
+  openingKeys,
   POLICY_DEFAULTS,
   POLICY_NAMES,
   parsePolicySpec,
@@ -896,6 +897,14 @@ describe('E9 policy specs: variants and opening blocks (docs/CURVES.md §7)', ()
       opening: 'anchors',
     });
     expect(() => parsePolicySpec('open-pop-eig')).toThrow(/unknown policy/);
+    expect(parsePolicySpec('custom-random')).toMatchObject({ base: 'random', opening: 'custom' });
+    expect(parsePolicySpec('custom3-pop-eig')).toMatchObject({ base: 'pop-eig', open: 3, opening: 'custom' });
+    expect(openingKeys('QID268, QID234/3,twin2k/w13/QID22')).toEqual([
+      'twin2k/w13/QID268',
+      'twin2k/w13/QID234/3',
+      'twin2k/w13/QID22',
+    ]);
+    expect(() => buildPolicies(['custom-random'], POLICY_DEFAULTS, 's', null)).toThrow(/--opening/);
     expect(() => parsePolicySpec('greedy')).toThrow(/unknown policy/);
     expect(() => parsePolicySpec('jev-eig[depth=2]')).toThrow(/unknown knob/);
     expect(() => parsePolicySpec('jev-eig[ref=T]')).toThrow(/R, pool or id/);
@@ -918,6 +927,13 @@ describe('E9 policy specs: variants and opening blocks (docs/CURVES.md §7)', ()
     expect(asked.slice(0, 3).map((i) => i.key)).toEqual(order);
     // Then survey order, from the top.
     expect(asked[3]!.key).toBe(person.pool[0]!.key);
+    // A custom opening is asked in its own order, the same for everyone.
+    const [custom] = buildPolicies(['custom-order'], POLICY_DEFAULTS, 's', null, undefined, [
+      planted[2]!.key,
+      planted[0]!.key,
+    ]);
+    const c = await walk(person, custom!, 3, { jev: jevFor(gateway), pop: null, seed: 's' });
+    expect(c.map((i) => i.key)).toEqual([planted[2]!.key, planted[0]!.key, person.pool[0]!.key]);
     // Another person sees another order.
     const orders = new Set(['a', 'b', 'c', 'd', 'e', 'f'].map((pid) => anchorOrder('s')(pid).join()));
     expect(orders.size).toBeGreaterThan(1);

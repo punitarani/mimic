@@ -43,6 +43,7 @@ import {
   needsJev,
   needsPopulation,
   openedPolicy,
+  openingKeys,
   orderPolicy,
   POLICY_DEFAULTS,
   POLICY_NAMES,
@@ -232,6 +233,8 @@ export function buildPolicies(
   staticSeq: readonly string[] | null,
   /** The latent-class model with k classes (`cls=k`), fitted once on the train people. */
   classesOf?: (k: number) => ClassModel,
+  /** The run's `--opening` sequence, for `custom-…` policies. */
+  custom?: readonly string[],
 ): Policy[] {
   return specs.map((raw) => {
     const s = parsePolicySpec(raw);
@@ -245,6 +248,10 @@ export function buildPolicies(
       inner = { ...base, posteriorOf: () => new ClassPosterior(model, own.beta) };
     }
     if (s.open > 0 && s.opening === 'anchors') return openedPolicy(s.spec, s.open, anchorOrder(seed), inner);
+    if (s.open > 0 && s.opening === 'custom') {
+      if (!custom?.length) throw new Error(`${s.spec} needs --opening`);
+      return openedPolicy(s.spec, s.open, custom, inner);
+    }
     if (s.open > 0) {
       if (!staticSeq) throw new Error(`${s.spec} needs the static questionnaire`);
       return openedPolicy(s.spec, s.open, staticSeq, inner);
@@ -257,6 +264,8 @@ export interface RunOptions {
   people: TwinPerson[];
   train: TwinPerson[];
   policies: string[];
+  /** Item keys `custom-…` policies open with (`--opening`). */
+  opening?: string[];
   checkpoints: number[];
   knobs: PolicyKnobs;
   seed: string;
@@ -318,7 +327,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     }
     return m;
   };
-  const policies = buildPolicies(opts.policies, opts.knobs, opts.seed, staticSeq, classesOf);
+  const policies = buildPolicies(opts.policies, opts.knobs, opts.seed, staticSeq, classesOf, opts.opening);
   const vectors = specs.some(needsEmbeddings)
     ? await embedTexts(
         deps.gateway,
@@ -495,6 +504,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       mmr: { type: 'string', default: String(POLICY_DEFAULTS.mmr) },
       reference: { type: 'string', default: POLICY_DEFAULTS.reference },
       given: { type: 'string' },
+      opening: { type: 'string' },
       classes: { type: 'string', default: String(POLICY_DEFAULTS.classes) },
       drop: { type: 'string' },
       'train-people': { type: 'string' },
@@ -557,6 +567,14 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     `E9: ${policies.join(', ')} on ${people.length} ${role} people (${train.length} train people for population statistics); checkpoints ${checkpoints.join(', ')}`,
   );
   if (!people.length) throw new Error(`no ${role} people in ${values.data}`);
+  if (values.opening) {
+    const inPools = new Set(people.flatMap((p) => p.pool.map((i) => i.key)));
+    const missing = openingKeys(values.opening).filter((k) => !inPools.has(k));
+    if (missing.length)
+      throw new Error(
+        `--opening names items no pool holds (given, dropped or unknown): ${missing.join(', ')}`,
+      );
+  }
 
   const runDir = resolve(values.out ?? `data/curves/${ulid()}`);
   mkdirSync(runDir, { recursive: true });
@@ -587,6 +605,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       chunkPeople: positive('chunk-people', values['chunk-people']),
       noJev: values['no-jev'],
       embedDir: join(cacheDir, 'emb'),
+      ...(values.opening ? { opening: openingKeys(values.opening) } : {}),
     },
   );
   const consistency = new Map<string, number>();
@@ -624,6 +643,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       ...(loaded.audit as unknown as Record<string, unknown>),
       staticSequence: result.staticSequence?.slice(0, 10) ?? null,
       given: values.given ?? null,
+      opening: values.opening ?? null,
       drop: values.drop ?? null,
       meanGiven: people.reduce((a, p) => a + p.given.length, 0) / people.length,
     },
@@ -650,6 +670,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       maxUsd: meter.maxUsd,
       data: basename(values.data),
       ...(values.given ? { given: values.given } : {}),
+      ...(values.opening ? { opening: values.opening } : {}),
       ...(values.drop ? { drop: values.drop } : {}),
       stopReason: result.stopReason,
     },
