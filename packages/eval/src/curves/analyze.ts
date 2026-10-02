@@ -88,6 +88,20 @@ export interface BlockRow {
   itemAcc: number;
 }
 
+/**
+ * A stopping rule (H8, docs/RESEARCH.md §1.6): stop before the next question once the policy's own score for it
+ * falls below τ (never before 3 answers). Compared with a fixed length asking the same mean number of questions.
+ */
+export interface StopRow {
+  policy: string;
+  tau: number;
+  meanQuestions: number;
+  /** Mean over people of their accuracy where they stopped (interpolated between checkpoints). */
+  accAtStop: number;
+  /** The policy's mean accuracy at a fixed length equal to `meanQuestions`. */
+  accFixed: number;
+}
+
 export interface TrajectoryRow {
   policy: string;
   /** Share of the first 10 and of all asked items per pool block. */
@@ -109,6 +123,7 @@ export interface CurvesReport {
   verdicts: CurvesVerdict[];
   blocks: BlockRow[];
   trajectories: TrajectoryRow[];
+  stopping: StopRow[];
   consistency: number | null;
   audit: Record<string, unknown>;
   costUsd: number;
@@ -186,6 +201,70 @@ function personCurves(records: CurveRecord[], policy: string): Map<string, Map<n
   return new Map([...out].map(([p, m]) => [p, new Map([...m].map(([k, xs]) => [k, mean(xs)]))]));
 }
 
+/** A curve's value at k, linear between its points and flat beyond them. */
+export function interpolate(curve: Array<[number, number]>, k: number): number {
+  if (!curve.length) return Number.NaN;
+  if (k <= curve[0]![0]) return curve[0]![1];
+  for (let i = 1; i < curve.length; i++) {
+    const [k1, y1] = curve[i]!;
+    if (k <= k1) {
+      const [k0, y0] = curve[i - 1]!;
+      return y0 + ((k - k0) / (k1 - k0)) * (y1 - y0);
+    }
+  }
+  return curve[curve.length - 1]![1];
+}
+
+const MIN_STOP = 3;
+
+export function stoppingRows(
+  records: CurveRecord[],
+  scores: Map<string, Array<number | null>>,
+  policy: string,
+  checkpoints: number[],
+): StopRow[] {
+  const curves = personCurves(records, policy);
+  const people = [...curves.keys()].filter((p) => scores.get(p)?.some((x) => x !== null));
+  if (!people.length) return [];
+  const observed = people
+    .flatMap((p) => scores.get(p)!.slice(MIN_STOP))
+    .filter((x): x is number => x !== null)
+    .sort((a, b) => a - b);
+  if (!observed.length) return [];
+  const steps = Math.max(...checkpoints);
+  const curveOf = (p: string): Array<[number, number]> =>
+    checkpoints.filter((k) => curves.get(p)!.has(k)).map((k) => [k, curves.get(p)!.get(k)!]);
+  const meanCurve: Array<[number, number]> = checkpoints.map((k) => [
+    k,
+    mean(people.map((p) => curves.get(p)!.get(k)).filter((x): x is number => x !== undefined)),
+  ]);
+  const taus = [
+    ...new Set([0.1, 0.25, 0.5, 0.75, 0.9].map((q) => observed[Math.floor(q * (observed.length - 1))]!)),
+  ];
+  return taus.map((tau) => {
+    const stops = people.map((p) => {
+      const s = scores.get(p)!;
+      let k = Math.min(steps, s.length);
+      for (let t = MIN_STOP; t < Math.min(steps, s.length); t++) {
+        const x = s[t];
+        if (x !== null && x !== undefined && x < tau) {
+          k = t;
+          break;
+        }
+      }
+      return { k, acc: interpolate(curveOf(p), k) };
+    });
+    const meanQuestions = mean(stops.map((x) => x.k));
+    return {
+      policy,
+      tau,
+      meanQuestions,
+      accAtStop: mean(stops.map((x) => x.acc)),
+      accFixed: interpolate(meanCurve, meanQuestions),
+    };
+  });
+}
+
 /** The first k (linear between checkpoints) at which a curve reaches `target`; null if it never does. */
 export function firstReach(curve: Array<[number, number]>, target: number): number | null {
   for (let i = 0; i < curve.length; i++) {
@@ -246,6 +325,8 @@ export interface AnalyzeInput {
   consistency: Map<string, number>;
   costs: Record<string, { selection: number; scoring: number; requests: number }>;
   trajectories: Map<string, Map<string, Array<{ key: string; block: string; prompt: string }>>>;
+  /** Policy → person (mimic ID) → each step's selection score. */
+  scores?: Map<string, Map<string, Array<number | null>>>;
   audit: Record<string, unknown>;
   costUsd: number;
   cache: { hits: number; misses: number; savedUsd: number };
@@ -399,6 +480,10 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
     };
   });
 
+  const stopping = input.policies.flatMap((policy) => {
+    const s = input.scores?.get(policy);
+    return s ? stoppingRows(cal, s, policy, ks) : [];
+  });
   const cons = [...input.consistency.entries()].filter(([p]) => people.has(p)).map(([, c]) => c);
   return {
     role: input.role,
@@ -412,6 +497,7 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
     verdicts,
     blocks,
     trajectories,
+    stopping,
     consistency: cons.length ? mean(cons) : null,
     audit: input.audit,
     costUsd: input.costUsd,
@@ -517,6 +603,19 @@ export function renderCurves(r: CurvesReport): string[] {
   );
   for (const b of r.blocks)
     out.push(`| ${b.policy} | ${b.group} | ${b.n} | ${f4(b.logLoss)} | ${pct(b.itemAcc)} |`);
+  if (r.stopping?.length) {
+    out.push(
+      '',
+      "## Stopping on the policy's own score (stop before the next question once its score falls below τ; never before 3)",
+      '',
+      '| Policy | τ | Mean questions | Accuracy where people stopped | Accuracy at a fixed length of that many | Δ points |',
+      '| --- | --- | --- | --- | --- | --- |',
+    );
+    for (const x of r.stopping)
+      out.push(
+        `| ${x.policy} | ${x.tau.toPrecision(3)} | ${x.meanQuestions.toFixed(1)} | ${pct(x.accAtStop)} | ${pct(x.accFixed)} | ${pts(x.accAtStop - x.accFixed)} |`,
+      );
+  }
   out.push(
     '',
     '## What each policy asked',

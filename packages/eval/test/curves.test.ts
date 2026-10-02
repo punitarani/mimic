@@ -16,10 +16,12 @@ import {
   type CurveRecord,
   calibrateCells,
   firstReach,
+  interpolate,
+  stoppingRows,
 } from '../src/curves/analyze';
-import { buildPolicies, runCurves, targetInstances, walk } from '../src/curves/command';
+import { buildPolicies, runCurves, splitSpecs, targetInstances, walk } from '../src/curves/command';
 import { halfOf, loadPeople, mimicIdOf, roleOf, stateAfter, type TwinPerson } from '../src/curves/data';
-import { JevOracle, POLICY_DEFAULTS, POLICY_NAMES } from '../src/curves/policies';
+import { JevOracle, POLICY_DEFAULTS, POLICY_NAMES, parsePolicySpec } from '../src/curves/policies';
 import { PersonaPosterior, Population, staticSequence } from '../src/curves/population';
 import { CachingGateway } from '../src/decision-cache';
 import { FakeDecisions, FakeLlm } from '../src/fakes';
@@ -473,6 +475,42 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
     ).toBe(3);
   });
 
+  it('stops each person where the policy’s score drops, and compares with a fixed length of the same mean', () => {
+    const at = (m: string, k: number, acc: number): CurveRecord => ({
+      policy: 'p',
+      k,
+      block: 'x',
+      rec: { ...rec(m, k, 't', 0.6, true), itemAcc: acc },
+    });
+    // a plateaus after 3 answers, b keeps learning to 6.
+    const records = [
+      at('a', 0, 0.5),
+      at('a', 3, 0.6),
+      at('a', 6, 0.6),
+      at('b', 0, 0.5),
+      at('b', 3, 0.6),
+      at('b', 6, 0.8),
+    ];
+    const scores = new Map([
+      ['a', [1, 1, 1, 0.1, 0.1, 0.1]],
+      ['b', [1, 1, 1, 1, 1, 1]],
+    ]);
+    const rows = stoppingRows(records, scores, 'p', [0, 3, 6]);
+    const row = rows.find((r) => r.tau > 0.1 && r.tau <= 1)!;
+    expect(row.meanQuestions).toBeCloseTo(4.5, 10);
+    expect(row.accAtStop).toBeCloseTo(0.7, 10);
+    expect(row.accFixed).toBeCloseTo(0.65, 10); // the mean curve, 0.6 at 3 and 0.7 at 6
+    expect(
+      interpolate(
+        [
+          [0, 0],
+          [10, 1],
+        ],
+        25,
+      ),
+    ).toBe(1);
+  });
+
   it('runs end to end offline, pairs every policy on the same people, and renders', async () => {
     const all = (await loadPeople(fixture(40))).people;
     const dev = all.filter((p) => p.role === 'dev').slice(0, 4);
@@ -570,5 +608,48 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
     expect(inst.every((i) => i.state.evidence.length === 2)).toBe(true);
     expect(inst.every((i) => i.id.startsWith(`${mimicIdOf(p.pid)}|2|`))).toBe(true);
     expect(inst.some((i) => i.repeatAgreement !== null)).toBe(true);
+  });
+});
+
+describe('E9 policy specs: variants and opening blocks (docs/CURVES.md §7)', () => {
+  it('parses a spec, its knobs and its opening block, and refuses anything else', () => {
+    expect(parsePolicySpec('jev-eig')).toMatchObject({ base: 'jev-eig', open: 0, knobs: {} });
+    expect(parsePolicySpec('open10-pop-eig[ref=pool,tsel=1,short=8]')).toMatchObject({
+      base: 'pop-eig',
+      open: 10,
+      knobs: { reference: 'pool', tSel: 1, lookaheadShortlist: 8 },
+    });
+    expect(() => parsePolicySpec('greedy')).toThrow(/unknown policy/);
+    expect(() => parsePolicySpec('jev-eig[depth=2]')).toThrow(/unknown knob/);
+    expect(() => parsePolicySpec('jev-eig[ref=T]')).toThrow(/R or pool/);
+    expect(splitSpecs('random,jev-eig[ref=pool,tsel=1], open5-pop-eig')).toEqual([
+      'random',
+      'jev-eig[ref=pool,tsel=1]',
+      'open5-pop-eig',
+    ]);
+  });
+
+  it('opens with the static questionnaire, then hands over, and records each step’s score', async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const dev = all.filter((p) => p.role !== 'train').slice(0, 2);
+    const train = all.filter((p) => p.role === 'train');
+    const pop = new Population(train);
+    const refs = [...new Set(train.flatMap((p) => p.reference.map((r) => r.key)))];
+    const seq = staticSequence(pop, train, refs, { steps: 4, probes: 5, seed: 's' });
+    const [opened, eig] = buildPolicies(['open2-pop-eig', 'pop-eig'], POLICY_DEFAULTS, 's', seq);
+    expect(opened!.name).toBe('open2-pop-eig');
+    const { gateway } = recordingGateway();
+    const jev = jevFor(gateway);
+    for (const p of dev) {
+      const scores: Array<number | null> = [];
+      const asked = await walk(p, opened!, 4, { jev, pop, seed: 's', scores });
+      expect(asked.slice(0, 2).map((i) => i.key)).toEqual(seq.slice(0, 2));
+      // The opening steps carry no score; the persona posterior's steps do.
+      expect(scores.slice(0, 2)).toEqual([null, null]);
+      expect(scores.slice(2).every((x) => typeof x === 'number' && x >= 0)).toBe(true);
+      const plain: Array<number | null> = [];
+      await walk(p, eig!, 2, { jev, pop, seed: 's', scores: plain });
+      expect(plain.every((x) => typeof x === 'number')).toBe(true);
+    }
   });
 });

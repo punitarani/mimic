@@ -759,5 +759,10 @@ Everything but the last item is offline. The run is Actions → Decision models 
   - each (policy, k) cell gets its own leave-one-out temperature; AULC averages each target over the checkpoints;
   - an offline run pairs every policy on the same people; a cap that cuts a chunk drops it for every policy; a rerun
     from the cache costs nothing; the report renders.
+  - policy specs parse their knobs and opening blocks and refuse anything else; `--policies` splits only at commas
+    outside brackets; an opened policy asks the static questionnaire first, then hands over; each step records its
+    score (none for the opening);
+  - the stopping analysis stops each person where the score drops and compares with the fixed length of the same
+    mean (a worked example: 4.5 questions, 70% against 65%).
 - **Live machinery check** (2026-10-02): all eight policies on 4 dev people, $0.36; Jev answered through the local
   proxy and the cache.

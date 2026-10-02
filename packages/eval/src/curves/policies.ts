@@ -79,6 +79,8 @@ export interface PolicyContext {
   jev: JevOracle;
   pop: Population | null;
   posterior: PersonaPosterior | null;
+  /** Records the chosen item's selection score (its expected gain or entropy), for the stopping-rule analysis. */
+  note?: (score: number) => void;
 }
 
 export interface Policy {
@@ -101,6 +103,11 @@ export interface PolicyKnobs {
   answerFloor: number;
   /** pop-static's probe train people. */
   staticProbes: number;
+  /**
+   * What the lookahead and the persona posterior aim at: `R`, the wave 4 reference questions (the kind of decision
+   * that will be scored), or `pool`, a fixed sample of the person's own pool questions (no knowledge of the targets).
+   */
+  reference: 'R' | 'pool';
 }
 
 export const POLICY_DEFAULTS: PolicyKnobs = {
@@ -110,6 +117,7 @@ export const POLICY_DEFAULTS: PolicyKnobs = {
   tSel: 4,
   answerFloor: 0.05,
   staticProbes: 40,
+  reference: 'R',
 };
 
 const argmaxBy = <T>(xs: readonly T[], f: (x: T) => number): T | undefined => {
@@ -177,14 +185,20 @@ export function jevEntropyPolicy(knobs: PolicyKnobs): Policy {
     usesPopulation: false,
     next: async (ctx) => {
       const scored = await entropyShortlist(ctx, knobs);
-      return argmaxBy(scored, (x) => x.h)?.item ?? randomOf(ctx.remaining, ctx.rng);
+      const best = argmaxBy(scored, (x) => x.h);
+      if (best) ctx.note?.(best.h);
+      return best?.item ?? randomOf(ctx.remaining, ctx.rng);
     },
   };
 }
 
-/** The reference questions a person's lookahead predicts: a fixed sample of R, the same at every step. */
-export function referenceSample(person: TwinPerson, size: number, seed: string): TwinItem[] {
-  return shuffle(person.reference, seededRng(`${seed}:ref:${person.pid}`)).slice(0, size);
+/** The reference questions a person's lookahead predicts: a fixed sample, the same at every step. */
+export function referenceSample(person: TwinPerson, knobs: PolicyKnobs, seed: string): TwinItem[] {
+  const from = knobs.reference === 'pool' ? person.pool : person.reference;
+  return shuffle(from, seededRng(`${seed}:ref:${knobs.reference}:${person.pid}`)).slice(
+    0,
+    knobs.referenceSize,
+  );
 }
 
 /**
@@ -235,27 +249,48 @@ export function jevEigPolicy(knobs: PolicyKnobs, seed: string): Policy {
       const scored = await entropyShortlist(ctx, knobs);
       const short = [...scored].sort((a, b) => b.h - a.h).slice(0, knobs.lookaheadShortlist);
       if (!short.length) return randomOf(ctx.remaining, ctx.rng);
-      const ref = referenceSample(ctx.person, knobs.referenceSize, seed);
+      const ref = referenceSample(ctx.person, knobs, seed);
       const gains = await Promise.all(short.map((s) => lookaheadGain(ctx, s.item, s.dist, ref, knobs)));
-      return short[gains.indexOf(Math.max(...gains))]!.item;
+      const best = Math.max(...gains);
+      ctx.note?.(best);
+      return short[gains.indexOf(best)]!.item;
     },
   };
 }
 
-const popKeys = (ctx: PolicyContext) => ctx.person.reference.map((r) => r.key).filter((k) => ctx.pop?.has(k));
+/** The reference keys the persona posterior aims at; a pool reference samples at least 30 pool questions. */
+const popKeys = (ctx: PolicyContext, knobs: PolicyKnobs, seed: string) =>
+  (knobs.reference === 'pool'
+    ? referenceSample(ctx.person, { ...knobs, referenceSize: Math.max(knobs.referenceSize, 30) }, seed)
+    : ctx.person.reference
+  )
+    .map((r) => r.key)
+    .filter((k) => ctx.pop?.has(k));
 
 /** The persona posterior's expected information about the reference, in closed form (no model calls). */
-export const popEigPolicy: Policy = {
-  name: 'pop-eig',
-  usesPopulation: true,
-  next: async (ctx) => {
-    if (!ctx.posterior || !ctx.pop) throw new Error('pop-eig needs the population');
-    const refs = popKeys(ctx);
-    const w = ctx.posterior.weights();
-    const cands = ctx.remaining.filter((i) => ctx.pop!.has(i.key));
-    return argmaxBy(cands, (i) => ctx.posterior!.eig(i.key, refs, w)) ?? randomOf(ctx.remaining, ctx.rng);
-  },
-};
+export function popEigPolicy(knobs: PolicyKnobs, seed: string): Policy {
+  return {
+    name: 'pop-eig',
+    usesPopulation: true,
+    next: async (ctx) => {
+      if (!ctx.posterior || !ctx.pop) throw new Error('pop-eig needs the population');
+      const refs = popKeys(ctx, knobs, seed);
+      const w = ctx.posterior.weights();
+      let best: TwinItem | undefined;
+      let bestScore = Number.NEGATIVE_INFINITY;
+      for (const i of ctx.remaining) {
+        if (!ctx.pop.has(i.key)) continue;
+        const g = ctx.posterior.eig(i.key, refs, w);
+        if (g > bestScore + 1e-12) {
+          bestScore = g;
+          best = i;
+        }
+      }
+      if (best) ctx.note?.(bestScore);
+      return best ?? randomOf(ctx.remaining, ctx.rng);
+    },
+  };
+}
 
 /** The best fixed questionnaire for the population (`staticSequence`), the same for everyone. */
 export function popStaticPolicy(sequence: readonly string[]): Policy {
@@ -280,7 +315,7 @@ export function hybridPolicy(knobs: PolicyKnobs, seed: string): Policy {
     usesPopulation: true,
     next: async (ctx) => {
       if (!ctx.posterior || !ctx.pop) throw new Error('hybrid needs the population');
-      const refs = popKeys(ctx);
+      const refs = popKeys(ctx, knobs, seed);
       const w = ctx.posterior.weights();
       const short = ctx.remaining
         .filter((i) => ctx.pop!.has(i.key))
@@ -290,7 +325,7 @@ export function hybridPolicy(knobs: PolicyKnobs, seed: string): Policy {
         .map((x) => x.i);
       if (!short.length) return randomOf(ctx.remaining, ctx.rng);
       const qs = await ctx.jev.predict(ctx.person.pid, ctx.state, short);
-      const ref = referenceSample(ctx.person, knobs.referenceSize, seed);
+      const ref = referenceSample(ctx.person, knobs, seed);
       const gains = await Promise.all(
         short.map((it, i) =>
           qs[i]
@@ -298,7 +333,9 @@ export function hybridPolicy(knobs: PolicyKnobs, seed: string): Policy {
             : Promise.resolve(-1),
         ),
       );
-      return short[gains.indexOf(Math.max(...gains))]!;
+      const best = Math.max(...gains);
+      ctx.note?.(best);
+      return short[gains.indexOf(best)]!;
     },
   };
 }
@@ -314,3 +351,63 @@ export const POLICY_NAMES = [
   'hybrid',
 ] as const;
 export type PolicyName = (typeof POLICY_NAMES)[number];
+
+/**
+ * A policy spec: a base policy, optionally after an opening block from the static questionnaire and with knobs of
+ * its own, e.g. `jev-eig`, `jev-eig[ref=pool,tsel=1]`, `open10-pop-eig`. The spec is the policy's name in the report
+ * and in its random seed.
+ */
+export interface PolicySpec {
+  spec: string;
+  base: PolicyName;
+  /** Items taken from the static questionnaire before the base policy starts. */
+  open: number;
+  knobs: Partial<PolicyKnobs>;
+}
+
+const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
+  ent: 'entropyShortlist',
+  short: 'lookaheadShortlist',
+  refsize: 'referenceSize',
+  tsel: 'tSel',
+  floor: 'answerFloor',
+  ref: 'reference',
+};
+
+export function parsePolicySpec(spec: string): PolicySpec {
+  const m = /^(?:open(\d+)-)?([a-z-]+)(?:\[([^\]]*)\])?$/.exec(spec.trim());
+  if (!m || !(POLICY_NAMES as readonly string[]).includes(m[2]!))
+    throw new Error(
+      `unknown policy ${spec} (known: ${POLICY_NAMES.join(', ')}; e.g. open10-jev-eig[ref=pool,tsel=1])`,
+    );
+  const knobs: Partial<PolicyKnobs> = {};
+  for (const kv of (m[3] ?? '').split(',').filter(Boolean)) {
+    const [k, v] = kv.split('=').map((x) => x.trim());
+    const key = KNOB_KEYS[k ?? ''];
+    if (!key || v === undefined || v === '')
+      throw new Error(`${spec}: unknown knob ${kv} (${Object.keys(KNOB_KEYS).join(', ')})`);
+    if (key === 'reference') {
+      if (v !== 'R' && v !== 'pool') throw new Error(`${spec}: ref is R or pool`);
+      knobs.reference = v;
+    } else {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < 0) throw new Error(`${spec}: ${k} must be a number`);
+      knobs[key] = n;
+    }
+  }
+  return { spec: spec.trim(), base: m[2] as PolicyName, open: Number(m[1] ?? 0), knobs };
+}
+
+/** Policies that need the train population (to select, or for the static opening block). */
+export const needsPopulation = (s: PolicySpec) =>
+  s.base === 'pop-eig' || s.base === 'pop-static' || s.base === 'hybrid' || s.open > 0;
+
+/** The first `n` items from the static questionnaire, then `inner`. */
+export function openedPolicy(name: string, n: number, sequence: readonly string[], inner: Policy): Policy {
+  const opening = popStaticPolicy(sequence);
+  return {
+    name,
+    usesPopulation: inner.usesPopulation,
+    next: (ctx) => (ctx.asked.length < n ? opening.next(ctx) : inner.next(ctx)),
+  };
+}

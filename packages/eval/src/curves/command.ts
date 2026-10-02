@@ -33,12 +33,15 @@ import {
   JevOracle,
   jevEigPolicy,
   jevEntropyPolicy,
+  needsPopulation,
+  openedPolicy,
   orderPolicy,
   POLICY_DEFAULTS,
   POLICY_NAMES,
   type Policy,
   type PolicyKnobs,
   type PolicyName,
+  parsePolicySpec,
   popEigPolicy,
   popStaticPolicy,
   randomPolicy,
@@ -63,13 +66,20 @@ export async function walk(
   person: TwinPerson,
   policy: Policy,
   steps: number,
-  ctx: { jev: JevOracle; pop: Population | null; seed: string },
+  ctx: {
+    jev: JevOracle;
+    pop: Population | null;
+    seed: string;
+    /** Filled with each step's selection score (null when the policy has none). */
+    scores?: Array<number | null>;
+  },
 ): Promise<TwinItem[]> {
   const rng = seededRng(`${ctx.seed}:${policy.name}:${person.pid}`);
   const asked: TwinItem[] = [];
   let remaining = [...person.pool];
   const posterior = policy.usesPopulation && ctx.pop ? new PersonaPosterior(ctx.pop) : null;
   for (let t = 0; t < Math.min(steps, person.pool.length); t++) {
+    let score: number | null = null;
     const item = await policy.next({
       person,
       asked,
@@ -79,7 +89,11 @@ export async function walk(
       jev: ctx.jev,
       pop: ctx.pop,
       posterior,
+      note: (x) => {
+        score = x;
+      },
     });
+    ctx.scores?.push(score);
     if (!remaining.includes(item)) throw new Error(`${policy.name} picked ${item.key}, not in the pool`);
     asked.push(item);
     remaining = remaining.filter((i) => i !== item);
@@ -113,34 +127,49 @@ export function targetInstances(person: TwinPerson, asked: readonly TwinItem[], 
   }));
 }
 
+function basePolicy(
+  base: PolicyName,
+  knobs: PolicyKnobs,
+  seed: string,
+  staticSeq: readonly string[] | null,
+): Policy {
+  switch (base) {
+    case 'order':
+      return orderPolicy;
+    case 'random':
+      return randomPolicy;
+    case 'stratified':
+      return stratifiedPolicy;
+    case 'jev-entropy':
+      return jevEntropyPolicy(knobs);
+    case 'pop-eig':
+      return popEigPolicy(knobs, seed);
+    case 'pop-static':
+      if (!staticSeq) throw new Error('pop-static needs a static sequence');
+      return popStaticPolicy(staticSeq);
+    case 'jev-eig':
+      return jevEigPolicy(knobs, seed);
+    case 'hybrid':
+      return hybridPolicy(knobs, seed);
+  }
+}
+
+/** Policies from their specs (`parsePolicySpec`), each named by its spec. */
 export function buildPolicies(
-  names: readonly string[],
+  specs: readonly string[],
   knobs: PolicyKnobs,
   seed: string,
   staticSeq: readonly string[] | null,
 ): Policy[] {
-  return names.map((n) => {
-    switch (n) {
-      case 'order':
-        return orderPolicy;
-      case 'random':
-        return randomPolicy;
-      case 'stratified':
-        return stratifiedPolicy;
-      case 'jev-entropy':
-        return jevEntropyPolicy(knobs);
-      case 'pop-eig':
-        return popEigPolicy;
-      case 'pop-static':
-        if (!staticSeq) throw new Error('pop-static needs a static sequence');
-        return popStaticPolicy(staticSeq);
-      case 'jev-eig':
-        return jevEigPolicy(knobs, seed);
-      case 'hybrid':
-        return hybridPolicy(knobs, seed);
-      default:
-        throw new Error(`unknown policy ${n} (known: ${POLICY_NAMES.join(', ')})`);
+  return specs.map((raw) => {
+    const s = parsePolicySpec(raw);
+    const own = { ...knobs, ...s.knobs };
+    const inner = basePolicy(s.base, own, seed, staticSeq);
+    if (s.open > 0) {
+      if (!staticSeq) throw new Error(`${s.spec} needs the static questionnaire`);
+      return openedPolicy(s.spec, s.open, staticSeq, inner);
     }
+    return { ...inner, name: s.spec };
   });
 }
 
@@ -160,6 +189,8 @@ export interface RunOptions {
 export interface RunResult {
   records: CurveRecord[];
   trajectories: Map<string, Map<string, TwinItem[]>>;
+  /** Policy → person → each step's selection score (null where the policy has none). */
+  scores: Map<string, Map<string, Array<number | null>>>;
   costs: Record<string, { selection: number; scoring: number; requests: number }>;
   stopReason: string | null;
   staticSequence: string[] | null;
@@ -167,11 +198,12 @@ export interface RunResult {
 
 /** Runs every policy on every person, chunk by chunk, then scores the targets at each checkpoint. */
 export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<RunResult> {
-  const needsPop = opts.policies.some((p) => p === 'pop-eig' || p === 'hybrid' || p === 'pop-static');
+  const specs = opts.policies.map(parsePolicySpec);
+  const needsPop = specs.some(needsPopulation);
   const pop = needsPop ? new Population(opts.train, POPULATION_DEFAULTS) : null;
   const refKeys = [...new Set(opts.train.flatMap((p) => p.reference.map((r) => r.key)))];
   const staticSeq =
-    pop && opts.policies.includes('pop-static')
+    pop && specs.some((s) => s.base === 'pop-static' || s.open > 0)
       ? staticSequence(pop, opts.train, refKeys, {
           steps: Math.max(...opts.checkpoints),
           probes: opts.knobs.staticProbes,
@@ -183,6 +215,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
   const steps = Math.max(...opts.checkpoints);
   const records: CurveRecord[] = [];
   const trajectories = new Map<string, Map<string, TwinItem[]>>(policies.map((p) => [p.name, new Map()]));
+  const scores = new Map<string, Map<string, Array<number | null>>>(policies.map((p) => [p.name, new Map()]));
   const costs: RunResult['costs'] = Object.fromEntries(
     policies.map((p) => [p.name, { selection: 0, scoring: 0, requests: 0 }]),
   );
@@ -197,16 +230,18 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     }
     const before = deps.meter.usd;
     const chunkRecords: CurveRecord[] = [];
-    const chunkTraj: Array<{ policy: string; pid: string; asked: TwinItem[] }> = [];
+    const chunkTraj: Array<{ policy: string; pid: string; asked: TwinItem[]; scores: Array<number | null> }> =
+      [];
     const chunkCosts = new Map<string, { selection: number; scoring: number; requests: number }>();
     try {
       for (const policy of policies) {
         const jev = new JevOracle(predictorFor(deps.gateway, candidate, 'eval.curves.select'), deps.meter);
         const usd0 = deps.meter.usd;
-        const walks = await mapLimit(chunk, opts.concurrency, async (person) => ({
-          person,
-          asked: await walk(person, policy, steps, { jev, pop, seed: opts.seed }),
-        }));
+        const walks = await mapLimit(chunk, opts.concurrency, async (person) => {
+          const scores: Array<number | null> = [];
+          const asked = await walk(person, policy, steps, { jev, pop, seed: opts.seed, scores });
+          return { person, asked, scores };
+        });
         const usd1 = deps.meter.usd;
         const instances = walks.flatMap(({ person, asked }) =>
           opts.checkpoints.flatMap((k) => targetInstances(person, asked, k)),
@@ -228,7 +263,8 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
             rec,
           });
         });
-        for (const w of walks) chunkTraj.push({ policy: policy.name, pid: w.person.pid, asked: w.asked });
+        for (const w of walks)
+          chunkTraj.push({ policy: policy.name, pid: w.person.pid, asked: w.asked, scores: w.scores });
         chunkCosts.set(policy.name, {
           selection: usd1 - usd0,
           scoring: deps.meter.usd - usd1,
@@ -241,7 +277,10 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
       break;
     }
     records.push(...chunkRecords);
-    for (const t of chunkTraj) trajectories.get(t.policy)!.set(t.pid, t.asked);
+    for (const t of chunkTraj) {
+      trajectories.get(t.policy)!.set(t.pid, t.asked);
+      scores.get(t.policy)!.set(t.pid, t.scores);
+    }
     for (const [p, c] of chunkCosts) {
       const cur = costs[p]!;
       cur.selection += c.selection;
@@ -253,7 +292,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
       `people ${start + 1}–${start + chunk.length} of ${opts.people.length}: $${deps.meter.usd.toFixed(4)} so far`,
     );
   }
-  return { records, trajectories, costs, stopReason, staticSequence: staticSeq };
+  return { records, trajectories, scores, costs, stopReason, staticSequence: staticSeq };
 }
 
 const list = (v: string) =>
@@ -261,6 +300,23 @@ const list = (v: string) =>
     .split(',')
     .map((x) => x.trim())
     .filter(Boolean);
+
+/** Policy specs, split at commas outside brackets (`jev-eig[ref=pool,tsel=1],random`). */
+export function splitSpecs(v: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of v) {
+    if (ch === '[') depth++;
+    if (ch === ']') depth = Math.max(0, depth - 1);
+    if (ch === ',' && depth === 0) {
+      if (cur.trim()) out.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out;
+}
 
 export async function curvesCmd(argv: string[]): Promise<void> {
   const { values } = parseArgs({
@@ -283,6 +339,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       't-sel': { type: 'string', default: String(POLICY_DEFAULTS.tSel) },
       'answer-floor': { type: 'string', default: String(POLICY_DEFAULTS.answerFloor) },
       'static-probes': { type: 'string', default: String(POLICY_DEFAULTS.staticProbes) },
+      reference: { type: 'string', default: POLICY_DEFAULTS.reference },
       'train-people': { type: 'string' },
       name: { type: 'string' },
       out: { type: 'string' },
@@ -293,9 +350,8 @@ export async function curvesCmd(argv: string[]): Promise<void> {
   if (!values.data) throw new Error('--data is required (the Twin-2K-500 wave_split JSON Lines)');
   const role = values.role as Role;
   if (role !== 'dev' && role !== 'test') throw new Error('--role must be dev or test');
-  const policies = list(values.policies);
-  for (const p of policies)
-    if (!(POLICY_NAMES as readonly string[]).includes(p)) throw new Error(`unknown policy ${p}`);
+  const policies = splitSpecs(values.policies);
+  const specs = policies.map(parsePolicySpec);
   const checkpoints = [...new Set(list(values.checkpoints).map(Number))].sort((a, b) => a - b);
   if (checkpoints.some((k) => !Number.isInteger(k) || k < 0))
     throw new Error('--checkpoints are whole numbers');
@@ -306,9 +362,11 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     tSel: positive('t-sel', values['t-sel'], false),
     answerFloor: Number(values['answer-floor']),
     staticProbes: positive('static-probes', values['static-probes']),
+    reference: values.reference === 'pool' ? 'pool' : 'R',
   };
+  if (values.reference !== 'R' && values.reference !== 'pool') throw new Error('--reference is R or pool');
   const nPeople = positive('people', values.people);
-  const needsTrain = policies.some((p) => p.startsWith('pop-') || p === 'hybrid');
+  const needsTrain = specs.some(needsPopulation);
   const loaded = await loadPeople(values.data, {
     roles: needsTrain ? ['train', role] : [role],
     limitPerRole: {
@@ -377,6 +435,12 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     consistency,
     costs: result.costs,
     trajectories,
+    scores: new Map(
+      [...result.scores].map(([policy, m]) => [
+        policy,
+        new Map([...m].map(([pid, xs]) => [mimicIdOf(pid), xs])),
+      ]),
+    ),
     audit: {
       ...(loaded.audit as unknown as Record<string, unknown>),
       staticSequence: result.staticSequence?.slice(0, 10) ?? null,
