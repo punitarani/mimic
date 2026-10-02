@@ -2,8 +2,9 @@
 
 v1 · 2026-10-01 · Status: run on 2026-10-01 (Actions run `36926382050`, eval run `01M3WP08Q7MSSY0772PRNCQE27`, $2.00).
 Verdict: keep Jev. Readout: `docs/reports/e8-models.md`. ADR-0068. The rule in §5 was fixed before the first run.
-E8b (§9, ADR-0069) re-asks the question with every model at its best: designed, not run. Fastino's GLiDE is supported
-(ADR-0070) and runs in either when named in `predictors`.
+E8b (§9, ADR-0069) re-asks the question with every model at its best. It ran on 2026-10-02 (Actions run
+`36943686226`, eval run `01M3X0RN76Y4C8WY6V8AJP1M9C`, $5.96), and its verdict is also keep Jev. Readout:
+`docs/reports/e8b-tuning.md`. Fastino's GLiDE is supported (ADR-0070) and runs in either when named in `predictors`.
 
 E8 asks which decision model predicts a person best. Jev is Mimic's primary. span-01 is the challenger behind the
 `decisions-model` flag (ADR-0051). Cloudflare's clef and clef-flash, and Perplexity's decider, were released this week
@@ -308,4 +309,24 @@ another at E8's concurrency, so latency stays comparable.
 - **The grid is small and hand-written, on purpose.** Twenty configurations is deliberately few for nine people.
   Free-text prompt search per model (GEPA) would fit the served people, so it waits for more of them.
 - **One run date.** Clef and the decider have no snapshots, as in §7.
+
+**Result (2026-10-02): keep Jev** (`docs/reports/e8b-tuning.md`). The run read the 9 served people and Twin people
+201–300.
+- **No challenger is `better`, even at its best.** Tuned against tuned Jev, on served questions:
+  - clef-flash (`derived`) −0.028 [−0.058, +0.005], 1.7 points less accurate;
+  - the decider −0.015 [−0.043, +0.012], 3.1 points less accurate;
+  - clef −0.002, 2.8 points less accurate;
+  - span-01 +0.051, 8.9 points less accurate.
+  On Twin, clef, clef-flash and the decider still beat Jev. E8 itself replicated on the fresh people.
+- **Tuning doesn't generalize across nine people.** Jev's in-sample pick promised 1.150, and nested it scored 1.187,
+  worse than untuned (1.173). On Twin every gain is at most 0.009 nats. Only clef-flash's served choice was stable (9 of
+  9 folds).
+- **Tuned Jev is not better than Jev as served.** Production is unchanged, and no shadow or backfill follows.
+- **Jev isn't repeatable.** Its full-state served score moved by 0.007 between runs on the same requests, while every
+  challenger's repeated.
+
+**For the next run** (proposed after this one, so it binds only later runs):
+- Read each model's latency over all its arms in the run, not only the chosen one. Jev's p95 varied from 297 to 534 ms
+  between arms in the same job. That alone decided whether the decider passed.
+- Run when E7 has at least doubled the served people, with GLiDE named.
 

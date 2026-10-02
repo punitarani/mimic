@@ -2568,6 +2568,28 @@ remove. Each is fixed or reported before any tuned data exists (`docs/MODELS.md`
 
 The served people can't be fresh, and that stays a stated limit. GLiDE is supported (ADR-0070) but not in this run.
 
+**Result (2026-10-02; `docs/reports/e8b-tuning.md`).** Actions run `36943686226`, eval run
+`01M3X0RN76Y4C8WY6V8AJP1M9C`: the 9 served people (462 questions) and Twin people 201–300 at k = 30. It cost $5.96, and
+every canary passed. Verdict: keep Jev.
+- **E8 replicated on the fresh Twin people.** Every Twin gap repeated within 0.007.
+- **Tuned against tuned Jev, no challenger is better on served questions.**
+  - clef-flash on `derived`: −0.028 [−0.058, +0.005], −1.7 points;
+  - the decider: −0.015 [−0.043, +0.012], −3.1 points;
+  - clef: −0.002, −2.8 points;
+  - span-01: +0.051, `worse`.
+  None of the family-wise intervals excludes 0. Every challenger also fails the latency check.
+- **Nested selection was worth having.**
+  - Jev's in-sample pick (`full+plain`, a temperature per type) claimed 1.150. Scored nested, it was 1.187, worse
+    than untuned E8 (1.173).
+  - All of that gap is the one person whose fold chose differently.
+  - Only clef-flash's choice was stable on served questions (9 of 9 folds). On Twin, gains are at most 0.009 nats.
+- **Tuned Jev is not better than Jev as served** (+0.008 served, −0.000 Twin). No shadow config or backfill follows.
+- **Jev's full-state served score moved by 0.007 between E8's two runs on the same requests,** and nothing else's did.
+  Served differences of that size in Jev are noise.
+- **Proposed for the next run, not applied to this one:**
+  - read latency over all of a model's arms, since Jev's p95 moved from 297 to 534 ms between arms in one job;
+  - re-run once E7 has at least doubled the served people.
+
 ## ADR-0070 — Fastino's GLiDE in E8 and E8b, opt-in (2026-10-01)
 
 **Context.** Fastino released GLiDE on 1 October: a decision model that takes Jev's request on its own API

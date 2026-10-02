@@ -731,4 +731,11 @@ Everything but the last item is offline. The run is Actions → Decision models 
     - `packages/eval/test/models.test.ts`: the E8b report carries a family-wise interval per challenger;
     - the workflow's Twin slice (`range(offset, offset + n)`, clipped to the dataset) was checked on offsets 0, 200
       and past the end.
+  - **Run on real people (2026-10-02).** Actions → Decision models with `tune`, run `36943686226`, eval run
+    `01M3X0RN76Y4C8WY6V8AJP1M9C`, $5.96 of $20:
+    - all five canaries passed;
+    - 9 real people (462 served questions, 10 settings) and Twin-2K-500 people 201–300 (2,000 items at k = 30, 6
+      distinct settings);
+    - every setting scored the same instances (`tune` refuses otherwise);
+    - verdict: keep Jev (`docs/reports/e8b-tuning.md`).
   - By default the scripted people's served questions are left out.
