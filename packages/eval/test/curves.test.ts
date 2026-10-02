@@ -41,6 +41,7 @@ import {
   withoutItems,
 } from '../src/curves/data';
 import { embedTexts, textOf } from '../src/curves/embeddings';
+import { jevLift } from '../src/curves/lift';
 import {
   anchorOrder,
   JevOracle,
@@ -361,7 +362,9 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
     });
     expect(post.identity('twin2k/w13/QID25/1', w)).toBeCloseTo(id, 10);
     expect(parsePolicySpec('pop-eig[cls=16]').knobs.classes).toBe(16);
-    expect(() => buildPolicies(['random[cls=2]'], POLICY_DEFAULTS, 's', null, () => two)).toThrow(/cls/);
+    expect(() =>
+      buildPolicies(['random[cls=2]'], POLICY_DEFAULTS, 's', null, { classesOf: () => two }),
+    ).toThrow(/cls/);
   });
 
   it('tempers the likelihood: below 1 the weights spread over more train people', async () => {
@@ -416,6 +419,59 @@ describe('E9 population: the persona posterior (docs/CURVES.md §4)', () => {
   });
 });
 
+describe("E9 Jev's lift: what Jev reads from one answer (docs/CURVES.md §4)", () => {
+  it('measures each candidate on train people against R alone, never a dev person or a target', async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const train = all.filter((p) => p.role === 'train');
+    const { gateway, seen } = recordingGateway();
+    const candidates = ['twin2k/w13/QID11', 'twin2k/w13/QID50', 'twin2k/w13/QID40'];
+    const rows = await jevLift({
+      train,
+      candidates,
+      jev: jevFor(gateway),
+      people: 6,
+      seed: 's',
+      tSel: 4,
+      concurrency: 3,
+    });
+    expect(rows.map((r) => r.key).sort()).toEqual([...candidates].sort());
+    expect(rows.every((r) => r.n === 6 && Number.isFinite(r.lift) && r.se >= 0)).toBe(true);
+    for (let i = 1; i < rows.length; i++) expect(rows[i]!.lift).toBeGreaterThanOrEqual(rows[i - 1]!.lift);
+    const candidatePrompts = new Set(
+      train.flatMap((p) => p.pool.filter((i) => candidates.includes(i.key)).map((i) => i.prompt)),
+    );
+    const rPrompts = new Set(train.flatMap((p) => p.reference.map((r) => r.prompt)));
+    const tPrompts = new Set(all.flatMap((p) => p.targets.map((t) => t.prompt)));
+    // Six people: one baseline state each and one per candidate, every one predicting R only.
+    expect(seen.length).toBe(6 * (1 + candidates.length));
+    for (const req of seen) {
+      const state = req.state as PersonState;
+      expect(state.evidence.length).toBeLessThanOrEqual(1);
+      expect(state.evidence.every((e) => candidatePrompts.has(e.q))).toBe(true);
+      for (const q of Object.values(req.questions)) {
+        expect([...rPrompts].some((r) => q.instructions.includes(r))).toBe(true);
+        expect([...tPrompts].some((t) => q.instructions.includes(t))).toBe(false);
+      }
+    }
+    // Deterministic for a seed: the same people, the same answers from the cache-free fake.
+    const again = await jevLift({
+      train,
+      candidates,
+      jev: jevFor(recordingGateway().gateway),
+      people: 6,
+      seed: 's',
+      tSel: 4,
+      concurrency: 1,
+    });
+    expect(again).toEqual(rows);
+    expect(parsePolicySpec('jev-lift[lshort=30,lpeople=40]').knobs).toEqual({
+      liftShortlist: 30,
+      liftPeople: 40,
+    });
+    expect(() => buildPolicies(['jev-lift'], POLICY_DEFAULTS, 's', null)).toThrow(/lift table/);
+  });
+});
+
 describe('E9 given answers: what Mimic knows before the first question (docs/CURVES.md §4)', () => {
   it('moves a block out of the pool into every state and the posterior, never into k', async () => {
     const { people } = await loadPeople(fixture(40));
@@ -456,7 +512,20 @@ describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
       { ...POLICY_DEFAULTS, entropyShortlist: 6, lookaheadShortlist: 2 },
       seed,
       seq,
-      (k) => fitClasses(pop, classKeys(train), { k, seed }),
+      {
+        classesOf: (k) => fitClasses(pop, classKeys(train), { k, seed }),
+        liftSeq: (
+          await jevLift({
+            train,
+            candidates: [...new Set(train.flatMap((p) => p.pool.map((i) => i.key)))],
+            jev: jevFor(gateway),
+            people: 5,
+            seed,
+            tSel: 4,
+            concurrency: 2,
+          })
+        ).map((r) => r.key),
+      },
     );
     const jev = jevFor(gateway);
     const vectors = await embedTexts(
@@ -928,10 +997,9 @@ describe('E9 policy specs: variants and opening blocks (docs/CURVES.md §7)', ()
     // Then survey order, from the top.
     expect(asked[3]!.key).toBe(person.pool[0]!.key);
     // A custom opening is asked in its own order, the same for everyone.
-    const [custom] = buildPolicies(['custom-order'], POLICY_DEFAULTS, 's', null, undefined, [
-      planted[2]!.key,
-      planted[0]!.key,
-    ]);
+    const [custom] = buildPolicies(['custom-order'], POLICY_DEFAULTS, 's', null, {
+      custom: [planted[2]!.key, planted[0]!.key],
+    });
     const c = await walk(person, custom!, 3, { jev: jevFor(gateway), pop: null, seed: 's' });
     expect(c.map((i) => i.key)).toEqual([planted[2]!.key, planted[0]!.key, person.pool[0]!.key]);
     // Another person sees another order.

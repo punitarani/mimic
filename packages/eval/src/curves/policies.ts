@@ -121,6 +121,10 @@ export interface PolicyKnobs {
   mmr: number;
   /** Latent classes the persona posterior runs over (`classes.ts`); 0 runs it over the train people themselves. */
   classes: number;
+  /** `jev-lift`: candidates measured (the top by population transfer, plus production's anchors). */
+  liftShortlist: number;
+  /** `jev-lift`: train people each candidate is measured on. */
+  liftPeople: number;
   /**
    * What the lookahead and the persona posterior aim at: `R`, the wave 4 reference questions (the kind of decision
    * that will be scored), `pool`, a fixed sample of the person's own pool questions (no knowledge of the targets), or
@@ -140,6 +144,8 @@ export const POLICY_DEFAULTS: PolicyKnobs = {
   mmr: 0.5,
   reference: 'R',
   classes: 0,
+  liftShortlist: 60,
+  liftPeople: 60,
 };
 
 const argmaxBy = <T>(xs: readonly T[], f: (x: T) => number): T | undefined => {
@@ -481,6 +487,7 @@ export const POLICY_NAMES = [
   'sem-ref',
   'jev-eig',
   'hybrid',
+  'jev-lift',
 ] as const;
 export type PolicyName = (typeof POLICY_NAMES)[number];
 
@@ -530,6 +537,8 @@ const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
   mmr: 'mmr',
   ref: 'reference',
   cls: 'classes',
+  lshort: 'liftShortlist',
+  lpeople: 'liftPeople',
 };
 
 export function parsePolicySpec(spec: string): PolicySpec {
@@ -561,7 +570,7 @@ export function parsePolicySpec(spec: string): PolicySpec {
 
 /** Policies that ask Jev to select (none can run with `--no-jev`). */
 export const needsJev = (s: PolicySpec) =>
-  s.base === 'jev-entropy' || s.base === 'jev-eig' || s.base === 'hybrid';
+  s.base === 'jev-entropy' || s.base === 'jev-eig' || s.base === 'hybrid' || s.base === 'jev-lift';
 
 /** Policies that need the train population (to select, or for the static opening block). */
 export const needsPopulation = (s: PolicySpec) =>
@@ -570,6 +579,7 @@ export const needsPopulation = (s: PolicySpec) =>
   s.base === 'pop-entropy' ||
   s.base === 'pop-transfer' ||
   s.base === 'hybrid' ||
+  s.base === 'jev-lift' ||
   (s.open > 0 && s.opening === 'static');
 
 /**
