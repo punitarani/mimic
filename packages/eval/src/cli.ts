@@ -21,6 +21,7 @@ import { armsRun } from './arms';
 import { benchmarkCmd } from './benchmark';
 import { runCohort } from './cohort';
 import { NAMED_CONFIGS, registerNamedConfig } from './configs';
+import { curvesCmd } from './curves/command';
 import { ensembleRun } from './ensemble';
 import { evidenceCmd } from './evidence';
 import { datasetHash, exportData } from './export';
@@ -140,6 +141,15 @@ Commands
             [--chunk-people 10] [--skip-canary] [--drop-failed-canary (run on without models whose canary failed)]
             [--tune (E8b, MODELS.md §9: every model also in ten settings, each at the one nested
             leave-one-person-out cross-validation chooses)] [--publish local|preview|prod] [--summary <file>] [--offline]
+  curves    E9 (docs/CURVES.md): learning curves of question-selection policies on Twin-2K-500's recorded answers;
+            each policy asks a person up to 30 of their own answers, Jev predicts their wave 4 targets at each
+            checkpoint, and CURVES_RULE compares each policy with random
+            --data <wave_split.jsonl> [--role dev|test] [--people 150] [--policies order,random,… — a policy may
+            open with the static questionnaire and take its own knobs: open10-jev-eig[ref=pool,tsel=1,short=8]]
+            [--checkpoints 0,3,6,10,15,20,25,30] [--max-usd 60] [--concurrency 6] [--in-flight 16] [--chunk-people 10]
+            [--cache data/curves-cache] [--entropy-shortlist 60] [--shortlist 6] [--ref-size 20] [--t-sel 4]
+            [--answer-floor 0.05] [--static-probes 40] [--reference R|pool] [--train-people N] [--seed e9]
+            [--summary <file>] [--offline]
   optimize  GEPA-style reflective prompt optimization (docs/OPTIMIZATION.md §6); resumable with --run-dir
             --data … --predictor decision:typesafe/jev-1.13 | llm:<model> [--candidate <seed.json>] [--components a,b]
             [--max-metric-calls 400] [--max-usd 2] [--minibatch 8] [--val-size 60] [--holdout-size 80]
@@ -831,6 +841,8 @@ async function main() {
       return evidenceCmd(rest);
     case 'models':
       return modelsCmd(rest);
+    case 'curves':
+      return curvesCmd(rest);
     case 'optimize':
       return optimizeCmd(rest);
     default:

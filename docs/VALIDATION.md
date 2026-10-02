@@ -739,3 +739,32 @@ Everything but the last item is offline. The run is Actions → Decision models 
     - every setting scored the same instances (`tune` refuses otherwise);
     - verdict: keep Jev (`docs/reports/e8b-tuning.md`).
   - By default the scripted people's served questions are left out.
+
+## E9: learning curves for question selection (ADR-0071)
+
+- **Offline** (`packages/eval/test/curves.test.ts`, on a synthetic `wave_split` file with block names, a planted
+  duplicate and retests):
+  - roles and the R/T halves come from hashes, not file order;
+  - a pool item that repeats a wave 4 question is dropped (once per person), R and T share no question, and a
+    matrix's rows stay in one half;
+  - a state holds exactly the first k answers asked (`evidenceSeqMax` = k), and for the first k survey answers it is
+    the state the importer's path (`importTwin`, `loadInstances`) builds, hash for hash;
+  - the persona posterior's closed-form information equals brute-force enumeration of the joint, and an item everyone
+    answers alike carries none;
+  - every policy, flipping every R and T answer leaves what it asks unchanged; no request shows a T prompt in its
+    state or asks it;
+  - a seed fixes a run, and random policies move with it;
+  - the request cache answers a repeat from disk at no cost (key order irrelevant), treats a torn file as a miss, and
+    never keeps a failure;
+  - each (policy, k) cell gets its own leave-one-out temperature; AULC averages each target over the checkpoints;
+  - an offline run pairs every policy on the same people; a cap that cuts a chunk drops it for every policy; a rerun
+    from the cache costs nothing; the report renders.
+  - policy specs parse their knobs and opening blocks and refuse anything else; `--policies` splits only at commas
+    outside brackets; an opened policy asks the static questionnaire first, then hands over; each step records its
+    score (none for the opening);
+  - the stopping analysis stops each person where the score drops and compares with the fixed length of the same
+    mean (a worked example: 4.5 questions, 70% against 65%).
+  - the population reader gives a normalised distribution for every target at every checkpoint, and on the fixture's
+    one-trait people five answers read the trait-driven targets better than none.
+- **Live machinery check** (2026-10-02): all eight policies on 4 dev people, $0.36; Jev answered through the local
+  proxy and the cache.
