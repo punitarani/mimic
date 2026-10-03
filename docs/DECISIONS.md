@@ -2679,3 +2679,32 @@ field is optional and undefaulted, so every existing config, and its hash, is un
 
 **Consequences.** An arm can ship an opening exactly as E9 measured it (`custom-<policy>` in `pnpm eval -- curves`).
 No served config sets it yet.
+
+## ADR-0073 — E9's opening as an arm: politics and money once the trust ramp opens (2026-10-03)
+
+**Context.** E9 (ADR-0071) measured question selection for Jev on Twin-2K-500's recorded answers, in the setting Mimic
+is in: demographics known before the first question, politics and money asked only after the six-answer trust ramp.
+The confirmatory run on 200 test people (`docs/CURVES.md` §10, `docs/reports/e9-curves.md` §T) was pre-registered
+before any Jev-scored run of that setting. Its primary contrast is the opening below, as Twin asks it, against
+production's `anchors.v1`, as Twin asks it. The opening beat production's: AULC log loss −0.0308 [−0.0396, −0.0225] and
++2.5 points of accuracy at 30 questions.
+
+**Decision.**
+- `anchors.e9.v1` (`packages/core/src/ontology/opening.ts`): eight reserve-bank questions, in this order, asked as
+  anchors (`anchors.order: 'fixed'`, ADR-0072).
+  - Six on money and possessions: materialism, a windfall, two mental-accounting items, gut or deliberate, research
+    before buying.
+  - Then, consented only, political leaning and financial security.
+  - The wording is the reviewed reserve wording, and none touches E7's shared-probe facets.
+- `cfg.e9.opening` is `cfg.e7.probes` with this opening; everything after it, the selector included, is the default's.
+  The `e9` preset in `/lab` pairs the two 1:1 as a draft, so E7's probes measure the opening on real people.
+- An anchor touching a sensitive facet waits for the trust ramp, as any question does (`serveOnce`). The anchors after
+  it are served first. No `anchors.v1` item is sensitive, so existing configs behave exactly as before.
+
+**Consequences.**
+- On Twin the gain comes from the two sensitive questions: the six others alone are level with production's opening.
+  It is mostly on decisions about policies, 1.605 → 1.522 log loss on the false-consensus items, with a smaller gain
+  on pricing (0.671 → 0.660). A leaner arm, production's anchors then the two, was not tested and is not shipped.
+- E7's probes never touch a sensitive facet, so on real people they measure only the part that transfers to other
+  decisions, which Twin suggests is real but small.
+- `cfg.default` is unchanged. The arm starts only when a person starts the `e9` experiment in `/lab`.

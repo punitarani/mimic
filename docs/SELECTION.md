@@ -128,8 +128,8 @@ rejected, can't leave a gap.
 
 **Trust ramp.** No question touching a sensitive facet is served before six anchor and adaptive answers. The engine
 removes such candidates from the pool (and the reserve) before selection, and the selector excludes them with no
-exception. Anchors come first and are never sensitive, so the ramp matters when a person turns psychology off and only
-three anchors are seeded. Sensitive items late in an instrument, after rapport and less intrusive items, are answered
+exception. `anchors.v1` holds no sensitive item; an anchor that touches a sensitive facet (`anchors.e9.v1`'s last two)
+waits for the ramp like any question, and the anchors after it are served first (ADR-0073). Sensitive items late in an instrument, after rapport and less intrusive items, are answered
 more honestly (Tourangeau & Yan 2007).
 
 **Sweep.** From ten answers, a candidate touching a consented sensitive facet no answered question has touched earns
@@ -146,6 +146,20 @@ of sensitive facets it may ask about.
 Offline mechanism checks (scripted answers, fakes that tag what they are told; not results) are in
 `packages/eval/test/balance.test.ts` and ADR-0044. `pnpm eval -- rubric` reports the same rows on any data file, split
 into real, scripted and imported people.
+
+## 5b. E9's opening (`cfg.e9.opening`, ADR-0073)
+
+E9 measured selection for Jev on Twin-2K-500's recorded answers (`docs/CURVES.md`, `docs/reports/e9-curves.md`). In
+Mimic's setting (demographics known, politics and money only after the ramp), what helped Jev most was to ask the
+person's political views and income as soon as the ramp opened. On 200 test people this beat production's opening by
+0.031 nats of AULC log loss and 2.5 points of accuracy at 30 questions. Production's opening, the money-and-possessions
+questions on their own, Jev's own uncertainty and adaptive selection over latent classes were each about as good as
+random.
+
+`cfg.e9.opening` asks `anchors.e9.v1` in its own order. Six reserve questions come first: materialism, a windfall, two
+mental-accounting items, gut or deliberate, research before buying. Then come political leaning and financial
+security, consented only and held back by the ramp. The rest of the session is the default's. The `e9` preset in
+`/lab` runs it against `cfg.e7.probes`.
 
 ## 6. Persona posterior: the loop within a person
 
