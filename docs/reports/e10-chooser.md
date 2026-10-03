@@ -1,8 +1,8 @@
 # E10 readout: who picks the next question (ADR-0074)
 
-**Status: interim.** Stages 1 and 2a ran on 2026-10-03. The pilot stopped when the OpenRouter account ran out of
-credits at 07:35 UTC (HTTP 402, `limit_source: openrouter_credits`; total usage $190.44 against $190 of credits). Stages
-2b–4 wait for credits.
+**Status: interim.** Stages 1, 2a and 2b ran on 2026-10-03; 2c is running. The pilot stopped when the OpenRouter
+account ran out of credits at 07:35 UTC (HTTP 402, `limit_source: openrouter_credits`; total usage $190.44 against
+$190 of credits). Credits were added by 10:48 UTC and the screen ran then.
 
 Design and rules: `docs/CHOOSER.md`. Every number here comes from dev people. Twin people rank designs for Jev on
 Twin's questions; they never stand in for a Mimic user.
@@ -44,7 +44,46 @@ Twin's questions; they never stand in for a Mimic user.
 Spend: the headroom bench cost $3.25. The pilot cost $0.47 before the credits ran out. The pilot's LLM choosers did
 not finish, so its 20-person chunk was dropped, and no LLM chooser result exists yet.
 
-## Next, once credits are added
+## Stage 2b: the screen (100 dev people, $1.38, run after credits were added)
+
+Each chooser picks from the same 12-candidate batch, after 8, 14 and 21 answers. It is scored by its pick's one-step
+gain on the person's targets over the batch's mean gain, which is what a random pick gets on average. Intervals are
+90%, by person.
+
+| Chooser | Δ log loss vs random | Δ accuracy, points | Latency p50 / p95 |
+| --- | --- | --- | --- |
+| `random[b=12]` (control) | −0.0017 [−0.0037, +0.0002] | +0.11 [−0.11, +0.34] | — |
+| `llm-gen[llm=luna]` | −0.0010 [−0.0025, +0.0005] | +0.03 [−0.22, +0.27] | 4.1 / 8.4 s |
+| `llm-gen[llm=luna,n=3]` | −0.0009 [−0.0026, +0.0006] | −0.16 [−0.42, +0.11] | 4.2 / 5.7 s |
+| `jev-pick[form=noul,aim=r]` | −0.0003 [−0.0018, +0.0012] | −0.01 [−0.28, +0.26] | 0.30 / 0.49 s |
+| `llm-pick[llm=luna]` | +0.0004 [−0.0009, +0.0017] | +0.08 [−0.15, +0.31] | 3.6 / 5.3 s |
+| `jev-pick[form=noul]` | +0.0006 [−0.0007, +0.0020] | −0.30 [−0.53, −0.08] | 0.28 / 0.46 s |
+| `jev-pick[form=noul,state=off]` | +0.0006 [−0.0005, +0.0018] | −0.02 [−0.21, +0.17] | 0.27 / 0.49 s |
+| `jev-pick[form=noul,aim=none]` | +0.0007 [−0.0005, +0.0020] | −0.22 [−0.46, +0.04] | 0.27 / 0.41 s |
+| `jev-pick[form=score]` | +0.0008 [−0.0003, +0.0020] | −0.05 [−0.24, +0.15] | 0.29 / 0.40 s |
+| `jev-gate[llm=luna]` | +0.0013 [−0.0001, +0.0026] | −0.11 [−0.36, +0.14] | 0.28 / 0.42 s |
+| `jev-pick` (choice) | +0.0014 [+0.0001, +0.0029] | −0.14 [−0.36, +0.10] | 0.28 / 0.43 s |
+| `llm-pick[llm=luna,lag=1]` | +0.0016 [+0.0002, +0.0031] | +0.12 [−0.12, +0.36] | 3.6 / 5.4 s |
+| `llm-pick[llm=luna,aim=r]` | +0.0019 [+0.0006, +0.0032] | +0.04 [−0.19, +0.26] | 3.8 / 6.0 s |
+
+Against the cross-fitted headroom of −0.0060 [−0.0081, −0.0041] for a batch of 12:
+
+1. **No chooser finds the better questions.** None is below random with an interval below 0. Three are slightly
+   worse: Jev's choice form, and Luna with `aim=r` or `lag=1`. The best two, the LLM writing a question, recover
+   about a sixth of the headroom, within noise. Jev and an LLM read the person and the candidates, but neither can
+   tell which answer Jev will learn the most from.
+2. **Jev almost never asks for a written question.** In `jev-gate`, "none of these" won once in 300 steps, so
+   choosing between the batch and generation reduces to Jev's pick.
+3. **Choosers that can't tell candidates apart lean on position.** 31% of Jev's picks and 34% of Luna's fall in the
+   first fifth of the shown list (uniform is 20%), with neutral keys in a seeded order.
+4. **Written questions ground loosely.** Luna's questions are plausible everyday ones ("If you unexpectedly received
+   $1,000, what would you most likely do with it?"). They map to the nearest recorded item at a median cosine of 0.68,
+   and Luna takes 4 s a question at the median and 8.4 s at the 95th percentile.
+
+By the screen's rule (§4: none beats random, so the top two go on), stage 2c walks `llm-gen[llm=luna]` with `n=1` and
+`n=3`, plus Jev's yes/no form, whose 10-person pilot had looked best, against `custom-random`.
+
+## Next
 
 - **2b, the screen:** the bench (`--bench 8,14,21`, gains already cached) for:
   - `jev-pick` in each form, with `state=off` and `aim=r`;
