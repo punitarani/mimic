@@ -115,7 +115,8 @@ If a task seems to require breaking one of these, stop and ask.
   (`docs/reports/e9-curves.md` §T, ADR-0073): asking political views and income once the trust ramp opens beats
   production's opening for Jev, mostly on decisions about policies. It ships as `cfg.e9.opening` (`anchors.e9.v1`,
   `anchors.order: 'fixed'`), the `e9` preset in `/lab` against `cfg.e7.probes`. Jev's own uncertainty doesn't beat
-  random at choosing.
+  random at choosing. Round 5 (`docs/CURVES.md` §11, `ENOUGH_RULE`): with that opening 20 answers are within a point of
+  30, so sessions stay at 30 (no shorter arm); pricing decisions keep improving to 30.
 - Scope and consent (ADR-0040, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and sensitive facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`), each behind its own consent (ticked by default at intake, ADR-0049); special-category areas also need a confirmation, and declined facets ("Prefer not to say") are blocked (ADR-0050, both enforced in `facetAllowed`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
 - Research directions and their experiments live in `docs/RESEARCH.md`. The evals behind them: `transfer` (what an
   export loses, ADR-0057), `ensemble` (pools of stored predictions, ADR-0058), `population` (a synthetic cohort,

@@ -10,7 +10,9 @@ opening that asks the person's political views and income once the ramp opens be
 AULC log loss −0.031 [−0.040, −0.023] and +2.5 points of accuracy at 30 questions on 200 test people. The gain comes
 from those two questions, mostly on decisions about policies; the opening's money-and-possessions questions add
 little. Jev's own uncertainty, the selector's information term, is no better than random at choosing (round 1) and
-worse in Mimic's setting (round 4b).
+worse in Mimic's setting (round 4b). On 197 more test people (round 5) the gain replicates (−0.025 [−0.033, −0.017]);
+with that opening 20 answers are enough (within a point of 30), so the session stays at 30. Pricing decisions keep
+improving to 30, and after eight questions the opening is already level with production's at thirty (exploratory).
 
 ## Round 0: the long horizon (dev, 150 people)
 
@@ -233,3 +235,47 @@ the size of the gain on Mimic's decisions is for the arm to show on real people.
 sensitive facet, measure the part that transfers to other decisions; Twin suggests it is real but small (pricing
 0.671 → 0.660).
 
+
+## Round 5: how few questions are enough (test people, pre-registered)
+
+Run `01M3ZRKCWT5VTWQP5T755HNT2T`, $1.62, the other 197 test people (§T read the first 200), read once, exactly as
+`docs/CURVES.md` §11 fixed it. No outage, no early stop. `ENOUGH_RULE`: a k is enough when, against k = 30 on the same
+people and targets, accuracy is at most 1 point lower and log loss at most 0.01 nats higher, both 90% intervals inside.
+
+| Opening | k = 0 | 3 | 6 | 8 | 10 | 12 | 15 | 20 | 25 | 30 | Enough from |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| E9's (`custom-random`) | 0.953 / 58.7% | 0.950 / 63.4% | 0.950 / 62.1% | 0.910 / 63.0% | 0.910 / 63.3% | 0.909 / 63.1% | 0.908 / 63.7% | 0.907 / 64.0% | 0.905 / 63.9% | 0.905 / 64.3% | **k = 20** |
+| production's (`anchors-random`) | 0.953 / 58.7% | 0.948 / 60.5% | 0.948 / 61.3% | 0.946 / 62.0% | 0.945 / 62.0% | 0.946 / 61.5% | 0.945 / 61.7% | 0.943 / 62.1% | 0.940 / 62.4% | 0.939 / 62.7% | k = 25 |
+
+Calibrated log loss / accuracy; fidelity at 20 and 30 is 76.3% and 76.6% with E9's opening, 74.1% and 74.8% with
+production's (the people's own retest agreement is 83.8%).
+
+**Decision (pre-registered): no shorter arm.** E9's opening is enough from 20 answers, above the 15 the rule needed.
+With it, k = 15 against k = 30 is −0.6 points [−1.0, −0.1] of accuracy and +0.0030 nats [+0.0003, +0.0058] of log
+loss: close, but the accuracy interval's lower end crosses the 1-point bound. `cfg.e9.opening` keeps the default's 30.
+
+**Pricing alone (informs, decides nothing).** On the pricing targets neither opening is enough before 30: each answer
+keeps adding a little (E9's opening: 61.9% at 10, 62.3% at 15, 62.9% at 20, 63.3% at 30). On the heuristics-and-biases
+targets E9's opening is enough from 15, and k = 8 already passes: the two sensitive questions deliver what those targets
+gain, and nothing after them adds to it. So the answer of 20 is pricing's slow climb, not the opening's.
+
+**Replication (no decision).** E9's opening against production's on these 197 people: AULC log loss −0.0248
+[−0.0328, −0.0169], accuracy at 30 +1.5 points [+0.5, +2.5], 133 people better and 64 worse. §T's result holds on
+people it did not read, a little smaller (−0.0308 there). On pricing alone the AULC difference is −0.0055 [−0.0139,
++0.0029] (accuracy +1.7 points [+0.2, +3.1]).
+
+**Exploratory (not pre-registered): fewer questions than today for the same result.** E9's opening after k answers
+against production's after 30, same people and targets:
+
+| E9's opening at | Δ accuracy, points | Δ log loss |
+| --- | --- | --- |
+| 8 | +0.3 [−0.9, +1.4] | −0.0287 [−0.0394, −0.0185] |
+| 10 | +0.6 [−0.6, +1.7] | −0.0288 [−0.0398, −0.0184] |
+| 15 | +0.9 [−0.2, +2.0] | −0.0309 [−0.0420, −0.0202] |
+| 20 | +1.2 [+0.1, +2.3] | −0.0322 [−0.0434, −0.0213] |
+
+After its eighth question, E9's opening is level with production's thirtieth on accuracy and better on log loss. This
+is a comparison the `e9` preset can make on real people with no new arm: both arms ask E7's probes after 0, 10, 20 and
+30 answers, and the near and mid tiers are asked at 10 and at 30, so the opening arm's lift over the context-only
+baseline at 10 can be read against the control's at 30 (`pnpm eval -- probes`, `docs/PROBE.md` §4). Twin's
+policy-opinion targets carry much of this, so it is a hypothesis for real people, not a result about them.

@@ -253,3 +253,6 @@ The answer for a policy is the smallest k from which every later checkpoint is e
   informs the arm and decides nothing.
 
 If the run stops early, the people completed are the result. Nothing is re-run on these people.
+
+**Result** (`docs/reports/e9-curves.md`, round 5): `custom-random` is enough from k = 20, `anchors-random` from 25.
+Above 15, so no shorter arm. On pricing alone neither is enough before 30.
