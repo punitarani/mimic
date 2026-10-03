@@ -1,23 +1,16 @@
 import { LAB_PEOPLE_SORTS, type LabPeopleSort, labMimics, POPULATIONS, type Population } from '@mimic/core';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { TopBar } from '@/components/brand';
 import { Sparkline } from '@/components/charts';
 import { DeleteMimicButton, DeletePersonButton } from '@/components/lab-mimics';
-import { ago, Badge, Chip, LabNav, pct, usd } from '@/components/lab-ui';
+import { ago, Badge, Chip, LabNav, POPULATION_LABEL, pct, usd } from '@/components/lab-ui';
 import { deps, isAdmin } from '@/lib/server';
 
 export const dynamic = 'force-dynamic';
 
 const PAGE = 50;
-
-const POPULATION_LABEL: Record<Population | 'all', string> = {
-  all: 'Everyone',
-  real: 'Real people',
-  scripted: 'Scripted',
-  twin2k: 'Twin-2K-500',
-};
 
 const SORT_LABEL: Record<LabPeopleSort, string> = {
   recent: 'Recently active',
@@ -34,11 +27,25 @@ interface Params {
   page?: string;
 }
 
-/** `/lab/mimics` (ADR-0075): every person and their mimics, with fidelity at a glance and hard delete. */
-export default async function LabPeople({ searchParams }: { searchParams: Promise<Params> }) {
+/** A repeated query parameter arrives as an array: read its first value. */
+const first = (v: string | string[] | undefined): string | undefined => (Array.isArray(v) ? v[0] : v);
+
+/** `/lab/mimics` (ADR-0076): every person and their mimics, with fidelity at a glance and hard delete. */
+export default async function LabPeople({
+  searchParams,
+}: {
+  searchParams: Promise<Record<keyof Params, string | string[] | undefined>>;
+}) {
   const { deps: d, env } = await deps();
   if (!(await isAdmin(env))) notFound();
-  const sp = await searchParams;
+  const raw = await searchParams;
+  const sp: Params = {
+    population: first(raw.population),
+    consent: first(raw.consent),
+    q: first(raw.q),
+    sort: first(raw.sort),
+    page: first(raw.page),
+  };
   // Real people by default: imported panels hold thousands of people and would bury them.
   const population: Population | 'all' =
     sp.population === 'all' ? 'all' : (POPULATIONS.find((p) => p === sp.population) ?? 'real');
@@ -67,6 +74,8 @@ export default async function LabPeople({ searchParams }: { searchParams: Promis
     const qs = new URLSearchParams(next).toString();
     return qs ? `/lab/mimics?${qs}` : '/lab/mimics';
   };
+  // Past the last page (its last person was just deleted, or a stale link): go to the last page that has people.
+  if (page > pages) redirect(href({ page: pages > 1 ? String(pages) : undefined }));
 
   return (
     <div className="min-h-dvh">
@@ -154,7 +163,9 @@ export default async function LabPeople({ searchParams }: { searchParams: Promis
             {q ? `No one matches "${q}".` : 'No one here yet.'}
           </p>
         ) : (
-          <div className="overflow-x-auto rounded-[var(--radius-card)] border border-line bg-raised">
+          // `relative` keeps the absolutely positioned sr-only header inside the scroller; without it the page
+          // itself scrolls sideways on a phone.
+          <div className="relative overflow-x-auto rounded-[var(--radius-card)] border border-line bg-raised">
             <table className="w-full text-left text-[13px] tabular">
               <thead className="border-b border-line bg-surface text-muted">
                 <tr>
@@ -193,9 +204,14 @@ export default async function LabPeople({ searchParams }: { searchParams: Promis
                             <span className="text-[12px] text-muted">
                               since {new Date(p.createdAt).toLocaleDateString()}
                             </span>
+                            {p.ownedMimics > p.mimics.length && (
+                              <span className="text-[12px] text-muted">
+                                {p.ownedMimics - p.mimics.length} more not shown
+                              </span>
+                            )}
                             <DeletePersonButton
                               participantId={p.participantId}
-                              mimics={p.mimics.length}
+                              mimics={p.ownedMimics}
                               className="-ml-1.5"
                             />
                           </div>

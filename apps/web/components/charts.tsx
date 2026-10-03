@@ -1,6 +1,8 @@
 /** Small server-renderable SVG charts for /lab. */
 
 const PALETTE = ['#2d4fb3', '#a9543a', '#4a7f62', '#7a5ba8', '#66707d', '#c08a2d'];
+/** Series past the palette reuse its colours dashed, so a chart with shadows never draws two lines alike. */
+const dashOf = (i: number) => (i >= PALETTE.length ? '6 3' : undefined);
 
 export function LineChart({
   series,
@@ -60,6 +62,7 @@ export function LineChart({
             stroke={PALETTE[i % PALETTE.length]}
             strokeWidth="2"
             strokeLinejoin="round"
+            strokeDasharray={dashOf(i)}
             points={s.points.map((p) => `${sx(p.x)},${sy(p.y)}`).join(' ')}
           />
         ))}
@@ -70,7 +73,17 @@ export function LineChart({
       <figcaption className="mt-1 flex flex-wrap gap-3 text-[12px] text-muted">
         {series.map((s, i) => (
           <span key={s.name} className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-4" style={{ background: PALETTE[i % PALETTE.length] }} />
+            <svg width="16" height="2" aria-hidden="true" className="shrink-0">
+              <line
+                x1="0"
+                x2="16"
+                y1="1"
+                y2="1"
+                stroke={PALETTE[i % PALETTE.length]}
+                strokeWidth="2"
+                strokeDasharray={dashOf(i)}
+              />
+            </svg>
             {s.name}
           </span>
         ))}

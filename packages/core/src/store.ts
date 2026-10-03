@@ -439,6 +439,8 @@ export interface Store {
   }): Promise<PredictionRecord[]>;
   getAnswerByIdempotencyKey(key: string): Promise<AnswerRecord | null>;
   getAnswerForQuestion(questionId: string): Promise<AnswerRecord | null>;
+  /** Answers given per mimic (feedback included), in few queries; mimics with none are absent. */
+  countAnswers(mimicIds: readonly string[]): Promise<Map<string, number>>;
   listAnswers(mimicId: string): Promise<AnswerRecord[]>;
   /**
    * Atomically stores the answer, marks the question answered and writes the scores. Returns false, writing

@@ -12,7 +12,7 @@ import type { Domain, Option, QKind, QType } from '../types';
 import { loadMimicData } from './data';
 import { type EngineDeps, requireMimic } from './deps';
 
-/** One mimic in the `/lab/mimics` directory (ADR-0075). */
+/** One mimic in the `/lab/mimics` directory (ADR-0076). */
 export interface LabMimicRow {
   id: string;
   participantId: string;
@@ -27,7 +27,7 @@ export interface LabMimicRow {
   configLabel: string | null;
   experimentId: string | null;
   arm: string | null;
-  /** Highest answer seq: answers given, feedback included. */
+  /** Answers given, feedback included (not `seqMax`, which also counts the question being asked). */
   answers: number;
   /** Latest fidelity row's value, accuracy and baseline accuracy; null before the first scored answer. */
   fidelity: number | null;
@@ -44,7 +44,10 @@ export interface LabMimicRow {
 export interface LabPerson {
   participantId: string;
   population: Population;
+  /** The mimics matching the filter. */
   mimics: LabMimicRow[];
+  /** Every mimic the person owns, filtered out or not: what deleting the person removes. */
+  ownedMimics: number;
   answers: number;
   spendUsd: number;
   createdAt: number;
@@ -79,6 +82,7 @@ export function mimicRow(
   m: MimicRecord,
   fid: FidelityRecord[],
   configLabels: ReadonlyMap<string, string | null>,
+  answers: number,
 ): LabMimicRow {
   const last = fid.at(-1);
   return {
@@ -95,7 +99,7 @@ export function mimicRow(
     configLabel: configLabels.get(m.configHash) ?? null,
     experimentId: m.experimentId,
     arm: m.arm,
-    answers: m.seqMax,
+    answers,
     fidelity: last?.fidelity ?? null,
     accuracy: last?.acc ?? null,
     baselineAccuracy: last?.accBaseline ?? null,
@@ -107,17 +111,19 @@ export function mimicRow(
 }
 
 /**
- * `/lab/mimics` (ADR-0075): every person and their mimics, for ops. Unlike `/lab`'s research numbers this lists
+ * `/lab/mimics` (ADR-0076): every person and their mimics, for ops. Unlike `/lab`'s research numbers this lists
  * everyone, consented or not; each row says whether the person consented to research use and who they are
  * (`populationOf`).
  */
 export async function labMimics(deps: EngineDeps, filter: LabMimicsFilter = {}): Promise<LabMimics> {
-  const [all, configs] = await Promise.all([
-    deps.store.listMimics(
-      filter.consentResearch === undefined ? {} : { consentResearch: filter.consentResearch },
-    ),
-    deps.store.listConfigs(),
-  ]);
+  const [everyone, configs] = await Promise.all([deps.store.listMimics({}), deps.store.listConfigs()]);
+  // Owned counts ignore every filter: deleting a person removes all their mimics, shown or not.
+  const owned = new Map<string, number>();
+  for (const m of everyone) owned.set(m.participantId, (owned.get(m.participantId) ?? 0) + 1);
+  const all =
+    filter.consentResearch === undefined
+      ? everyone
+      : everyone.filter((m) => m.consentResearch === filter.consentResearch);
   const counts: Record<Population | 'all', number> = { all: all.length, real: 0, scripted: 0, twin2k: 0 };
   for (const m of all) counts[populationOf(m.participantId)]++;
   const q = filter.query?.trim().toLowerCase();
@@ -130,13 +136,20 @@ export async function labMimics(deps: EngineDeps, filter: LabMimicsFilter = {}):
         )),
   );
   const byPerson = new Map<string, MimicRecord[]>();
-  for (const m of mimics) byPerson.set(m.participantId, [...(byPerson.get(m.participantId) ?? []), m]);
+  for (const m of mimics) {
+    const ms = byPerson.get(m.participantId);
+    if (ms) ms.push(m);
+    else byPerson.set(m.participantId, [m]);
+  }
+  const sort = filter.sort ?? 'recent';
+  // Ranking by answers counts every candidate's answers; otherwise only the page's mimics are counted.
+  const rankCounts = sort === 'answers' ? await deps.store.countAnswers(mimics.map((m) => m.id)) : null;
   const key = (ms: MimicRecord[]): number => {
-    switch (filter.sort ?? 'recent') {
+    switch (sort) {
       case 'created':
         return Math.min(...ms.map((m) => m.createdAt));
       case 'answers':
-        return ms.reduce((s, m) => s + m.seqMax, 0);
+        return ms.reduce((s, m) => s + (rankCounts?.get(m.id) ?? 0), 0);
       case 'spend':
         return ms.reduce((s, m) => s + m.spendUsd, 0);
       case 'recent':
@@ -149,18 +162,26 @@ export async function labMimics(deps: EngineDeps, filter: LabMimicsFilter = {}):
   const offset = Math.max(0, filter.offset ?? 0);
   const page = ranked.slice(offset, offset + Math.max(1, filter.limit ?? 50));
 
+  const pageIds = page.flatMap((p) => p.ms.map((m) => m.id));
+  const [fidelityRows, answerCounts] = await Promise.all([
+    deps.store.listFidelityFor(pageIds),
+    rankCounts ?? deps.store.countAnswers(pageIds),
+  ]);
   const fidelity = new Map<string, FidelityRecord[]>();
-  for (const f of await deps.store.listFidelityFor(page.flatMap((p) => p.ms.map((m) => m.id)))) {
-    fidelity.set(f.mimicId, [...(fidelity.get(f.mimicId) ?? []), f]);
+  for (const f of fidelityRows) {
+    const fs = fidelity.get(f.mimicId);
+    if (fs) fs.push(f);
+    else fidelity.set(f.mimicId, [f]);
   }
   const labels = new Map(configs.map((c) => [c.hash, c.label]));
   const people: LabPerson[] = page.map(({ participantId, ms }) => {
-    const rows = ms.map((m) => mimicRow(m, fidelity.get(m.id) ?? [], labels));
+    const rows = ms.map((m) => mimicRow(m, fidelity.get(m.id) ?? [], labels, answerCounts.get(m.id) ?? 0));
     rows.sort((a, b) => b.updatedAt - a.updatedAt);
     return {
       participantId,
       population: populationOf(participantId),
       mimics: rows,
+      ownedMimics: owned.get(participantId) ?? rows.length,
       answers: rows.reduce((s, r) => s + r.answers, 0),
       spendUsd: rows.reduce((s, r) => s + r.spendUsd, 0),
       createdAt: Math.min(...rows.map((r) => r.createdAt)),
@@ -178,7 +199,10 @@ export interface LabQuestionRow {
   domain: Domain;
   status: QuestionStatus;
   servedAt: number | null;
-  /** The person's scope hides this question: its prompt, options and answer are withheld here too (ADR-0040). */
+  /**
+   * The person's scope hides this question: its prompt, facets, options, answer and the guesses' option keys and labels
+   * are withheld here too (ADR-0040).
+   */
   hidden: boolean;
   prompt: string | null;
   facetIds: string[];
@@ -250,7 +274,7 @@ export function accuracyCurves(rows: ScoredRow[], seqOf: ReadonlyMap<string, num
 
 const ROLE_ORDER: Record<string, number> = { primary: 0, baseline: 1, shadow: 2, hypothesis: 3 };
 
-/** `/lab/mimics/[id]` (ADR-0075): one mimic's questions, answers, predictions, accuracy over time and cost. */
+/** `/lab/mimics/[id]` (ADR-0076): one mimic's questions, answers, predictions, accuracy over time and cost. */
 export async function labMimic(deps: EngineDeps, mimicId: string): Promise<LabMimicDetail> {
   const m = await requireMimic(deps, mimicId);
   const [loaded, fid, scored, preds, calls, configs, experiments, siblings] = await Promise.all([
@@ -261,7 +285,10 @@ export async function labMimic(deps: EngineDeps, mimicId: string): Promise<LabMi
     deps.store.listModelCalls({ mimicId: m.id, limit: 100_000 }),
     deps.store.listConfigs(),
     deps.store.listExperiments(),
-    deps.store.listMimics({ participantId: m.participantId }),
+    deps.store.listMimics({ participantId: m.participantId }).then(async (ms) => {
+      const others = ms.filter((s) => s.id !== m.id);
+      return { others, answers: await deps.store.countAnswers(others.map((s) => s.id)) };
+    }),
   ]);
 
   const rows: ScoredRow[] = scored.map((r) => ({
@@ -278,10 +305,8 @@ export async function labMimic(deps: EngineDeps, mimicId: string): Promise<LabMi
     latencyMs: r.prediction.latencyMs,
   }));
   const failures = preds.filter((p) => !p.ok).map((p) => ({ predictorId: p.predictorId, role: p.role }));
-  const predictors = predictorMetrics(rows, failures).sort(
-    (a, b) =>
-      (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9) || a.predictorId.localeCompare(b.predictorId),
-  );
+  // Ordered by role, then predictor.
+  const predictors = predictorMetrics(rows, failures);
 
   const served = loaded.questions
     .filter((q): q is typeof q & { seq: number } => q.seq !== null)
@@ -295,7 +320,11 @@ export async function labMimic(deps: EngineDeps, mimicId: string): Promise<LabMi
   const answers = new Map(loaded.answers.map((a) => [a.questionId, a]));
   const itemAcc = new Map(scored.map((r) => [r.prediction.id, r.score.itemAcc]));
   const predsByQ = new Map<string, typeof preds>();
-  for (const p of preds) predsByQ.set(p.questionId, [...(predsByQ.get(p.questionId) ?? []), p]);
+  for (const p of preds) {
+    const ps = predsByQ.get(p.questionId);
+    if (ps) ps.push(p);
+    else predsByQ.set(p.questionId, [p]);
+  }
   const questions: LabQuestionRow[] = served.map((q) => {
     const hidden = loaded.scope.hiddenQuestionIds.has(q.id);
     const label = (key: string) => q.options.find((o) => o.key === key)?.label ?? key;
@@ -305,7 +334,8 @@ export async function labMimic(deps: EngineDeps, mimicId: string): Promise<LabMi
       const p = ps.find((x) => x.role === role);
       if (!p) return null;
       const key = argmax(p.dist) ?? '';
-      return { p, key, label: hidden ? '' : label(key), prob: p.dist[key] ?? 0 };
+      // A hidden question's option keys can name the answer as plainly as its labels: withhold both.
+      return { p, key: hidden ? '' : key, label: hidden ? '' : label(key), prob: p.dist[key] ?? 0 };
     };
     const primary = top('primary');
     const baseline = top('baseline');
@@ -319,7 +349,7 @@ export async function labMimic(deps: EngineDeps, mimicId: string): Promise<LabMi
       servedAt: q.servedAt,
       hidden,
       prompt: hidden ? null : q.prompt,
-      facetIds: q.facetIds,
+      facetIds: hidden ? [] : q.facetIds,
       options: hidden ? [] : q.options,
       answer:
         a && !hidden ? { key: a.value, label: label(a.value), why: a.why, latencyMs: a.latencyMs } : null,
@@ -345,21 +375,19 @@ export async function labMimic(deps: EngineDeps, mimicId: string): Promise<LabMi
 
   const labels = new Map(configs.map((c) => [c.hash, c.label]));
   return {
-    mimic: mimicRow(m, fid, labels),
+    mimic: mimicRow(m, fid, labels, loaded.answers.length),
     experimentName: experiments.find((e) => e.id === m.experimentId)?.name ?? null,
     fidelity: fid,
     predictors,
     curves,
     questions,
     calls: callMetrics(calls),
-    siblings: siblings
-      .filter((s) => s.id !== m.id)
-      .map((s) => ({
-        id: s.id,
-        displayName: s.displayName,
-        status: s.status,
-        answers: s.seqMax,
-        createdAt: s.createdAt,
-      })),
+    siblings: siblings.others.map((s) => ({
+      id: s.id,
+      displayName: s.displayName,
+      status: s.status,
+      answers: siblings.answers.get(s.id) ?? 0,
+      createdAt: s.createdAt,
+    })),
   };
 }

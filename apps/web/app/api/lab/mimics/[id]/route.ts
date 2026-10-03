@@ -2,7 +2,7 @@ import { deleteMimic, labMimic } from '@mimic/core';
 import { requireAdmin } from '@/lib/admin';
 import { deps, handle, ok, type RouteCtx } from '@/lib/server';
 
-/** GET /api/lab/mimics/:id — one mimic's questions, predictions, accuracy over time and cost (ADR-0075). */
+/** GET /api/lab/mimics/:id — one mimic's questions, predictions, accuracy over time and cost (ADR-0076). */
 export const GET = handle(async (_req: Request, ctx: RouteCtx<{ id: string }>) => {
   const { id } = await ctx.params;
   const { deps: d, env } = await deps();

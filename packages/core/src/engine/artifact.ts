@@ -317,7 +317,7 @@ export async function deleteMimic(deps: EngineDeps, mimicId: string): Promise<vo
 
 /**
  * Hard-deletes a person: every mimic they own (each through `deleteMimic`, so D1, R2, Vectorize and KV), then their
- * participant row. Used by `/lab/mimics` (ADR-0075).
+ * participant row. Used by `/lab/mimics` (ADR-0076).
  */
 export async function deleteParticipant(
   deps: EngineDeps,

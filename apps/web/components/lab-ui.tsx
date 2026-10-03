@@ -1,7 +1,16 @@
+import type { Population } from '@mimic/core';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 /** Server-renderable building blocks shared by the /lab pages. */
+
+/** How /lab names each population (ADR-0045): scripted and imported people are always labelled as such. */
+export const POPULATION_LABEL: Record<Population | 'all', string> = {
+  all: 'Everyone',
+  real: 'Real people',
+  scripted: 'Scripted',
+  twin2k: 'Twin-2K-500',
+};
 
 export const pct = (x: number | null | undefined, d = 0) =>
   x === null || x === undefined ? '—' : `${(x * 100).toFixed(d)}%`;

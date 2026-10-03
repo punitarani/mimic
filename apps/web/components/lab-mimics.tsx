@@ -10,8 +10,8 @@ const LINK =
   'whitespace-nowrap rounded-[6px] px-1.5 py-0.5 text-[13px] text-rust hover:bg-rust/10 focus-visible:outline-2 focus-visible:outline-offset-2';
 
 /**
- * Hard-deletes one mimic from /lab/mimics (ADR-0075), after a confirmation. With `redirectTo` it leaves the page it
- * deleted; otherwise it refreshes the list in place.
+ * Hard-deletes one mimic from /lab/mimics (ADR-0076), after a confirmation. With `redirectTo` it leaves the page it
+ * deleted, replacing it in the history so Back doesn't return to it; otherwise it refreshes the list in place.
  */
 export function DeleteMimicButton({
   id,
@@ -28,7 +28,12 @@ export function DeleteMimicButton({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" className={cn(LINK, className)} onClick={() => setOpen(true)}>
+      <button
+        type="button"
+        aria-label={`Delete ${name}`}
+        className={cn(LINK, className)}
+        onClick={() => setOpen(true)}
+      >
         Delete
       </button>
       {open && (
@@ -43,7 +48,7 @@ export function DeleteMimicButton({
           onConfirm={async () => {
             await api.labDeleteMimic(id);
             setOpen(false);
-            if (redirectTo) router.push(redirectTo);
+            if (redirectTo) router.replace(redirectTo);
             router.refresh();
           }}
         />
@@ -52,7 +57,7 @@ export function DeleteMimicButton({
   );
 }
 
-/** Hard-deletes a person: every mimic they own, then their participant row (ADR-0075). */
+/** Hard-deletes a person: every mimic they own, then their participant row (ADR-0076). */
 export function DeletePersonButton({
   participantId,
   mimics,
@@ -68,7 +73,12 @@ export function DeletePersonButton({
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button type="button" className={cn(LINK, className)} onClick={() => setOpen(true)}>
+      <button
+        type="button"
+        aria-label={`Delete person ${participantId}`}
+        className={cn(LINK, className)}
+        onClick={() => setOpen(true)}
+      >
         Delete person
       </button>
       {open && (
@@ -92,7 +102,7 @@ export function DeletePersonButton({
           onConfirm={async () => {
             await api.labDeleteParticipant(participantId);
             setOpen(false);
-            if (redirectTo) router.push(redirectTo);
+            if (redirectTo) router.replace(redirectTo);
             router.refresh();
           }}
         />

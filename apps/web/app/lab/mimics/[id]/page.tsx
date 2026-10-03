@@ -4,7 +4,19 @@ import { notFound } from 'next/navigation';
 import { TopBar } from '@/components/brand';
 import { LineChart } from '@/components/charts';
 import { DeleteMimicButton, DeletePersonButton } from '@/components/lab-mimics';
-import { ago, Badge, LabNav, ms, num, pct, Section, Stat, Table, usd } from '@/components/lab-ui';
+import {
+  ago,
+  Badge,
+  LabNav,
+  ms,
+  num,
+  POPULATION_LABEL,
+  pct,
+  Section,
+  Stat,
+  Table,
+  usd,
+} from '@/components/lab-ui';
 import { deps, isAdmin } from '@/lib/server';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +24,7 @@ export const dynamic = 'force-dynamic';
 const score = (x: number | null) =>
   x === null ? 'text-muted' : x >= 0.75 ? 'text-moss' : x <= 0.25 ? 'text-rust' : 'text-graphite';
 
-/** `/lab/mimics/[id]` (ADR-0075): one mimic's questions, answers, guesses, accuracy over time and cost. */
+/** `/lab/mimics/[id]` (ADR-0076): one mimic's questions, answers, guesses, accuracy over time and cost. */
 export default async function LabMimicPage({
   params,
   searchParams,
@@ -55,7 +67,7 @@ export default async function LabMimicPage({
               {[m.occupation, m.location].filter(Boolean).join(' · ')}
             </p>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {m.population !== 'real' && <Badge>{m.population}</Badge>}
+              {m.population !== 'real' && <Badge>{POPULATION_LABEL[m.population]}</Badge>}
               <Badge tone={m.status === 'learning' ? 'good' : 'neutral'}>{m.status}</Badge>
               <Badge>identity {m.identityState}</Badge>
               {m.consentResearch ? (
@@ -74,11 +86,12 @@ export default async function LabMimicPage({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-[13px]">
+            {/* The mimic page only reads; the session page would serve this person their next question. */}
             <Link
-              href={`/m/${m.id}`}
+              href={`/m/${m.id}/mimic`}
               className="rounded-[6px] px-1.5 py-0.5 text-graphite hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2"
             >
-              Open session view
+              Open mimic page
             </Link>
             <DeleteMimicButton id={m.id} name={m.displayName} redirectTo="/lab/mimics" />
             <DeletePersonButton
@@ -100,7 +113,7 @@ export default async function LabMimicPage({
             label="Primary accuracy"
             value={
               primary
-                ? `${pct(primary.accuracy, 1)}${primary.lift === null ? '' : ` · ${primary.lift >= 0 ? '+' : ''}${(primary.lift * 100).toFixed(1)} vs baseline`}`
+                ? `${pct(primary.accuracy, 1)}${primary.lift === null ? '' : ` · ${primary.lift >= 0 ? '+' : ''}${(primary.lift * 100).toFixed(1)} pts vs baseline`}`
                 : '—'
             }
           />
