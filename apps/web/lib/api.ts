@@ -168,6 +168,12 @@ export const api = {
   saveExperiment: (e: ExperimentRequest) => call<ExperimentRecord>('POST', '/api/lab/experiments', e),
   setupPreset: (id: string) =>
     call<{ experiment: ExperimentRecord; created: boolean }>('POST', '/api/lab/experiments/preset', { id }),
+  labDeleteMimic: (id: string) => call<{ deleted: true }>('DELETE', `/api/lab/mimics/${id}`),
+  labDeleteParticipant: (participantId: string) =>
+    call<{ deleted: true; mimics: number }>(
+      'DELETE',
+      `/api/lab/participants/${encodeURIComponent(participantId)}`,
+    ),
 };
 
 /** An experiment preset as `/lab` lists it (ADR-0045). */

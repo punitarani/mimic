@@ -7,6 +7,7 @@ export * from './footprint';
 export * from './identity';
 export * from './jobs';
 export * from './lab';
+export * from './lab-mimics';
 export * from './observations';
 export * from './playground';
 export * from './rewind';

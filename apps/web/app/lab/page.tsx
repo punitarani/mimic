@@ -1,19 +1,13 @@
 import { EXPERIMENT_PRESETS, labOverview } from '@mimic/core';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import type { ReactNode } from 'react';
 import { TopBar } from '@/components/brand';
 import { LineChart, ScatterChart } from '@/components/charts';
 import { ExperimentsPanel } from '@/components/lab-experiments';
+import { LabNav, ms, num, pct, Section, Stat, Table, usd } from '@/components/lab-ui';
 import { deps, isAdmin } from '@/lib/server';
 
 export const dynamic = 'force-dynamic';
-
-const pct = (x: number | null | undefined, d = 0) =>
-  x === null || x === undefined ? '—' : `${(x * 100).toFixed(d)}%`;
-const num = (x: number, d = 3) => x.toFixed(d);
-const usd = (x: number) => (x < 0.01 ? `$${x.toFixed(4)}` : `$${x.toFixed(2)}`);
-const ms = (x: number) => `${Math.round(x)} ms`;
 
 export default async function Lab({
   searchParams,
@@ -39,6 +33,7 @@ export default async function Lab({
         <span className="text-[14px] text-muted">Lab</span>
       </TopBar>
       <main className="mx-auto w-full max-w-6xl space-y-10 px-4 pb-20 sm:px-6">
+        <LabNav active="/lab" />
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="font-serif text-3xl tracking-tight">Lab</h1>
@@ -245,61 +240,6 @@ export default async function Lab({
           </Section>
         </div>
       </main>
-    </div>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'bad' }) {
-  return (
-    <div className="rounded-[var(--radius-card)] border border-line bg-raised p-4">
-      <p className="text-[12px] text-muted">{label}</p>
-      <p
-        className={`mt-1 text-lg font-medium ${tone === 'good' ? 'text-moss' : tone === 'bad' ? 'text-rust' : ''}`}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function Section({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
-  return (
-    <section>
-      <h2 className="text-lg font-medium">{title}</h2>
-      {note && <p className="text-[13px] text-muted">{note}</p>}
-      <div className="mt-3">{children}</div>
-    </section>
-  );
-}
-
-function Table({ head, rows }: { head: string[]; rows: ReactNode[][] }) {
-  if (!rows.length) return <p className="text-[13px] text-muted">No data yet.</p>;
-  return (
-    <div className="overflow-x-auto rounded-[var(--radius-card)] border border-line bg-raised">
-      <table className="w-full text-left text-[13px] tabular">
-        <thead className="border-b border-line bg-surface text-muted">
-          <tr>
-            {head.map((h) => (
-              <th key={h} className="whitespace-nowrap px-3 py-2 font-medium">
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line">
-          {rows.map((r, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: static table rows
-            <tr key={i}>
-              {r.map((c, j) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: static table cells
-                <td key={j} className="whitespace-nowrap px-3 py-2">
-                  {c}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

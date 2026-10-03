@@ -367,6 +367,8 @@ export interface Store {
   guarded(mimicId: string, epoch: number): Store;
   // participants
   ensureParticipant(id: string, now: number): Promise<void>;
+  /** Removes the participant row only; delete each of their mimics first (`deleteParticipant` in the engine). */
+  deleteParticipant(id: string): Promise<void>;
   // configs & experiments
   putConfig(rec: ConfigRecord): Promise<void>;
   getConfig(hash: string): Promise<ConfigRecord | null>;
@@ -491,6 +493,8 @@ export interface Store {
   insertKg(nodes: KgNodeRecord[], edges: KgEdgeRecord[]): Promise<void>;
   insertFidelity(rec: FidelityRecord): Promise<void>;
   listFidelity(mimicId: string): Promise<FidelityRecord[]>;
+  /** Fidelity rows for many mimics in few queries (the `/lab/mimics` directory), ordered as `listFidelity`. */
+  listFidelityFor(mimicIds: readonly string[]): Promise<FidelityRecord[]>;
   insertSnapshot(rec: SnapshotRecord): Promise<void>;
   listSnapshots(mimicId: string): Promise<SnapshotRecord[]>;
   listMimicFacets(mimicId: string): Promise<MimicFacetRecord[]>;

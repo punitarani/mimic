@@ -367,6 +367,9 @@ export class DrizzleStore implements Store {
   async ensureParticipant(id: string, now: number) {
     await this.db.insert(s.participants).values({ id, createdAt: now }).onConflictDoNothing();
   }
+  async deleteParticipant(id: string) {
+    await this.db.delete(s.participants).where(eq(s.participants.id, id));
+  }
 
   // configs & experiments
   async putConfig(rec: ConfigRecord) {
@@ -1081,6 +1084,19 @@ export class DrizzleStore implements Store {
       .orderBy(asc(s.fidelity.seqUpTo), asc(s.fidelity.id))
       .all();
     return rows.map(({ id: _id, ...r }) => r);
+  }
+  async listFidelityFor(mimicIds: readonly string[]) {
+    const out: FidelityRecord[] = [];
+    for (let i = 0; i < mimicIds.length; i += 90) {
+      const rows = await this.db
+        .select()
+        .from(s.fidelity)
+        .where(inArray(s.fidelity.mimicId, mimicIds.slice(i, i + 90)))
+        .orderBy(asc(s.fidelity.mimicId), asc(s.fidelity.seqUpTo), asc(s.fidelity.id))
+        .all();
+      out.push(...rows.map(({ id: _id, ...r }) => r));
+    }
+    return out;
   }
   async insertSnapshot(rec: SnapshotRecord) {
     await this.write([this.db.insert(s.snapshots).values(rec)]);
