@@ -26,6 +26,22 @@ export const CURVES_RULE = {
   maxAccuracyDrop: 0.01,
 } as const;
 
+/**
+ * How few questions are enough (round 5, docs/CURVES.md §11): a checkpoint is enough when, against the last one and on
+ * the same people and targets, its accuracy is at most 1 point lower and its log loss at most 0.01 nats higher (the 90%
+ * interval by person inside both bounds). The answer is the smallest checkpoint from which every later one is enough.
+ */
+export const ENOUGH_RULE = { maxAccuracyDrop: 0.01, maxLogLossRise: 0.01 } as const;
+
+export interface EnoughRow {
+  policy: string;
+  k: number;
+  /** k − last, paired by person. */
+  dItemAcc: PersonDelta;
+  dLogLoss: PersonDelta;
+  enough: boolean;
+}
+
 export interface CurveRecord {
   policy: string;
   k: number;
@@ -124,6 +140,8 @@ export interface CurvesReport {
   blocks: BlockRow[];
   trajectories: TrajectoryRow[];
   stopping: StopRow[];
+  /** Each checkpoint against the last, per policy, and the smallest checkpoint that is enough (`ENOUGH_RULE`). */
+  enough: { rows: EnoughRow[]; at: Array<{ policy: string; k: number | null }> };
   /** The population reader (no Jev): what each policy's answers say about the targets. */
   reader: Array<{
     policy: string;
@@ -403,6 +421,39 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
     };
   });
 
+  const enoughRows: EnoughRow[] = [];
+  const enoughAt: Array<{ policy: string; k: number | null }> = [];
+  for (const policy of input.policies) {
+    const lastRecs = atK(cal, policy, last);
+    if (!lastRecs.length) continue;
+    const rows: EnoughRow[] = [];
+    for (const k of ks.filter((x) => x > 0 && x < last)) {
+      const at = atK(cal, policy, k);
+      if (!at.length) continue;
+      const seed = `curves:${input.seed}:enough:${policy}:${k}`;
+      const dItemAcc = pairedByPerson(lastRecs, at, 'itemAcc', `${seed}:acc`);
+      const dLogLoss = pairedByPerson(lastRecs, at, 'logLoss', `${seed}:ll`);
+      rows.push({
+        policy,
+        k,
+        dItemAcc,
+        dLogLoss,
+        enough:
+          dItemAcc.people >= rule.minPeople &&
+          dItemAcc.ciLow >= -ENOUGH_RULE.maxAccuracyDrop &&
+          dLogLoss.ciHigh <= ENOUGH_RULE.maxLogLossRise,
+      });
+    }
+    enoughRows.push(...rows);
+    // The smallest checkpoint from which every later one is enough; the last is enough by definition.
+    let at: number | null = last;
+    for (const row of [...rows].reverse()) {
+      if (!row.enough) break;
+      at = row.k;
+    }
+    enoughAt.push({ policy, k: rows.length || lastRecs.length ? at : null });
+  }
+
   const deltas: PolicyDelta[] = [];
   for (const against of [...new Set([rule.reference, 'order', ...(input.versus ?? [])])])
     for (const policy of input.policies) {
@@ -527,6 +578,7 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
     blocks,
     trajectories,
     stopping,
+    enough: { rows: enoughRows, at: enoughAt },
     reader,
     consistency: cons.length ? mean(cons) : null,
     audit: input.audit,
@@ -650,6 +702,25 @@ export function renderCurves(r: CurvesReport): string[] {
     for (const x of [...r.reader].sort((a, b) => a.aulcLogLoss - b.aulcLogLoss))
       out.push(
         `| ${x.policy} | ${f4(x.aulcLogLoss)} | ${pct(x.aulcItemAcc)} | ${x.points.map((p) => `${p.logLoss.toFixed(3)} / ${pct(p.itemAcc)}`).join(' | ')} |`,
+      );
+  }
+  if (r.enough?.rows.length) {
+    out.push(
+      '',
+      `## How few questions are enough (each k against k = ${last}, same people and targets; 90% intervals by person)`,
+      '',
+      `A k is enough when its accuracy is at most ${ENOUGH_RULE.maxAccuracyDrop * 100} point lower than at ${last} and its log loss at most ${ENOUGH_RULE.maxLogLossRise} nats higher, both intervals inside (ENOUGH_RULE, docs/CURVES.md §11).`,
+      '',
+      ...r.enough.at.map(
+        (x) => `- **${x.policy}**: ${x.k === null ? 'no checkpoint is enough' : `enough from k = ${x.k}`}`,
+      ),
+      '',
+      `| Policy | k | Δ accuracy vs ${last}, points | Δ log loss vs ${last} | Enough |`,
+      '| --- | --- | --- | --- | --- |',
+    );
+    for (const x of r.enough.rows)
+      out.push(
+        `| ${x.policy} | ${x.k} | ${iv(x.dItemAcc, pts)} | ${iv(x.dLogLoss, sgn)} | ${x.enough ? 'yes' : 'no'} |`,
       );
   }
   if (r.stopping?.length) {

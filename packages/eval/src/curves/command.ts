@@ -569,6 +569,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       mmr: { type: 'string', default: String(POLICY_DEFAULTS.mmr) },
       reference: { type: 'string', default: POLICY_DEFAULTS.reference },
       given: { type: 'string' },
+      offset: { type: 'string', default: '0' },
       versus: { type: 'string' },
       opening: { type: 'string' },
       classes: { type: 'string', default: String(POLICY_DEFAULTS.classes) },
@@ -613,11 +614,14 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     liftPeople: positive('lift-people', values['lift-people']),
   };
   if (!Number.isInteger(knobs.classes) || knobs.classes < 0) throw new Error('--classes is a whole number');
+  if (!Number.isInteger(Number(values.offset)) || Number(values.offset) < 0)
+    throw new Error('--offset is a whole number of people to skip');
   if (values.reference !== 'R' && values.reference !== 'pool' && values.reference !== 'id')
     throw new Error('--reference is R, pool or id');
   const nPeople = positive('people', values.people);
   const loaded = await loadPeople(values.data, {
     roles: ['train', role],
+    offsetPerRole: { [role]: Number(values.offset) },
     limitPerRole: {
       [role]: nPeople,
       ...(values['train-people'] ? { train: positive('train-people', values['train-people']) } : {}),
@@ -750,6 +754,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       data: basename(values.data),
       ...(values.given ? { given: values.given } : {}),
       ...(values.opening ? { opening: values.opening } : {}),
+      ...(Number(values.offset) ? { offset: Number(values.offset) } : {}),
       ...(values.drop ? { drop: values.drop } : {}),
       stopReason: result.stopReason,
     },

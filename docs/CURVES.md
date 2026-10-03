@@ -213,3 +213,43 @@ pnpm eval -- curves --data data/twin-full.jsonl --role test --people 200 --seed 
 
 If the run stops early (an outage or the cap), the people completed are the result, and the readout says how many;
 nothing is re-run on test people.
+
+## 11. Round 5: how few questions are enough (pre-registered 2026-10-03, before it runs)
+
+Written after the confirmatory run (§10). It uses only test people that run did not read.
+
+**What it decides.** With E9's opening (`cfg.e9.opening`), how many answers Jev needs before more stop helping. On the
+confirmatory run its curve was flat after about 10 (0.896 at 10, 0.893 at 30). This round measures that properly, on
+people no run has read.
+
+**Run.**
+
+```
+pnpm eval -- curves --data data/twin-full.jsonl --role test --offset 200 --people 1000 --seed e9 --beta 0.25 \
+  --given Demographics,-QID20,-QID21,-QID22 \
+  --opening QID234/3,QID32,QID34,QID26/1,QID239/1,QID33,QID22,QID21 \
+  --policies 'anchors-random,custom-random' --checkpoints 0,3,6,8,10,12,15,20,25,30 \
+  --versus anchors-random --max-usd 8
+```
+
+`--offset 200` skips the 200 test people §10 read, in the same seeded order, leaving the other 197 of the 397.
+
+**Rule (`ENOUGH_RULE`, `packages/eval/src/curves/analyze.ts`).** A checkpoint k is enough for a policy when, against
+k = 30 on the same people and targets:
+
+- its accuracy is at most 1 point lower;
+- its log loss is at most 0.01 nats higher;
+- the 90% interval by person lies inside both bounds;
+- at least 30 people are compared.
+
+The answer for a policy is the smallest k from which every later checkpoint is enough.
+
+**Decision.**
+- If `custom-random`'s answer is 15 or fewer, a shorter arm is built: `cfg.e9.opening` with that many anchor and
+  adaptive questions, and a probe schedule that fits it.
+- Otherwise, no shorter arm.
+- `anchors-random`'s answer (production's opening) is reported, with no decision.
+- Twin's decisions over-represent policy opinions, so the readout also gives the answer on pricing alone. That number
+  informs the arm and decides nothing.
+
+If the run stops early, the people completed are the result. Nothing is re-run on these people.
