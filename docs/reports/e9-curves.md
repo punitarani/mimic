@@ -137,3 +137,39 @@ AULC Δ log loss against random (random's own AULC in its column).
    random.
 
 The population reader cannot tell whether Jev gains from these questions; round 4 asks Jev.
+
+## Round 4: the Mimic setting, read by Jev (dev, 150 people)
+
+Run `01M3ZM2WY853Q09Z65FAH0663H`, $4.55: the six non-sensitive demographics given; party, income and political views
+askable. A rehearsal of the pre-registered set (`docs/CURVES.md` §10) plus `sem-ref` and `pop-eig` over the train
+people.
+
+| Policy | AULC log loss | Δ vs random | Δ vs `anchors-random` | Accuracy at 30 |
+| --- | --- | --- | --- | --- |
+| `pop-eig` (β = 0.25) | 0.9122 | −0.0285 [−0.0411, −0.0162] | −0.0265 [−0.0391, −0.0135] | 65.0% |
+| `custom-random` (the arm's opening) | 0.9192 | −0.0216 [−0.0308, −0.0119] | −0.0195 [−0.0289, −0.0106] | 64.1% |
+| `jev-lift` | 0.9306 | −0.0101 [−0.0165, −0.0039] | −0.0081 [−0.0142, −0.0022] | 64.4% |
+| `anchors-random` (production today) | 0.9387 | −0.0020 [−0.0060, +0.0020] | — | 63.0% |
+| `custom6-random` (the opening without its two sensitive questions) | 0.9394 | −0.0014 [−0.0049, +0.0022] | +0.0007 [−0.0030, +0.0043] | 63.4% |
+| `pop-eig[cls=16]` | 0.9396 | −0.0011 [−0.0059, +0.0034] | +0.0009 [−0.0033, +0.0050] | 62.7% |
+| `random` | 0.9407 | — | +0.0020 [−0.0020, +0.0061] | 62.6% |
+| `sem-ref` | 0.9411 | +0.0003 [−0.0029, +0.0036] | +0.0024 [−0.0010, +0.0054] | 63.8% |
+
+1. **What helps Jev here is asking political views and income once the ramp opens.** The arm's opening drops from
+   0.941 at k = 6 to 0.914 at k = 10, right after its two sensitive questions (questions 7 and 8); the same opening
+   without them (`custom6-random`) is level with production's anchors. `pop-eig` asks political views first for 115 of
+   150 people and is ahead from k = 3.
+2. **The gain is concentrated in one kind of decision.** By target block (mean calibrated log loss, k = 3–30, from the
+   request cache): false consensus, where people rate policies, 1.602 under production's anchors and 1.543 under the
+   arm's opening; pricing 0.668 and 0.664; the other heuristics-and-biases blocks move by less than 0.02 either way.
+   Political views predicts political opinions; it says little about prices.
+3. **Production's opening is level with random for Jev too**, and so are the money-and-possessions questions on their
+   own: the population's and Jev's readings agree on that.
+4. **Jev's own measure finds what the population's misses, slowly.** `jev-lift` asks Mr A/B, time-preference rows,
+   financial literacy and maximizing first (the largest single-answer lifts on R, −0.017 to −0.032 nats); it gains
+   accuracy from the start and log loss from k = 20: it asks political views 17th (its lift on R ranks there), and income
+   never (its lift on R is slightly positive). What a question is worth depends on the decisions it is scored on: R
+   holds fewer policy items than T, so a lift measured on R undervalues political views for T.
+5. **Latent classes do not carry `pop-eig`'s gain** (level with random), so an aggregate-only port of adaptive
+   population selection does not work as built; `sem-ref` (semantic relevance to the decisions) gains accuracy but not
+   log loss.
