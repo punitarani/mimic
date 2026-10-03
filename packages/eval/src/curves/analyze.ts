@@ -19,12 +19,38 @@ import {
  * AULC interval by person (90%) lies below the reference's and its accuracy after the last checkpoint is no more than
  * `maxAccuracyDrop` below it.
  */
-export const CURVES_RULE = {
+export interface CurvesRule {
+  /** The rule's name and where it was fixed, for the report (absent on reports written before E10). */
+  name?: string;
+  doc?: string;
+  reference: string;
+  aulcKs: readonly number[];
+  minPeople: number;
+  maxAccuracyDrop: number;
+}
+
+export const CURVES_RULE: CurvesRule = {
+  name: 'CURVES_RULE',
+  doc: 'docs/CURVES.md §6',
   reference: 'random',
   aulcKs: [3, 6, 10, 15, 20, 25, 30],
   minPeople: 30,
   maxAccuracyDrop: 0.01,
-} as const;
+};
+
+/**
+ * E10 (docs/CHOOSER.md): a chooser beats E9's opening followed by random picks (`custom-random`) when its AULC over the
+ * questions after the opening (k = 10–30; every `custom-…` policy asks the same eight first, so k ≤ 8 cannot differ)
+ * has a 90% interval by person below 0 and its accuracy at the last checkpoint is no more than a point lower.
+ */
+export const CHOOSER_RULE: CurvesRule = {
+  name: 'CHOOSER_RULE',
+  doc: 'docs/CHOOSER.md',
+  reference: 'custom-random',
+  aulcKs: [10, 15, 20, 25, 30],
+  minPeople: 30,
+  maxAccuracyDrop: 0.01,
+};
 
 /**
  * How few questions are enough (round 5, docs/CURVES.md §11): a checkpoint is enough when, against the last one and on
@@ -127,11 +153,53 @@ export interface TrajectoryRow {
   openers: Array<{ key: string; prompt: string; count: number }>;
 }
 
+/** One E10 chooser decision, as the analysis reads it (`ChoiceRow` in command.ts). */
+export interface ChoiceInput {
+  policy: string;
+  how: 'jev' | 'llm' | 'gen' | 'fallback';
+  position: number | null;
+  shown: readonly string[];
+  pTop?: number;
+  gated?: boolean;
+  similarity?: number;
+  fallback?: string;
+  latencyMs: number;
+  costUsd: number;
+}
+
+/** What a chooser did across its steps: how it decided, where its picks sat, what it cost and how long it took. */
+export interface ChoiceSummary {
+  policy: string;
+  steps: number;
+  how: Record<string, number>;
+  fallbackRate: number;
+  /** jev-gate: the share of steps sent to the writer. */
+  gateRate: number | null;
+  /** Share of picks in each fifth of the shown list (a uniform chooser puts 20% in each). */
+  positionFifths: number[];
+  pTopMedian: number | null;
+  /** Grounding similarity quartiles (llm-gen and gated steps). */
+  similarity: [number, number, number] | null;
+  /** Uncached calls only. */
+  latencyP50: number | null;
+  latencyP95: number | null;
+  usdPerStep: number;
+  topFallbacks: string[];
+}
+
+export interface GroupDelta {
+  policy: string;
+  against: string;
+  group: string;
+  aulcLogLoss: PersonDelta;
+  aulcItemAcc: PersonDelta;
+}
+
 export interface CurvesReport {
   role: string;
   policies: string[];
   checkpoints: number[];
-  rule: typeof CURVES_RULE;
+  rule: CurvesRule;
   people: number;
   points: CurvePoint[];
   summaries: PolicySummary[];
@@ -157,6 +225,10 @@ export interface CurvesReport {
   knobs: Record<string, unknown>;
   offline: boolean;
   scorer: 'jev' | 'population';
+  /** Every policy against the rule's reference on each target group (pricing, heuristics and biases). */
+  groupDeltas?: GroupDelta[];
+  /** E10 choosers' decisions. */
+  choices?: ChoiceSummary[];
 }
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -366,6 +438,8 @@ export interface AnalyzeInput {
   seed: string;
   /** Further policies to compare every policy with, beside the rule's reference and `order` (`--versus`). */
   versus?: string[];
+  /** E10 choosers' decisions (`choices.jsonl`). */
+  choices?: ChoiceInput[];
 }
 
 export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesReport {
@@ -513,6 +587,27 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
       };
     });
 
+  const groupDeltas: GroupDelta[] = [];
+  if (input.policies.includes(rule.reference))
+    for (const group of ['pricing', 'heuristics and biases']) {
+      const inGroup = cal.filter((r) => targetGroup(r.block) === group);
+      const a = aulcRecords(inGroup, rule.reference, aulcKs);
+      if (!a.length) continue;
+      for (const policy of input.policies) {
+        if (policy === rule.reference) continue;
+        const b = aulcRecords(inGroup, policy, aulcKs);
+        if (!b.length) continue;
+        const seed = `curves:${input.seed}:${rule.reference}:${policy}:${group}`;
+        groupDeltas.push({
+          policy,
+          against: rule.reference,
+          group,
+          aulcLogLoss: pairedByPerson(a, b, 'logLoss', `${seed}:ll`),
+          aulcItemAcc: pairedByPerson(a, b, 'itemAcc', `${seed}:acc`),
+        });
+      }
+    }
+
   const blocks: BlockRow[] = [];
   for (const policy of input.policies)
     for (const group of ['pricing', 'heuristics and biases']) {
@@ -588,7 +683,55 @@ export function analyzeCurves(input: AnalyzeInput, rule = CURVES_RULE): CurvesRe
     knobs: input.knobs,
     offline: input.offline,
     scorer: input.scorer ?? 'jev',
+    groupDeltas,
+    ...(input.choices?.length ? { choices: summarizeChoices(input.choices) } : {}),
   };
+}
+
+const quantile = (xs: number[], q: number) => {
+  if (!xs.length) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.max(0, Math.round(q * (s.length - 1))))]!;
+};
+
+/** Per policy: how its chooser decided (E10). */
+export function summarizeChoices(rows: readonly ChoiceInput[]): ChoiceSummary[] {
+  const by = new Map<string, ChoiceInput[]>();
+  for (const r of rows) by.set(r.policy, [...(by.get(r.policy) ?? []), r]);
+  return [...by.entries()].map(([policy, xs]) => {
+    const how: Record<string, number> = {};
+    for (const x of xs) how[x.how] = (how[x.how] ?? 0) + 1;
+    const fifths = [0, 0, 0, 0, 0];
+    let placed = 0;
+    for (const x of xs)
+      if (x.position !== null && x.shown.length > 1) {
+        fifths[Math.min(4, Math.floor((5 * x.position) / x.shown.length))]!++;
+        placed++;
+      }
+    const gates = xs.filter((x) => x.gated !== undefined);
+    const sims = xs.map((x) => x.similarity).filter((x): x is number => x !== undefined);
+    const lat = xs.map((x) => x.latencyMs).filter((x) => x > 0);
+    const reasons = new Map<string, number>();
+    for (const x of xs) if (x.fallback) reasons.set(x.fallback, (reasons.get(x.fallback) ?? 0) + 1);
+    const pTops = xs.map((x) => x.pTop).filter((x): x is number => x !== undefined);
+    return {
+      policy,
+      steps: xs.length,
+      how,
+      fallbackRate: (how.fallback ?? 0) / xs.length,
+      gateRate: gates.length ? gates.filter((x) => x.gated).length / gates.length : null,
+      positionFifths: fifths.map((c) => (placed ? c / placed : 0)),
+      pTopMedian: quantile(pTops, 0.5),
+      similarity: sims.length ? [quantile(sims, 0.25)!, quantile(sims, 0.5)!, quantile(sims, 0.75)!] : null,
+      latencyP50: quantile(lat, 0.5),
+      latencyP95: quantile(lat, 0.95),
+      usdPerStep: xs.reduce((a, x) => a + x.costUsd, 0) / xs.length,
+      topFallbacks: [...reasons.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([r, n]) => `${r} (${n})`),
+    };
+  });
 }
 
 const f4 = (x: number) => (Number.isFinite(x) ? x.toFixed(4) : '—');
@@ -621,7 +764,7 @@ export function renderCurves(r: CurvesReport): string[] {
   for (const v of r.verdicts) out.push(`| ${v.policy} | ${v.outcome} | ${v.reason} |`);
   out.push(
     '',
-    `The rule is CURVES_RULE in packages/eval/src/curves/analyze.ts, fixed before the first run (docs/CURVES.md §6): the AULC interval by person (90%) below 0, accuracy at the last checkpoint at most ${r.rule.maxAccuracyDrop * 100} point below, at least ${r.rule.minPeople} people.`,
+    `The rule is ${r.rule.name ?? 'CURVES_RULE'} in packages/eval/src/curves/analyze.ts, fixed before the first run (${r.rule.doc ?? 'docs/CURVES.md §6'}): the AULC interval by person (90%) below 0, accuracy at the last checkpoint at most ${r.rule.maxAccuracyDrop * 100} point below, at least ${r.rule.minPeople} people.`,
     '',
     '## Policies',
     '',
@@ -702,6 +845,36 @@ export function renderCurves(r: CurvesReport): string[] {
     for (const x of [...r.reader].sort((a, b) => a.aulcLogLoss - b.aulcLogLoss))
       out.push(
         `| ${x.policy} | ${f4(x.aulcLogLoss)} | ${pct(x.aulcItemAcc)} | ${x.points.map((p) => `${p.logLoss.toFixed(3)} / ${pct(p.itemAcc)}`).join(' | ')} |`,
+      );
+  }
+  if (r.groupDeltas?.length) {
+    out.push(
+      '',
+      `## Against \`${r.rule.reference}\` by target group (AULC over k = ${r.rule.aulcKs.filter((k) => r.checkpoints.includes(k)).join(', ')}; 90% intervals by person)`,
+      '',
+      '| Policy | Group | Δ log loss | Δ accuracy, points |',
+      '| --- | --- | --- | --- |',
+    );
+    for (const g of r.groupDeltas)
+      out.push(`| ${g.policy} | ${g.group} | ${iv(g.aulcLogLoss, sgn)} | ${iv(g.aulcItemAcc, pts)} |`);
+  }
+  if (r.choices?.length) {
+    out.push(
+      '',
+      "## The choosers' decisions",
+      '',
+      'Position: the share of picks in each fifth of the shown list (neutral keys in a seeded order; uniform is 20% each). Latency is for uncached calls only.',
+      '',
+      '| Policy | Steps | How | Fallback | Gated | Position by fifth | Median p | Grounding similarity (quartiles) | Latency p50 / p95 ms | $ per step | Fallback reasons |',
+      '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    );
+    for (const c of r.choices)
+      out.push(
+        `| ${c.policy} | ${c.steps} | ${Object.entries(c.how)
+          .map(([k, n]) => `${k} ${n}`)
+          .join(
+            ', ',
+          )} | ${pct(c.fallbackRate)} | ${c.gateRate === null ? '—' : pct(c.gateRate)} | ${c.positionFifths.map((x) => Math.round(x * 100)).join(' / ')} | ${c.pTopMedian === null ? '—' : c.pTopMedian.toFixed(3)} | ${c.similarity ? c.similarity.map((x) => x.toFixed(2)).join(' / ') : '—'} | ${c.latencyP50 === null ? '—' : `${Math.round(c.latencyP50)} / ${Math.round(c.latencyP95 ?? 0)}`} | ${c.usdPerStep.toFixed(5)} | ${c.topFallbacks.join('; ') || '—'} |`,
       );
   }
   if (r.enough?.rows.length) {

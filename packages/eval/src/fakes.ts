@@ -236,7 +236,18 @@ export class FakeLlm implements LlmClient {
     else if (sys.startsWith('You write the portrait at the heart of a SOUL.md')) out = this.soul(user);
     else if (sys.startsWith('Write one short sentence'))
       out = { sentence: 'I tend to go with what worked before.' };
-    else out = {};
+    else if (sys.startsWith('You choose the next question in an interview'))
+      // E10's LLM chooser: the first candidate listed (a deterministic, valid pick).
+      out = { key: user.match(/^(q\d+):/m)?.[1] ?? 'q01' };
+    else if (sys.startsWith('You write the next question in an interview')) {
+      const n = Number(sys.match(/Write (\d+) different/)?.[1] ?? 1);
+      out = {
+        questions: Array.from({ length: n }, (_, i) => ({
+          prompt: SCENARIOS[i % SCENARIOS.length]!,
+          options: ['Yes', 'No'],
+        })),
+      };
+    } else out = {};
     return {
       content: text ?? JSON.stringify(out),
       modelSnapshot: `${req.model}@fake`,

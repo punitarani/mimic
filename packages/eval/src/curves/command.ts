@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, statSync } from 'node:fs';
+import { appendFileSync, mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { type EvalRunRecord, type Gateway, seededRng, sha256Hex, ulid } from '@mimic/core';
@@ -18,7 +18,23 @@ import {
 } from '../optimize/evaluate';
 import type { EvalInstance } from '../optimize/instances';
 import { renderReport, writeReport } from '../report';
-import { analyzeCurves, type CurveRecord, type CurvesReport, renderCurves } from './analyze';
+import {
+  analyzeCurves,
+  CHOOSER_RULE,
+  CURVES_RULE,
+  type CurveRecord,
+  type CurvesReport,
+  renderCurves,
+} from './analyze';
+import { analyzeBench, renderBench, runBench } from './bench';
+import {
+  type ChoiceNote,
+  type ChooserDeps,
+  jevGatePolicy,
+  jevPickPolicy,
+  llmGenPolicy,
+  llmPickPolicy,
+} from './choosers';
 import { type ClassModel, ClassPosterior, classKeys, fitClasses } from './classes';
 import {
   type LoadAudit,
@@ -42,6 +58,7 @@ import {
   jevEntropyPolicy,
   needsEmbeddings,
   needsJev,
+  needsModels,
   needsPopulation,
   openedPolicy,
   openingKeys,
@@ -60,6 +77,7 @@ import {
   semRefPolicy,
   stratifiedPolicy,
   TWIN_ANCHORS,
+  withBatch,
 } from './policies';
 import { PersonaPosterior, POPULATION_DEFAULTS, Population, staticSequence } from './population';
 
@@ -68,7 +86,12 @@ export { renderCurves };
 
 export const JEV_PREDICTOR = 'decision:typesafe/jev-1.13';
 export const DEFAULT_CHECKPOINTS = [0, 3, 6, 10, 15, 20, 25, 30];
-export const DEFAULT_POLICIES: PolicyName[] = [...POLICY_NAMES];
+// E10's choosers need a gateway, and Jev's a batch: they run when named, not by default.
+export const DEFAULT_POLICIES: PolicyName[] = POLICY_NAMES.filter(
+  (n) => !needsModels({ spec: n, base: n, open: 0, opening: 'static', knobs: {} }),
+);
+/** Candidates Jev is shown at once (a choice with more criteria than this is beyond what E10 measured). */
+export const MAX_JEV_CANDIDATES = 48;
 
 export interface CurvesDeps {
   gateway: Gateway;
@@ -87,6 +110,8 @@ export async function walk(
     /** Filled with each step's selection score (null when the policy has none). */
     scores?: Array<number | null>;
     vectors?: ReadonlyMap<string, number[]>;
+    /** Filled with each E10 chooser decision, by step. */
+    choices?: Array<ChoiceNote & { step: number }>;
   },
 ): Promise<TwinItem[]> {
   const rng = seededRng(`${ctx.seed}:${policy.name}:${person.pid}`);
@@ -112,6 +137,7 @@ export async function walk(
         score = x;
       },
       ...(ctx.vectors ? { vectors: ctx.vectors } : {}),
+      ...(ctx.choices ? { log: (note: ChoiceNote) => ctx.choices!.push({ ...note, step: t }) } : {}),
     });
     ctx.scores?.push(score);
     if (!remaining.includes(item)) throw new Error(`${policy.name} picked ${item.key}, not in the pool`);
@@ -200,7 +226,13 @@ function basePolicy(
   seed: string,
   staticSeq: readonly string[] | null,
   liftSeq?: readonly string[],
+  models?: ChooserDeps,
+  spec: string = base,
 ): Policy {
+  const chooser = () => {
+    if (!models) throw new Error(`${spec} needs the gateway (an E10 chooser)`);
+    return models;
+  };
   switch (base) {
     case 'order':
       return orderPolicy;
@@ -228,6 +260,18 @@ function basePolicy(
     case 'jev-lift':
       if (!liftSeq) throw new Error("jev-lift needs Jev's lift table (the run measures it on train people)");
       return { ...popStaticPolicy(liftSeq), name: 'jev-lift' };
+    case 'jev-pick':
+      if (knobs.batch <= 0 || knobs.batch > MAX_JEV_CANDIDATES)
+        throw new Error(`${spec}: Jev picks from a batch of 1–${MAX_JEV_CANDIDATES} (b=…)`);
+      return jevPickPolicy(spec, knobs, chooser());
+    case 'llm-pick':
+      return llmPickPolicy(spec, knobs, chooser());
+    case 'llm-gen':
+      return llmGenPolicy(spec, knobs, chooser());
+    case 'jev-gate':
+      if (knobs.batch <= 0 || knobs.batch > MAX_JEV_CANDIDATES)
+        throw new Error(`${spec}: Jev picks from a batch of 1–${MAX_JEV_CANDIDATES} (b=…)`);
+      return jevGatePolicy(spec, knobs, chooser());
   }
 }
 
@@ -239,6 +283,8 @@ export interface PolicyExtras {
   custom?: readonly string[];
   /** Candidates by Jev's lift, most helpful first (`jev-lift`). */
   liftSeq?: readonly string[];
+  /** The gateway and meter E10's choosers call through. */
+  models?: ChooserDeps;
 }
 
 /** Policies from their specs (`parsePolicySpec`), each named by its spec. */
@@ -249,11 +295,11 @@ export function buildPolicies(
   staticSeq: readonly string[] | null,
   extras: PolicyExtras = {},
 ): Policy[] {
-  const { classesOf, custom, liftSeq } = extras;
+  const { classesOf, custom, liftSeq, models } = extras;
   return specs.map((raw) => {
     const s = parsePolicySpec(raw);
     const own = { ...knobs, ...s.knobs };
-    const base = basePolicy(s.base, own, seed, staticSeq, liftSeq);
+    const base = basePolicy(s.base, own, seed, staticSeq, liftSeq, models, s.spec);
     let inner = base;
     if (own.classes > 0) {
       if (!base.usesPopulation) throw new Error(`${s.spec}: cls is for the persona posterior's policies`);
@@ -261,6 +307,8 @@ export function buildPolicies(
       const model = classesOf(own.classes);
       inner = { ...base, posteriorOf: () => new ClassPosterior(model, own.beta) };
     }
+    // E10: the step's batch and the trust ramp, inside any opening (an opening is asked as it is).
+    if (own.batch > 0 || own.ramp > 0) inner = withBatch(inner, own, seed);
     if (s.open > 0 && s.opening === 'anchors') return openedPolicy(s.spec, s.open, anchorOrder(seed), inner);
     if (s.open > 0 && s.opening === 'custom') {
       if (!custom?.length) throw new Error(`${s.spec} needs --opening`);
@@ -310,6 +358,14 @@ export interface RunResult {
   staticSequence: string[] | null;
   /** Jev's lift per candidate (`jev-lift`), most helpful first; null when no policy measured it. */
   lift: LiftRow[] | null;
+  /** E10 choosers' decisions, one per step they chose (`choices.jsonl`). */
+  choices: ChoiceRow[];
+}
+
+export interface ChoiceRow extends ChoiceNote {
+  policy: string;
+  pid: string;
+  step: number;
 }
 
 /** Runs every policy on every person, chunk by chunk, then scores the targets at each checkpoint. */
@@ -385,16 +441,20 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
       `jev-lift: ${candidates.length} candidates on ${Math.min(own.liftPeople, opts.train.length)} train people, $${liftUsd.toFixed(4)}`,
     );
   }
+  const embedDir = opts.embedDir ?? 'data/curves-cache/emb';
   const policies = buildPolicies(opts.policies, opts.knobs, opts.seed, staticSeq, {
     classesOf,
     ...(opts.opening ? { custom: opts.opening } : {}),
     ...(lift ? { liftSeq: lift.map((r) => r.key) } : {}),
+    ...(specs.some(needsModels)
+      ? { models: { gateway: deps.gateway, meter: deps.meter, embedDir, seed: opts.seed } }
+      : {}),
   });
   const vectors = specs.some(needsEmbeddings)
     ? await embedTexts(
         deps.gateway,
         opts.people.flatMap((p) => [...p.pool, ...p.reference].map(textOf)),
-        { dir: opts.embedDir ?? 'data/curves-cache/emb', meter: deps.meter },
+        { dir: embedDir, meter: deps.meter },
       )
     : undefined;
   const steps = Math.max(...opts.checkpoints);
@@ -405,6 +465,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
   const costs: RunResult['costs'] = Object.fromEntries(
     policies.map((p) => [p.name, { selection: 0, scoring: 0, requests: 0 }]),
   );
+  const choices: ChoiceRow[] = [];
   let stopReason: string | null = null;
   let costliest = 0;
 
@@ -420,6 +481,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     const chunkTraj: Array<{ policy: string; pid: string; asked: TwinItem[]; scores: Array<number | null> }> =
       [];
     const chunkCosts = new Map<string, { selection: number; scoring: number; requests: number }>();
+    const chunkChoices: ChoiceRow[] = [];
     let asked = 0;
     let failed = 0;
     try {
@@ -428,13 +490,16 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
         const usd0 = deps.meter.usd;
         const walks = await mapLimit(chunk, opts.concurrency, async (person) => {
           const scores: Array<number | null> = [];
+          const notes: Array<ChoiceNote & { step: number }> = [];
           const asked = await walk(person, policy, steps, {
             jev,
             pop,
             seed: opts.seed,
             scores,
+            choices: notes,
             ...(vectors ? { vectors } : {}),
           });
+          for (const n of notes) chunkChoices.push({ policy: policy.name, pid: person.pid, ...n });
           return { person, asked, scores };
         });
         const usd1 = deps.meter.usd;
@@ -499,6 +564,7 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     }
     records.push(...chunkRecords);
     reader.push(...chunkReader);
+    choices.push(...chunkChoices);
     for (const t of chunkTraj) {
       trajectories.get(t.policy)!.set(t.pid, t.asked);
       scores.get(t.policy)!.set(t.pid, t.scores);
@@ -518,7 +584,17 @@ export async function runCurves(deps: CurvesDeps, opts: RunOptions): Promise<Run
     const c = costs[liftSpec.spec];
     if (c) c.selection += liftUsd;
   }
-  return { records, reader, trajectories, scores, costs, stopReason, staticSequence: staticSeq, lift };
+  return {
+    records,
+    reader,
+    trajectories,
+    scores,
+    costs,
+    stopReason,
+    staticSequence: staticSeq,
+    lift,
+    choices,
+  };
 }
 
 const list = (v: string) =>
@@ -582,8 +658,13 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       summary: { type: 'string' },
       offline: { type: 'boolean', default: false },
       'no-jev': { type: 'boolean', default: false },
+      rule: { type: 'string', default: 'curves' },
+      bench: { type: 'string' },
+      'bench-ref': { type: 'string', default: 'custom-random' },
+      'bench-batch': { type: 'string', default: '24' },
     },
   });
+  if (values.rule !== 'curves' && values.rule !== 'chooser') throw new Error('--rule is curves or chooser');
   if (!values.data) throw new Error('--data is required (the Twin-2K-500 wave_split JSON Lines)');
   const role = values.role as Role;
   if (role !== 'dev' && role !== 'test') throw new Error('--role must be dev or test');
@@ -612,6 +693,16 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     classes: Number(values.classes),
     liftShortlist: positive('lift-shortlist', values['lift-shortlist']),
     liftPeople: positive('lift-people', values['lift-people']),
+    // E10's knobs are set per policy (`custom-jev-pick[b=12,form=noul]`).
+    batch: POLICY_DEFAULTS.batch,
+    ramp: POLICY_DEFAULTS.ramp,
+    aim: POLICY_DEFAULTS.aim,
+    form: POLICY_DEFAULTS.form,
+    stateView: POLICY_DEFAULTS.stateView,
+    lag: POLICY_DEFAULTS.lag,
+    genN: POLICY_DEFAULTS.genN,
+    gateThr: POLICY_DEFAULTS.gateThr,
+    llm: POLICY_DEFAULTS.llm,
   };
   if (!Number.isInteger(knobs.classes) || knobs.classes < 0) throw new Error('--classes is a whole number');
   if (!Number.isInteger(Number(values.offset)) || Number(values.offset) < 0)
@@ -666,6 +757,25 @@ export async function curvesCmd(argv: string[]): Promise<void> {
     maxInFlight: positive('in-flight', values['in-flight']),
   });
   const meter = new Meter(positive('max-usd', values['max-usd'], false));
+  if (values.bench) {
+    try {
+      await benchCmd({
+        people,
+        train,
+        policies,
+        knobs,
+        seed: values.seed,
+        gateway,
+        meter,
+        cacheDir,
+        runDir,
+        values,
+      });
+    } finally {
+      engine.close();
+    }
+    return;
+  }
   const result = await runCurves(
     { gateway, meter },
     {
@@ -698,46 +808,57 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       ),
     ]),
   );
-  const report = analyzeCurves({
-    role,
-    records: result.records,
-    reader: result.reader,
-    policies,
-    checkpoints,
-    consistency,
-    costs: result.costs,
-    trajectories,
-    scores: new Map(
-      [...result.scores].map(([policy, m]) => [
-        policy,
-        new Map([...m].map(([pid, xs]) => [mimicIdOf(pid), xs])),
-      ]),
-    ),
-    audit: {
-      ...(loaded.audit as unknown as Record<string, unknown>),
-      staticSequence: result.staticSequence?.slice(0, 10) ?? null,
-      ...(result.lift
-        ? {
-            liftTop: result.lift.slice(0, 15).map((r) => `${r.key} ${r.lift.toFixed(4)}±${r.se.toFixed(4)}`),
-            liftAnchors: result.lift
-              .filter((r) => (TWIN_ANCHORS as readonly string[]).includes(r.key))
-              .map((r) => `${r.key} ${r.lift.toFixed(4)}±${r.se.toFixed(4)}`),
-          }
-        : {}),
-      given: values.given ?? null,
-      opening: values.opening ?? null,
-      drop: values.drop ?? null,
-      meanGiven: people.reduce((a, p) => a + p.given.length, 0) / people.length,
+  const report = analyzeCurves(
+    {
+      role,
+      records: result.records,
+      reader: result.reader,
+      policies,
+      checkpoints,
+      consistency,
+      costs: result.costs,
+      trajectories,
+      scores: new Map(
+        [...result.scores].map(([policy, m]) => [
+          policy,
+          new Map([...m].map(([pid, xs]) => [mimicIdOf(pid), xs])),
+        ]),
+      ),
+      audit: {
+        ...(loaded.audit as unknown as Record<string, unknown>),
+        staticSequence: result.staticSequence?.slice(0, 10) ?? null,
+        ...(result.lift
+          ? {
+              liftTop: result.lift
+                .slice(0, 15)
+                .map((r) => `${r.key} ${r.lift.toFixed(4)}±${r.se.toFixed(4)}`),
+              liftAnchors: result.lift
+                .filter((r) => (TWIN_ANCHORS as readonly string[]).includes(r.key))
+                .map((r) => `${r.key} ${r.lift.toFixed(4)}±${r.se.toFixed(4)}`),
+            }
+          : {}),
+        given: values.given ?? null,
+        opening: values.opening ?? null,
+        drop: values.drop ?? null,
+        meanGiven: people.reduce((a, p) => a + p.given.length, 0) / people.length,
+      },
+      costUsd: meter.usd,
+      cache: gateway.stats,
+      stopReason: result.stopReason,
+      knobs: { ...knobs, population: POPULATION_DEFAULTS },
+      offline: values.offline,
+      scorer: values['no-jev'] ? 'population' : 'jev',
+      seed: values.seed,
+      ...(values.versus ? { versus: splitSpecs(values.versus) } : {}),
+      ...(result.choices.length ? { choices: result.choices } : {}),
     },
-    costUsd: meter.usd,
-    cache: gateway.stats,
-    stopReason: result.stopReason,
-    knobs: { ...knobs, population: POPULATION_DEFAULTS },
-    offline: values.offline,
-    scorer: values['no-jev'] ? 'population' : 'jev',
-    seed: values.seed,
-    ...(values.versus ? { versus: splitSpecs(values.versus) } : {}),
-  });
+    values.rule === 'chooser' ? CHOOSER_RULE : CURVES_RULE,
+  );
+  if (result.choices.length)
+    writeFileSync(
+      join(runDir, 'choices.jsonl'),
+      `${result.choices.map((c) => JSON.stringify(c)).join('\n')}\n`,
+    );
   const st = statSync(values.data);
   const run: EvalRunRecord = {
     id: ulid(),
@@ -756,6 +877,7 @@ export async function curvesCmd(argv: string[]): Promise<void> {
       ...(values.opening ? { opening: values.opening } : {}),
       ...(Number(values.offset) ? { offset: Number(values.offset) } : {}),
       ...(values.drop ? { drop: values.drop } : {}),
+      ...(values.rule !== 'curves' ? { rule: values.rule } : {}),
       stopReason: result.stopReason,
     },
     datasetHash: sha256Hex(`${basename(values.data)}:${st.size}:${people.map((p) => p.pid).join(',')}`),
@@ -776,3 +898,74 @@ export async function curvesCmd(argv: string[]): Promise<void> {
 }
 
 export type { EvalRecord, LoadAudit };
+
+/** `--bench 8,14,21`: E10's decision-point bench instead of full walks (`bench.ts`). */
+async function benchCmd(a: {
+  people: TwinPerson[];
+  train: TwinPerson[];
+  policies: string[];
+  knobs: PolicyKnobs;
+  seed: string;
+  gateway: Gateway;
+  meter: Meter;
+  cacheDir: string;
+  runDir: string;
+  values: {
+    bench?: string;
+    'bench-ref': string;
+    'bench-batch': string;
+    opening?: string;
+    concurrency: string;
+  };
+}): Promise<void> {
+  const points = [...new Set(list(a.values.bench ?? '').map(Number))].sort((x, y) => x - y);
+  if (!points.length || points.some((k) => !Number.isInteger(k) || k < 0))
+    throw new Error('--bench takes answers already asked at each point, e.g. 8,14,21');
+  const batch = positive('bench-batch', a.values['bench-batch']);
+  const specs = a.policies.map(parsePolicySpec);
+  const pop = a.train.length ? new Population(a.train, POPULATION_DEFAULTS) : null;
+  const embedDir = join(a.cacheDir, 'emb');
+  const custom = a.values.opening ? { custom: openingKeys(a.values.opening) } : {};
+  const built = buildPolicies(a.policies, a.knobs, a.seed, null, {
+    ...custom,
+    models: { gateway: a.gateway, meter: a.meter, embedDir, seed: a.seed },
+  });
+  const [reference] = buildPolicies([a.values['bench-ref']], a.knobs, a.seed, null, custom);
+  const vectors = specs.some(needsEmbeddings)
+    ? await embedTexts(
+        a.gateway,
+        a.people.flatMap((p) => [...p.pool, ...p.reference].map(textOf)),
+        { dir: embedDir, meter: a.meter },
+      )
+    : undefined;
+  const jev = new JevOracle(
+    predictorFor(a.gateway, resolveCandidate({ predictor: JEV_PREDICTOR }), 'eval.curves.bench'),
+    a.meter,
+  );
+  const ramp = Math.max(0, ...specs.map((s) => s.knobs.ramp ?? 0));
+  const { points: rows, stopReason } = await runBench({
+    people: a.people,
+    reference: reference!,
+    policies: built,
+    points,
+    batch,
+    ramp,
+    seed: a.seed,
+    t: a.knobs.tSel,
+    jev,
+    pop,
+    ...(vectors ? { vectors } : {}),
+    concurrency: positive('concurrency', a.values.concurrency),
+  });
+  const report = analyzeBench(rows, { points, batch, seed: a.seed }, a.meter.usd);
+  const md = [
+    `# E10 bench (${a.people.length} people)`,
+    '',
+    ...(stopReason ? [`**Stopped:** ${stopReason}`, ''] : []),
+    ...renderBench(report),
+  ].join('\n');
+  writeFileSync(join(a.runDir, 'bench.json'), JSON.stringify({ report, rows }, null, 1));
+  writeFileSync(join(a.runDir, 'bench.md'), `${md}\n`);
+  console.log(md);
+  console.log(`\nbench → ${join(a.runDir, 'bench.md')}`);
+}
