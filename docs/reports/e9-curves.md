@@ -1,8 +1,15 @@
 # E9 readout: which question to ask next (ADR-0071)
 
-The design and `CURVES_RULE` were fixed in `docs/CURVES.md` before the first run. Every round below reads **dev**
-people: they are for iteration, not results. Twin people rank selection policies for Jev on Twin's questions; they
-never stand in for a Mimic user (`docs/RESEARCH.md` §8). The confirmatory run on test people is §T.
+The design and `CURVES_RULE` were fixed in `docs/CURVES.md` before the first run. The rounds read **dev** people: they
+are for iteration, not results. The result is the confirmatory run on test people (§T), pre-registered in
+`docs/CURVES.md` §10. Twin people rank selection policies for Jev on Twin's questions; they never stand in for a Mimic
+user (`docs/RESEARCH.md` §8).
+
+**Result.** In the setting Mimic is in (demographics known, politics and money asked only after the trust ramp), an
+opening that asks the person's political views and income once the ramp opens beats production's opening for Jev:
+AULC log loss −0.031 [−0.040, −0.023] and +2.5 points of accuracy at 30 questions on 200 test people. The gain comes
+from those two questions, mostly on decisions about policies; the opening's money-and-possessions questions add
+little. Jev's own uncertainty, the selector's information term, is no better than random at choosing (round 1, 4b).
 
 ## Round 0: the long horizon (dev, 150 people)
 
@@ -173,3 +180,47 @@ people.
 5. **Latent classes do not carry `pop-eig`'s gain** (level with random), so an aggregate-only port of adaptive
    population selection does not work as built; `sem-ref` (semantic relevance to the decisions) gains accuracy but not
    log loss.
+
+## §T: the confirmatory run (test people, pre-registered)
+
+Run `01M3ZMY3S44GMQYXKGTNW1XQ50`, $3.78, 200 test people, read once, exactly as `docs/CURVES.md` §10 fixed it before
+any Jev-scored run of this setting. No outage, no early stop.
+
+| Policy | AULC log loss | Δ vs random | Δ vs `anchors-random` | Accuracy at 30 | Fidelity at 30 |
+| --- | --- | --- | --- | --- | --- |
+| `custom-random` (`cfg.e9.opening`) | 0.9086 | −0.0367 [−0.0448, −0.0282] | **−0.0308 [−0.0396, −0.0225]** | 64.8% | 76.6% |
+| `jev-lift` | 0.9240 | −0.0213 [−0.0264, −0.0159] | −0.0154 [−0.0206, −0.0098] | 64.8% | 76.6% |
+| `anchors-random` (production today) | 0.9394 | −0.0059 [−0.0089, −0.0029] | — | 62.3% | 73.7% |
+| `pop-eig[cls=16]` | 0.9399 | −0.0054 [−0.0086, −0.0023] | +0.0005 [−0.0030, +0.0039] | 62.7% | 74.1% |
+| `custom6-random` (no sensitive two) | 0.9426 | −0.0027 [−0.0056, −0.0001] | +0.0032 [+0.0003, +0.0061] | 63.1% | 74.6% |
+| `random` | 0.9453 | — | +0.0059 [+0.0029, +0.0090] | 62.2% | 73.5% |
+
+Fidelity is accuracy ÷ the people's own test–retest agreement on the same targets (84.6%).
+
+**Rule 1 (`CURVES_RULE`, every policy against random):** all five beat random.
+
+**Rule 2 (primary): the opening beats production's.** The interval of `custom-random` − `anchors-random` lies below 0
+(−0.0308 [−0.0396, −0.0225]) and its accuracy at 30 is 2.5 points higher [+1.4, +3.6], not lower. By the rule,
+`cfg.e9.opening` goes to real people as the `e9` preset (draft; ADR-0073).
+
+**Secondary (no decision).**
+
+1. **The two sensitive questions carry it.** The curve drops from 0.943 at k = 6 to 0.896 at k = 10, right after
+   political views and income (questions 7 and 8). Without them (`custom6-random`) the opening is slightly worse than
+   production's on log loss (+0.0032 [+0.0003, +0.0061]) and better on accuracy (+1.3 points).
+2. **Mostly on decisions about policies.** By target block (mean calibrated log loss, k = 3–30, from the request
+   cache), production's anchors → the opening: false consensus (rating policies) 1.605 → 1.522; pricing 0.671 →
+   0.660; anchoring (African countries, low) 0.634 → 0.607, (redwood, high) 0.631 → 0.612; the other blocks move by
+   less than 0.01.
+3. **Jev's own measure works, from train people alone.** `jev-lift` beats production's anchors (−0.0154 [−0.0206,
+   −0.0098]) and has the highest accuracy from the third question (65.9%); it reaches political views at question 17.
+4. **The class model does not carry the population's gain** (level with production's anchors), so adaptive population
+   selection has no aggregate-only form yet.
+
+**What it means for Mimic.** Once a person has consented to politics and money and answered six questions, asking
+their political leaning and financial situation next is the most valuable thing the session can do for predictions
+of the decisions those touch. Twin's decisions over-represent policy opinions (2,000 of 7,164 scored instances), so
+the size of the gain on Mimic's decisions is for the arm to show on real people. E7's probes, which never touch a
+sensitive facet, measure the part that transfers to other decisions; Twin suggests it is real but small (pricing
+0.671 → 0.660).
+
