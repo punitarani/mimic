@@ -9,7 +9,8 @@ user (`docs/RESEARCH.md` §8).
 opening that asks the person's political views and income once the ramp opens beats production's opening for Jev:
 AULC log loss −0.031 [−0.040, −0.023] and +2.5 points of accuracy at 30 questions on 200 test people. The gain comes
 from those two questions, mostly on decisions about policies; the opening's money-and-possessions questions add
-little. Jev's own uncertainty, the selector's information term, is no better than random at choosing (round 1, 4b).
+little. Jev's own uncertainty, the selector's information term, is no better than random at choosing (round 1) and
+worse in Mimic's setting (round 4b).
 
 ## Round 0: the long horizon (dev, 150 people)
 
@@ -180,6 +181,14 @@ people.
 5. **Latent classes do not carry `pop-eig`'s gain** (level with random), so an aggregate-only port of adaptive
    population selection does not work as built; `sem-ref` (semantic relevance to the decisions) gains accuracy but not
    log loss.
+
+### Round 4b: Jev's own uncertainty (dev, 75 people)
+
+Run `01M3ZN9WZRSJHK9GKQ5A8TR5X5`, $2.00. `jev-entropy` asks the question whose answer Jev is least sure of: the
+selector's information term without hypotheses. In the Mimic setting it is worse than random: AULC log loss +0.0042
+[+0.0002, +0.0082], accuracy at 30 −2.4 points [−4.1, −0.7]. Its curve hardly moves from 0 to 30 questions (0.949 →
+0.949). It asks the lottery and time-preference rows Jev is unsure of, and they tell Jev nothing about the person's
+other decisions. Production's anchors are level with random on these 75 people (+0.0002).
 
 ## §T: the confirmatory run (test people, pre-registered)
 
