@@ -417,6 +417,17 @@ export const E7_PROBES_CONFIG: PipelineConfig = {
 export const E7_PROBES_LABEL = 'cfg.e7.probes';
 
 /**
+ * `cfg.e9.opening` (ADR-0073): `cfg.e7.probes` opening with E9's planned sequence (`anchors.e9.v1`, in its own order)
+ * instead of `anchors.v1`, so E7's probes measure what the opening changes on real people. Everything after the
+ * opening, the selector included, is the default's.
+ */
+export const E9_OPENING_CONFIG: PipelineConfig = {
+  ...E7_PROBES_CONFIG,
+  anchors: { setId: 'anchors.e9.v1', count: 8, order: 'fixed' },
+};
+export const E9_OPENING_LABEL = 'cfg.e9.opening';
+
+/**
  * Runtime spend limits (ADR-0035). Deploy settings, not pipeline config: they change what a mimic may spend, never
  * what a prediction sees, so changing them keeps every config hash.
  */

@@ -260,9 +260,11 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
     }
   }
 
-  // 1) Anchors first, in the per-person order fixed at intake.
+  // 1) Anchors first, in the order fixed at intake. One touching a sensitive facet waits for the trust ramp like any
+  // question (ADR-0073); the anchors after it go first.
+  const ramp = rampAllows(cfg, loaded);
   const anchor = questions
-    .filter((q) => q.kind === 'anchor' && q.status === 'pooled' && inScope(q))
+    .filter((q) => q.kind === 'anchor' && q.status === 'pooled' && inScope(q) && ramp(q))
     .sort((a, b) => a.createdAt - b.createdAt)[0];
   if (anchor)
     return serveWithPredictions(deps, m, cfg, loaded, stateAt, seq, anchor, [anchor], progress, rng);
@@ -313,7 +315,6 @@ async function serveOnce(deps: EngineDeps, mimicId: string): Promise<NextResult>
 
   // 3) Adaptive pool (reserve bank when the generated pool is empty). Before the trust ramp opens, nothing touching
   // a sensitive facet is offered at all (ADR-0044).
-  const ramp = rampAllows(cfg, loaded);
   // A reserve item is asked once: two serves racing through the top-up below can each pool a copy of it.
   const askedKeys = new Set(
     questions.filter((q) => q.status === 'served' || q.status === 'answered').map((q) => q.itemKey),

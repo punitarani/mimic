@@ -1,0 +1,194 @@
+{
+  "setId": "anchors.e9.v1",
+  "items": [
+    {
+      "itemKey": "reserve.v2/materialism_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You have $500 to spend on yourself. What do you choose?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Something nice I can keep"
+        },
+        {
+          "key": "b",
+          "label": "A trip or an experience"
+        }
+      ],
+      "facetIds": [
+        "materialism"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/windfall",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You unexpectedly get a $300 gift card for any store. You:",
+      "options": [
+        {
+          "key": "a",
+          "label": "Treat yourself to something fun"
+        },
+        {
+          "key": "b",
+          "label": "Use it for things you would buy anyway"
+        }
+      ],
+      "facetIds": [
+        "spending_style"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/mental_accounting_2",
+      "type": "noul",
+      "domain": "casual",
+      "prompt": "You lose your $50 concert ticket on the way to the show. Would you buy another at the door?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "mental_accounting"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/gut_call",
+      "type": "noul",
+      "domain": "core",
+      "prompt": "Choosing between two apartments you like equally, would you decide on gut feeling?",
+      "options": [
+        {
+          "key": "yes",
+          "label": "Yes"
+        },
+        {
+          "key": "no",
+          "label": "No"
+        }
+      ],
+      "facetIds": [
+        "deliberation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v1/big_purchase",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "Buying new headphones, how much research do you do?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Buy the first decent pair"
+        },
+        {
+          "key": "1",
+          "label": "Glance at a review"
+        },
+        {
+          "key": "2",
+          "label": "Compare a few options"
+        },
+        {
+          "key": "3",
+          "label": "Read several reviews"
+        },
+        {
+          "key": "4",
+          "label": "Research until I find the best"
+        }
+      ],
+      "facetIds": [
+        "maximizing",
+        "deliberation"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/mental_accounting_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "You get an unexpected $200 tax refund. What do you do with it?",
+      "options": [
+        {
+          "key": "a",
+          "label": "Treat myself, it is bonus money"
+        },
+        {
+          "key": "b",
+          "label": "Put it toward bills or savings"
+        },
+        {
+          "key": "c",
+          "label": "Some of each"
+        }
+      ],
+      "facetIds": [
+        "mental_accounting"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/political_leaning_1",
+      "type": "score",
+      "domain": "casual",
+      "prompt": "In a close national election, which kind of party would you most likely vote for?",
+      "options": [
+        {
+          "key": "0",
+          "label": "Clearly left of centre"
+        },
+        {
+          "key": "1",
+          "label": "Centre-left"
+        },
+        {
+          "key": "2",
+          "label": "Centre"
+        },
+        {
+          "key": "3",
+          "label": "Centre-right"
+        },
+        {
+          "key": "4",
+          "label": "Clearly right of centre"
+        }
+      ],
+      "facetIds": [
+        "political_leaning"
+      ]
+    },
+    {
+      "itemKey": "reserve.v2/financial_security_1",
+      "type": "choice",
+      "domain": "casual",
+      "prompt": "An unexpected $1,000 bill arrives. How would you cover it?",
+      "options": [
+        {
+          "key": "a",
+          "label": "From savings, easily"
+        },
+        {
+          "key": "b",
+          "label": "From savings, but it would hurt"
+        },
+        {
+          "key": "c",
+          "label": "Borrow or use credit"
+        },
+        {
+          "key": "d",
+          "label": "It would be very hard to cover"
+        }
+      ],
+      "facetIds": [
+        "financial_security"
+      ]
+    }
+  ]
+}
