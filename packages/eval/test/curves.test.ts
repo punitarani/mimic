@@ -3,16 +3,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HashEmbedder } from '@mimic/adapters';
 import {
+  type ChatRequest,
   type DecisionProvider,
   type DecisionRequest,
   Gateway,
   type PersonState,
   scorePrediction,
+  seededRng,
 } from '@mimic/core';
 import { describe, expect, it } from 'vitest';
 import {
   analyzeCurves,
   aulcRecords,
+  CHOOSER_RULE,
   CURVES_RULE,
   type CurveRecord,
   calibrateCells,
@@ -22,9 +25,12 @@ import {
   renderCurves,
   stoppingRows,
 } from '../src/curves/analyze';
+import { analyzeBench, renderBench, runBench } from '../src/curves/bench';
+import { type ChoiceNote, jevGatePolicy, llmGenPolicy, llmPickPolicy } from '../src/curves/choosers';
 import { ClassPosterior, classKeys, fitClasses } from '../src/curves/classes';
 import {
   buildPolicies,
+  DEFAULT_POLICIES,
   populationReader,
   runCurves,
   splitSpecs,
@@ -38,6 +44,7 @@ import {
   roleOf,
   stateAfter,
   stateOf,
+  type TwinItem,
   type TwinPerson,
   withGiven,
   withoutItems,
@@ -46,13 +53,18 @@ import { embedTexts, textOf } from '../src/curves/embeddings';
 import { jevLift } from '../src/curves/lift';
 import {
   anchorOrder,
+  batchOf,
   JevOracle,
+  needsModels,
+  openItems,
   openingKeys,
   POLICY_DEFAULTS,
   POLICY_NAMES,
   parsePolicySpec,
   referenceSample,
   TWIN_ANCHORS,
+  TWIN_SENSITIVE,
+  withBatch,
 } from '../src/curves/policies';
 import { identityGain, PersonaPosterior, Population, staticSequence } from '../src/curves/population';
 import { CachingGateway } from '../src/decision-cache';
@@ -163,10 +175,12 @@ function fixture(n = 60, transform: (l: ReturnType<typeof line>) => unknown = (l
   return path;
 }
 
-/** A gateway over fakes that records every request it is asked. */
+/** A gateway over fakes that records every request it is asked, chat included. */
 function recordingGateway(costUsd = 0) {
   const fake = new FakeDecisions();
+  const fakeLlm = new FakeLlm();
   const seen: DecisionRequest[] = [];
+  const chats: ChatRequest[] = [];
   const decisions: DecisionProvider = {
     provider: 'fake',
     decide: async (req) => {
@@ -177,14 +191,24 @@ function recordingGateway(costUsd = 0) {
   };
   const gateway = new Gateway({
     decisions,
-    llm: new FakeLlm(),
+    llm: {
+      provider: 'fake-llm',
+      chat: async (req) => {
+        chats.push(req);
+        return fakeLlm.chat(req);
+      },
+    },
     embedder: new HashEmbedder(),
     log: { write: async () => {} },
     clock: () => 1,
     newId: () => 'id',
   });
-  return { gateway, seen };
+  return { gateway, seen, chats };
 }
+
+/** E10's choosers as the leakage test runs them: Jev's need a batch. */
+const asRun = (name: string) =>
+  name === 'jev-pick' || name === 'jev-gate' || name === 'llm-pick' ? `${name}[b=3]` : name;
 
 const jevFor = (gateway: Gateway, meter = new Meter()) =>
   new JevOracle(
@@ -522,7 +546,7 @@ describe('E9 given answers: what Mimic knows before the first question (docs/CUR
 
 describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
   const run = async (people: TwinPerson[], train: TwinPerson[], name: string, seed = 's') => {
-    const { gateway, seen } = recordingGateway();
+    const { gateway, seen, chats } = recordingGateway();
     const pop = new Population(train);
     const refs = [...new Set(train.flatMap((p) => p.reference.map((r) => r.key)))];
     const seq = staticSequence(pop, train, refs, { steps: 4, probes: 5, seed });
@@ -544,6 +568,12 @@ describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
             concurrency: 2,
           })
         ).map((r) => r.key),
+        models: {
+          gateway,
+          meter: new Meter(),
+          embedDir: mkdtempSync(join(tmpdir(), 'e10-emb-')),
+          seed,
+        },
       },
     );
     const jev = jevFor(gateway);
@@ -558,7 +588,7 @@ describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
     const asked = [];
     for (const p of people)
       asked.push((await walk(p, policy!, 4, { jev, pop, seed, vectors })).map((i) => i.key));
-    return { asked, seen };
+    return { asked, seen, chats };
   };
 
   it('never asks or shows a target, and no answer to R or T changes what is asked', async () => {
@@ -571,15 +601,41 @@ describe('E9 policies: what they may read (docs/CURVES.md §4)', () => {
       reference: p.reference.map((r) => ({ ...r, answer: r.options[r.options.length - 1]!.key })),
       targets: p.targets.map((t) => ({ ...t, answer: t.options[t.options.length - 1]!.key })),
     }));
-    for (const name of [...POLICY_NAMES, 'pop-eig[cls=2]', 'anchors-pop-eig[ref=id]']) {
+    const names = [
+      ...POLICY_NAMES.map(asRun),
+      'pop-eig[cls=2]',
+      'anchors-pop-eig[ref=id]',
+      'jev-pick[b=3,form=noul,aim=r]',
+      'jev-pick[b=3,form=score,state=off]',
+      'llm-pick[b=3,lag=1]',
+      'llm-gen[n=2]',
+      'jev-gate[b=3,thr=0.9]',
+    ];
+    for (const name of names) {
       const a = await run(dev, train, name);
       const b = await run(flipped, train, name);
       expect(b.asked, name).toEqual(a.asked);
       const targetPrompts = new Set(dev.flatMap((p) => p.targets.map((t) => t.prompt)));
+      if (needsModels(parsePolicySpec(name)))
+        expect(a.seen.length + a.chats.length, `${name} called a model`).toBeGreaterThan(0);
+      for (const req of a.chats) {
+        const text = req.messages.map((m) => m.content).join('\n');
+        expect(
+          [...targetPrompts].some((t) => text.includes(t)),
+          name,
+        ).toBe(false);
+      }
       for (const req of a.seen) {
         const state = req.state as PersonState;
         expect(
-          state.evidence.every((e) => !targetPrompts.has(e.q)),
+          (state.evidence ?? []).every((e) => !targetPrompts.has(e.q)),
+          name,
+        ).toBe(true);
+        const criteria = Object.values(req.questions).flatMap((q) =>
+          q.type === 'score' ? q.criteria : Object.values(q.criteria),
+        );
+        expect(
+          criteria.every((c) => ![...targetPrompts].some((t) => c.includes(t))),
           name,
         ).toBe(true);
         const asked = Object.values(req.questions).map((q) => q.instructions);
@@ -839,7 +895,7 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
       {
         people: dev,
         train,
-        policies: [...POLICY_NAMES],
+        policies: [...DEFAULT_POLICIES],
         checkpoints,
         knobs: { ...POLICY_DEFAULTS, entropyShortlist: 6, lookaheadShortlist: 2, staticProbes: 5 },
         seed: 's',
@@ -848,7 +904,7 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
       },
     );
     const targets = dev.reduce((a, p) => a + p.targets.length, 0);
-    expect(res.records).toHaveLength(POLICY_NAMES.length * checkpoints.length * targets);
+    expect(res.records).toHaveLength(DEFAULT_POLICIES.length * checkpoints.length * targets);
     expect(res.reader).toHaveLength(res.records.length);
     // k = 0 is the same state for everyone and every policy.
     const zero = res.records.filter((r) => r.k === 0);
@@ -856,7 +912,7 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
     const report = analyzeCurves({
       role: 'dev',
       records: res.records,
-      policies: [...POLICY_NAMES],
+      policies: [...DEFAULT_POLICIES],
       checkpoints,
       consistency: new Map(dev.map((p) => [mimicIdOf(p.pid), 0.8])),
       costs: res.costs,
@@ -872,9 +928,9 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
       seed: 's',
       versus: ['pop-eig'],
     });
-    expect(report.deltas.filter((d) => d.against === 'pop-eig')).toHaveLength(POLICY_NAMES.length - 1);
+    expect(report.deltas.filter((d) => d.against === 'pop-eig')).toHaveLength(DEFAULT_POLICIES.length - 1);
     expect(report.verdicts.every((v) => v.outcome === 'insufficient')).toBe(true); // 4 people < 30
-    expect(report.points.filter((p) => p.k === 3)).toHaveLength(POLICY_NAMES.length);
+    expect(report.points.filter((p) => p.k === 3)).toHaveLength(DEFAULT_POLICIES.length);
     const md = renderReport({
       id: 'r',
       name: 'E9 test',
@@ -1104,4 +1160,332 @@ describe('E9 policy specs: variants and opening blocks (docs/CURVES.md §7)', ()
       expect(plain.every((x) => typeof x === 'number')).toBe(true);
     }
   });
+});
+
+describe('E10 choosers: who picks the next question (docs/CHOOSER.md)', () => {
+  const item = (key: string, prompt = key): TwinItem => ({
+    key,
+    qid: key.split('/')[2]!,
+    block: 'Demographics',
+    type: 'choice',
+    prompt,
+    options: [
+      { key: 'a', label: 'One' },
+      { key: 'b', label: 'Two' },
+    ],
+    answer: 'a',
+  });
+
+  it('keeps complete chat replies on disk, apart from decisions, and never a cut-off or failed one', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'e10-chat-'));
+    let calls = 0;
+    let finish = 'stop';
+    let fail = false;
+    const g = new CachingGateway(
+      {
+        decisions: new FakeDecisions(),
+        llm: {
+          provider: 'fake',
+          chat: async (req) => {
+            calls++;
+            if (fail) throw new Error('boom');
+            return {
+              content: `{"n":${calls}}`,
+              modelSnapshot: req.model,
+              finishReason: finish,
+              usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.25 },
+              latencyMs: 5,
+              raw: null,
+            };
+          },
+        },
+        log: { write: async () => {} },
+        clock: () => 1,
+        newId: () => 'id',
+      },
+      { dir },
+    );
+    const req: ChatRequest = { model: 'm', messages: [{ role: 'user', content: 'hi' }] };
+    const first = await g.chat({ purpose: 't' }, req);
+    const again = await g.chat({ purpose: 't' }, { messages: req.messages, model: 'm' });
+    expect(again.content).toBe(first.content);
+    expect(again.usage.costUsd).toBe(0);
+    expect(calls).toBe(1);
+    expect(g.stats.chat).toMatchObject({ hits: 1, misses: 1, savedUsd: 0.25 });
+    expect(CachingGateway.chatKeyOf(req)).not.toBe(
+      CachingGateway.keyOf({ model: 'm', state: {}, questions: {} }),
+    );
+    finish = 'length';
+    const cut: ChatRequest = { ...req, messages: [{ role: 'user', content: 'long' }] };
+    await g.chat({ purpose: 't' }, cut);
+    await g.chat({ purpose: 't' }, cut);
+    expect(calls).toBe(3);
+    fail = true;
+    const other: ChatRequest = { ...req, messages: [{ role: 'user', content: 'other' }] };
+    await expect(g.chat({ purpose: 't' }, other)).rejects.toThrow('boom');
+    fail = false;
+    finish = 'stop';
+    await g.chat({ purpose: 't' }, other);
+    expect(calls).toBe(5);
+  });
+
+  it('draws the same batch for a person and step whatever the order, a smaller one the start of a larger', () => {
+    const open = Array.from({ length: 30 }, (_, i) => item(`twin2k/w13/QID${100 + i}`));
+    const a = batchOf(open, 12, 's', 'p1', 9);
+    expect(a).toHaveLength(12);
+    expect(a.every((x) => open.includes(x))).toBe(true);
+    expect(batchOf([...open].reverse(), 12, 's', 'p1', 9)).toEqual(a);
+    expect(batchOf(open, 6, 's', 'p1', 9)).toEqual(a.slice(0, 6));
+    expect(batchOf(open, 12, 's', 'p1', 10)).not.toEqual(a);
+    expect(batchOf(open, 0, 's', 'p1', 9)).toBe(open);
+    // The trust ramp: party, income and political views wait for six answers.
+    const withSensitive = [...open, item('twin2k/w13/QID20'), item('twin2k/w13/QID22')];
+    expect(openItems(withSensitive, 5, 6).some((x) => TWIN_SENSITIVE.has(x.key))).toBe(false);
+    expect(openItems(withSensitive, 6, 6)).toBe(withSensitive);
+    expect(openItems(withSensitive, 0, 0)).toBe(withSensitive);
+  });
+
+  const setup = async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const person = all.filter((p) => p.role !== 'train')[0]!;
+    return { person };
+  };
+  const ctxFor = async (
+    person: TwinPerson,
+    gateway: Gateway,
+    asked: TwinItem[],
+    log: (n: ChoiceNote) => void,
+  ) => {
+    const vectors = await embedTexts(gateway, [...person.pool, ...person.reference].map(textOf), {
+      dir: mkdtempSync(join(tmpdir(), 'e10-emb-')),
+      meter: new Meter(),
+    });
+    const remaining = person.pool.filter((i) => !asked.includes(i));
+    return {
+      person,
+      asked,
+      remaining,
+      state: stateOf(person, asked),
+      rng: seededRng('r'),
+      jev: jevFor(gateway),
+      pop: null,
+      posterior: null,
+      vectors,
+      log,
+    };
+  };
+  const deps = (gateway: Gateway) => ({
+    gateway,
+    meter: new Meter(),
+    embedDir: mkdtempSync(join(tmpdir(), 'e10-emb-')),
+    seed: 's',
+  });
+
+  it('falls back to a seeded candidate when the chooser answers nothing usable, and says why', async () => {
+    const { person } = await setup();
+    const gateway = new Gateway({
+      decisions: new FakeDecisions(),
+      llm: {
+        provider: 'fake',
+        chat: async (req) => ({
+          content: '{}',
+          modelSnapshot: req.model,
+          usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 },
+          latencyMs: 1,
+          raw: null,
+        }),
+      },
+      embedder: new HashEmbedder(),
+      log: { write: async () => {} },
+      clock: () => 1,
+      newId: () => 'id',
+    });
+    const notes: ChoiceNote[] = [];
+    const ctx = await ctxFor(person, gateway, [], (n) => notes.push(n));
+    const pick = await llmPickPolicy('llm-pick', POLICY_DEFAULTS, deps(gateway)).next(ctx);
+    expect(ctx.remaining).toContain(pick);
+    expect(notes[0]).toMatchObject({ how: 'fallback', fallback: 'invalid JSON output', pick: pick.key });
+  });
+
+  it('hides the latest answer from a chooser with lag, and grounds a written question to the item it matches', async () => {
+    const { person } = await setup();
+    const target = person.pool[3]!;
+    const chats: ChatRequest[] = [];
+    const gateway = new Gateway({
+      decisions: new FakeDecisions(),
+      llm: {
+        provider: 'fake',
+        chat: async (req) => {
+          chats.push(req);
+          // Writes exactly the pool question `target`.
+          return {
+            content: JSON.stringify({
+              questions: [{ prompt: target.prompt, options: target.options.map((o) => o.label) }],
+            }),
+            modelSnapshot: req.model,
+            usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 },
+            latencyMs: 1,
+            raw: null,
+          };
+        },
+      },
+      embedder: new HashEmbedder(),
+      log: { write: async () => {} },
+      clock: () => 1,
+      newId: () => 'id',
+    });
+    const asked = [person.pool[0]!, person.pool[1]!];
+    const notes: ChoiceNote[] = [];
+    const ctx = await ctxFor(person, gateway, asked, (n) => notes.push(n));
+    const pick = await llmGenPolicy('llm-gen', { ...POLICY_DEFAULTS, lag: 1 }, deps(gateway)).next(ctx);
+    expect(pick).toBe(target);
+    expect(notes[0]).toMatchObject({ how: 'gen', pick: target.key });
+    expect(notes[0]!.similarity).toBeCloseTo(1, 6);
+    const user = chats[0]!.messages.find((m) => m.role === 'user')!.content;
+    expect(user).toContain(asked[0]!.prompt);
+    expect(user).not.toContain(asked[1]!.prompt);
+    // An asked item is never grounded to, even when the question written is exactly it.
+    const again = await ctxFor(person, gateway, [person.pool[0]!, target], () => {});
+    expect(await llmGenPolicy('llm-gen', POLICY_DEFAULTS, deps(gateway)).next(again)).not.toBe(target);
+  });
+
+  it('writes a question when Jev chooses none of the batch, and picks from the batch when it does not', async () => {
+    const { person } = await setup();
+    let none = true;
+    const gateway = new Gateway({
+      decisions: {
+        provider: 'fake',
+        decide: async (req) => {
+          const keys = Object.keys(req.questions.pick?.type === 'choice' ? req.questions.pick.criteria : {});
+          const win = none ? 'none' : (keys.find((k) => k !== 'none') ?? 'q01');
+          return {
+            modelSnapshot: 'jev',
+            answers: {
+              pick: {
+                type: 'choice',
+                choice: win,
+                probabilities: Object.fromEntries(
+                  keys.map((k) => [k, k === win ? 0.6 : 0.4 / (keys.length - 1)]),
+                ),
+              },
+            },
+            usage: { inputTokens: 1, outputTokens: 0, costUsd: 0 },
+            latencyMs: 1,
+            raw: null,
+          };
+        },
+      },
+      llm: new FakeLlm(),
+      embedder: new HashEmbedder(),
+      log: { write: async () => {} },
+      clock: () => 1,
+      newId: () => 'id',
+    });
+    const gate = withBatch(
+      jevGatePolicy('jev-gate', { ...POLICY_DEFAULTS, batch: 3 }, deps(gateway)),
+      { ...POLICY_DEFAULTS, batch: 3 },
+      's',
+    );
+    const notes: ChoiceNote[] = [];
+    const ctx = await ctxFor(person, gateway, [], (n) => notes.push(n));
+    await gate.next(ctx);
+    expect(notes[0]).toMatchObject({ how: 'gen', gated: true });
+    none = false;
+    const batch = batchOf(ctx.remaining, 3, 's', person.pid, 0);
+    const pick = await gate.next(ctx);
+    expect(batch).toContain(pick);
+    expect(notes[1]).toMatchObject({ how: 'jev', gated: false });
+  });
+
+  it('runs the choosers end to end offline, logs every decision and renders them under CHOOSER_RULE', async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const dev = all.filter((p) => p.role === 'dev').slice(0, 3);
+    const { gateway } = recordingGateway();
+    const policies = ['random', 'jev-pick[b=3]', 'llm-pick[b=3]', 'llm-gen', 'jev-gate[b=3]'];
+    const res = await runCurves(
+      { gateway, meter: new Meter() },
+      {
+        people: dev,
+        train: [],
+        policies,
+        checkpoints: [0, 1, 3],
+        knobs: POLICY_DEFAULTS,
+        seed: 's',
+        concurrency: 2,
+        chunkPeople: 2,
+        embedDir: mkdtempSync(join(tmpdir(), 'e10-emb-')),
+      },
+    );
+    for (const p of policies.slice(1))
+      expect(res.choices.filter((c) => c.policy === p)).toHaveLength(dev.length * 3);
+    expect(res.choices.every((c) => dev.some((p) => p.pid === c.pid))).toBe(true);
+    const report = analyzeCurves(
+      {
+        role: 'dev',
+        records: res.records,
+        policies,
+        checkpoints: [0, 1, 3],
+        consistency: new Map(),
+        costs: res.costs,
+        trajectories: new Map(),
+        audit: {},
+        costUsd: 0,
+        cache: { hits: 0, misses: 0, savedUsd: 0 },
+        stopReason: null,
+        knobs: {},
+        offline: true,
+        seed: 's',
+        choices: res.choices,
+      },
+      { ...CHOOSER_RULE, reference: 'random', aulcKs: [1, 3] },
+    );
+    expect(report.choices?.map((c) => c.policy).sort()).toEqual(policies.slice(1).sort());
+    const md = renderCurves(report).join('\n');
+    expect(md).toContain("## The choosers' decisions");
+    expect(md).toContain('CHOOSER_RULE');
+    expect(md).toContain('by target group');
+    expect(CHOOSER_RULE).toMatchObject({ reference: 'custom-random', aulcKs: [10, 15, 20, 25, 30] });
+  }, 60_000);
+
+  it('benches choosers on the same state and batch: the best pick bounds every chooser', async () => {
+    const all = (await loadPeople(fixture(40))).people;
+    const dev = all.filter((p) => p.role === 'dev').slice(0, 3);
+    const { gateway } = recordingGateway();
+    const models = deps(gateway);
+    const built = buildPolicies(
+      ['random[b=3]', 'jev-pick[b=3]', 'llm-pick[b=3]'],
+      POLICY_DEFAULTS,
+      's',
+      null,
+      {
+        models,
+      },
+    );
+    const [reference] = buildPolicies(['random'], POLICY_DEFAULTS, 's', null);
+    const { points, stopReason } = await runBench({
+      people: dev,
+      reference: reference!,
+      policies: built,
+      points: [1, 2],
+      batch: 4,
+      ramp: 0,
+      seed: 's',
+      t: 4,
+      jev: jevFor(gateway),
+      pop: null,
+      concurrency: 2,
+    });
+    expect(stopReason).toBeNull();
+    expect(points).toHaveLength(dev.length * 2);
+    for (const p of points) {
+      expect(p.gains).toHaveLength(4);
+      expect(p.picks.map((x) => x.policy)).toEqual(['random[b=3]', 'jev-pick[b=3]', 'llm-pick[b=3]']);
+      // Every pick came from the start of the measured batch.
+      for (const x of p.picks) expect(p.gains.slice(0, 3).map((g) => g.key)).toContain(x.key);
+    }
+    const report = analyzeBench(points, { points: [1, 2], batch: 4, seed: 's' }, 0);
+    for (const o of report.oracle) expect(o.logLoss.mean).toBeLessThanOrEqual(0);
+    for (const r of report.rows) expect(r.regret.logLoss.mean).toBeGreaterThanOrEqual(0);
+    expect(renderBench(report).join('\n')).toContain('Headroom');
+  }, 60_000);
 });

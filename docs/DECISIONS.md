@@ -2708,3 +2708,46 @@ production's `anchors.v1`, as Twin asks it. The opening beat production's: AULC 
 - E7's probes never touch a sensitive facet, so on real people they measure only the part that transfers to other
   decisions, which Twin suggests is real but small.
 - `cfg.default` is unchanged. The arm starts only when a person starts the `e9` experiment in `/lab`.
+
+## ADR-0074 — E10: who picks the next question, Jev from the batch or an LLM writing one (2026-10-03)
+
+**Context.** Production's `voi` selector scores a pool of 6–15 generated and reserve questions. No LLM is called while
+a question is served. E9 (ADR-0071) found that Jev's own uncertainty, the selector's information term, picks badly,
+and that statistics from other people pick well but don't port to generated questions. Its confirmed win is a fixed
+opening (ADR-0073); after the opening, random picks gain little. The next question could instead be chosen by Jev or
+an LLM from the batch, or written by an LLM, or Jev could decide between the batch and a newly written question.
+Nothing in the codebase asked Jev to choose among questions.
+
+**Decision.**
+- **E10** (`docs/CHOOSER.md`) measures four choosers on E9's harness, after E9's opening:
+  - `jev-pick`: Jev picks from the batch, as a choice, a yes/no per candidate, or a score per candidate.
+  - `llm-pick`: DeepSeek picks from the batch.
+  - `llm-gen`: DeepSeek writes the question, grounded to the person's nearest open recorded item by embedding, so the
+    recorded answer stands in.
+  - `jev-gate`: Jev picks from the batch or chooses to have one written.
+- **The batch** (`b`) is drawn from what is open, seeded by person and step only, so policies are compared on the same
+  candidates. The trust ramp (`ramp`) keeps Twin's party, income and political-views items back for six answers.
+- **What a chooser sees.** Only the person's own answers and question texts, never a target or another person
+  (invariant 8). So each chooser ports to generated questions. The prompts are eval tooling (`docs/prompts/curves/`),
+  versioned like the optimizer's.
+- **Caching.** `CachingGateway` now also keeps complete chat replies on disk, by the request's content hash and keyed
+  apart from decisions. Reruns replay the same choices for free. A reply cut off at its token cap is not kept.
+- **`CHOOSER_RULE`**: AULC over k = 10–30 against `custom-random`, with a 90% interval by person below 0, accuracy at
+  30 no more than a point lower, and at least 30 people.
+- **Screening and confirmation.**
+  - A one-step decision-point bench (`--bench`) screens choosers cheaply. It also measures the headroom: the best pick
+    in a batch against a random one.
+  - Full walks decide.
+  - The confirmation is pre-registered in `docs/CHOOSER.md` §6 and read once, on dev people 301–609.
+- **A deviation from E9's design:** confirmation uses dev people, not test people. E9 used up all 397 test people;
+  dev 301–609 have never been read by a Jev-scored run.
+
+**Consequences.**
+- A winner ships as an arm against `cfg.e9.opening`, never as `cfg.default`.
+- How it is served follows from what wins:
+  - a person-blind Jev form is scored when questions are drafted;
+  - a Jev pick at serve time is one more parallel request;
+  - an LLM pick that holds up with `lag=1` is prefetched while the person answers;
+  - writing a question at serve time is allowed only when the gate's measured rate keeps waits of up to about 5 s
+    occasional.
+- The harness's default policy list leaves the choosers out. They need a gateway, and Jev's choosers a batch.

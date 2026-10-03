@@ -9,6 +9,7 @@ import {
   temperatureScale,
 } from '@mimic/core';
 import type { Meter } from '../optimize/evaluate';
+import type { ChoiceNote } from './choosers';
 import { mimicIdOf, questionOf, stateOf, type TwinItem, type TwinPerson } from './data';
 import { cosine, textOf } from './embeddings';
 import { PersonaPosterior, type Population, type Posterior } from './population';
@@ -89,6 +90,13 @@ export interface PolicyContext {
   note?: (score: number) => void;
   /** Question text (`textOf`) → embedding, for the semantic policies. */
   vectors?: ReadonlyMap<string, number[]>;
+  /**
+   * Everything still open to ask (the trust ramp applied), when `remaining` is a batch drawn from it (`withBatch`):
+   * what a question written by an LLM is grounded to.
+   */
+  eligible?: readonly TwinItem[];
+  /** Records an E10 chooser's decision (`choices.jsonl`). */
+  log?: (note: ChoiceNote) => void;
 }
 
 export interface Policy {
@@ -131,6 +139,24 @@ export interface PolicyKnobs {
    * `id`, the person themselves: which train person they answer like (persona posterior policies only).
    */
   reference: 'R' | 'pool' | 'id';
+  /** E10 (docs/CHOOSER.md): candidates a step chooses among, drawn from what is open (0: everything open). */
+  batch: number;
+  /** E10: sensitive items (party, income, political views) wait until this many are asked (the trust ramp; 0: off). */
+  ramp: number;
+  /** E10 choosers: what they are told Mimic predicts (`p`: the product's statement, `r`: five R questions, `none`). */
+  aim: 'p' | 'r' | 'none';
+  /** `jev-pick`: one choice among the candidates, a yes/no per candidate, or a 0–4 score per candidate. */
+  form: 'choice' | 'noul' | 'score';
+  /** E10 choosers: whether they see the person's answers (`off`: the candidates alone). */
+  stateView: 'on' | 'off';
+  /** E10 choosers: the latest answers they don't see yet (1: choosing while the person answers). */
+  lag: number;
+  /** `llm-gen`: questions written a step (more than one: Jev picks among them once grounded). */
+  genN: number;
+  /** `jev-gate`: also write a question when Jev's best candidate is below this probability. */
+  gateThr: number;
+  /** The LLM an E10 chooser or writer calls, at its measured `predict.v2` settings (ADR-0041). */
+  llm: 'deepseek' | 'glm' | 'luna' | 'mimo' | 'qwen';
 }
 
 export const POLICY_DEFAULTS: PolicyKnobs = {
@@ -146,6 +172,15 @@ export const POLICY_DEFAULTS: PolicyKnobs = {
   classes: 0,
   liftShortlist: 60,
   liftPeople: 60,
+  batch: 0,
+  ramp: 0,
+  aim: 'p',
+  form: 'choice',
+  stateView: 'on',
+  lag: 0,
+  genN: 1,
+  gateThr: 0,
+  llm: 'deepseek',
 };
 
 const argmaxBy = <T>(xs: readonly T[], f: (x: T) => number): T | undefined => {
@@ -423,8 +458,9 @@ export function semRefPolicy(knobs: PolicyKnobs): Policy {
   };
 }
 
-/** Policies that embed questions (`embedTexts`) before they run. */
-export const needsEmbeddings = (s: PolicySpec) => s.base === 'sem-ref';
+/** Policies that embed questions (`embedTexts`) before they run: the semantic one, and those that ground. */
+export const needsEmbeddings = (s: PolicySpec) =>
+  s.base === 'sem-ref' || s.base === 'llm-gen' || s.base === 'jev-gate';
 
 /** The best fixed questionnaire for the population (`staticSequence`), the same for everyone. */
 export function popStaticPolicy(sequence: readonly string[]): Policy {
@@ -488,6 +524,10 @@ export const POLICY_NAMES = [
   'jev-eig',
   'hybrid',
   'jev-lift',
+  'jev-pick',
+  'llm-pick',
+  'llm-gen',
+  'jev-gate',
 ] as const;
 export type PolicyName = (typeof POLICY_NAMES)[number];
 
@@ -539,6 +579,24 @@ const KNOB_KEYS: Record<string, keyof PolicyKnobs> = {
   cls: 'classes',
   lshort: 'liftShortlist',
   lpeople: 'liftPeople',
+  b: 'batch',
+  ramp: 'ramp',
+  aim: 'aim',
+  form: 'form',
+  state: 'stateView',
+  lag: 'lag',
+  n: 'genN',
+  thr: 'gateThr',
+  llm: 'llm',
+};
+
+/** Knobs that take a word, and the words each takes. */
+const WORD_KNOBS: Partial<Record<keyof PolicyKnobs, readonly string[]>> = {
+  reference: ['R', 'pool', 'id'],
+  aim: ['p', 'r', 'none'],
+  form: ['choice', 'noul', 'score'],
+  stateView: ['on', 'off'],
+  llm: ['deepseek', 'glm', 'luna', 'mimo', 'qwen'],
 };
 
 export function parsePolicySpec(spec: string): PolicySpec {
@@ -553,13 +611,15 @@ export function parsePolicySpec(spec: string): PolicySpec {
     const key = KNOB_KEYS[k ?? ''];
     if (!key || v === undefined || v === '')
       throw new Error(`${spec}: unknown knob ${kv} (${Object.keys(KNOB_KEYS).join(', ')})`);
-    if (key === 'reference') {
-      if (v !== 'R' && v !== 'pool' && v !== 'id') throw new Error(`${spec}: ref is R, pool or id`);
-      knobs.reference = v;
+    const words = WORD_KNOBS[key];
+    if (words) {
+      if (!words.includes(v))
+        throw new Error(`${spec}: ${k} is ${words.slice(0, -1).join(', ')} or ${words[words.length - 1]}`);
+      Object.assign(knobs, { [key]: v });
     } else {
       const n = Number(v);
       if (!Number.isFinite(n) || n < 0) throw new Error(`${spec}: ${k} must be a number`);
-      knobs[key] = n;
+      Object.assign(knobs, { [key]: n });
     }
   }
   const opening = m[1] === 'anchors' ? 'anchors' : m[1] === 'custom' ? 'custom' : 'static';
@@ -570,7 +630,15 @@ export function parsePolicySpec(spec: string): PolicySpec {
 
 /** Policies that ask Jev to select (none can run with `--no-jev`). */
 export const needsJev = (s: PolicySpec) =>
-  s.base === 'jev-entropy' || s.base === 'jev-eig' || s.base === 'hybrid' || s.base === 'jev-lift';
+  s.base === 'jev-entropy' ||
+  s.base === 'jev-eig' ||
+  s.base === 'hybrid' ||
+  s.base === 'jev-lift' ||
+  needsModels(s);
+
+/** E10's choosers: they call Jev or an LLM through the gateway (`choosers.ts`). */
+export const needsModels = (s: PolicySpec) =>
+  s.base === 'jev-pick' || s.base === 'llm-pick' || s.base === 'llm-gen' || s.base === 'jev-gate';
 
 /** Policies that need the train population (to select, or for the static opening block). */
 export const needsPopulation = (s: PolicySpec) =>
@@ -624,3 +692,48 @@ export const openingKeys = (spec: string) =>
 /** Production's anchors in a per-person order (seeded like `anchors:{mimicId}` at intake). */
 export const anchorOrder = (seed: string) => (pid: string) =>
   shuffle([...TWIN_ANCHORS], seededRng(`${seed}:anchors:${pid}`));
+
+/**
+ * Twin's sensitive items: party, income and political views. Production holds questions on a sensitive facet back
+ * until six answers (the trust ramp, ADR-0044); the `ramp` knob does the same here.
+ */
+export const TWIN_SENSITIVE: ReadonlySet<string> = new Set([
+  'twin2k/w13/QID20',
+  'twin2k/w13/QID21',
+  'twin2k/w13/QID22',
+]);
+
+/** What is open to ask: everything left, less the sensitive items until `ramp` questions are asked. */
+export const openItems = (remaining: readonly TwinItem[], asked: number, ramp: number) =>
+  asked >= ramp ? remaining : remaining.filter((i) => !TWIN_SENSITIVE.has(i.key));
+
+/**
+ * A step's batch (E10, docs/CHOOSER.md): `b` items drawn from what is open, seeded by the person and the step only,
+ * so policies at the same point see the same batch (common random numbers), and a smaller batch is the start of a
+ * larger one. `b` = 0, or one at least as large as what is open, is everything open.
+ */
+export function batchOf(
+  open: readonly TwinItem[],
+  b: number,
+  seed: string,
+  pid: string,
+  step: number,
+): readonly TwinItem[] {
+  if (b <= 0 || b >= open.length) return open;
+  // Survey order first, so the draw does not depend on how a policy's remaining list happens to be ordered.
+  const sorted = [...open].sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
+  return shuffle(sorted, seededRng(`${seed}:batch:${pid}:${step}`)).slice(0, b);
+}
+
+/** Runs `inner` on a batch of what is open (`batchOf`, the trust ramp applied). */
+export function withBatch(inner: Policy, knobs: PolicyKnobs, seed: string): Policy {
+  return {
+    ...inner,
+    next: (ctx) => {
+      const open = openItems(ctx.remaining, ctx.asked.length, knobs.ramp);
+      const usable = open.length ? open : ctx.remaining;
+      const batch = batchOf(usable, knobs.batch, seed, ctx.person.pid, ctx.asked.length);
+      return inner.next({ ...ctx, remaining: batch, eligible: usable });
+    },
+  };
+}

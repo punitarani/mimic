@@ -7,6 +7,7 @@ import {
   type Gateway,
   wordCount,
 } from '@mimic/core';
+import { chooserPromptDocs } from '../curves/choosers';
 import { type Candidate, type EvalRecord, stateExcerpt } from './evaluate';
 import type { EvalInstance } from './instances';
 
@@ -287,6 +288,7 @@ ${input}
 \`\`\`
 `;
   return {
+    ...chooserPromptDocs(),
     [`docs/prompts/optimize/${REFLECT_PROMPT_VERSION}.md`]: doc(
       REFLECT_PROMPT_VERSION,
       'Reflection (rewrite one component)',
