@@ -16,8 +16,10 @@ import {
   CURVES_RULE,
   type CurveRecord,
   calibrateCells,
+  ENOUGH_RULE,
   firstReach,
   interpolate,
+  renderCurves,
   stoppingRows,
 } from '../src/curves/analyze';
 import { ClassPosterior, classKeys, fitClasses } from '../src/curves/classes';
@@ -472,6 +474,23 @@ describe("E9 Jev's lift: what Jev reads from one answer (docs/CURVES.md §4)", (
   });
 });
 
+describe('E9 people: reading the unread (docs/CURVES.md §11)', () => {
+  it('skips the people an earlier run read, in the same seeded order', async () => {
+    const path = fixture(60);
+    const first = (await loadPeople(path, { roles: ['dev'], limitPerRole: { dev: 3 } })).people.map(
+      (p) => p.pid,
+    );
+    const next = (
+      await loadPeople(path, { roles: ['dev'], limitPerRole: { dev: 3 }, offsetPerRole: { dev: 3 } })
+    ).people.map((p) => p.pid);
+    const six = (await loadPeople(path, { roles: ['dev'], limitPerRole: { dev: 6 } })).people.map(
+      (p) => p.pid,
+    );
+    expect(next.some((pid) => first.includes(pid))).toBe(false);
+    expect([...first, ...next]).toEqual(six);
+  });
+});
+
 describe('E9 given answers: what Mimic knows before the first question (docs/CURVES.md §4)', () => {
   it('moves a block out of the pool into every state and the posterior, never into k', async () => {
     const { people } = await loadPeople(fixture(40));
@@ -730,6 +749,47 @@ describe('E9 analysis (docs/CURVES.md §5)', () => {
         0.5,
       ),
     ).toBe(3);
+  });
+
+  it('finds how few questions are enough: the smallest k from which every later k matches the last', () => {
+    // 40 people, three targets each: right on two of three at k = 5, on all three from k = 10.
+    const records: CurveRecord[] = [];
+    for (let i = 0; i < 40; i++) {
+      const person = `P${i}`;
+      for (const [k, right] of [
+        [0, 1],
+        [5, 2],
+        [10, 3],
+        [20, 3],
+      ] as const)
+        for (let t = 0; t < 3; t++)
+          records.push({ policy: 'p', k, block: 'x', rec: rec(person, k, `t${t}`, 0.8, t < right) });
+    }
+    const report = analyzeCurves({
+      role: 'dev',
+      records,
+      policies: ['p'],
+      checkpoints: [0, 5, 10, 20],
+      consistency: new Map(),
+      costs: {},
+      trajectories: new Map(),
+      audit: {},
+      costUsd: 0,
+      cache: { hits: 0, misses: 0, savedUsd: 0 },
+      stopReason: null,
+      knobs: {},
+      offline: true,
+      seed: 's',
+    });
+    expect(report.enough.at).toEqual([{ policy: 'p', k: 10 }]);
+    const at5 = report.enough.rows.find((r) => r.k === 5)!;
+    expect(at5.enough).toBe(false);
+    expect(at5.dItemAcc.mean).toBeCloseTo(-1 / 3, 6);
+    expect(report.enough.rows.find((r) => r.k === 10)!.dItemAcc.mean).toBeCloseTo(0, 10);
+    expect(ENOUGH_RULE).toEqual({ maxAccuracyDrop: 0.01, maxLogLossRise: 0.01 });
+    const md = renderCurves(report).join('\n');
+    expect(md).toContain('How few questions are enough');
+    expect(md).toContain('**p**: enough from k = 10');
   });
 
   it('stops each person where the policy’s score drops, and compares with a fixed length of the same mean', () => {

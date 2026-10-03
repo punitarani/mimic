@@ -91,6 +91,8 @@ export interface LoadOptions {
   roles?: Role[];
   /** At most this many people per role, in a seeded order (`seed`). */
   limitPerRole?: Partial<Record<Role, number>>;
+  /** Skip this many people of a role first, in the same order: people an earlier run already read. */
+  offsetPerRole?: Partial<Record<Role, number>>;
   /** Skip the persona fields of people outside `roles` without parsing them. */
   seed?: string;
 }
@@ -211,7 +213,8 @@ function limitPeople(people: TwinPerson[], opts: LoadOptions): TwinPerson[] {
     const mine = people
       .filter((p) => p.role === role)
       .sort((a, b) => unitHash(`${seed}:order:${a.pid}`) - unitHash(`${seed}:order:${b.pid}`));
-    out.push(...mine.slice(0, opts.limitPerRole?.[role] ?? mine.length));
+    const from = opts.offsetPerRole?.[role] ?? 0;
+    out.push(...mine.slice(from, from + (opts.limitPerRole?.[role] ?? mine.length)));
   }
   return out;
 }
