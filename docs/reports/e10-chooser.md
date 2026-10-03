@@ -1,13 +1,28 @@
-# E10 readout: who picks the next question (ADR-0074)
+# E10 readout: who picks the next question (ADR-0074, ADR-0075)
 
-**Status: interim.** Stages 1, 2a, 2b and round 1 of 2c ran on 2026-10-03; round 2 is running. The pilot stopped when the OpenRouter
-account ran out of credits at 07:35 UTC (HTTP 402, `limit_source: openrouter_credits`; total usage $190.44 against
-$190 of credits). Credits were added by 10:48 UTC and the screen ran then.
+**Status: complete, a null.** No chooser beats a random pick from the batch after E9's opening:
+- Jev picking from the batch;
+- an LLM picking from it;
+- an LLM writing the question;
+- Jev deciding between the batch and a written question.
+
+E10 stopped at stage 2c under its own rules (`docs/CHOOSER.md` §4): two rounds of walks improved the best by less than
+0.002 nats, and the best AULC point estimate (−0.0010) was above the −0.002 needed to attempt a confirmation. Dev
+people 301–609 stay unread. No arm ships (ADR-0075).
 
 Design and rules: `docs/CHOOSER.md`. Every number here comes from dev people. Twin people rank designs for Jev on
-Twin's questions; they never stand in for a Mimic user.
+Twin's questions; they never stand in for a Mimic user. The pilot was interrupted when the OpenRouter account ran
+out of credits at 07:35 UTC on 2026-10-03; the rest ran after credits were added at 10:48 UTC.
 
-## What it found so far
+**In short:**
+1. After the opening, the best of 12 candidates is worth −0.006 nats a question, cross-fitted, and no accuracy.
+2. Neither Jev nor an LLM can tell from the person's answers and the question texts which candidate that is. In
+   one-step screens and full walks alike, every chooser is level with a random pick.
+3. Asked to choose between the batch and a written question, Jev nearly always keeps the batch (1 step in 300).
+4. Only Jev (0.3 s) and GPT-6 Luna (3–4 s) are fast enough to choose while a person waits. DeepSeek, the default LLM,
+   averages 39 s.
+
+## Stages 1 and 2a: headroom, speed and the pilot
 
 1. **The headroom after E9's opening is small, and it is in log loss, not accuracy.**
    - On 96 dev people, at the pick after 8, 14 and 21 answers, the best of a 12-question batch beats a random pick by
@@ -101,15 +116,59 @@ costs 3–4 s a question, and grounds at a median cosine of 0.66. Jev's yes/no f
 k = 10–30, but ahead by question 30 and on pricing. Round 2 tests its two best-motivated variants. One is told the
 decisions to predict (`aim=r`, the bench's best Jev form). The other picks from 24 (`b=24`, the most headroom).
 
-## Next
+## Stage 2c, round 2: Jev's yes/no form, two variants (dev 1–150, $2.69)
 
-- **2b, the screen:** the bench (`--bench 8,14,21`, gains already cached) for:
-  - `jev-pick` in each form, with `state=off` and `aim=r`;
-  - `llm-pick[llm=luna]` with `aim` and `lag`;
-  - `llm-gen[llm=luna]` with `n=1` and `n=3`;
-  - `jev-gate[llm=luna]`.
+The daily spend cap stopped the last chunk, so 140 people were walked. AULC (k = 10–30) against `custom-random`:
 
-  About $1 with Luna.
-- **2c:** walks of the survivors on dev 1–150.
-- **3:** selection on dev 151–300.
-- **4:** pre-registered confirmation on dev 301–609.
+| Policy | Verdict | AULC Δ log loss | AULC Δ accuracy | Δ log loss at 30 |
+| --- | --- | --- | --- | --- |
+| `custom-jev-pick[b=12,form=noul]` (round 1's, replayed) | level | −0.0009 [−0.0028, +0.0011] | −0.1 | −0.0031 [−0.0070, +0.0008] |
+| `custom-jev-pick[b=12,form=noul,aim=r]` | level | −0.0010 [−0.0036, +0.0016] | +0.1 | −0.0035 [−0.0079, +0.0009] |
+| `custom-jev-pick[b=24,form=noul]` | level | +0.0008 [−0.0008, +0.0024] | −0.4 [−0.7, −0.0] | −0.0030 [−0.0066, +0.0004] |
+
+Neither variant moves the best: −0.0010 against round 1's −0.0007, an improvement under 0.002 for the second round in
+a row. A larger batch does not help, though it has more headroom (−0.0070 for 24). Jev picks no better from more
+candidates.
+
+## Decision
+
+By `docs/CHOOSER.md` §4:
+- Iteration stops after two rounds under 0.002 nats.
+- Stage 3's futility rule skips confirmation, since the best point estimate (−0.0010) is above −0.002.
+- No E10 arm is built, and production's serve path is unchanged.
+- Dev people 301–609 stay unread for a later experiment.
+
+## What it means for Mimic
+
+- **A serve-time chooser is not worth its cost.**
+  - A Jev chooser is fast (one more request, 0.3 s) but no better than random. An LLM chooser is slower (3–4 s with
+    Luna, 39 s with DeepSeek) and no better either.
+  - Writing a question at serve time costs a 3–8 s wait. It lands on the person's recorded answers no better than a
+    random pick from a stored batch.
+  - Your allowance of waits up to about 5 s is not needed for any of them.
+- **What E9 and E10 together say about the selector:**
+  - E9: the questions asked first matter most. Political views and income, once the trust ramp opens, beat
+    production's anchors.
+  - E9: Jev's own uncertainty, the `voi` selector's information term, picks worse than random.
+  - E10: after the opening, neither Jev nor an LLM can pick better than random.
+  - Together they point to keeping selection after the opening simple (coverage, balance, burden). Dropping the
+    information term, as the deferred selector-fix arm proposes, needs real users to confirm.
+- **The headroom that remains is real but unreadable from question text.** About −0.006 nats a question separates
+  the best candidate from a random one. Reaching it would take a chooser that measures what each answer does for Jev:
+  - `jev-lift` (E9) measures it offline, from other people's recorded answers. That works only for the reserve bank.
+  - A chooser trained on such measurements (amortised selection, `docs/RESEARCH.md` §7) could generalise to written
+    questions. That is a research project, not a prompt.
+
+## Spend
+
+| Run | Cost |
+| --- | --- |
+| Headroom bench | $3.25 |
+| Pilot | $0.47 |
+| Screen | $1.38 |
+| Walks round 1 | $4.90 |
+| Walks round 2 | $2.69 |
+| Latency and recognition probes | under $0.05 |
+| **Total** | **$12.74** |
+
+Every request is in the cache, so the whole readout replays for free.

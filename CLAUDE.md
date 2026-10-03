@@ -117,6 +117,11 @@ If a task seems to require breaking one of these, stop and ask.
   `anchors.order: 'fixed'`), the `e9` preset in `/lab` against `cfg.e7.probes`. Jev's own uncertainty doesn't beat
   random at choosing. Round 5 (`docs/CURVES.md` §11, `ENOUGH_RULE`): with that opening 20 answers are within a point of
   30, so sessions stay at 30 (no shorter arm); pricing decisions keep improving to 30.
+- E10 (ADR-0074, ADR-0075, `docs/CHOOSER.md`) asked who should pick questions after E9's opening: Jev from the pool's
+  batch, an LLM from the batch, an LLM writing one (grounded to the nearest recorded item), or Jev deciding between
+  the batch and generation (`pnpm eval -- curves` with `jev-pick`, `llm-pick`, `llm-gen`, `jev-gate`; `--bench`;
+  `--rule chooser`). Every chooser was level with a random pick (`docs/reports/e10-chooser.md`), so no arm and no
+  serve-time LLM: only Jev (0.3 s) and GPT-6 Luna (3–4 s) are fast enough to choose while a person waits.
 - Scope and consent (ADR-0040, `docs/CATEGORIES.md`): every facet has a category (`psychology`, `values`, `life`, `work`) and sensitive facets a sensitive area (`politics`, `religion`, `sexuality`, `health`, `money`), each behind its own consent (ticked by default at intake, ADR-0049); special-category areas also need a confirmation, and declined facets ("Prefer not to say") are blocked (ADR-0050, both enforced in `facetAllowed`). Get facets through `facetsFor` (scoped by default) and data through the loaders (which hide out-of-scope answers, traits, insights and facts); never read the ontology directly for anything a person will see or a model will be asked. Only direct, consented questions may populate a sensitive facet: never infer one from other answers or web facts.
 - Research directions and their experiments live in `docs/RESEARCH.md`. The evals behind them: `transfer` (what an
   export loses, ADR-0057), `ensemble` (pools of stored predictions, ADR-0058), `population` (a synthetic cohort,

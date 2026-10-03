@@ -119,7 +119,17 @@ Reported but deciding nothing:
   - latency p50/p95 on uncached calls;
   - $ per step.
 
-## 6. Confirmation (to be pre-registered before stage 4 runs)
+## 6. Confirmation: not reached
+
+E10 stopped at stage 2c (`docs/reports/e10-chooser.md`):
+- Two rounds of walks improved the best chooser by less than 0.002 nats.
+- The best AULC point estimate against `custom-random` (−0.0010, Jev's yes/no form told the decisions it predicts)
+  is above the −0.002 that stage 3 requires before a confirmation is worth its people.
+
+No confirmation was pre-registered and none ran, so dev people 301–609 stay unread by any E10 or Jev-scored run. No
+arm ships (ADR-0075).
+
+The text below was written before stage 4 and is kept as written.
 
 Written after stage 3 and merged before any of dev people 301–609 are read.
 
