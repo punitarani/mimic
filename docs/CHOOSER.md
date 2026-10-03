@@ -122,3 +122,7 @@ Reported but deciding nothing:
 ## 6. Confirmation (to be pre-registered before stage 4 runs)
 
 Written after stage 3 and merged before any of dev people 301–609 are read.
+
+A note for the record: a latency probe on 2026-10-03 sent three of them (dev people 591–593 in seeded order) to four
+LLM choosers. It sent their first ten pool answers and a batch of candidates, and nothing else. No target was read and
+nothing was scored, so they stay in the confirmation set.

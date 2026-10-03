@@ -1,4 +1,4 @@
-import { seededRng, temperatureScale } from '@mimic/core';
+import { seededRng, temperatureScale, unitHash } from '@mimic/core';
 import { BudgetStop } from '../optimize/evaluate';
 import type { ChoiceNote } from './choosers';
 import { stateOf, type TwinItem, type TwinPerson } from './data';
@@ -48,8 +48,11 @@ export interface BenchPoint {
   pid: string;
   point: number;
   base: Score;
-  /** Each measured candidate's change from `base` (negative log loss is better). */
-  gains: Array<{ key: string; dLogLoss: number; dAcc: number }>;
+  /**
+   * Each measured candidate's change from `base` (negative log loss is better), overall and on each half of the
+   * targets (`halfOfTarget`), for the cross-fitted headroom.
+   */
+  gains: Array<{ key: string; dLogLoss: number; dAcc: number; halves: [Score, Score] }>;
   picks: Array<{ policy: string; key: string; dLogLoss: number; dAcc: number; note?: ChoiceNote }>;
 }
 
@@ -74,28 +77,59 @@ export interface BenchReport {
   people: number;
   points: number[];
   batch: number;
-  /** What a perfect chooser gains over random, for batches of each size (the start of the measured batch). */
-  oracle: Array<{ b: number; logLoss: Interval; acc: Interval }>;
+  /**
+   * What a perfect chooser gains over random, for batches of each size (the start of the measured batch). Chosen and
+   * scored on the same targets it favours noise; `crossFit` chooses on one half of the targets and scores on the
+   * other, so it is the headroom a chooser could actually reach.
+   */
+  oracle: Array<{
+    b: number;
+    logLoss: Interval;
+    acc: Interval;
+    crossFit: { logLoss: Interval; acc: Interval };
+  }>;
   /** How much the measured candidates differ at all: the mean gain of a random pick. */
   randomGain: { logLoss: Interval; acc: Interval };
   rows: BenchRow[];
   costUsd: number;
 }
 
-function scoreOf(items: readonly TwinItem[], dists: ReadonlyArray<Record<string, number> | null>, t: number) {
-  let ll = 0;
-  let acc = 0;
+/** Targets split in two by item, the same for everyone, for the cross-fitted headroom. */
+export const halfOfTarget = (key: string): 0 | 1 => (unitHash(`e10:half:${key}`) < 0.5 ? 0 : 1);
+
+interface Scored extends Score {
+  halves: [Score, Score];
+}
+
+function scoreOf(
+  items: readonly TwinItem[],
+  dists: ReadonlyArray<Record<string, number> | null>,
+  t: number,
+): Scored | null {
+  const sums = [
+    { ll: 0, acc: 0, n: 0 },
+    { ll: 0, acc: 0, n: 0 },
+  ];
   let n = 0;
   items.forEach((it, i) => {
     const d = dists[i];
     if (!d) return;
     const p = temperatureScale(d, t);
-    ll += -Math.log(Math.max(p[it.answer] ?? 0, 1e-6));
     const top = Object.entries(d).sort((a, b) => b[1] - a[1])[0]?.[0];
-    acc += top === it.answer ? 1 : 0;
+    const h = sums[halfOfTarget(it.key)]!;
+    h.ll += -Math.log(Math.max(p[it.answer] ?? 0, 1e-6));
+    h.acc += top === it.answer ? 1 : 0;
+    h.n++;
     n++;
   });
-  return n === items.length && n > 0 ? { logLoss: ll / n, acc: acc / n } : null;
+  if (n !== items.length || n === 0) return null;
+  const half = (x: { ll: number; acc: number; n: number }): Score =>
+    x.n ? { logLoss: x.ll / x.n, acc: x.acc / x.n } : { logLoss: 0, acc: 0 };
+  return {
+    logLoss: (sums[0]!.ll + sums[1]!.ll) / n,
+    acc: (sums[0]!.acc + sums[1]!.acc) / n,
+    halves: [half(sums[0]!), half(sums[1]!)],
+  };
 }
 
 const mean = (xs: readonly number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -129,14 +163,24 @@ async function gainOf(
   person: TwinPerson,
   prefix: readonly TwinItem[],
   c: TwinItem,
-  base: Score,
+  base: Scored,
 ) {
   const s = scoreOf(
     person.targets,
     await o.jev.predict(person.pid, stateOf(person, [...prefix, c]), person.targets),
     o.t,
   );
-  return s ? { key: c.key, dLogLoss: s.logLoss - base.logLoss, dAcc: s.acc - base.acc } : null;
+  if (!s) return null;
+  const d = (i: 0 | 1): Score => ({
+    logLoss: s.halves[i].logLoss - base.halves[i].logLoss,
+    acc: s.halves[i].acc - base.halves[i].acc,
+  });
+  return {
+    key: c.key,
+    dLogLoss: s.logLoss - base.logLoss,
+    dAcc: s.acc - base.acc,
+    halves: [d(0), d(1)] as [Score, Score],
+  };
 }
 
 export async function runBench(
@@ -208,9 +252,22 @@ async function benchPerson(o: BenchOptions, person: TwinPerson, last: number): P
           },
         });
         const g = gains.find((x) => x.key === item.key) ?? (await gainOf(o, person, prefix, item, base));
-        if (g) picks.push({ policy: policy.name, ...g, ...(note ? { note } : {}) });
+        if (g)
+          picks.push({
+            policy: policy.name,
+            key: g.key,
+            dLogLoss: g.dLogLoss,
+            dAcc: g.dAcc,
+            ...(note ? { note } : {}),
+          });
       }
-      out.push({ pid: person.pid, point, base, gains, picks });
+      out.push({
+        pid: person.pid,
+        point,
+        base: { logLoss: base.logLoss, acc: base.acc },
+        gains,
+        picks,
+      });
     }
   }
   return out;
@@ -263,8 +320,31 @@ export function analyzeBench(
     return m;
   };
   const sizes = [...new Set([6, 12, o.batch].filter((b) => b <= o.batch))].sort((a, b) => a - b);
+  /** Chooses the best on one half of the targets by log loss and scores it on the other, both ways round. */
+  const crossFit = (p: BenchPoint, b: number, metric: 'logLoss' | 'acc') => {
+    const g = p.gains.slice(0, b);
+    let sum = 0;
+    for (const [pickOn, scoreOn] of [
+      [0, 1],
+      [1, 0],
+    ] as const) {
+      const best = g.reduce((x, y) => (y.halves[pickOn].logLoss < x.halves[pickOn].logLoss ? y : x));
+      sum += best.halves[scoreOn][metric] - mean(g.map((y) => y.halves[scoreOn][metric]));
+    }
+    return sum / 2;
+  };
   const oracle = sizes.map((b) => ({
     b,
+    crossFit: {
+      logLoss: personInterval(
+        collect((p) => crossFit(p, b, 'logLoss')),
+        `${o.seed}:bench:xfit:${b}:ll`,
+      ),
+      acc: personInterval(
+        collect((p) => crossFit(p, b, 'acc')),
+        `${o.seed}:bench:xfit:${b}:acc`,
+      ),
+    },
     logLoss: personInterval(
       collect((p) => {
         const g = p.gains.slice(0, b);
@@ -357,9 +437,14 @@ export function renderBench(r: BenchReport): string[] {
     '',
     '## Headroom: a perfect chooser against random (90% intervals by person)',
     '',
-    '| Batch | Δ log loss | Δ accuracy, points |',
-    '| --- | --- | --- |',
-    ...r.oracle.map((x) => `| ${x.b} | ${ivs(x.logLoss)} | ${ivp(x.acc)} |`),
+    'In-sample picks the best on the targets it is scored on, so it favours noise. Cross-fitted picks the best on half the targets by log loss and scores it on the other half: the headroom a chooser can reach.',
+    '',
+    '| Batch | In-sample Δ log loss | In-sample Δ accuracy, points | Cross-fitted Δ log loss | Cross-fitted Δ accuracy, points |',
+    '| --- | --- | --- | --- | --- |',
+    ...r.oracle.map(
+      (x) =>
+        `| ${x.b} | ${ivs(x.logLoss)} | ${ivp(x.acc)} | ${ivs(x.crossFit.logLoss)} | ${ivp(x.crossFit.acc)} |`,
+    ),
     '',
     '## Choosers against a random pick from the same batch',
     '',
