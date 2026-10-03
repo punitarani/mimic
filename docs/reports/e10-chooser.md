@@ -1,6 +1,6 @@
 # E10 readout: who picks the next question (ADR-0074)
 
-**Status: interim.** Stages 1, 2a and 2b ran on 2026-10-03; 2c is running. The pilot stopped when the OpenRouter
+**Status: interim.** Stages 1, 2a, 2b and round 1 of 2c ran on 2026-10-03; round 2 is running. The pilot stopped when the OpenRouter
 account ran out of credits at 07:35 UTC (HTTP 402, `limit_source: openrouter_credits`; total usage $190.44 against
 $190 of credits). Credits were added by 10:48 UTC and the screen ran then.
 
@@ -82,6 +82,24 @@ Against the cross-fitted headroom of −0.0060 [−0.0081, −0.0041] for a batc
 
 By the screen's rule (§4: none beats random, so the top two go on), stage 2c walks `llm-gen[llm=luna]` with `n=1` and
 `n=3`, plus Jev's yes/no form, whose 10-person pilot had looked best, against `custom-random`.
+
+## Stage 2c, round 1: full walks (dev 1–150, $4.90)
+
+Each policy asks E9's opening, then picks questions 9–30. Jev predicts the targets after 0, 8, 10, 15, 20, 25 and 30
+answers, and each (policy, k) has its own leave-one-out temperature. `CHOOSER_RULE` compares AULC over k = 10–30
+against `custom-random`.
+
+| Policy | Verdict | AULC Δ log loss | AULC Δ accuracy | Δ log loss at 30 | Pricing Δ log loss | $ / pick | Latency p50 / p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `custom-random[b=12]` | level | +0.0002 [−0.0027, +0.0029] | +0.1 | +0.0024 [−0.0014, +0.0061] | −0.0002 | — | — |
+| `custom-jev-pick[b=12,form=noul]` | level | −0.0007 [−0.0027, +0.0011] | −0.2 | −0.0052 [−0.0092, −0.0010] | −0.0010 [−0.0018, −0.0002] | $0.0002 | 0.28 / 0.41 s |
+| `custom-llm-gen[llm=luna]` | level | +0.0002 [−0.0017, +0.0021] | +0.1 | +0.0023 [−0.0007, +0.0053] | −0.0006 | $0.0003 | 3.0 / 4.6 s |
+| `custom-llm-gen[llm=luna,n=3]` | level | −0.0001 [−0.0019, +0.0019] | +0.2 | +0.0017 [−0.0014, +0.0048] | −0.0012 | $0.0005 | 3.8 / 5.1 s |
+
+The walks agree with the screen: nothing beats random picks after the opening. Writing questions with Luna is level,
+costs 3–4 s a question, and grounds at a median cosine of 0.66. Jev's yes/no form is the one faint signal: level over
+k = 10–30, but ahead by question 30 and on pricing. Round 2 tests its two best-motivated variants. One is told the
+decisions to predict (`aim=r`, the bench's best Jev form). The other picks from 24 (`b=24`, the most headroom).
 
 ## Next
 
