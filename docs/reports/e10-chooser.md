@@ -1,13 +1,28 @@
-# E10 readout: who picks the next question (ADR-0074)
+# E10 readout: who picks the next question (ADR-0074, ADR-0075)
 
-**Status: interim.** Stages 1 and 2a ran on 2026-10-03. The pilot stopped when the OpenRouter account ran out of
-credits at 07:35 UTC (HTTP 402, `limit_source: openrouter_credits`; total usage $190.44 against $190 of credits). Stages
-2b–4 wait for credits.
+**Status: complete, a null.** No chooser beats a random pick from the batch after E9's opening:
+- Jev picking from the batch;
+- an LLM picking from it;
+- an LLM writing the question;
+- Jev deciding between the batch and a written question.
+
+E10 stopped at stage 2c under its own rules (`docs/CHOOSER.md` §4): two rounds of walks improved the best by less than
+0.002 nats, and the best AULC point estimate (−0.0010) was above the −0.002 needed to attempt a confirmation. Dev
+people 301–609 stay unread. No arm ships (ADR-0075).
 
 Design and rules: `docs/CHOOSER.md`. Every number here comes from dev people. Twin people rank designs for Jev on
-Twin's questions; they never stand in for a Mimic user.
+Twin's questions; they never stand in for a Mimic user. The pilot was interrupted when the OpenRouter account ran
+out of credits at 07:35 UTC on 2026-10-03; the rest ran after credits were added at 10:48 UTC.
 
-## What it found so far
+**In short:**
+1. After the opening, the best of 12 candidates is worth −0.006 nats a question, cross-fitted, and no accuracy.
+2. Neither Jev nor an LLM can tell from the person's answers and the question texts which candidate that is. In
+   one-step screens and full walks alike, every chooser is level with a random pick.
+3. Asked to choose between the batch and a written question, Jev nearly always keeps the batch (1 step in 300).
+4. Only Jev (0.3 s) and GPT-6 Luna (3–4 s) are fast enough to choose while a person waits. DeepSeek, the default LLM,
+   averages 39 s.
+
+## Stages 1 and 2a: headroom, speed and the pilot
 
 1. **The headroom after E9's opening is small, and it is in log loss, not accuracy.**
    - On 96 dev people, at the pick after 8, 14 and 21 answers, the best of a 12-question batch beats a random pick by
@@ -44,15 +59,116 @@ Twin's questions; they never stand in for a Mimic user.
 Spend: the headroom bench cost $3.25. The pilot cost $0.47 before the credits ran out. The pilot's LLM choosers did
 not finish, so its 20-person chunk was dropped, and no LLM chooser result exists yet.
 
-## Next, once credits are added
+## Stage 2b: the screen (100 dev people, $1.38, run after credits were added)
 
-- **2b, the screen:** the bench (`--bench 8,14,21`, gains already cached) for:
-  - `jev-pick` in each form, with `state=off` and `aim=r`;
-  - `llm-pick[llm=luna]` with `aim` and `lag`;
-  - `llm-gen[llm=luna]` with `n=1` and `n=3`;
-  - `jev-gate[llm=luna]`.
+Each chooser picks from the same 12-candidate batch, after 8, 14 and 21 answers. It is scored by its pick's one-step
+gain on the person's targets over the batch's mean gain, which is what a random pick gets on average. Intervals are
+90%, by person.
 
-  About $1 with Luna.
-- **2c:** walks of the survivors on dev 1–150.
-- **3:** selection on dev 151–300.
-- **4:** pre-registered confirmation on dev 301–609.
+| Chooser | Δ log loss vs random | Δ accuracy, points | Latency p50 / p95 |
+| --- | --- | --- | --- |
+| `random[b=12]` (control) | −0.0017 [−0.0037, +0.0002] | +0.11 [−0.11, +0.34] | — |
+| `llm-gen[llm=luna]` | −0.0010 [−0.0025, +0.0005] | +0.03 [−0.22, +0.27] | 4.1 / 8.4 s |
+| `llm-gen[llm=luna,n=3]` | −0.0009 [−0.0026, +0.0006] | −0.16 [−0.42, +0.11] | 4.2 / 5.7 s |
+| `jev-pick[form=noul,aim=r]` | −0.0003 [−0.0018, +0.0012] | −0.01 [−0.28, +0.26] | 0.30 / 0.49 s |
+| `llm-pick[llm=luna]` | +0.0004 [−0.0009, +0.0017] | +0.08 [−0.15, +0.31] | 3.6 / 5.3 s |
+| `jev-pick[form=noul]` | +0.0006 [−0.0007, +0.0020] | −0.30 [−0.53, −0.08] | 0.28 / 0.46 s |
+| `jev-pick[form=noul,state=off]` | +0.0006 [−0.0005, +0.0018] | −0.02 [−0.21, +0.17] | 0.27 / 0.49 s |
+| `jev-pick[form=noul,aim=none]` | +0.0007 [−0.0005, +0.0020] | −0.22 [−0.46, +0.04] | 0.27 / 0.41 s |
+| `jev-pick[form=score]` | +0.0008 [−0.0003, +0.0020] | −0.05 [−0.24, +0.15] | 0.29 / 0.40 s |
+| `jev-gate[llm=luna]` | +0.0013 [−0.0001, +0.0026] | −0.11 [−0.36, +0.14] | 0.28 / 0.42 s |
+| `jev-pick` (choice) | +0.0014 [+0.0001, +0.0029] | −0.14 [−0.36, +0.10] | 0.28 / 0.43 s |
+| `llm-pick[llm=luna,lag=1]` | +0.0016 [+0.0002, +0.0031] | +0.12 [−0.12, +0.36] | 3.6 / 5.4 s |
+| `llm-pick[llm=luna,aim=r]` | +0.0019 [+0.0006, +0.0032] | +0.04 [−0.19, +0.26] | 3.8 / 6.0 s |
+
+Against the cross-fitted headroom of −0.0060 [−0.0081, −0.0041] for a batch of 12:
+
+1. **No chooser finds the better questions.** None is below random with an interval below 0. Three are slightly
+   worse: Jev's choice form, and Luna with `aim=r` or `lag=1`. The best two, the LLM writing a question, recover
+   about a sixth of the headroom, within noise. Jev and an LLM read the person and the candidates, but neither can
+   tell which answer Jev will learn the most from.
+2. **Jev almost never asks for a written question.** In `jev-gate`, "none of these" won once in 300 steps, so
+   choosing between the batch and generation reduces to Jev's pick.
+3. **Choosers that can't tell candidates apart lean on position.** 31% of Jev's picks and 34% of Luna's fall in the
+   first fifth of the shown list (uniform is 20%), with neutral keys in a seeded order.
+4. **Written questions ground loosely.** Luna's questions are plausible everyday ones ("If you unexpectedly received
+   $1,000, what would you most likely do with it?"). They map to the nearest recorded item at a median cosine of 0.68,
+   and Luna takes 4 s a question at the median and 8.4 s at the 95th percentile.
+
+By the screen's rule (§4: none beats random, so the top two go on), stage 2c walks `llm-gen[llm=luna]` with `n=1` and
+`n=3`, plus Jev's yes/no form, whose 10-person pilot had looked best, against `custom-random`.
+
+## Stage 2c, round 1: full walks (dev 1–150, $4.90)
+
+Each policy asks E9's opening, then picks questions 9–30. Jev predicts the targets after 0, 8, 10, 15, 20, 25 and 30
+answers, and each (policy, k) has its own leave-one-out temperature. `CHOOSER_RULE` compares AULC over k = 10–30
+against `custom-random`.
+
+| Policy | Verdict | AULC Δ log loss | AULC Δ accuracy | Δ log loss at 30 | Pricing Δ log loss | $ / pick | Latency p50 / p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `custom-random[b=12]` | level | +0.0002 [−0.0027, +0.0029] | +0.1 | +0.0024 [−0.0014, +0.0061] | −0.0002 | — | — |
+| `custom-jev-pick[b=12,form=noul]` | level | −0.0007 [−0.0027, +0.0011] | −0.2 | −0.0052 [−0.0092, −0.0010] | −0.0010 [−0.0018, −0.0002] | $0.0002 | 0.28 / 0.41 s |
+| `custom-llm-gen[llm=luna]` | level | +0.0002 [−0.0017, +0.0021] | +0.1 | +0.0023 [−0.0007, +0.0053] | −0.0006 | $0.0003 | 3.0 / 4.6 s |
+| `custom-llm-gen[llm=luna,n=3]` | level | −0.0001 [−0.0019, +0.0019] | +0.2 | +0.0017 [−0.0014, +0.0048] | −0.0012 | $0.0005 | 3.8 / 5.1 s |
+
+The walks agree with the screen: nothing beats random picks after the opening. Writing questions with Luna is level,
+costs 3–4 s a question, and grounds at a median cosine of 0.66. Jev's yes/no form is the one faint signal: level over
+k = 10–30, but ahead by question 30 and on pricing. Round 2 tests its two best-motivated variants. One is told the
+decisions to predict (`aim=r`, the bench's best Jev form). The other picks from 24 (`b=24`, the most headroom).
+
+## Stage 2c, round 2: Jev's yes/no form, two variants (dev 1–150, $2.69)
+
+The daily spend cap stopped the last chunk, so 140 people were walked. AULC (k = 10–30) against `custom-random`:
+
+| Policy | Verdict | AULC Δ log loss | AULC Δ accuracy | Δ log loss at 30 |
+| --- | --- | --- | --- | --- |
+| `custom-jev-pick[b=12,form=noul]` (round 1's, replayed) | level | −0.0009 [−0.0028, +0.0011] | −0.1 | −0.0031 [−0.0070, +0.0008] |
+| `custom-jev-pick[b=12,form=noul,aim=r]` | level | −0.0010 [−0.0036, +0.0016] | +0.1 | −0.0035 [−0.0079, +0.0009] |
+| `custom-jev-pick[b=24,form=noul]` | level | +0.0008 [−0.0008, +0.0024] | −0.4 [−0.7, −0.0] | −0.0030 [−0.0066, +0.0004] |
+
+Neither variant moves the best: −0.0010 against round 1's −0.0007, an improvement under 0.002 for the second round in
+a row. A larger batch does not help, though it has more headroom (−0.0070 for 24). Jev picks no better from more
+candidates.
+
+## Decision
+
+By `docs/CHOOSER.md` §4:
+- Iteration stops after two rounds under 0.002 nats.
+- Stage 3's futility rule skips confirmation, since the best point estimate (−0.0010) is above −0.002.
+- No E10 arm is built, and production's serve path is unchanged.
+- Dev people 301–609 stay unread for a later experiment.
+
+## What it means for Mimic
+
+- **A serve-time chooser is not worth its cost.**
+  - A Jev chooser is fast (one more request, 0.3 s) but no better than random. An LLM chooser is slower (3–4 s with
+    Luna, 39 s with DeepSeek) and no better either.
+  - Writing a question at serve time costs a 3–8 s wait. It lands on the person's recorded answers no better than a
+    random pick from a stored batch.
+  - Your allowance of waits up to about 5 s is not needed for any of them.
+- **What E9 and E10 together say about the selector:**
+  - E9: the questions asked first matter most. Political views and income, once the trust ramp opens, beat
+    production's anchors.
+  - E9: Jev's own uncertainty, the `voi` selector's information term, picks worse than random.
+  - E10: after the opening, neither Jev nor an LLM can pick better than random.
+  - Together they point to keeping selection after the opening simple (coverage, balance, burden). Dropping the
+    information term, as the deferred selector-fix arm proposes, needs real users to confirm.
+- **The headroom that remains is real but unreadable from question text.** About −0.006 nats a question separates
+  the best candidate from a random one. Reaching it would take a chooser that measures what each answer does for Jev:
+  - `jev-lift` (E9) measures it offline, from other people's recorded answers. That works only for the reserve bank.
+  - A chooser trained on such measurements (amortised selection, `docs/RESEARCH.md` §7) could generalise to written
+    questions. That is a research project, not a prompt.
+
+## Spend
+
+| Run | Cost |
+| --- | --- |
+| Headroom bench | $3.25 |
+| Pilot | $0.47 |
+| Screen | $1.38 |
+| Walks round 1 | $4.90 |
+| Walks round 2 | $2.69 |
+| Latency and recognition probes | under $0.05 |
+| **Total** | **$12.74** |
+
+Every request is in the cache, so the whole readout replays for free.

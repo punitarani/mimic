@@ -2752,7 +2752,38 @@ Nothing in the codebase asked Jev to choose among questions.
     occasional.
 - The harness's default policy list leaves the choosers out. They need a gateway, and Jev's choosers a batch.
 
-## ADR-0075 — `/lab/mimics`: a directory of people, with hard delete (2026-10-03)
+## ADR-0075 — E10's result: no chooser after the opening, and no serve-time generation (2026-10-03)
+
+**Context.** E10 (ADR-0074, `docs/CHOOSER.md`) measured whether Jev or an LLM should pick the next question after
+E9's opening. The candidates were Jev picking from the pool's batch, an LLM picking from it, an LLM writing the
+question, and Jev deciding between the batch and a written question. It ran on Twin dev people under the rules it
+fixed before running (`docs/reports/e10-chooser.md`).
+
+**Decision.**
+- **No E10 arm.**
+  - Every chooser was level with a random pick from the same batch, in a one-step screen (13 variants, 100 people)
+    and in full walks (two rounds, about 150 people).
+  - The best was −0.0010 nats of AULC (Jev's yes/no form, told the decisions it predicts). That is above the −0.002
+    stage 3 requires, so no confirmation ran, and dev people 301–609 stay unread.
+- **No serve-time LLM, chooser or writer, in production.**
+  - None beat random. Only GPT-6 Luna (3–4 s) fits the up-to-5 s wait allowed for occasional serve-time work;
+    DeepSeek averaged 39 s.
+  - In `jev-gate`, Jev chose "write a new question" once in 300 steps, so a Jev-gated generator would almost never
+    fire.
+- **Production keeps generating in the background (`pool.refill`)** and selecting with `voi`. `cfg.default` and the
+  `e9` preset are unchanged.
+
+**Consequences.**
+- The headroom is real but hard to reach: the best of 12 candidates is worth about −0.006 nats a question, cross-fitted.
+  Reaching it needs a chooser that measures what an answer does for Jev, such as `jev-lift` (E9) or a policy trained
+  on such measurements (`docs/RESEARCH.md` §7). Judging the question text is not enough.
+- E9's finding stands that the `voi` information term (Jev's uncertainty) picks worse than random. E10 adds that
+  nothing smarter readily beats random after the opening. The selector-fix arm (coverage and balance without the
+  information term) remains the next selection change to test, on real users.
+- The E10 harness (`jev-pick`, `llm-pick`, `llm-gen`, `jev-gate`, `--bench`, `--rule chooser`, the chat cache) stays
+  for future choosers.
+
+## ADR-0076 — `/lab/mimics`: a directory of people, with hard delete (2026-10-03)
 
 **Context.** `/lab` reports research numbers over consented real people, pooled. Operating the cohort also needs a
 view of each person: who has a mimic, how far they got, how well their mimic predicts them, and a way to delete a
@@ -2762,17 +2793,22 @@ person on request without their cookie.
 - `/lab/mimics` lists every person (participant) and their mimics, consented or not: it is an ops view, not a result.
   Real people show by default; scripted and imported people are one filter away and always labelled (ADR-0045).
   Filters: population, research consent, a text search; sorts: recent activity, newest, answers, spend; 50 people a
-  page, and only the page's mimics read their fidelity rows (`Store.listFidelityFor`, one query per 90 mimics).
+  page, and only the page's mimics read their fidelity rows and answer counts (`Store.listFidelityFor`,
+  `Store.countAnswers`, one query per 95 mimics; sorting by answers counts every match). Answers are counted, not read
+  from `seqMax`, which also counts the question being asked. A person's row says how many of their mimics the filters
+  hide, and the confirmation for deleting the person counts all of them.
 - `/lab/mimics/[id]` shows one mimic: fidelity over time with its interval, accuracy per predictor over a rolling
   window of 10 scored questions, the per-predictor table restricted to this mimic, every served question with the
   answer and the primary's and baseline's sealed guesses, and cost per call type. Questions the person's current
-  scope hides (ADR-0040) stay hidden here too: their prompt, options, answer and guessed labels are withheld.
-- Delete a mimic (`deleteMimic`, as `DELETE /api/mimics/:id`) or a person: `deleteParticipant` deletes each of their
-  mimics the same way, then the participant row (`Store.deleteParticipant`). Both sit behind `requireAdmin`.
+  scope hides (ADR-0040) stay hidden here too: their prompt, facets, options, answer and the guesses' option keys and
+  labels are withheld. It links to the person's mimic page, which only reads; the session page would serve them a
+  question.
+- Delete a mimic (`DELETE /api/lab/mimics/:id`, through `deleteMimic` like the owner's `DELETE /api/mimics/:id`) or a
+  person (`DELETE /api/lab/participants/:id`): `deleteParticipant` deletes each of their mimics the same way, then the
+  participant row (`Store.deleteParticipant`). Both sit behind `requireAdmin`.
 - The engine functions are `labMimics` and `labMimic` (`packages/core/src/engine/lab-mimics.ts`); no table, config
   or prompt changes.
 
 **Consequences.** Admins can see and delete any person's data in one place. Nothing on these pages is a research
 metric: per-person numbers from people without research consent are for operating the service only and never enter
 an export or a report (invariant 7).
-

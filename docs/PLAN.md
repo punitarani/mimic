@@ -815,7 +815,7 @@ Per-facet "certainty" in the UI is Jev's confidence for that facet's trait read.
 | `/m/[id]/soul` | Curate `SOUL.md` (§8.3): write or rewrite the inferred sections; set boundaries, whether agents may speak as you, your own words and voice samples; include or hide sections and items; reword statements; preview, copy and download (full or core). `/m/[id]/persona` redirects here. |
 | `/credits` | The attribution the autocomplete data's licenses require (ADR-0030), linked from the footers of `/` and `/new`. |
 | `/lab` | Admin only. |
-| `/lab/mimics`, `/lab/mimics/[id]` | Admin only. Every person and their mimics; one mimic's questions, accuracy over time and cost; hard delete (ADR-0075). |
+| `/lab/mimics`, `/lab/mimics/[id]` | Admin only. Every person and their mimics; one mimic's questions, accuracy over time and cost; hard delete (ADR-0076). |
 
 **Session layout.** On desktop, the model panel sits on the left (about 40%) and the question on the right. On mobile, the question fills the screen, and a compact fidelity chip at the top opens the panel as a bottom sheet.
 
@@ -850,7 +850,7 @@ is kept as a rewind, not as evidence (ADR-0036).
 - Cost and latency per call type.
 - The fidelity-per-dollar frontier.
 
-**People** (`/lab/mimics`, ADR-0075): an ops directory of every person and their mimics, consented or not, real
+**People** (`/lab/mimics`, ADR-0076): an ops directory of every person and their mimics, consented or not, real
 people by default (scripted and imported people one filter away, always labelled). Each row shows status, config and
 arm, answers, fidelity with a sparkline, accuracy against the baseline, spend and last activity, and deletes the mimic
 or the whole person. `/lab/mimics/[id]` shows one mimic: fidelity over time with its interval, rolling accuracy per
@@ -895,9 +895,9 @@ This is a brief for the frontend work. Refine it with the frontend-design skill 
 | `POST /api/mimics/:id/footprint` | `{ docs }` (parsed with `@mimic/core/footprint`) → what was pooled | Questions the person's own documents imply answers to, verified by asking (ADR-0061) |
 | `DELETE /api/mimics/:id` | | Hard delete across D1, R2, Vectorize and KV |
 | `GET/POST /api/lab/{configs,experiments,evals}` | | Admin only |
-| `GET /api/lab/mimics` | `?population&consent&q&sort&limit&offset` → people and their mimics | Admin only (ADR-0075) |
-| `GET/DELETE /api/lab/mimics/:id` | → one mimic's lab detail / hard delete | Admin only (ADR-0075) |
-| `DELETE /api/lab/participants/:id` | → `{ mimics }` deleted | Admin only: every mimic of the person, then the participant row (ADR-0075) |
+| `GET /api/lab/mimics` | `?population&consent&q&sort&limit&offset` → people and their mimics | Admin only (ADR-0076) |
+| `GET/DELETE /api/lab/mimics/:id` | → one mimic's lab detail / hard delete | Admin only (ADR-0076) |
+| `DELETE /api/lab/participants/:id` | → `{ mimics }` deleted | Admin only: every mimic of the person, then the participant row (ADR-0076) |
 
 **Auth.** While the cohort is private, `/new` requires an invite code, checked against the `INVITE_CODES` secret. Invite links carry it as `?invite=CODE` on `/new` or `/`: the intake form fills the code in and hides the field, and shows it only if the server rejects the code (ADR-0026, ADR-0047). The `use-invite-code` flag turns the requirement off and on without a deploy (ADR-0055). An anonymous participant cookie is set on first visit. Later, an optional email magic link (Better Auth on D1) lets people claim their mimics across devices. `/lab` sits behind Cloudflare Access, plus `ADMIN_EMAILS`.
 
