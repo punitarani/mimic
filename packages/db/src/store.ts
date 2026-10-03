@@ -298,7 +298,7 @@ const toRewind = (r: typeof s.answerRewinds.$inferSelect): AnswerRewindRecord =>
 type Batch = [BatchItem<'sqlite'>, ...BatchItem<'sqlite'>[]];
 
 /** Splits an IN list so no statement binds more than D1's 100 parameters (a few are left for the other terms). */
-function idChunks(ids: string[]): string[][] {
+function idChunks(ids: readonly string[]): string[][] {
   const out: string[][] = [];
   for (let i = 0; i < ids.length; i += MAX_PARAMS - 5) out.push(ids.slice(i, i + MAX_PARAMS - 5));
   return out;
@@ -366,6 +366,9 @@ export class DrizzleStore implements Store {
   // participants
   async ensureParticipant(id: string, now: number) {
     await this.db.insert(s.participants).values({ id, createdAt: now }).onConflictDoNothing();
+  }
+  async deleteParticipant(id: string) {
+    await this.db.delete(s.participants).where(eq(s.participants.id, id));
   }
 
   // configs & experiments
@@ -617,6 +620,19 @@ export class DrizzleStore implements Store {
   async getAnswerForQuestion(questionId: string) {
     const r = await this.db.select().from(s.answers).where(eq(s.answers.questionId, questionId)).get();
     return r ? toAnswer(r) : null;
+  }
+  async countAnswers(mimicIds: readonly string[]) {
+    const parts = await Promise.all(
+      idChunks(mimicIds).map((ids) =>
+        this.db
+          .select({ mimicId: s.answers.mimicId, n: sql<number>`count(*)` })
+          .from(s.answers)
+          .where(inArray(s.answers.mimicId, ids))
+          .groupBy(s.answers.mimicId)
+          .all(),
+      ),
+    );
+    return new Map(parts.flat().map((r) => [r.mimicId, Number(r.n)]));
   }
   async listAnswers(mimicId: string) {
     const rows = await this.db
@@ -1081,6 +1097,19 @@ export class DrizzleStore implements Store {
       .orderBy(asc(s.fidelity.seqUpTo), asc(s.fidelity.id))
       .all();
     return rows.map(({ id: _id, ...r }) => r);
+  }
+  async listFidelityFor(mimicIds: readonly string[]) {
+    const parts = await Promise.all(
+      idChunks(mimicIds).map((ids) =>
+        this.db
+          .select()
+          .from(s.fidelity)
+          .where(inArray(s.fidelity.mimicId, ids))
+          .orderBy(asc(s.fidelity.mimicId), asc(s.fidelity.seqUpTo), asc(s.fidelity.id))
+          .all(),
+      ),
+    );
+    return parts.flat().map(({ id: _id, ...r }): FidelityRecord => r);
   }
   async insertSnapshot(rec: SnapshotRecord) {
     await this.write([this.db.insert(s.snapshots).values(rec)]);

@@ -314,3 +314,17 @@ export async function deleteMimic(deps: EngineDeps, mimicId: string): Promise<vo
 
   await deps.store.deleteMimic(m.id);
 }
+
+/**
+ * Hard-deletes a person: every mimic they own (each through `deleteMimic`, so D1, R2, Vectorize and KV), then their
+ * participant row. Used by `/lab/mimics` (ADR-0076).
+ */
+export async function deleteParticipant(
+  deps: EngineDeps,
+  participantId: string,
+): Promise<{ mimics: number }> {
+  const mimics = await deps.store.listMimics({ participantId });
+  for (const m of mimics) await deleteMimic(deps, m.id);
+  await deps.store.deleteParticipant(participantId);
+  return { mimics: mimics.length };
+}

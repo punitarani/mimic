@@ -2783,3 +2783,32 @@ fixed before running (`docs/reports/e10-chooser.md`).
 - The E10 harness (`jev-pick`, `llm-pick`, `llm-gen`, `jev-gate`, `--bench`, `--rule chooser`, the chat cache) stays
   for future choosers.
 
+## ADR-0076 — `/lab/mimics`: a directory of people, with hard delete (2026-10-03)
+
+**Context.** `/lab` reports research numbers over consented real people, pooled. Operating the cohort also needs a
+view of each person: who has a mimic, how far they got, how well their mimic predicts them, and a way to delete a
+person on request without their cookie.
+
+**Decision.**
+- `/lab/mimics` lists every person (participant) and their mimics, consented or not: it is an ops view, not a result.
+  Real people show by default; scripted and imported people are one filter away and always labelled (ADR-0045).
+  Filters: population, research consent, a text search; sorts: recent activity, newest, answers, spend; 50 people a
+  page, and only the page's mimics read their fidelity rows and answer counts (`Store.listFidelityFor`,
+  `Store.countAnswers`, one query per 95 mimics; sorting by answers counts every match). Answers are counted, not read
+  from `seqMax`, which also counts the question being asked. A person's row says how many of their mimics the filters
+  hide, and the confirmation for deleting the person counts all of them.
+- `/lab/mimics/[id]` shows one mimic: fidelity over time with its interval, accuracy per predictor over a rolling
+  window of 10 scored questions, the per-predictor table restricted to this mimic, every served question with the
+  answer and the primary's and baseline's sealed guesses, and cost per call type. Questions the person's current
+  scope hides (ADR-0040) stay hidden here too: their prompt, facets, options, answer and the guesses' option keys and
+  labels are withheld. It links to the person's mimic page, which only reads; the session page would serve them a
+  question.
+- Delete a mimic (`DELETE /api/lab/mimics/:id`, through `deleteMimic` like the owner's `DELETE /api/mimics/:id`) or a
+  person (`DELETE /api/lab/participants/:id`): `deleteParticipant` deletes each of their mimics the same way, then the
+  participant row (`Store.deleteParticipant`). Both sit behind `requireAdmin`.
+- The engine functions are `labMimics` and `labMimic` (`packages/core/src/engine/lab-mimics.ts`); no table, config
+  or prompt changes.
+
+**Consequences.** Admins can see and delete any person's data in one place. Nothing on these pages is a research
+metric: per-person numbers from people without research consent are for operating the service only and never enter
+an export or a report (invariant 7).
